@@ -121,6 +121,12 @@ and runs the prompt there. Thresholds live in `config/machine.json` `capacity` (
   Per-project facts (stack, commands, gotchas): `data/notes/<project>.md`, included in every brief.
 - Never edit a project's committed `AGENTS.md` or `CLAUDE.md` to add knowledge; only correct wrong facts there.
 - Load `toli-stow` on `/stow` or before a session reset.
+- Memory has a budget: `data/malik.md` + `data/learnings.md` stay under `memoryBudgetTokens` (default 7500,
+  `bin/toli memory`). Entries are dated `- YYYY-MM-DD: ...` (last confirmed). Stale entries (`bin/toli memory stale`)
+  are re-confirmed (date refreshed) or archived with `bin/toli memory archive`, never deleted by hand. Never archive
+  a `data/malik.md` entry without Malik's explicit word for that entry.
+- `bin/toli prune` is a dry run; the ticker posts it to the inbox weekly. Run `bin/toli prune --apply` only when Malik
+  says so. Reports in `data/reports/` are never pruned.
 
 ## 9. Commands
 

@@ -24,14 +24,15 @@ export type Task = {
     doneAt?: string;
 };
 
-type BacklogFile = { nextId: number; tasks: Task[] };
+export type BacklogFile = { nextId: number; tasks: Task[] };
 
 export function loadBacklog(): BacklogFile {
     const backlog = readJson<BacklogFile>(paths.backlog(), { nextId: 1, tasks: [] });
     return { nextId: backlog.nextId ?? 1, tasks: backlog.tasks ?? [] };
 }
 
-function updateBacklog<T>(fn: (backlog: BacklogFile) => T): T {
+/** Read-modify-write data/backlog.json under the backlog lock. */
+export function updateBacklog<T>(fn: (backlog: BacklogFile) => T): T {
     return withLock(paths.lock("backlog"), () => {
         const backlog = loadBacklog();
         const result = fn(backlog);

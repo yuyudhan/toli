@@ -47,8 +47,11 @@ the actual work, checks their work, and tells you the result.
    one is running, otherwise in the background. Results from other machines come back to your main machine.
 10. **Picture pages for decisions.** When there are several options, Sardar opens a lavish page in your browser so
     you can tick choices instead of typing.
-11. **Memory.** Sardar keeps notes per project, your preferences, and lessons learned in `data/`, and uses them in
-    every new task.
+11. **Memory that stays small.** Sardar keeps notes per project, your preferences, and lessons learned in `data/`,
+    and uses them in every new task. Each `/stow` keeps the always-loaded part under a token budget: lessons that
+    stop being confirmed for 30 days (7 for "until X" ones) are re-checked or moved to an archive, never deleted.
+    Your preferences are never archived unless you say so. Once a week Sardar also lists old job results, finished
+    tasks, and logs that could be cleaned up; nothing is removed until you say "prune".
 12. **Local stacks.** If a project's notes list how to start, stop, migrate, and read logs of its local stack, Sardar
     runs exactly those commands itself. Nothing else.
 13. **Quiet or away.** `/quiet` keeps Sardar to results, failures, and decisions while you are here; `/afk` lets it
@@ -63,7 +66,7 @@ Everyday commands you type inside omp:
 | `/ahoy`                         | Walk through decisions that are waiting for you                                        |
 | `/schedule`                     | Add, list, pause, or remove timed jobs ("every day at 5 pm ...")                       |
 | `/add-project`, `/drop-project` | Add or remove a project                                                                |
-| `/stow`                         | Save what was learned this session                                                     |
+| `/stow`                         | Save what was learned this session and keep memory within its budget                   |
 | `/afk`                          | "I'm away" - keep working through queued tasks and give one summary when you are back  |
 | `/quiet`                        | "I'm here, keep it short" - only results, failures, and decisions                      |
 | `/sync-toli`                    | Pull the latest Sardar rules onto this machine (or all machines)                       |
@@ -166,16 +169,16 @@ then prints the PR/MR URL. Pushing, opening and merging all need Malik's word fo
 
 ## Slash commands
 
-| Command                                      | What it does                                                           |
-| -------------------------------------------- | ---------------------------------------------------------------------- |
-| `/bearings [lavish]`                         | Status overview: work in flight, questions waiting, job results, inbox |
-| `/ahoy`                                      | Go through every task waiting on a decision                            |
-| `/stow`                                      | Save session learnings and preferences; tidy the backlog               |
-| `/afk [off]`                                 | Keep working the queue while away; one report on return                |
-| `/quiet [off]`                               | Only outcomes, failures, and decisions while present                   |
-| `/add-project`, `/drop-project`              | Register or remove a project                                           |
-| `/schedule add\|list\|pause\|resume\|remove` | Recurring jobs                                                         |
-| `/sync-toli [--all]`                         | Update the toli repo (fast-forward only)                               |
+| Command                                      | What it does                                                            |
+| -------------------------------------------- | ----------------------------------------------------------------------- |
+| `/bearings [lavish]`                         | Status overview: work in flight, questions waiting, job results, inbox  |
+| `/ahoy`                                      | Go through every task waiting on a decision                             |
+| `/stow`                                      | Save learnings and preferences; re-check stale memory; tidy the backlog |
+| `/afk [off]`                                 | Keep working the queue while away; one report on return                 |
+| `/quiet [off]`                               | Only outcomes, failures, and decisions while present                    |
+| `/add-project`, `/drop-project`              | Register or remove a project                                            |
+| `/schedule add\|list\|pause\|resume\|remove` | Recurring jobs                                                          |
+| `/sync-toli [--all]`                         | Update the toli repo (fast-forward only)                                |
 
 ## Periodic jobs
 
@@ -191,6 +194,32 @@ While the omp session is open, the Sardar extension checks every minute and runs
 session is open, the OS ticker runs them headless (`omp -p`) and saves output to `data/jobs/<name>/<stamp>.md`.
 Results appear in `/bearings` until acknowledged (`bin/toli job ack`). Scheduled runs never push, merge, open PRs, or
 ask questions.
+
+## Memory and pruning
+
+    bin/toli memory [--json]          # always-loaded memory (data/malik.md + data/learnings.md) in estimated tokens vs budget; notes listed separately
+    bin/toli memory stale [--json]    # entries past their lifetime: file, line, id, date, age, tier
+    bin/toli memory archive <file> <line-or-id> --reason "<why>" [--force]   # move one entry to data/archive/<file>.md
+    bin/toli prune [--apply] [--json] # dry run by default: old job results, finished tasks, logs, seen inbox items
+
+Tokens are estimated as UTF-8 bytes / 3. The budget is `memoryBudgetTokens` in `config/machine.json` (default 7500);
+`bin/toli doctor` warns when memory is over it. Entries are dated (`- 2026-10-29: ...`); the date is when the entry was
+last confirmed. `data/malik.md` is pinned (never ages; archiving needs `--force` on Malik's word); `data/learnings.md`
+and `data/notes/*.md` entries go stale after 30 days, or 7 days when marked `(until: <condition>)`. Archived entries
+keep their source file, original date, and reason under a dated heading.
+
+| Pruned by `bin/toli prune --apply`                        | Default rule                                  | What happens                       |
+| --------------------------------------------------------- | --------------------------------------------- | ---------------------------------- |
+| Job results `data/jobs/<name>/*.md`                       | older than 30 days; the newest 5 per job stay | deleted                            |
+| Done or dropped tasks in `data/backlog.json`              | finished more than 90 days ago                | moved to `data/archive/tasks.json` |
+| Files in `logs/`                                          | not written for 14 days                       | deleted                            |
+| Inbox items `data/inbox/*.md` (delivered worker messages) | acknowledged and older than 14 days           | deleted                            |
+| Investigation reports `data/reports/`                     | never                                         | kept                               |
+
+Override any rule in `config/machine.json`, e.g.
+`"retention": { "jobResultsDays": 30, "jobResultsKeep": 5, "tasksDays": 90, "logsDays": 14, "inboxDays": 14 }`.
+Once a week the ticker (`bin/toli job tick`) posts the dry-run listing to the inbox (a worker sends it to the
+coordinator's inbox); it never applies it.
 
 ## no-mistakes and lavish
 
@@ -282,6 +311,7 @@ Private (gitignored, per machine):
     data/malik.md                Malik's preferences
     data/reports/<taskId>.md     investigation reports
     data/jobs/<name>/<stamp>.md  job results
+    data/archive/                archived memory entries (<file>.md) and old tasks (tasks.json); never loaded
     data/inbox/, data/remote/, data/afk/
-    state/                       session.json, jobs.json, afk flag, outbox/, runs/
+    state/                       session.json, jobs.json, prune.json, afk flag, outbox/, runs/
     logs/, .env*, .lavish/

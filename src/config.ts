@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { paths } from "./paths.ts";
-import { readJson, ToliError } from "./util.ts";
+import { readJson, shellQuote, ToliError } from "./util.ts";
 
 export type Role = "coordinator" | "worker";
 
@@ -12,12 +12,29 @@ export type CapacityConfig = {
     minDiskFreeGB?: number;
 };
 
+/** Retention for `bin/toli prune`, in days unless named otherwise; any field left out uses its default. */
+export type RetentionConfig = {
+    jobResultsDays?: number;
+    jobResultsKeep?: number;
+    tasksDays?: number;
+    logsDays?: number;
+    inboxDays?: number;
+};
+
 export type Machine = {
     name: string;
     role: Role;
     coordinator?: { ssh: string; root: string };
     capacity?: CapacityConfig;
+    /** Token budget for the always-loaded memory files (data/malik.md + data/learnings.md). */
+    memoryBudgetTokens?: number;
+    retention?: RetentionConfig;
 };
+
+/** Optional settings from config/machine.json, readable before `init` (every field may be absent). */
+export function machineSettings(): Partial<Machine> {
+    return readJson<Partial<Machine>>(paths.machine(), {});
+}
 
 export type FleetMachine = { name: string; ssh: string; root: string };
 
@@ -57,4 +74,13 @@ export function otherFleetMachines(): FleetMachine[] {
 /** ssh argv prefix: batch mode (never prompts) with a bounded connect timeout. */
 export function sshArgs(host: string, connectTimeoutSeconds = 15): string[] {
     return ["ssh", "-o", "BatchMode=yes", "-o", `ConnectTimeout=${connectTimeoutSeconds}`, host];
+}
+
+// ssh runs the remote command in a non-interactive shell that skips the login profile, so Homebrew and Bun's
+// install directories are often missing from PATH there and `bin/toli` (a `#!/usr/bin/env bun` script) fails.
+const REMOTE_PATH = 'PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"';
+
+/** Remote shell command that runs `bin/toli <command>` from `root`; `command` must already be shell-quoted. */
+export function remoteToliCommand(root: string, command: string): string {
+    return `export ${REMOTE_PATH} && cd ${shellQuote(root)} && bin/toli ${command}`;
 }

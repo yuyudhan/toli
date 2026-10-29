@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } f
 import { join } from "node:path";
 import { ackedThrough, ackThrough } from "./acks.ts";
 import { Args } from "./args.ts";
-import { loadMachine, type Machine, sshArgs } from "./config.ts";
+import { loadMachine, type Machine, remoteToliCommand, sshArgs } from "./config.ts";
 import { cronFiredBetween, parseCron } from "./cron.ts";
 import { paths } from "./paths.ts";
 import { findProject } from "./projects.ts";
@@ -206,7 +206,7 @@ export function finishJob(name: string, runId: string, body: string, status: Run
 
 type OutboxItem = { from: string; title: string; body: string };
 
-function queueOutbox(machine: Machine, title: string, body: string, id: string): void {
+export function queueOutbox(machine: Machine, title: string, body: string, id: string): void {
     writeJsonAtomic(join(paths.outboxDir(), `${id}.json`), { from: machine.name, title, body } satisfies OutboxItem);
 }
 
@@ -238,10 +238,10 @@ export function deliverOutbox(machine: Machine): { delivered: number; pending: n
             continue;
         }
         const item = readJson<OutboxItem>(claimed, { from: machine.name, title: file, body: "" });
-        const remote = [
-            `cd ${shellQuote(coordinator.root)}`,
-            `bin/toli inbox add --from ${shellQuote(item.from)} --title ${shellQuote(item.title)}`,
-        ].join(" && ");
+        const remote = remoteToliCommand(
+            coordinator.root,
+            `inbox add --from ${shellQuote(item.from)} --title ${shellQuote(item.title)}`,
+        );
         const sent = run([...sshArgs(coordinator.ssh), remote], { stdin: item.body, timeoutMs: 120_000 });
         if (sent.code === 0) {
             rmSync(claimed, { force: true });

@@ -1,7 +1,15 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "./args.ts";
-import { fleetMachine, hasMachine, loadMachine, type Machine, otherFleetMachines, sshArgs } from "./config.ts";
+import {
+    fleetMachine,
+    hasMachine,
+    loadMachine,
+    type Machine,
+    otherFleetMachines,
+    remoteToliCommand,
+    sshArgs,
+} from "./config.ts";
 import { git } from "./git.ts";
 import { paths } from "./paths.ts";
 import { noCandidateText, pickMachine } from "./pick.ts";
@@ -70,7 +78,7 @@ export function syncCommand(argv: string[]): number {
     if (!args.bool("all")) return 0;
     let failures = 0;
     for (const machine of otherFleetMachines()) {
-        const result = run([...sshArgs(machine.ssh, 15), `cd ${shellQuote(machine.root)} && bin/toli sync`], {
+        const result = run([...sshArgs(machine.ssh, 15), remoteToliCommand(machine.root, "sync")], {
             timeoutMs: 120_000,
         });
         if (result.code === 0) {
@@ -158,7 +166,6 @@ export async function remoteCommand(argv: string[]): Promise<number> {
     }
     const target = fleetMachine(targetName);
     const from = loadMachine().name;
-    const remoteToli = (command: string): string => `cd ${shellQuote(target.root)} && bin/toli ${command}`;
     const startedAt = now();
     const sections: string[] = [];
     let code = 0;
@@ -166,7 +173,10 @@ export async function remoteCommand(argv: string[]): Promise<number> {
         projectName === undefined ? "" : (loadProjects().find((entry) => entry.name === projectName)?.url ?? "");
     if (projectName !== undefined && url !== "") {
         const ensure = run(
-            [...sshArgs(target.ssh, 15), remoteToli(`project ensure ${shellQuote(projectName)} ${shellQuote(url)}`)],
+            [
+                ...sshArgs(target.ssh, 15),
+                remoteToliCommand(target.root, `project ensure ${shellQuote(projectName)} ${shellQuote(url)}`),
+            ],
             {
                 timeoutMs: 15 * 60 * 1000,
             },
@@ -175,10 +185,13 @@ export async function remoteCommand(argv: string[]): Promise<number> {
         if (ensure.code !== 0) code = ensure.code;
     }
     if (code === 0) {
-        const result = run([...sshArgs(target.ssh, 15), remoteToli(`exec --from ${shellQuote(from)}`)], {
-            stdin: remotePrompt(from, target.name, prompt, projectName),
-            timeoutMs: EXEC_KILL_MS + 60_000,
-        });
+        const result = run(
+            [...sshArgs(target.ssh, 15), remoteToliCommand(target.root, `exec --from ${shellQuote(from)}`)],
+            {
+                stdin: remotePrompt(from, target.name, prompt, projectName),
+                timeoutMs: EXEC_KILL_MS + 60_000,
+            },
+        );
         sections.push(
             [result.stdout.trimEnd(), result.stderr.trim() ? `\n--- stderr ---\n${result.stderr.trimEnd()}` : ""].join(
                 "",
