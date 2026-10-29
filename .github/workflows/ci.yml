@@ -13,6 +13,14 @@ jobs:
         env:
             GITLEAKS_VERSION: 8.30.1
             GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+            SHFMT_VERSION: 3.13.1
+            SHFMT_SHA256: fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1
+            SHELLCHECK_VERSION: 0.11.0
+            SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+            ACTIONLINT_VERSION: 1.7.12
+            ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+            JUST_VERSION: 1.58.0
+            JUST_SHA256: 4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
         steps:
             - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
               with:
@@ -21,11 +29,34 @@ jobs:
 
             - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
               with:
-                  bun-version: 1.3.14
+                  bun-version-file: .bun-version
 
             - run: bun install --frozen-lockfile
 
-            - name: Lint (tsc, Biome, guards)
+            - name: Install shfmt, shellcheck, actionlint, just (pinned, checksum-verified)
+              run: |
+                  bin="$RUNNER_TEMP/bin"
+                  mkdir -p "$bin"
+                  cd "$RUNNER_TEMP"
+                  fetch() { # <url> <file> <sha256>
+                      curl -sSfL -o "$2" "$1"
+                      echo "$3  $2" | sha256sum --check
+                  }
+                  fetch "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64" \
+                      shfmt "$SHFMT_SHA256"
+                  install -m 0755 shfmt "$bin/shfmt"
+                  fetch "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+                      shellcheck.tar.xz "$SHELLCHECK_SHA256"
+                  tar -xJf shellcheck.tar.xz --strip-components=1 -C "$bin" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+                  fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+                      actionlint.tar.gz "$ACTIONLINT_SHA256"
+                  tar -xzf actionlint.tar.gz -C "$bin" actionlint
+                  fetch "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+                      just.tar.gz "$JUST_SHA256"
+                  tar -xzf just.tar.gz -C "$bin" just
+                  echo "$bin" >> "$GITHUB_PATH"
+
+            - name: Lint (tsc, Biome, Prettier, Taplo, shfmt, just --fmt, shellcheck, actionlint, guards)
               run: bun run lint
 
             - name: Test with coverage threshold (bunfig.toml)

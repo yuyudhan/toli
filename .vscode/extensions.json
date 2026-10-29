@@ -1,0 +1,11 @@
+{
+    "recommendations": [
+        "biomejs.biome",
+        "esbenp.prettier-vscode",
+        "editorconfig.editorconfig",
+        "tamasfe.even-better-toml",
+        "mkhl.shfmt",
+        "timonwong.shellcheck",
+        "nefrob.vscode-just-syntax"
+    ]
+}

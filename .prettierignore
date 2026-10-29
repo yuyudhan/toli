@@ -1,0 +1,17 @@
+# Prettier owns Markdown and YAML only (scripts/format.ts passes it just those); this file keeps editors and ad-hoc
+# `prettier .` runs off everything else.
+node_modules/
+bun.lock
+
+# Per-machine private state (gitignored)
+/data/
+/state/
+/config/
+/projects/
+/logs/
+.lavish/
+
+# Owned by Biome (biome.json)
+*.ts
+*.json
+*.jsonc
