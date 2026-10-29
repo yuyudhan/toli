@@ -1,0 +1,52 @@
+# Per-machine private state: never shared between the mate clones.
+# Anchored to the repo root so tracked files such as src/config.ts stay visible.
+/projects/
+/data/
+/state/
+/config/
+/logs/
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+auth.json
+*-password
+*-pwd
+
+# Bun / Node dependencies and build output
+node_modules/
+dist/
+build/
+out/
+*.bun-build
+coverage/
+.cache/
+*.tsbuildinfo
+
+# Runtime and logs
+*.log
+*.db
+*.db-wal
+*.db-shm
+tmp/
+
+# Lavish review artifacts
+.lavish/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor noise (vim, emacs, JetBrains, VS Code)
+*.swp
+*.swo
+*~
+\#*\#
+.#*
+*.~undo-tree~
+.idea/
+.vscode/
