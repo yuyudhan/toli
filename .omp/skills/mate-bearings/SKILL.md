@@ -13,10 +13,11 @@ On the coordinator (`config/machine.json` role `coordinator`), include the worke
 
     bin/mate digest --json --fleet
 
-The digest covers: machine, projects (branch, dirty, ahead/behind), backlog (in flight / waiting on Malik / queued),
-unseen job results, inbox from other machines, and recent reports. With `--fleet` it also has `availability`: one
-entry per machine saying whether it is free for work and, if not, why (load, memory, disk, runs, unreachable). If a
-worker is unreachable over ssh, say so in one line rather than failing the whole overview.
+The digest covers: machine, projects (branch, fixed branch and any mismatch, dirty, ahead/behind), backlog (in
+flight / waiting on Malik / queued), unseen job results, inbox from other machines, and recent reports. With
+`--fleet` it also has `availability`: one entry per machine saying whether it is free for work and, if not, why
+(load, memory, disk, runs, unreachable). If a worker is unreachable over ssh, say so in one line rather than
+failing the whole overview.
 
 ## Plain digest (default)
 
@@ -29,11 +30,17 @@ Lead with what needs Malik, then what changed, then the rest. Translate everythi
     From other machines: <machine - title>.
     Machines: <free machines>; busy: <machine - reason in plain words>.
     Projects with uncommitted or unpushed work: <project - state>.
+    Off their working branch: <project - on <current>, should be <fixed branch>>.
 
 - "waiting on Malik" becomes "needs your answer"; "queued" becomes "not started yet"; "inbox" becomes "from <machine>".
 - Omit empty sections entirely.
 - Keep it under about 15 lines. Offer detail instead of dumping it.
 - If anything needs his answer, offer `/ahoy` to go through it.
+- A project off its fixed branch needs Malik: say how to switch back (or that he may want to change the configured
+  branch) and never switch it yourself.
+- This layout is also the while-you-were-away block (AGENTS.md section 1): after 30 or more minutes of silence from
+  Malik, lead the next reply with its first three lines (needs you, done, running).
+- In quiet mode (`state/quiet`), keep only what needs him, what finished, and failures.
 
 ## Lavish page (`/bearings lavish`)
 

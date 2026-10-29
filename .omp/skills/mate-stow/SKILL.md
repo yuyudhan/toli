@@ -19,6 +19,20 @@ Malik asks for a change to mate itself.
 **Never edit a project's committed AGENTS.md, CLAUDE.md, or other docs** as part of stow. Project facts go to
 `data/notes/<project>.md`. If a project's own docs are wrong, tell Malik and offer a ship task.
 
+## Project notes sections mate reads
+
+Keep these headings exact in `data/notes/<project>.md`; skills look for them by name:
+
+| Heading | Holds | Read by |
+|---|---|---|
+| `## Local stack` | directory, start/stop/restart/migrate/logs commands, health URLs | `mate-stacks` |
+| `## URLs` | local and staging URLs (staging is read-only) | briefs, `mate-scout` |
+| `## Proof` | screenshot widths and other required evidence | briefs |
+| `## Release` | integration branch, release notes file, tag format, smoke checks, issue transitions | `mate-release` |
+
+Record a stack command, URL, or release step only after Malik stated it or a run proved it. Never store passwords,
+tokens, or OTPs in notes; point to where Malik keeps them instead.
+
 ## What qualifies
 
 Write an entry only if it will change a future decision:

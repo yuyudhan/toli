@@ -25,6 +25,10 @@ Delivery happens only after evidence is verified (`skill://mate-dispatch`, step 
 Stages only the given paths, commits on whatever branch the project is on, never pushes. Commit messages follow the
 project's own conventions (check its AGENTS.md / recent `git log`).
 
+When the project has a fixed working branch (`branch` in `bin/mate project list`), `bin/mate commit` refuses on any
+other branch. Do not switch, create, or reconfigure branches to get past it: tell Malik which branch the clone is on
+and ask how to proceed (the refusal message lists the options).
+
 ## Mode: pr
 
 Only when Malik asked for a branch or PR on this work.
@@ -35,8 +39,17 @@ Only when Malik asked for a branch or PR on this work.
 
 2. Commit with `bin/mate commit` as above.
 3. Ask Malik for the go-ahead to push and open the PR, unless he already said so for this change.
-4. Push and open the PR with `git push -u origin <branch>` and `gh pr create` in the project directory.
+4. Push and open the PR/MR through mate (works for GitHub, GitLab incl. self-hosted, and Bitbucket Cloud; check
+   readiness with `bin/mate forge <project>` first):
+
+        bin/mate push <project>
+        bin/mate pr create <project> --title "<title>" --body-file <file> [--base <branch>] [--draft]
+
+   `pr create` refuses until the branch is pushed and prints the PR/MR URL. Never push with raw `git push`, never
+   force, and never call `gh`/`glab`/the Bitbucket API directly for these steps.
 5. Record it: `bin/mate task done <id> --commit <sha> --note "<full PR URL>"`.
+6. Follow up with `bin/mate pr status <project> [<id>]` (state, mergeable, CI). `bin/mate pr merge <project> <id>`
+   only on Malik's explicit word to merge that PR.
 
 ## Mode: no-mistakes
 

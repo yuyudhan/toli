@@ -20,7 +20,8 @@ bodies, code, or project files (write "the user" if you must refer to him).
 
 - Name: <project>
 - Path: <absolute path from `bin/mate project path <project>`>
-- Notes: <absolute path to data/notes/<project>.md> - read it first (stack, commands, gotchas)
+- Notes: <absolute path to data/notes/<project>.md> - read it first (stack, commands, URLs, proof, gotchas)
+- Branch: <fixed branch from `bin/mate project list --json`, or "current branch"> - stay on it; never switch
 - Shape: <ship | scout>
 
 ## Spec
@@ -36,6 +37,13 @@ task needs, and never revert or reformat changes you did not make.
 - <observable result 1>
 - <observable result 2>
 - Run the project's tests (<command from notes>) and/or this smoke check: <command>.
+- <UI/API work: keep when the notes list `## URLs`, else drop> Check the logs (<log command or file from notes>)
+  and show no new errors; verify <local URL from notes> with a headless browser (UI) or HTTP request (API) and paste
+  what it returned.
+- <UI changes: keep, else drop> Before/after screenshots at each width in the notes' `## Proof` section
+  (<widths>); give their file paths.
+- <bug fixes: keep, else drop> A test that reproduces the bug: paste its failing output before the fix and its
+  passing output after.
 - Paste the exact commands you ran and their output (pass/fail lines and counts). A claim without output is not
   evidence. If something could not be run, say so and why.
 
@@ -48,7 +56,9 @@ task needs, and never revert or reformat changes you did not make.
 
 - Read the project's own AGENTS.md / CLAUDE.md (and any nested ones for files you touch) before editing, and follow
   them.
-- Work directly in the project path above. No git worktrees.
+- Work directly in the project path above. No git worktrees. Stay on the branch named above; never create, switch,
+  or rebase branches.
+- Run git only through `bash` (git CLI), never through other git tools or integrations.
 - Never push, merge, or open a PR.
 - Never discard uncommitted work: no `git reset --hard`, `git checkout -- .`, `git stash`, `git clean`, branch
   deletion, or force push. If git state blocks you, stop and report.
@@ -56,6 +66,9 @@ task needs, and never revert or reformat changes you did not make.
 - Do not commit unless this brief says so below. If it does, commit only the paths you changed via
   `bin/mate commit <project> -m "<message>" -- <paths you changed...>` run from the mate repo root.
 - Destructive, irreversible, or security-sensitive steps: stop and report instead of doing them.
+- Browsers run headless only; never open a visible browser window.
+- Stop and report if a login asks for an OTP, captcha, or any second factor. Never try to get past it.
+- Staging and any other shared environment are read-only: look, never change data, settings, or deployments.
 - Commit instruction for this task: <"do not commit; mate commits after review" | "commit via bin/mate commit">
 
 ## Report format

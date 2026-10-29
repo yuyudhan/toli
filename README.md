@@ -14,8 +14,8 @@ private (projects, backlog, notes, config, logs) is gitignored and stays on each
 Think of mate as your personal assistant manager. You talk only to mate; mate hires helpers (omp subagents) to do
 the actual work, checks their work, and tells you the result.
 
-1. **One place to talk.** Start `omp` in this folder and just say what you want: "fix the login bug in dhruv",
-   "find why the build is slow in varta". Mate answers you as "Malik" and replies "Ji Malik".
+1. **One place to talk.** Start `omp` in this folder and just say what you want: "fix the login bug in billing-api",
+   "find why the build is slow in web-app". Mate answers you as "Malik" and replies "Ji Malik".
 2. **Many projects.** All your projects live in `projects/`. Mate figures out which project you mean, and asks once
    if it is not sure.
 3. **Helpers do the work, fast.** Mate gives each job a clear written task and hands it to omp subagents. Several
@@ -23,12 +23,16 @@ the actual work, checks their work, and tells you the result.
 4. **Two kinds of jobs.** "Ship" jobs change code. "Scout" jobs only investigate and write a report in
    `data/reports/`, without touching code.
 5. **Proof before done.** A helper must actually run the project's tests or a quick check and show the output.
+   When your notes for a project list its URLs, the helper also checks the logs and opens the local page in a
+   headless browser; UI changes come with before/after screenshots at your chosen widths, and bug fixes show the
+   test failing first and passing after. Staging is only looked at, never changed, and helpers stop at any OTP.
    Mate checks that proof before it calls the work finished.
-6. **Safe by default.** Mate commits on the branch you are already on, and stops there. It never pushes, merges,
-   or opens a pull request unless you say so. It never throws away your unsaved work. Branches are created only
-   when you ask.
+6. **Safe by default.** Mate commits on the branch you are already on (or the project's fixed branch, if you set
+   one), and stops there. It never pushes, merges, releases, or opens a pull request unless you say so. It never
+   throws away your unsaved work. Branches are created only when you ask.
 7. **Careful review when you want it.** Ask for a branch or PR and mate can run your `no-mistakes` pipeline
-   (review, tests, docs, lint) with omp, and brings any question from it back to you word for word.
+   (review, tests, docs, lint) with omp. Mate settles review questions that clearly follow what you already agreed
+   and brings you only the ones that widen scope, are unclear, destructive, or touch security.
 8. **Three machines, one team.** The same mate runs on all your machines. Mate checks which machine is free
    (CPU, memory, disk, how busy it is) and sends heavy work there. A machine that is asleep or busy is skipped.
 9. **Timed jobs.** Say "every day at 5 pm, check X" and mate runs it on time: inside your open omp session if
@@ -37,6 +41,11 @@ the actual work, checks their work, and tells you the result.
     you can tick choices instead of typing.
 11. **Memory.** Mate keeps notes per project, your preferences, and lessons learned in `data/`, and uses them in
     every new task.
+12. **Local stacks.** If a project's notes list how to start, stop, migrate, and read logs of its local stack, mate
+    runs exactly those commands itself. Nothing else.
+13. **Quiet or away.** `/quiet` keeps mate to results, failures, and decisions while you are here; `/afk` lets it
+    work the queue while you are gone. After half an hour without a message from you, mate's next reply starts with
+    what needs you, what finished, and what is still running.
 
 Everyday commands you type inside omp:
 
@@ -48,11 +57,15 @@ Everyday commands you type inside omp:
 | `/add-project`, `/drop-project` | Add or remove a project |
 | `/stow` | Save what was learned this session |
 | `/afk` | "I'm away" - keep working through queued tasks and give one summary when you are back |
+| `/quiet` | "I'm here, keep it short" - only results, failures, and decisions |
 | `/sync-mate` | Pull the latest mate rules onto this machine (or all machines) |
 
 ## First-time setup (each machine)
 
-Requirements: [bun](https://bun.sh), omp, git, `gh` (logged in), and optionally `no-mistakes`.
+Requirements: [bun](https://bun.sh), omp, git, `gh` (logged in), and optionally `no-mistakes`. For GitLab projects,
+`glab` logged in to each GitLab host in use; for Bitbucket Cloud projects, `BITBUCKET_USERNAME` and
+`BITBUCKET_API_TOKEN` (environment or the gitignored `.env` in this repo) or a bitbucket.org login in the git credential
+helper.
 
     git clone https://github.com/yuyudhan/yuyudhan-mate.git ~/code/yuyudhan-mate
     cd ~/code/yuyudhan-mate
@@ -64,7 +77,7 @@ Requirements: [bun](https://bun.sh), omp, git, `gh` (logged in), and optionally 
     # each worker:
     bin/mate init --name <machine> --role worker --coordinator-ssh <host> --coordinator-root <path>
 
-    bin/mate doctor              # checks bun, omp, git, gh auth, no-mistakes, config, clones, fleet, scheduler
+    bin/mate doctor              # checks bun, omp, git, forge auth (gh/glab/bitbucket), no-mistakes, config, clones, fleet, scheduler
     bin/mate schedule install    # runs `bin/mate job tick` every minute (launchd on macOS, crontab on Linux)
 
 List every machine in `config/fleet.json` (on each machine that should see or dispatch to the others):
@@ -120,9 +133,28 @@ About 100 existing clones will be migrated from `~/code/firstmate/projects/` int
 `bin/mate project import`.
 
 Other project commands: `bin/mate project list`, `bin/mate project path <name>`,
-`bin/mate project set <name> --mode <m>`, `bin/mate project ensure <name> <git-url>` (idempotent: clone and/or
-register as needed), `bin/mate project drop <name> [--delete-clone]` (refuses when the clone is dirty or has unpushed
-commits).
+`bin/mate project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none]
+[--forge-host <host>|none]`, `bin/mate project ensure <name> <git-url>` (idempotent: clone and/or register as needed),
+`bin/mate project drop <name> [--delete-clone]` (refuses when the clone is dirty or has unpushed commits).
+
+A project can have a fixed working branch (`--branch`): `bin/mate commit` then refuses to commit when the clone is on
+any other branch, and `bin/mate digest` flags the mismatch. Mate switches or creates branches only on Malik's word.
+
+## Forges, push and pull requests
+
+GitHub (`gh`), GitLab (`glab`, gitlab.com or self-hosted) and Bitbucket Cloud (REST API) are detected from the clone's
+`origin` URL. For an ssh endpoint such as `git@gitlab-ssh.<host>:group/repo.git`, the GitLab host comes from glab's
+config (the host whose `ssh_host` matches); `project set --forge/--forge-host` override detection.
+
+    bin/mate forge <project> [--json]                  # forge, host, repo path, CLI/credential readiness
+    bin/mate push <project>                            # git push -u origin <current branch>; never forced
+    bin/mate pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft]
+    bin/mate pr status <project> [<id>] [--json]       # state, mergeable, CI/pipeline, URL (default: current branch)
+    bin/mate pr list <project> [--json]
+    bin/mate pr merge <project> <id> [--method merge|squash|rebase]
+
+`push` refuses a detached HEAD. `pr create` refuses until the current branch is on origin and contains local HEAD,
+then prints the PR/MR URL. Pushing, opening and merging all need Malik's word for that change.
 
 ## Slash commands
 
@@ -132,6 +164,7 @@ commits).
 | `/ahoy` | Go through every task waiting on a decision |
 | `/stow` | Save session learnings and preferences; tidy the backlog |
 | `/afk [off]` | Keep working the queue while away; one report on return |
+| `/quiet [off]` | Only outcomes, failures, and decisions while present |
 | `/add-project`, `/drop-project` | Register or remove a project |
 | `/schedule add\|list\|pause\|resume\|remove` | Recurring jobs |
 | `/sync-mate [--all]` | Update the mate repo (fast-forward only) |

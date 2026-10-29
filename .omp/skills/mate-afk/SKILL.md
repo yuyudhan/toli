@@ -7,9 +7,9 @@ description: Keep working through the queued backlog while Malik is away, park a
 
 ## Going away (`/afk`)
 
-1. Set the flag from the repo root:
+1. Set the flag from the repo root (away replaces quiet mode; remove its flag):
 
-        touch state/afk
+        touch state/afk && rm -f state/quiet
 
 2. Note the start time; the report file will be `data/afk/<stamp>.md` (stamp like `2026-10-29T1730`).
 3. Reply in one line: "Ji Malik, I'll keep working through the queue and have one report ready when you're back."
@@ -21,8 +21,11 @@ Work the backlog under the normal rules; being away never loosens them.
     bin/mate task list --json --status queued
 
 - Take queued tasks oldest first and run them through `skill://mate-dispatch` (ship or scout as recorded).
-- Delivery is commit-on-current-branch only. No branches, pushes, merges, PRs, or no-mistakes runs, even if the
-  project mode prefers them; those need Malik's word for the specific change.
+- Delivery is commit-on-the-working-branch only (the project's fixed branch when it has one). No branches, branch
+  switches, pushes, merges, PRs, releases, or no-mistakes runs, even if the project mode prefers them; those need
+  Malik's word for the specific change.
+- Local stacks: only the commands a project's notes declare (`skill://mate-stacks`), and only when a queued task's
+  evidence needs them. Stop what you started before the report.
 - Anything needing Malik (an ambiguous spec, a design choice, a destructive or security-sensitive step, failing
   evidence with no clear fix) becomes:
 

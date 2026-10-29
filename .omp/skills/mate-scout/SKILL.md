@@ -16,8 +16,11 @@ environment.
         bin/mate task start T<n>
 
 2. Brief from `docs/brief-template.md`. In "Spec" state that the work is read-only: no edits, no commits. In "Acceptance" ask for concrete
-   evidence: file paths with line numbers, command output, log excerpts. In "Report format" ask for the structure
-   below.
+   evidence: file paths with line numbers, command output, log excerpts, and, when the notes list `## URLs`, what
+   the local or staging URL returned (headless browser or HTTP request; staging read-only). In "Report format" ask
+   for the structure below.
+   If the investigation needs the stack running and the notes declare `## Local stack`, start it with
+   `skill://mate-stacks` or tell crew to use the declared commands.
 3. Spawn with the routing table: `scout` agent (effort lo for lookups, med for investigations). Use `task` with effort
    hi only for hard root-cause hunts that need running code; even then the brief forbids edits.
 4. Write the crew's report to `data/reports/T<n>.md` and close:

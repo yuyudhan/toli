@@ -23,6 +23,9 @@ Mate never does project work itself. Every change or investigation in a project 
 3. If two or more projects remain plausible, ask Malik one concise question naming the candidates. Never guess on
    ship work.
 4. Unknown project: offer `/add-project` (`skill://mate-projects`).
+5. Note the project's fixed working branch: the `branch` field in `bin/mate project list --json` (absent or null
+   means work on the current branch). Every brief names it, and crew stays on it. If the clone is on a different
+   branch (`bin/mate digest` flags the mismatch), do not switch it yourself: tell Malik and ask how to proceed.
 
 ## 3. Choose the machine
 
@@ -49,9 +52,20 @@ blocks work, and there is no locking between crew.
     bin/mate task add <project> "<short title>" --shape ship|scout --note "<Malik's words>"
 
 This prints the task id `T<n>`. Fill in `docs/brief-template.md` for the task: Malik's intent verbatim, project path
-(`bin/mate project path <project>`), the notes file, spec, acceptance evidence, out of scope, and the rules block
-unchanged. Every brief keeps `MATE_BRIEF v1` as its exact first line; AGENTS.md uses that line to tell crew subagents
-apart from mate, so a brief without it makes the crew act as mate. Then mark the task active:
+(`bin/mate project path <project>`), the notes file, the fixed branch (step 2), spec, acceptance evidence, out of
+scope, and the rules block unchanged. Every brief keeps `MATE_BRIEF v1` as its exact first line; AGENTS.md uses that
+line to tell crew subagents apart from mate, so a brief without it makes the crew act as mate.
+
+Build the acceptance lines from the notes file:
+
+- Always: the project's test or smoke command.
+- UI or API work and the notes have `## URLs`: logs checked (the `## Local stack` logs) and the local URL verified
+  with a headless browser (UI) or HTTP request (API). Staging URLs are for read-only checks only.
+- UI changes: before/after screenshots at each width listed in the notes' `## Proof` section.
+- Bug fixes: a reproducing test, with its failing output before the fix and passing output after.
+
+If the stack must be running for the evidence and the notes declare `## Local stack`, either bring it up yourself
+first (`skill://mate-stacks`) or tell crew in the Spec to use the declared commands. Then mark the task active:
 
     bin/mate task start T<n>
 
@@ -78,6 +92,9 @@ Crew must have actually run the project's tests or a smoke check and pasted the 
 
 - The command shown matches the project's real test/smoke command (from notes or the project's AGENTS.md).
 - The output shows a pass, not a skipped or truncated run.
+- Every acceptance line has its proof: log excerpt and URL result for UI/API work, screenshot paths for UI changes
+  (open them), failing-then-passing output for bug fixes. A proof line marked "could not run" is a gap, not a pass.
+- Crew stayed on the fixed branch and stopped at any OTP or captcha instead of working around it.
 - The diff stays within what the task needed, plus anything the crew explicitly justified.
 
 Missing or failing evidence: send the crew back (or spawn a follow-up) before committing. Never commit unverified work.
@@ -85,13 +102,14 @@ If the result needs a decision from Malik, `bin/mate task hold T<n> --question "
 
 ## 7. Land and close
 
-Default delivery (Malik's standing choice) is a commit on the current branch, never pushed:
+Default delivery (Malik's standing choice) is a commit on the working branch, never pushed:
 
     bin/mate commit <project> -m "<message>" -- <paths the crew changed...>
     bin/mate task done T<n> --commit <sha> --note "<one line>"
 
-Only the paths this task changed are staged. Other delivery modes (pr, no-mistakes) and branching are in
-`skill://mate-deliver`.
+Only the paths this task changed are staged. `bin/mate commit` refuses when the clone is not on the project's fixed
+branch; never switch branches to get past it, ask Malik. Pushing, PRs, other delivery modes (pr, no-mistakes), and
+branching are in `skill://mate-deliver`; releases are in `skill://mate-release`, only on Malik's word.
 
 ## 8. Report to Malik
 

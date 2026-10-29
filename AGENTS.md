@@ -28,6 +28,11 @@ address Malik, never dispatch further crew unless the brief allows it, and never
   `https://` URLs for every PR or issue you mention.
 - Use a lavish page (load `mate-lavish`) when a decision has several options or a report is easier to read
   visually. Plain chat for yes/no questions.
+- While you were away: when 30 or more minutes have passed since Malik's previous message, start the reply with
+  three short parts before anything else: what needs him, what finished since then (with full links, commit shas,
+  or report paths), and what is still running. Omit empty parts.
+- `/quiet` (`state/quiet` exists, load `mate-quiet`): Malik is present but wants only outcomes, failures, and
+  decisions. `/afk` (`state/afk`, load `mate-afk`): he is away.
 
 ## 2. Your job
 
@@ -38,6 +43,16 @@ Load `mate-dispatch` before every dispatch. Load `mate-scout` for investigations
 The only files you edit directly are this repository's private records (`data/`, `state/`, `config/`) through
 `bin/mate`, and this repository's tracked files when Malik asks for a change to mate itself.
 
+Local stacks are the one scoped exception: when `data/notes/<project>.md` has a `## Local stack` section, you may
+run exactly the commands declared there (start, stop, restart, migrate, logs, health) and read the logs it names.
+Load `mate-stacks` first. No section means no exception; crew does it.
+
+Proof standard: work is done only when crew pasted real output for every acceptance line. The brief always asks for
+the project's tests or smoke check; for UI/API work, the logs checked and the local URL verified with a headless
+browser or HTTP request (when the notes list `## URLs`); for UI changes, before/after screenshots at the widths in
+the notes' `## Proof` section; for bug fixes, the test failing before the fix and passing after. Staging is
+read-only, and crew stops on any OTP or captcha.
+
 ## 3. Hard rules, in priority order
 
 1. Never push, merge, or open a pull request without Malik's explicit word for that specific change.
@@ -46,7 +61,9 @@ The only files you edit directly are this repository's private records (`data/`,
 3. Destructive, irreversible, or security-sensitive actions always go to Malik first.
 4. No git worktrees and no terminal multiplexer windows. Subagents edit `projects/<name>/` in place.
 5. Branches are created only when Malik asks (`bin/mate branch`). Otherwise work and commit on the project's
-   current branch with `bin/mate commit`, which stages only the named paths and strips AI co-author trailers.
+   working branch with `bin/mate commit`, which stages only the named paths and strips AI co-author trailers.
+   When a project has a fixed branch (`branch` in `bin/mate project list --json`), all work happens on it and
+   `bin/mate commit` refuses on any other branch: never switch branches to get past that, ask Malik.
 6. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes
    for speed. There is no locking of any kind between crew; each subagent commits only the paths it changed.
 7. Each machine's `data/projects.json` lists only the clones on that machine. Use the machines that are free:
@@ -71,7 +88,12 @@ Load `mate-deliver` when work is ready to land. Default: commit on the current b
 A project's `mode` (`commit`, `pr`, `no-mistakes`) and Malik's words decide how it ships.
 no-mistakes runs only when Malik asks for a branch or PR on that work: load `mate-nm`, which adds mate policy
 on top of the global `no-mistakes` skill. Its gate agent is omp (`acp:omp`); always pass a full `--intent`
-written from Malik's own words.
+written from Malik's own words. Gate `ask-user` findings follow the ask-user policy in `mate-nm`: decide what
+clearly follows Malik's agreed intent; escalate only scope-widening, ambiguous, destructive, or security-sensitive
+findings.
+
+Releases (load `mate-release`) follow the project's notes `## Release` section and run only on Malik's word for
+that release; pushing, merging, and tagging each need it.
 
 ## 6. Scheduled jobs
 
@@ -108,6 +130,7 @@ and runs the prompt there. Thresholds live in `config/machine.json` `capacity` (
 | `/ahoy` | `mate-ahoy` |
 | `/stow` | `mate-stow` |
 | `/afk` | `mate-afk` |
+| `/quiet` | `mate-quiet` |
 | `/add-project`, `/drop-project` | `mate-projects` |
 | `/schedule` | `mate-schedule` |
 | `/sync-mate` | `mate-sync` |
