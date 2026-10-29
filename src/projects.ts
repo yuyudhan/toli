@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Args } from "./args.ts";
 import { git, gitOk, isGitRepo, unpushedBranches } from "./git.ts";
 import { paths } from "./paths.ts";
-import { MateError, now, out, printJson, readJson, requireName, run, withLock, writeJsonAtomic } from "./util.ts";
+import { now, out, printJson, readJson, requireName, run, ToliError, withLock, writeJsonAtomic } from "./util.ts";
 
 export const MODES = ["commit", "pr", "no-mistakes"] as const;
 export type Mode = (typeof MODES)[number];
@@ -13,7 +13,7 @@ export type Forge = (typeof FORGES)[number];
 
 /**
  * A project cloned on this machine; `data/projects.json` lists only this machine's clones.
- * `branch`: the fixed working branch `mate commit` requires. `forge`/`forgeHost`: override origin-based detection.
+ * `branch`: the fixed working branch `toli commit` requires. `forge`/`forgeHost`: override origin-based detection.
  */
 export type Project = {
     name: string;
@@ -53,13 +53,13 @@ function updateProjects<T>(fn: (projects: Project[]) => T): T {
 
 export function findProject(name: string): Project {
     const project = loadProjects().find((entry) => entry.name === name);
-    if (!project) throw new MateError(`unknown project "${name}" (see \`bin/mate project list\`)`);
+    if (!project) throw new ToliError(`unknown project "${name}" (see \`bin/toli project list\`)`);
     return project;
 }
 
 function parseMode(value: string | undefined): Mode | undefined {
     if (value === undefined) return undefined;
-    if (!(MODES as readonly string[]).includes(value)) throw new MateError(`--mode must be one of ${MODES.join(", ")}`);
+    if (!(MODES as readonly string[]).includes(value)) throw new ToliError(`--mode must be one of ${MODES.join(", ")}`);
     return value as Mode;
 }
 
@@ -68,7 +68,7 @@ function parseForge(value: string | undefined): Forge | null | undefined {
     if (value === undefined) return undefined;
     if (value === "none") return null;
     if (!(FORGES as readonly string[]).includes(value))
-        throw new MateError(`--forge must be one of ${FORGES.join(", ")}, or none`);
+        throw new ToliError(`--forge must be one of ${FORGES.join(", ")}, or none`);
     return value as Forge;
 }
 
@@ -77,7 +77,7 @@ function parseBranch(value: string | undefined): string | null | undefined {
     if (value === undefined) return undefined;
     if (value === "none") return null;
     if (run(["git", "check-ref-format", "--branch", value]).code !== 0)
-        throw new MateError(`--branch "${value}" is not a valid branch name`);
+        throw new ToliError(`--branch "${value}" is not a valid branch name`);
     return value;
 }
 
@@ -86,7 +86,7 @@ function parseForgeHost(value: string | undefined): string | null | undefined {
     if (value === undefined) return undefined;
     if (value === "none") return null;
     if (!/^[A-Za-z0-9.-]+(:\d+)?$/.test(value))
-        throw new MateError(`--forge-host must be a host name such as gitlab.example.com, got "${value}"`);
+        throw new ToliError(`--forge-host must be a host name such as gitlab.example.com, got "${value}"`);
     return value.toLowerCase();
 }
 
@@ -94,7 +94,7 @@ function parseForgeHost(value: string | undefined): string | null | undefined {
 export function projectCloneDir(name: string): string {
     findProject(name);
     const dir = paths.projectDir(name);
-    if (!isGitRepo(dir)) throw new MateError(`projects/${name} is not a git clone on this machine`);
+    if (!isGitRepo(dir)) throw new ToliError(`projects/${name} is not a git clone on this machine`);
     return dir;
 }
 
@@ -108,7 +108,7 @@ function noMistakesReadiness(dir: string): string {
 function cloneInto(name: string, url: string): string {
     const dir = paths.projectDir(name);
     const clone = run(["git", "clone", url, dir]);
-    if (clone.code !== 0) throw new MateError(`git clone failed: ${(clone.stderr || clone.stdout).trim()}`);
+    if (clone.code !== 0) throw new ToliError(`git clone failed: ${(clone.stderr || clone.stdout).trim()}`);
     return dir;
 }
 
@@ -125,10 +125,10 @@ function add(argv: string[]): void {
     const name = requireName("project", args.positional[0]);
     const url = args.pos(1, "git-url");
     const mode = parseMode(args.str("mode")) ?? "commit";
-    if (loadProjects().some((entry) => entry.name === name)) throw new MateError(`project "${name}" already exists`);
+    if (loadProjects().some((entry) => entry.name === name)) throw new ToliError(`project "${name}" already exists`);
     const dir = paths.projectDir(name);
     if (existsSync(dir)) {
-        if (!isGitRepo(dir)) throw new MateError(`projects/${name} exists and is not a git clone`);
+        if (!isGitRepo(dir)) throw new ToliError(`projects/${name} exists and is not a git clone`);
         out(`projects/${name} already cloned; registering it`);
     } else {
         cloneInto(name, url);
@@ -148,7 +148,7 @@ function ensure(argv: string[]): void {
     const registered = loadProjects().some((entry) => entry.name === name);
     const dir = paths.projectDir(name);
     const cloned = isGitRepo(dir);
-    if (!cloned && existsSync(dir)) throw new MateError(`projects/${name} exists and is not a git clone`);
+    if (!cloned && existsSync(dir)) throw new ToliError(`projects/${name} exists and is not a git clone`);
     if (registered && cloned) {
         out(`${name}: already registered and cloned at ${dir}`);
         return;
@@ -217,12 +217,12 @@ function set(argv: string[]): void {
     const forge = parseForge(args.str("forge"));
     const forgeHost = parseForgeHost(args.str("forge-host"));
     if (mode === undefined && branch === undefined && forge === undefined && forgeHost === undefined)
-        throw new MateError(
+        throw new ToliError(
             "nothing to set: pass --mode <m>, --branch <b>|none, --forge <f>|none or --forge-host <h>|none",
         );
     const updated = updateProjects((projects) => {
         const project = projects.find((entry) => entry.name === name);
-        if (!project) throw new MateError(`unknown project "${name}"`);
+        if (!project) throw new ToliError(`unknown project "${name}"`);
         if (mode !== undefined) project.mode = mode;
         if (branch === null) delete project.branch;
         else if (branch !== undefined) project.branch = branch;
@@ -243,10 +243,10 @@ function drop(argv: string[]): void {
     const dir = paths.projectDir(name);
     if (isGitRepo(dir)) {
         const dirty = gitOk(dir, ["status", "--porcelain"]);
-        if (dirty !== "") throw new MateError(`refusing: projects/${name} has uncommitted changes:\n${dirty}`);
+        if (dirty !== "") throw new ToliError(`refusing: projects/${name} has uncommitted changes:\n${dirty}`);
         const unpushed = unpushedBranches(dir);
         if (unpushed.length > 0) {
-            throw new MateError(`refusing: projects/${name} has unpushed commits on ${unpushed.join(", ")}`);
+            throw new ToliError(`refusing: projects/${name} has unpushed commits on ${unpushed.join(", ")}`);
         }
     }
     updateProjects((projects) => {
@@ -265,7 +265,7 @@ function importClones(argv: string[]): void {
     const args = new Args(argv, { values: ["dir"] });
     args.maxPositional(0);
     const base = join(paths.root(), args.str("dir") ?? "projects");
-    if (!existsSync(base)) throw new MateError(`${base} does not exist`);
+    if (!existsSync(base)) throw new ToliError(`${base} does not exist`);
     const known = new Set(loadProjects().map((entry) => entry.name));
     const found: Project[] = [];
     for (const entry of readdirSync(base, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -301,6 +301,6 @@ const PROJECT_SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
 export function projectCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
     const handler = sub !== undefined && Object.hasOwn(PROJECT_SUBCOMMANDS, sub) ? PROJECT_SUBCOMMANDS[sub] : undefined;
-    if (!handler) throw new MateError("usage: mate project add|ensure|list|path|set|drop|import");
+    if (!handler) throw new ToliError("usage: toli project add|ensure|list|path|set|drop|import");
     handler(rest);
 }

@@ -11,11 +11,11 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
-/** A user-facing failure: printed as `mate: <message>` and exits non-zero. */
-export class MateError extends Error {
+/** A user-facing failure: printed as `toli: <message>` and exits non-zero. */
+export class ToliError extends Error {
     constructor(message: string) {
         super(message);
-        this.name = "MateError";
+        this.name = "ToliError";
     }
 }
 
@@ -33,12 +33,12 @@ export function printJson(value: unknown): void {
     out(JSON.stringify(value, null, 4));
 }
 
-/** Current time; `MATE_NOW` (any Date-parsable string) pins it for tests. */
+/** Current time; `TOLI_NOW` (any Date-parsable string) pins it for tests. */
 export function now(): Date {
-    const pinned = process.env.MATE_NOW;
+    const pinned = process.env.TOLI_NOW;
     if (pinned) {
         const date = new Date(pinned);
-        if (Number.isNaN(date.getTime())) throw new MateError(`MATE_NOW is not a date: ${pinned}`);
+        if (Number.isNaN(date.getTime())) throw new ToliError(`TOLI_NOW is not a date: ${pinned}`);
         return date;
     }
     return new Date();
@@ -55,7 +55,7 @@ export function readJson<T>(path: string, fallback: T): T {
     try {
         return JSON.parse(text) as T;
     } catch (error) {
-        throw new MateError(`${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+        throw new ToliError(`${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
 
@@ -74,7 +74,7 @@ export function writeTextAtomic(path: string, text: string): void {
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 10_000;
 
-/** Serialize read-modify-write cycles across concurrent mate processes (e.g. overlapping cron ticks). */
+/** Serialize read-modify-write cycles across concurrent toli processes (e.g. overlapping cron ticks). */
 export function withLock<T>(lockPath: string, fn: () => T): T {
     mkdirSync(dirname(lockPath), { recursive: true });
     const deadline = Date.now() + LOCK_WAIT_MS;
@@ -89,7 +89,7 @@ export function withLock<T>(lockPath: string, fn: () => T): T {
             } catch {
                 // The holder released the lock between our open and stat; retry.
             }
-            if (Date.now() > deadline) throw new MateError(`timed out waiting for lock ${lockPath}`);
+            if (Date.now() > deadline) throw new ToliError(`timed out waiting for lock ${lockPath}`);
             Bun.sleepSync(25);
         }
     }
@@ -222,9 +222,9 @@ export function pidAlive(pid: number): boolean {
     }
 }
 
-/** `MATE_PLATFORM` lets tests exercise either platform's behaviour on any host. */
+/** `TOLI_PLATFORM` lets tests exercise either platform's behaviour on any host. */
 export function platform(): string {
-    return process.env.MATE_PLATFORM ?? process.platform;
+    return process.env.TOLI_PLATFORM ?? process.platform;
 }
 
 /** Body text piped on stdin; an interactive terminal yields "" instead of blocking. */
@@ -242,7 +242,7 @@ export function isValidName(name: string): boolean {
 }
 
 export function requireName(kind: string, name: string | undefined): string {
-    if (name === undefined || name === "") throw new MateError(`missing ${kind} name`);
-    if (!isValidName(name)) throw new MateError(`invalid ${kind} name "${name}" (letters, digits, . _ - only)`);
+    if (name === undefined || name === "") throw new ToliError(`missing ${kind} name`);
+    if (!isValidName(name)) throw new ToliError(`invalid ${kind} name "${name}" (letters, digits, . _ - only)`);
     return name;
 }

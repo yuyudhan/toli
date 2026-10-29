@@ -6,11 +6,11 @@ import { type CapacityConfig, loadMachine, type Machine } from "./config.ts";
 import { isGitRepo } from "./git.ts";
 import { paths } from "./paths.ts";
 import { loadProjects } from "./projects.ts";
-import { MateError, now, out, pidAlive, platform, printJson, readJson, run, writeJsonAtomic } from "./util.ts";
+import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writeJsonAtomic } from "./util.ts";
 
 export type Capacity = Required<CapacityConfig>;
 
-/** One machine's self-reported snapshot (`bin/mate resources --json`). */
+/** One machine's self-reported snapshot (`bin/toli resources --json`). */
 export type Resources = {
     machine: string;
     platform: string;
@@ -111,7 +111,7 @@ export function capacityFor(machine: Machine, cpuCount: number): Capacity {
         const raw = configured[key];
         if (raw === undefined) return fallback;
         if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
-            throw new MateError(`config/machine.json capacity.${key} must be a non-negative number`);
+            throw new ToliError(`config/machine.json capacity.${key} must be a non-negative number`);
         }
         return raw;
     };

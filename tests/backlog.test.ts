@@ -65,7 +65,7 @@ describe("task lifecycle", () => {
             ["task", "hold", "T1", "--question", "q"],
             ["task", "start", "T2"],
         ]) {
-            const result = box.mate(args);
+            const result = box.toli(args);
             expect(result.code).toBe(1);
             expect(result.stderr).toMatch(/T[12] is (done|dropped)/);
         }
@@ -75,7 +75,7 @@ describe("task lifecycle", () => {
     test("answering a task that is not held fails and changes nothing", () => {
         const box = project();
         box.ok(["task", "add", "alpha", "a"]);
-        const result = box.mate(["task", "answer", "T1", "yes"]);
+        const result = box.toli(["task", "answer", "T1", "yes"]);
         expect(result.code).toBe(1);
         expect(result.stderr).toContain("not waiting on an answer");
         expect(task(box, "T1")).toMatchObject({ status: "queued", notes: [] });
@@ -84,10 +84,10 @@ describe("task lifecycle", () => {
     test("hold needs a question; unknown ids and bad shapes are rejected", () => {
         const box = project();
         box.ok(["task", "add", "alpha", "a"]);
-        expect(box.mate(["task", "hold", "T1"]).stderr).toContain("--question");
-        expect(box.mate(["task", "start", "T9"]).stderr).toContain('unknown task "T9"');
-        expect(box.mate(["task", "add", "alpha", "b", "--shape", "build"]).stderr).toContain("ship or scout");
-        expect(box.mate(["task", "add", "nope", "b"]).code).toBe(1);
+        expect(box.toli(["task", "hold", "T1"]).stderr).toContain("--question");
+        expect(box.toli(["task", "start", "T9"]).stderr).toContain('unknown task "T9"');
+        expect(box.toli(["task", "add", "alpha", "b", "--shape", "build"]).stderr).toContain("ship or scout");
+        expect(box.toli(["task", "add", "nope", "b"]).code).toBe(1);
     });
 
     test("list filters by status and rejects unknown statuses", () => {
@@ -98,6 +98,6 @@ describe("task lifecycle", () => {
         const held = JSON.parse(box.ok(["task", "list", "--status", "held", "--json"])) as TaskJson[];
         expect(held.map((entry) => entry.id)).toEqual(["T2"]);
         expect(box.ok(["task", "list", "--status", "done"])).toBe("no tasks");
-        expect(box.mate(["task", "list", "--status", "waiting"]).code).toBe(1);
+        expect(box.toli(["task", "list", "--status", "waiting"]).code).toBe(1);
     });
 });

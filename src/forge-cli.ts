@@ -1,4 +1,4 @@
-import { MateError, run } from "./util.ts";
+import { run, ToliError } from "./util.ts";
 
 export type MergeMethod = "merge" | "squash" | "rebase";
 export const MERGE_METHODS: readonly MergeMethod[] = ["merge", "squash", "rebase"];
@@ -51,13 +51,13 @@ function normalizeState(state: unknown): string {
 
 type Json = Record<string, unknown>;
 
-/** Run a forge CLI; a non-zero exit becomes a MateError carrying the CLI's own message. */
+/** Run a forge CLI; a non-zero exit becomes a ToliError carrying the CLI's own message. */
 function runCli(cmd: string[], cwd: string, env: Record<string, string> = {}): string {
     const result = run(cmd, { cwd, env, timeoutMs: 120_000 });
-    if (result.code === 127) throw new MateError(`${cmd[0]} not found on PATH`);
+    if (result.code === 127) throw new ToliError(`${cmd[0]} not found on PATH`);
     if (result.code !== 0) {
         const detail = (result.stderr || result.stdout).trim();
-        throw new MateError(`${cmd.slice(0, 3).join(" ")} failed (exit ${result.code})${detail ? `: ${detail}` : ""}`);
+        throw new ToliError(`${cmd.slice(0, 3).join(" ")} failed (exit ${result.code})${detail ? `: ${detail}` : ""}`);
     }
     return result.stdout;
 }
@@ -66,7 +66,7 @@ function parseJson<T>(text: string, what: string): T {
     try {
         return JSON.parse(text) as T;
     } catch {
-        throw new MateError(`unparseable JSON from ${what}: ${text.trim().slice(0, 200)}`);
+        throw new ToliError(`unparseable JSON from ${what}: ${text.trim().slice(0, 200)}`);
     }
 }
 

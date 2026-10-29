@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { ackedThrough, ackThrough } from "./acks.ts";
 import { Args } from "./args.ts";
 import { paths } from "./paths.ts";
-import { MateError, now, out, printJson, readStdin, requireName, stamp, writeTextAtomic } from "./util.ts";
+import { now, out, printJson, readStdin, requireName, stamp, ToliError, writeTextAtomic } from "./util.ts";
 
 export type InboxItem = { file: string; path: string; stamp: string; from: string; title: string; unseen: boolean };
 
@@ -49,9 +49,9 @@ function add(argv: string[]): void {
     args.maxPositional(0);
     const from = requireName("machine", args.str("from"));
     const title = args.str("title");
-    if (!title) throw new MateError("inbox add needs --title");
+    if (!title) throw new ToliError("inbox add needs --title");
     const body = readStdin();
-    if (body.trim() === "") throw new MateError("inbox add needs the message body on stdin");
+    if (body.trim() === "") throw new ToliError("inbox add needs the message body on stdin");
     out(addInboxItem(from, title, body));
 }
 
@@ -93,6 +93,6 @@ export function inboxCommand(argv: string[]): void {
             ack(rest);
             break;
         default:
-            throw new MateError("usage: mate inbox add|list|ack");
+            throw new ToliError("usage: toli inbox add|list|ack");
     }
 }

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ForgeClient, MergeMethod, PrCreate, PrRef, PrStatus, PrSummary } from "./forge-cli.ts";
 import { ciSummary } from "./forge-cli.ts";
 import { paths } from "./paths.ts";
-import { MateError, run } from "./util.ts";
+import { run, ToliError } from "./util.ts";
 
 const DEFAULT_API = "https://api.bitbucket.org/2.0";
 
@@ -62,7 +62,7 @@ export function bitbucketCredentials(): BitbucketCredentials | null {
 }
 
 export const BITBUCKET_CREDENTIALS_HELP =
-    "Bitbucket credentials missing: set BITBUCKET_USERNAME and BITBUCKET_API_TOKEN (environment or the mate repo's .env), " +
+    "Bitbucket credentials missing: set BITBUCKET_USERNAME and BITBUCKET_API_TOKEN (environment or the toli repo's .env), " +
     "or store a bitbucket.org login in the git credential helper";
 
 type Json = Record<string, unknown>;
@@ -99,9 +99,9 @@ export class BitbucketClient implements ForgeClient {
         credentials: BitbucketCredentials | null = bitbucketCredentials(),
     ) {
         if (repo.split("/").length !== 2)
-            throw new MateError(`Bitbucket repo path must be workspace/repo, got "${repo}"`);
-        if (!credentials) throw new MateError(BITBUCKET_CREDENTIALS_HELP);
-        this.base = (process.env.MATE_BITBUCKET_API ?? DEFAULT_API).replace(/\/+$/, "");
+            throw new ToliError(`Bitbucket repo path must be workspace/repo, got "${repo}"`);
+        if (!credentials) throw new ToliError(BITBUCKET_CREDENTIALS_HELP);
+        this.base = (process.env.TOLI_BITBUCKET_API ?? DEFAULT_API).replace(/\/+$/, "");
         this.auth = `Basic ${Buffer.from(`${credentials.username}:${credentials.token}`).toString("base64")}`;
     }
 
@@ -109,7 +109,7 @@ export class BitbucketClient implements ForgeClient {
         const url = path.startsWith("http") ? path : `${this.base}/repositories/${this.repo}${path}`;
         // Pagination links are absolute; never send the credentials anywhere but the API itself.
         if (!url.startsWith(`${this.base}/`))
-            throw new MateError(`refusing Bitbucket request outside ${this.base}: ${url}`);
+            throw new ToliError(`refusing Bitbucket request outside ${this.base}: ${url}`);
         const response = await fetch(url, {
             method,
             headers: {
@@ -129,7 +129,7 @@ export class BitbucketClient implements ForgeClient {
         }
         if (!response.ok) {
             const detail = field<string>(parsed, "error", "message") ?? field<string>(parsed, "raw") ?? "";
-            throw new MateError(
+            throw new ToliError(
                 `Bitbucket ${method} ${url} failed: HTTP ${response.status}${detail ? ` ${detail}` : ""}`,
             );
         }
@@ -163,7 +163,7 @@ export class BitbucketClient implements ForgeClient {
         const query = encodeURIComponent(`source.branch.name="${branch.replace(/"/g, '\\"')}" AND state="OPEN"`);
         const page = await this.request("GET", `/pullrequests?q=${query}`);
         const first = field<Json[]>(page, "values")?.[0];
-        if (!first) throw new MateError(`no open Bitbucket pull request from branch ${branch}`);
+        if (!first) throw new ToliError(`no open Bitbucket pull request from branch ${branch}`);
         return first;
     }
 

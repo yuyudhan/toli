@@ -48,11 +48,11 @@ describe("inbox", () => {
 
     test("add rejects a missing title, an empty body, and an unsafe sender name", () => {
         const box = sandbox();
-        expect(box.mate(["inbox", "add", "--from", "m2"], { stdin: "x" }).stderr).toContain("--title");
-        expect(box.mate(["inbox", "add", "--from", "m2", "--title", "t"], { stdin: "  \n" }).stderr).toContain(
+        expect(box.toli(["inbox", "add", "--from", "m2"], { stdin: "x" }).stderr).toContain("--title");
+        expect(box.toli(["inbox", "add", "--from", "m2", "--title", "t"], { stdin: "  \n" }).stderr).toContain(
             "body on stdin",
         );
-        expect(box.mate(["inbox", "add", "--from", "../etc", "--title", "t"], { stdin: "x" }).code).toBe(1);
+        expect(box.toli(["inbox", "add", "--from", "../etc", "--title", "t"], { stdin: "x" }).code).toBe(1);
         expect(box.ok(["inbox", "list"])).toBe("inbox: empty");
     });
 });

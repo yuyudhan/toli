@@ -95,7 +95,7 @@ describe("parseRemote", () => {
     });
 });
 
-describe("mate forge detection", () => {
+describe("toli forge detection", () => {
     test("github over https and through an ssh alias", () => {
         const https = forgeBox("https://github.com/acme/app.git");
         expect(forgeJson(https)).toMatchObject({ forge: "github", host: "github.com", repo: "acme/app", ready: true });
@@ -140,7 +140,7 @@ describe("mate forge detection", () => {
 
     test("overrides win over detection; unknown hosts need --forge", () => {
         const fb = forgeBox("git@git.example.org:team/app.git");
-        const unknown = fb.box.mate(["forge", "app"], { env: fb.env });
+        const unknown = fb.box.toli(["forge", "app"], { env: fb.env });
         expect(unknown.code).toBe(1);
         expect(unknown.stderr).toContain("--forge github|gitlab|bitbucket");
         fb.box.ok(["project", "set", "app", "--forge", "gitlab", "--forge-host", "gitlab.example.org"]);
@@ -151,17 +151,17 @@ describe("mate forge detection", () => {
         expect(forgeJson(gl)).toMatchObject({ forge: "gitlab", host: "other.example", hostSource: "forgeHost" });
         gl.box.ok(["project", "set", "app", "--forge", "github", "--forge-host", "none"]);
         expect(forgeJson(gl)).toMatchObject({ forge: "github", host: "gitlab-ssh.corp.example" });
-        expect(gl.box.mate(["project", "set", "app", "--forge", "svn"]).code).toBe(1);
+        expect(gl.box.toli(["project", "set", "app", "--forge", "svn"]).code).toBe(1);
     });
 });
 
-describe("mate push and pr create", () => {
+describe("toli push and pr create", () => {
     test("push refuses a detached HEAD and pushes only the current branch, never forced", () => {
         const fb = forgeBox("https://github.com/acme/app.git");
         const gitLog = join(fb.box.root, "git.log");
         fb.box.stub("git", `printf '%s ' "$@" >> "${gitLog}"; echo >> "${gitLog}"; exec "${REAL_GIT}" "$@"`);
         fb.box.git(fb.dir, ["checkout", "--detach"]);
-        const detached = fb.box.mate(["push", "app"], { env: fb.env });
+        const detached = fb.box.toli(["push", "app"], { env: fb.env });
         expect(detached.code).toBe(1);
         expect(detached.stderr).toContain("detached HEAD");
 
@@ -182,16 +182,16 @@ describe("mate push and pr create", () => {
         writeFileSync(join(fb.dir, "a.txt"), "a\n");
         fb.box.ok(["commit", "app", "-m", "add a", "--", "a.txt"]);
         const create = ["pr", "create", "app", "--title", "Add a", "--body", "Adds a.", "--base", "main", "--draft"];
-        const refused = fb.box.mate(create, { env: fb.env });
+        const refused = fb.box.toli(create, { env: fb.env });
         expect(refused.code).toBe(1);
         expect(refused.stderr).toContain("branch feature is not on origin");
-        expect(refused.stderr).toContain("bin/mate push app");
+        expect(refused.stderr).toContain("bin/toli push app");
         expect(invocations(fb.log).filter((argv) => argv[1] === "pr")).toEqual([]);
 
         fb.box.ok(["push", "app"], { env: fb.env });
         writeFileSync(join(fb.dir, "b.txt"), "b\n");
         fb.box.ok(["commit", "app", "-m", "add b", "--", "b.txt"]);
-        const behind = fb.box.mate(create, { env: fb.env });
+        const behind = fb.box.toli(create, { env: fb.env });
         expect(behind.code).toBe(1);
         expect(behind.stderr).toContain("does not contain local HEAD");
 
@@ -323,7 +323,7 @@ describe("mate push and pr create", () => {
 
     test("pr create needs exactly one body source", () => {
         const fb = forgeBox("https://github.com/acme/app.git");
-        const neither = fb.box.mate(["pr", "create", "app", "--title", "T"], { env: fb.env });
+        const neither = fb.box.toli(["pr", "create", "app", "--title", "T"], { env: fb.env });
         expect(neither.code).toBe(1);
         expect(neither.stderr).toContain("exactly one of --body");
     });

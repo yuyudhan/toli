@@ -1,4 +1,4 @@
-// Code files (TypeScript and bin/mate) stay at or under LIMIT lines.
+// Code files (TypeScript and bin/toli) stay at or under LIMIT lines.
 // scripts/file-size-exceptions.txt ratchets pre-existing offenders: each entry is debt with a
 // ceiling, never permission. A listed file fails if it grows past its ceiling, and also fails once
 // it is back under LIMIT (or gone) so the stale entry gets deleted. Unlisted files get the real limit.

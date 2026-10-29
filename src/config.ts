@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { paths } from "./paths.ts";
-import { MateError, readJson } from "./util.ts";
+import { readJson, ToliError } from "./util.ts";
 
 export type Role = "coordinator" | "worker";
 
-/** Optional per-machine thresholds for `bin/mate resources`; any field left out uses its default. */
+/** Optional per-machine thresholds for `bin/toli resources`; any field left out uses its default. */
 export type CapacityConfig = {
     maxRuns?: number;
     maxLoadPerCpu?: number;
@@ -29,11 +29,11 @@ export function hasMachine(): boolean {
 
 export function loadMachine(): Machine {
     if (!hasMachine())
-        throw new MateError(
-            "config/machine.json missing: run `bin/mate init --name <machine> --role coordinator|worker`",
+        throw new ToliError(
+            "config/machine.json missing: run `bin/toli init --name <machine> --role coordinator|worker`",
         );
     const machine = readJson<Machine>(paths.machine(), { name: "", role: "coordinator" });
-    if (!machine.name) throw new MateError("config/machine.json has no name");
+    if (!machine.name) throw new ToliError("config/machine.json has no name");
     return machine;
 }
 
@@ -44,7 +44,7 @@ export function loadFleet(): Fleet {
 
 export function fleetMachine(name: string): FleetMachine {
     const machine = loadFleet().machines.find((entry) => entry.name === name);
-    if (!machine) throw new MateError(`machine "${name}" is not in config/fleet.json`);
+    if (!machine) throw new ToliError(`machine "${name}" is not in config/fleet.json`);
     return machine;
 }
 

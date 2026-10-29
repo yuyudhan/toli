@@ -2,7 +2,7 @@ import { Args } from "./args.ts";
 import { loadFleet, sshArgs } from "./config.ts";
 import { loadProjects } from "./projects.ts";
 import { availabilityLine, type FleetEntry, localResources, type Resources } from "./resources.ts";
-import { MateError, out, printJson, runAsync, shellQuote } from "./util.ts";
+import { out, printJson, runAsync, shellQuote, ToliError } from "./util.ts";
 
 export type Candidate = { machine: string; local: boolean; hasClone: boolean; score: number };
 
@@ -84,7 +84,7 @@ async function probe(machine: { name: string; ssh: string; root: string }): Prom
         resources: null,
     });
     const result = await runAsync(
-        [...sshArgs(machine.ssh, PROBE_CONNECT_SECONDS), `cd ${shellQuote(machine.root)} && bin/mate resources --json`],
+        [...sshArgs(machine.ssh, PROBE_CONNECT_SECONDS), `cd ${shellQuote(machine.root)} && bin/toli resources --json`],
         {
             timeoutMs: PROBE_CAP_MS,
         },
@@ -202,7 +202,7 @@ export function noCandidateText(pick: PickResult): string {
 
 export async function fleetCommand(argv: string[]): Promise<void> {
     const [sub, ...rest] = argv;
-    if (sub !== "status") throw new MateError("usage: mate fleet status [--json]");
+    if (sub !== "status") throw new ToliError("usage: toli fleet status [--json]");
     const args = new Args(rest, { booleans: ["json"] });
     args.maxPositional(0);
     const entries = await fleetStatus();

@@ -1,4 +1,4 @@
-import { MateError } from "./util.ts";
+import { ToliError } from "./util.ts";
 
 export type ParsedArgs = {
     positional: string[];
@@ -31,7 +31,7 @@ export function parseArgs(argv: string[], booleans: readonly string[] = []): Par
             inline = eq === -1 ? undefined : word.slice(eq + 1);
         } else if (/^-[A-Za-z]$/.test(word)) {
             const long = SHORT_FLAGS[word.slice(1)];
-            if (long === undefined) throw new MateError(`unknown option ${word}`);
+            if (long === undefined) throw new ToliError(`unknown option ${word}`);
             name = long;
         }
         if (name === undefined) {
@@ -39,7 +39,7 @@ export function parseArgs(argv: string[], booleans: readonly string[] = []): Par
             continue;
         }
         if (booleans.includes(name)) {
-            if (inline !== undefined) throw new MateError(`--${name} takes no value`);
+            if (inline !== undefined) throw new ToliError(`--${name} takes no value`);
             flags.set(name, true);
             continue;
         }
@@ -48,7 +48,7 @@ export function parseArgs(argv: string[], booleans: readonly string[] = []): Par
             continue;
         }
         const value = argv[i + 1];
-        if (value === undefined) throw new MateError(`--${name} needs a value`);
+        if (value === undefined) throw new ToliError(`--${name} needs a value`);
         flags.set(name, value);
         i++;
     }
@@ -69,7 +69,7 @@ export class Args {
         this.flags = parsed.flags;
         this.allowed = new Set([...booleans, ...(options.values ?? [])]);
         for (const name of this.flags.keys()) {
-            if (!this.allowed.has(name)) throw new MateError(`unknown option --${name}`);
+            if (!this.allowed.has(name)) throw new ToliError(`unknown option --${name}`);
         }
     }
 
@@ -88,14 +88,14 @@ export class Args {
 
     pos(index: number, label: string): string {
         const value = this.positional[index];
-        if (value === undefined || value === "") throw new MateError(`missing <${label}>`);
+        if (value === undefined || value === "") throw new ToliError(`missing <${label}>`);
         return value;
     }
 
     /** Fail on positionals beyond `count` so typos do not pass silently. */
     maxPositional(count: number): void {
         if (this.positional.length > count) {
-            throw new MateError(`unexpected argument "${this.positional[count]}"`);
+            throw new ToliError(`unexpected argument "${this.positional[count]}"`);
         }
     }
 }

@@ -11,7 +11,7 @@ describe("fixed working branch", () => {
         expect(box.ok(["project", "set", "app", "--branch", "develop"])).toBe("app: mode=commit branch=develop");
         writeFileSync(join(dir, "a.txt"), "a\n");
         const head = box.git(dir, ["rev-parse", "HEAD"]);
-        const refused = box.mate(["commit", "app", "-m", "add a", "--", "a.txt"]);
+        const refused = box.toli(["commit", "app", "-m", "add a", "--", "a.txt"]);
         expect(refused.code).toBe(1);
         expect(refused.stderr).toContain('is on "main", but its working branch is "develop"');
         expect(refused.stderr).toContain(`git -C ${dir} switch develop`);
@@ -32,7 +32,7 @@ describe("fixed working branch", () => {
         writeFileSync(join(dir, "b.txt"), "b\n");
         box.ok(["commit", "app", "-m", "add b", "--", "b.txt"]);
         expect(JSON.parse(box.ok(["project", "list", "--json"]))[0].branch).toBeNull();
-        expect(box.mate(["project", "set", "app", "--branch", "bad..name"]).code).toBe(1);
+        expect(box.toli(["project", "set", "app", "--branch", "bad..name"]).code).toBe(1);
     });
 
     test("a legacy projects.json without the new fields still loads and gains them on write", () => {

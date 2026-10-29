@@ -6,7 +6,7 @@ import { BitbucketClient, bitbucketCredentials, parseDotenv } from "../src/forge
 
 type Recorded = { method: string; path: string; auth: string | null; body: unknown };
 
-const ENV_KEYS = ["BITBUCKET_USERNAME", "BITBUCKET_API_TOKEN", "MATE_BITBUCKET_API", "MATE_ROOT"] as const;
+const ENV_KEYS = ["BITBUCKET_USERNAME", "BITBUCKET_API_TOKEN", "TOLI_BITBUCKET_API", "TOLI_ROOT"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 const requests: Recorded[] = [];
 let server: Bun.Server<undefined>;
@@ -73,7 +73,7 @@ afterEach(() => {
 });
 
 function useStub(): void {
-    process.env.MATE_BITBUCKET_API = api;
+    process.env.TOLI_BITBUCKET_API = api;
     process.env.BITBUCKET_USERNAME = "bob";
     process.env.BITBUCKET_API_TOKEN = "tok";
 }
@@ -152,12 +152,12 @@ describe("Bitbucket Cloud client", () => {
     });
 
     test("credentials come from env first, then the repo-root .env", () => {
-        const root = mkdtempSync(join(tmpdir(), "mate-bb-"));
+        const root = mkdtempSync(join(tmpdir(), "toli-bb-"));
         writeFileSync(
             join(root, ".env"),
             '# comment\nexport BITBUCKET_USERNAME="dot"\nBITBUCKET_API_TOKEN=dottok # trailing\n',
         );
-        process.env.MATE_ROOT = root;
+        process.env.TOLI_ROOT = root;
         delete process.env.BITBUCKET_USERNAME;
         delete process.env.BITBUCKET_API_TOKEN;
         expect(bitbucketCredentials()).toEqual({ username: "dot", token: "dottok", source: ".env" });

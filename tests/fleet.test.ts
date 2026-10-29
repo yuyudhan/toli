@@ -20,7 +20,7 @@ Pages throttled:                               0.
 Pages wired down:                              1.
 Pages purgeable:                               0.`;
 
-const ENV = { MATE_PLATFORM: "darwin" };
+const ENV = { TOLI_PLATFORM: "darwin" };
 
 function remoteSnapshot(machine: string, overrides: Record<string, unknown> = {}): string {
     return JSON.stringify({
@@ -56,9 +56,9 @@ function fleet(m2Snapshot: string, capacity: Record<string, number> = ROOMY): Sa
         join(box.root, "config", "fleet.json"),
         JSON.stringify({
             machines: [
-                { name: "m1", ssh: "host1", root: "/srv/mate" },
-                { name: "m2", ssh: "host2", root: "/srv/mate" },
-                { name: "m3", ssh: "host3", root: "/srv/mate" },
+                { name: "m1", ssh: "host1", root: "/srv/toli" },
+                { name: "m2", ssh: "host2", root: "/srv/toli" },
+                { name: "m3", ssh: "host3", root: "/srv/toli" },
             ],
         }),
     );
@@ -124,7 +124,7 @@ describe("pick", () => {
             ...ROOMY,
             minDiskFreeGB: 1e12,
         });
-        const result = box.mate(["pick"], { env: ENV });
+        const result = box.toli(["pick"], { env: ENV });
         expect(result.code).toBe(2);
         expect(result.stdout).toContain("no machine available:");
         expect(result.stdout).toContain("m1: disk ");
@@ -146,7 +146,7 @@ describe("remote auto", () => {
         const box = fleet(remoteSnapshot("m2", { memAvailableMB: 16000, load1: 0 }), { ...ROOMY, minDiskFreeGB: 1e12 });
         const output = box.ok(["remote", "auto", 'it\'s "quoted"; $(rm -rf /)'], { env: ENV });
         expect(output).toContain("ran on m2");
-        expect(sshLog(box)).toContain("cd /srv/mate && bin/mate exec --from m1");
+        expect(sshLog(box)).toContain("cd /srv/toli && bin/toli exec --from m1");
         expect(sshLog(box)).not.toContain("rm -rf");
     });
 
@@ -155,7 +155,7 @@ describe("remote auto", () => {
             ...ROOMY,
             minDiskFreeGB: 1e12,
         });
-        const result = box.mate(["remote", "auto", "x"], { env: ENV });
+        const result = box.toli(["remote", "auto", "x"], { env: ENV });
         expect(result.code).toBe(2);
         expect(sshLog(box)).not.toContain("exec");
     });
@@ -166,7 +166,7 @@ describe("run records", () => {
         const box = fleet(remoteSnapshot("m2"));
         const runs = join(box.root, "state", "runs");
         box.stub("omp", `ls "${runs}"; exit 3`);
-        const result = box.mate(["exec", "--from", "m2", "--task", "T4"], { env: ENV, stdin: "fix the build\n" });
+        const result = box.toli(["exec", "--from", "m2", "--task", "T4"], { env: ENV, stdin: "fix the build\n" });
         expect(result.code).toBe(3);
         expect(result.stdout).toMatch(/^exec-.*\.json$/m);
         expect(readdirSync(runs)).toEqual([]);
@@ -266,6 +266,6 @@ describe("legacy owner field", () => {
     test("--owner is no longer accepted", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
-        expect(box.mate(["project", "add", "x", "git@example.com:a/x.git", "--owner", "m2"]).code).toBe(1);
+        expect(box.toli(["project", "add", "x", "git@example.com:a/x.git", "--owner", "m2"]).code).toBe(1);
     });
 });

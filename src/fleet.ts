@@ -9,7 +9,6 @@ import { loadProjects } from "./projects.ts";
 import { registerRun, removeRun } from "./resources.ts";
 import { headlessOmpArgs } from "./tick.ts";
 import {
-    MateError,
     now,
     out,
     readStdin,
@@ -18,6 +17,7 @@ import {
     runInherit,
     shellQuote,
     stamp,
+    ToliError,
     warn,
     writeJsonAtomic,
     writeTextAtomic,
@@ -28,7 +28,7 @@ export function initCommand(argv: string[]): void {
     args.maxPositional(0);
     const name = requireName("machine", args.str("name"));
     const role = args.str("role");
-    if (role !== "coordinator" && role !== "worker") throw new MateError("--role must be coordinator or worker");
+    if (role !== "coordinator" && role !== "worker") throw new ToliError("--role must be coordinator or worker");
     const coordinatorSsh = args.str("coordinator-ssh");
     const coordinatorRoot = args.str("coordinator-root");
     const machine: Machine = { name, role };
@@ -37,10 +37,10 @@ export function initCommand(argv: string[]): void {
     if (capacity !== undefined) machine.capacity = capacity;
     if (role === "worker") {
         if (!coordinatorSsh || !coordinatorRoot)
-            throw new MateError("a worker needs --coordinator-ssh <host> --coordinator-root <path>");
+            throw new ToliError("a worker needs --coordinator-ssh <host> --coordinator-root <path>");
         machine.coordinator = { ssh: coordinatorSsh, root: coordinatorRoot };
     } else if (coordinatorSsh || coordinatorRoot) {
-        throw new MateError("--coordinator-ssh/--coordinator-root apply to workers only");
+        throw new ToliError("--coordinator-ssh/--coordinator-root apply to workers only");
     }
     for (const dir of ["config", "data", "state", "logs", "projects"])
         mkdirSync(join(paths.root(), dir), { recursive: true });
@@ -54,12 +54,12 @@ export function initCommand(argv: string[]): void {
 function syncLocal(): void {
     const root = paths.root();
     const dirty = git(root, ["status", "--porcelain", "--untracked-files=no"]);
-    if (dirty.code !== 0) throw new MateError(`git status failed in ${root}: ${dirty.stderr.trim()}`);
+    if (dirty.code !== 0) throw new ToliError(`git status failed in ${root}: ${dirty.stderr.trim()}`);
     if (dirty.stdout.trim() !== "")
-        throw new MateError(`refusing to sync: ${root} has uncommitted changes:\n${dirty.stdout.trimEnd()}`);
+        throw new ToliError(`refusing to sync: ${root} has uncommitted changes:\n${dirty.stdout.trimEnd()}`);
     const pull = git(root, ["pull", "--ff-only"]);
     if (pull.code !== 0)
-        throw new MateError(`git pull --ff-only failed (not a fast-forward?): ${(pull.stderr || pull.stdout).trim()}`);
+        throw new ToliError(`git pull --ff-only failed (not a fast-forward?): ${(pull.stderr || pull.stdout).trim()}`);
     out(`${loadMachine().name}: ${pull.stdout.trim() || "up to date"}`);
 }
 
@@ -70,7 +70,7 @@ export function syncCommand(argv: string[]): number {
     if (!args.bool("all")) return 0;
     let failures = 0;
     for (const machine of otherFleetMachines()) {
-        const result = run([...sshArgs(machine.ssh, 15), `cd ${shellQuote(machine.root)} && bin/mate sync`], {
+        const result = run([...sshArgs(machine.ssh, 15), `cd ${shellQuote(machine.root)} && bin/toli sync`], {
             timeoutMs: 120_000,
         });
         if (result.code === 0) {
@@ -83,13 +83,13 @@ export function syncCommand(argv: string[]): number {
     return failures === 0 ? 0 : 1;
 }
 
-const REMOTE_HEADER = "[mate remote from ";
+const REMOTE_HEADER = "[toli remote from ";
 
 export function remotePrompt(from: string, target: string, prompt: string, project?: string): string {
     return [
         `${REMOTE_HEADER}${from} to ${target}]`,
-        `This request was dispatched by the mate on ${from}; nobody is watching this run.`,
-        'Rules: commit on the current branch only (bin/mate commit <project> -m "..." -- <paths>); never push, merge, or open a PR;',
+        `This request was dispatched by Sardar on ${from}; nobody is watching this run.`,
+        'Rules: commit on the current branch only (bin/toli commit <project> -m "..." -- <paths>); never push, merge, or open a PR;',
         "never ask questions. Finish by reporting the outcome and the evidence (commands run, results, commit shas).",
         ...(project === undefined ? [] : [`Project: ${project} (clone at projects/${project}).`]),
         "",
@@ -111,12 +111,12 @@ function runTitle(prompt: string): string {
 const EXEC_MAX_TIME = "60m";
 const EXEC_KILL_MS = 65 * 60 * 1000;
 
-/** `mate exec`: run the stdin prompt in headless omp here, counted as load via a run record for its lifetime. */
+/** `toli exec`: run the stdin prompt in headless omp here, counted as load via a run record for its lifetime. */
 export async function execCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { values: ["from", "task"] });
     args.maxPositional(0);
     const prompt = readStdin();
-    if (prompt.trim() === "") throw new MateError("exec needs the prompt on stdin");
+    if (prompt.trim() === "") throw new ToliError("exec needs the prompt on stdin");
     const machine = loadMachine();
     const from = requireName("machine", args.str("from") ?? machine.name);
     const runId = `exec-${stamp()}-${process.pid}`;
@@ -135,7 +135,7 @@ export async function execCommand(argv: string[]): Promise<number> {
     }
 }
 
-/** `mate remote <machine|auto> "<prompt>" [--project <name>]`. */
+/** `toli remote <machine|auto> "<prompt>" [--project <name>]`. */
 export async function remoteCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { values: ["project"] });
     args.maxPositional(2);
@@ -158,7 +158,7 @@ export async function remoteCommand(argv: string[]): Promise<number> {
     }
     const target = fleetMachine(targetName);
     const from = loadMachine().name;
-    const remoteMate = (command: string): string => `cd ${shellQuote(target.root)} && bin/mate ${command}`;
+    const remoteToli = (command: string): string => `cd ${shellQuote(target.root)} && bin/toli ${command}`;
     const startedAt = now();
     const sections: string[] = [];
     let code = 0;
@@ -166,7 +166,7 @@ export async function remoteCommand(argv: string[]): Promise<number> {
         projectName === undefined ? "" : (loadProjects().find((entry) => entry.name === projectName)?.url ?? "");
     if (projectName !== undefined && url !== "") {
         const ensure = run(
-            [...sshArgs(target.ssh, 15), remoteMate(`project ensure ${shellQuote(projectName)} ${shellQuote(url)}`)],
+            [...sshArgs(target.ssh, 15), remoteToli(`project ensure ${shellQuote(projectName)} ${shellQuote(url)}`)],
             {
                 timeoutMs: 15 * 60 * 1000,
             },
@@ -175,7 +175,7 @@ export async function remoteCommand(argv: string[]): Promise<number> {
         if (ensure.code !== 0) code = ensure.code;
     }
     if (code === 0) {
-        const result = run([...sshArgs(target.ssh, 15), remoteMate(`exec --from ${shellQuote(from)}`)], {
+        const result = run([...sshArgs(target.ssh, 15), remoteToli(`exec --from ${shellQuote(from)}`)], {
             stdin: remotePrompt(from, target.name, prompt, projectName),
             timeoutMs: EXEC_KILL_MS + 60_000,
         });

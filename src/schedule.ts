@@ -3,18 +3,18 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Args } from "./args.ts";
 import { paths } from "./paths.ts";
-import { MateError, out, platform, printJson, run, shellQuote, writeTextAtomic } from "./util.ts";
+import { out, platform, printJson, run, shellQuote, ToliError, writeTextAtomic } from "./util.ts";
 
-export const LABEL = "com.yuyudhan.mate.tick";
-export const CRON_TAG = "# yuyudhan-mate tick";
+export const LABEL = "com.yuyudhan.toli.tick";
+export const CRON_TAG = "# toli tick";
 
-/** `MATE_DRY_RUN=1`: print what would be written and run, touching nothing. */
+/** `TOLI_DRY_RUN=1`: print what would be written and run, touching nothing. */
 function dryRun(): boolean {
-    return process.env.MATE_DRY_RUN === "1";
+    return process.env.TOLI_DRY_RUN === "1";
 }
 
 export function plistPath(): string {
-    return join(process.env.MATE_LAUNCH_AGENTS_DIR ?? join(homedir(), "Library", "LaunchAgents"), `${LABEL}.plist`);
+    return join(process.env.TOLI_LAUNCH_AGENTS_DIR ?? join(homedir(), "Library", "LaunchAgents"), `${LABEL}.plist`);
 }
 
 /**
@@ -51,7 +51,7 @@ export function renderPlist(): string {
     <string>${LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-${strings([bunPath(), paths.mateBin(), "job", "tick"])}
+${strings([bunPath(), paths.toliBin(), "job", "tick"])}
     </array>
     <key>WorkingDirectory</key>
     <string>${xml(paths.root())}</string>
@@ -77,7 +77,7 @@ export function cronLine(): string {
     const root = paths.root();
     const command = [
         `cd ${shellQuote(root)}`,
-        `PATH=${shellQuote(schedulePath())} ${shellQuote(bunPath())} ${shellQuote(paths.mateBin())} job tick >> ${shellQuote(join(paths.logsDir(), "cron.log"))} 2>&1`,
+        `PATH=${shellQuote(schedulePath())} ${shellQuote(bunPath())} ${shellQuote(paths.toliBin())} job tick >> ${shellQuote(join(paths.logsDir(), "cron.log"))} 2>&1`,
     ].join(" && ");
     return `* * * * * ${command} ${CRON_TAG}`;
 }
@@ -100,12 +100,12 @@ function readCrontab(): string[] {
 function writeCrontab(lines: string[]): void {
     const text = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
     const result = run(["crontab", "-"], { stdin: text });
-    if (result.code !== 0) throw new MateError(`crontab - failed: ${(result.stderr || result.stdout).trim()}`);
+    if (result.code !== 0) throw new ToliError(`crontab - failed: ${(result.stderr || result.stdout).trim()}`);
 }
 
 function mustRun(cmd: string[]): void {
     const result = run(cmd);
-    if (result.code !== 0) throw new MateError(`${cmd.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
+    if (result.code !== 0) throw new ToliError(`${cmd.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
 }
 
 function install(): void {
@@ -123,7 +123,7 @@ function install(): void {
         writeTextAtomic(target, plist);
         if (launchctlLoaded()) mustRun(["launchctl", "bootout", `${guiDomain()}/${LABEL}`]);
         mustRun(["launchctl", "bootstrap", guiDomain(), target]);
-        out(`installed and loaded ${target}: bin/mate job tick runs every minute`);
+        out(`installed and loaded ${target}: bin/toli job tick runs every minute`);
         return;
     }
     const line = cronLine();
@@ -157,7 +157,7 @@ function uninstall(): void {
         return;
     }
     if (kept.length !== lines.length) writeCrontab(kept);
-    out(kept.length !== lines.length ? "removed mate crontab line" : "no mate crontab line installed");
+    out(kept.length !== lines.length ? "removed toli crontab line" : "no toli crontab line installed");
 }
 
 export type ScheduleStatus = { scheduler: "launchd" | "crontab"; installed: boolean; loaded: boolean; detail: string };
@@ -200,6 +200,6 @@ export function scheduleCommand(argv: string[]): void {
             break;
         }
         default:
-            throw new MateError("usage: mate schedule install|uninstall|status");
+            throw new ToliError("usage: toli schedule install|uninstall|status");
     }
 }

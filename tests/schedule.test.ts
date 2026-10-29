@@ -3,10 +3,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { type Sandbox, sandbox } from "./helpers.ts";
 
-const TAG = "# yuyudhan-mate tick";
+const TAG = "# toli tick";
 
 function plist(box: Sandbox): string {
-    return box.ok(["schedule", "install"], { env: { MATE_PLATFORM: "darwin", MATE_LAUNCH_AGENTS_DIR: box.root } });
+    return box.ok(["schedule", "install"], { env: { TOLI_PLATFORM: "darwin", TOLI_LAUNCH_AGENTS_DIR: box.root } });
 }
 
 /** A file-backed `crontab` stub: `-l` prints the file (exit 1 when absent), `-` replaces it from stdin. */
@@ -24,22 +24,22 @@ esac`,
     return file;
 }
 
-const linux = { MATE_PLATFORM: "linux", MATE_DRY_RUN: "0" };
+const linux = { TOLI_PLATFORM: "linux", TOLI_DRY_RUN: "0" };
 
 describe("schedule install on macOS (dry run)", () => {
-    test("plist runs `bun bin/mate job tick` every 60s from absolute paths, touching nothing", () => {
+    test("plist runs `bun bin/toli job tick` every 60s from absolute paths, touching nothing", () => {
         const box = sandbox();
         const output = plist(box);
         const strings = [...output.matchAll(/<string>([^<]*)<\/string>/g)].map((match) => match[1] ?? "");
-        const [label, bun, mate, job, tick, workdir] = strings;
-        expect(label).toBe("com.yuyudhan.mate.tick");
+        const [label, bun, toli, job, tick, workdir] = strings;
+        expect(label).toBe("com.yuyudhan.toli.tick");
         expect([job, tick]).toEqual(["job", "tick"]);
-        expect(mate).toBe(join(box.root, "bin", "mate"));
+        expect(toli).toBe(join(box.root, "bin", "toli"));
         expect(workdir).toBe(box.root);
-        for (const path of [bun, mate, workdir]) expect(isAbsolute(path ?? "")).toBe(true);
+        for (const path of [bun, toli, workdir]) expect(isAbsolute(path ?? "")).toBe(true);
         expect(output).toContain("<key>StartInterval</key>\n    <integer>60</integer>");
         expect(output).toContain(`<string>${join(box.root, "logs", "launchd.err.log")}</string>`);
-        expect(existsSync(join(box.root, "com.yuyudhan.mate.tick.plist"))).toBe(false);
+        expect(existsSync(join(box.root, "com.yuyudhan.toli.tick.plist"))).toBe(false);
     });
 
     test("PATH holds the directories of the tools jobs call, plus the system dirs", () => {
@@ -58,7 +58,7 @@ describe("schedule install on macOS (dry run)", () => {
         const box = sandbox();
         const root = join(box.root, "a&b<c>");
         const output = box.ok(["schedule", "install"], {
-            env: { MATE_PLATFORM: "darwin", MATE_LAUNCH_AGENTS_DIR: box.root, MATE_ROOT: root },
+            env: { TOLI_PLATFORM: "darwin", TOLI_LAUNCH_AGENTS_DIR: box.root, TOLI_ROOT: root },
         });
         expect(output).toContain("a&amp;b&lt;c&gt;");
         expect(output).not.toContain("a&b<c>");
@@ -77,7 +77,7 @@ describe("schedule on Linux (crontab)", () => {
         const line = lines[1] ?? "";
         expect(line.startsWith("* * * * * cd ")).toBe(true);
         expect(line).toContain(
-            `${join(box.root, "bin", "mate")} job tick >> ${join(box.root, "logs", "cron.log")} 2>&1`,
+            `${join(box.root, "bin", "toli")} job tick >> ${join(box.root, "logs", "cron.log")} 2>&1`,
         );
         expect(line.endsWith(TAG)).toBe(true);
     });
@@ -85,11 +85,11 @@ describe("schedule on Linux (crontab)", () => {
     test("a repo path with spaces is shell-quoted in the cron line", () => {
         const box = sandbox();
         const file = withCrontab(box, null);
-        const root = join(box.root, "my mate");
-        box.ok(["schedule", "install"], { env: { ...linux, MATE_ROOT: root } });
+        const root = join(box.root, "my toli");
+        box.ok(["schedule", "install"], { env: { ...linux, TOLI_ROOT: root } });
         const line = readFileSync(file, "utf8");
         expect(line).toContain(`cd '${root}' && `);
-        expect(line).toContain(`'${join(root, "bin", "mate")}' job tick`);
+        expect(line).toContain(`'${join(root, "bin", "toli")}' job tick`);
     });
 
     test("install works when the user has no crontab yet", () => {
@@ -107,15 +107,15 @@ describe("schedule on Linux (crontab)", () => {
         const box = sandbox();
         const file = withCrontab(box, "0 3 * * * /usr/bin/backup\n");
         box.ok(["schedule", "install"], { env: linux });
-        expect(box.ok(["schedule", "uninstall"], { env: linux })).toBe("removed mate crontab line");
+        expect(box.ok(["schedule", "uninstall"], { env: linux })).toBe("removed toli crontab line");
         expect(readFileSync(file, "utf8")).toBe("0 3 * * * /usr/bin/backup\n");
-        expect(box.ok(["schedule", "uninstall"], { env: linux })).toBe("no mate crontab line installed");
+        expect(box.ok(["schedule", "uninstall"], { env: linux })).toBe("no toli crontab line installed");
     });
 
     test("dry run prints the would-be crontab and leaves the real one untouched", () => {
         const box = sandbox();
         const file = withCrontab(box, "0 3 * * * /usr/bin/backup\n");
-        const output = box.ok(["schedule", "install"], { env: { MATE_PLATFORM: "linux" } });
+        const output = box.ok(["schedule", "install"], { env: { TOLI_PLATFORM: "linux" } });
         expect(output).toContain("# dry run: would install crontab:");
         expect(output).toContain(TAG);
         expect(readFileSync(file, "utf8")).toBe("0 3 * * * /usr/bin/backup\n");
@@ -124,7 +124,7 @@ describe("schedule on Linux (crontab)", () => {
     test("a failing crontab write is an error, not a silent success", () => {
         const box = sandbox();
         box.stub("crontab", `[ "$1" = "-l" ] && exit 1; echo "crontab: permission denied" >&2; exit 1`);
-        const result = box.mate(["schedule", "install"], { env: linux });
+        const result = box.toli(["schedule", "install"], { env: linux });
         expect(result.code).toBe(1);
         expect(result.stderr).toContain("permission denied");
     });

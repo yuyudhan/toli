@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { stripAiTrailers } from "../src/commit.ts";
 import { sandbox, withProject } from "./helpers.ts";
 
-describe("mate commit", () => {
+describe("toli commit", () => {
     test("strips AI trailers but keeps human sign-offs", () => {
         const message = [
             "Fix parser",
@@ -31,7 +31,7 @@ describe("mate commit", () => {
         writeFileSync(join(dir, "b.txt"), "b\n");
         writeFileSync(join(dir, "c.txt"), "c\n");
         box.git(dir, ["add", "c.txt"]);
-        expect(box.mate(["commit", "app", "-m", "no paths"]).code).toBe(1);
+        expect(box.toli(["commit", "app", "-m", "no paths"]).code).toBe(1);
         const sha = box.ok(["commit", "app", "-m", "Add a\n\nCo-Authored-By: Claude <x@y>", "--", "a.txt"]);
         expect(box.git(dir, ["rev-parse", "HEAD"])).toBe(sha);
         expect(box.git(dir, ["show", "--name-only", "--format=", "HEAD"])).toBe("a.txt");
@@ -41,18 +41,18 @@ describe("mate commit", () => {
     });
 });
 
-describe("mate project drop", () => {
+describe("toli project drop", () => {
     test("refuses dirty clones and unpushed commits; deletes only when clean", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const dir = withProject(box, "app");
         writeFileSync(join(dir, "a.txt"), "a\n");
-        const dirty = box.mate(["project", "drop", "app"]);
+        const dirty = box.toli(["project", "drop", "app"]);
         expect(dirty.code).toBe(1);
         expect(dirty.stderr).toContain("uncommitted");
 
         box.ok(["commit", "app", "-m", "add a", "--", "a.txt"]);
-        const ahead = box.mate(["project", "drop", "app"]);
+        const ahead = box.toli(["project", "drop", "app"]);
         expect(ahead.code).toBe(1);
         expect(ahead.stderr).toContain("unpushed commits on main");
 
@@ -60,7 +60,7 @@ describe("mate project drop", () => {
         box.git(dir, ["switch", "-c", "local-only"]);
         writeFileSync(join(dir, "b.txt"), "b\n");
         box.ok(["commit", "app", "-m", "add b", "--", "b.txt"]);
-        const noUpstream = box.mate(["project", "drop", "app"]);
+        const noUpstream = box.toli(["project", "drop", "app"]);
         expect(noUpstream.code).toBe(1);
         expect(noUpstream.stderr).toContain("local-only");
 

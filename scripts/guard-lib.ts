@@ -1,8 +1,8 @@
 // Shared plumbing for scripts/guard.ts and the rules in scripts/guard/*.ts.
 //
 // Scope modes (one is chosen per run):
-//   MATE_GUARD_HOOK=1        staged files only, content read from the index (pre-commit)
-//   MATE_GUARD_RANGE=A..B    files changed in A..B, content read at B (pushed commits)
+//   TOLI_GUARD_HOOK=1        staged files only, content read from the index (pre-commit)
+//   TOLI_GUARD_RANGE=A..B    files changed in A..B, content read at B (pushed commits)
 //   neither                  every tracked file, content read from the working tree
 // Git failures throw: a guard that cannot list or read its files must fail, never pass.
 import { lstatSync, readFileSync } from "node:fs";
@@ -102,7 +102,7 @@ function stagedScope(): Scope {
 
 function rangeScope(range: string): Scope {
     if (!/^[^.\s]+\.\.[^.\s]+$/.test(range)) {
-        throw new Error(`MATE_GUARD_RANGE must look like <rev>..<rev>, got ${JSON.stringify(range)}`);
+        throw new Error(`TOLI_GUARD_RANGE must look like <rev>..<rev>, got ${JSON.stringify(range)}`);
     }
     const notes: string[] = [];
     const blobs = changedBlobs([range], notes);
@@ -141,8 +141,8 @@ function treeScope(): Scope {
 }
 
 export function collectScope(env: NodeJS.ProcessEnv = process.env): Scope {
-    if (env.MATE_GUARD_HOOK === "1") return stagedScope();
-    const range = env.MATE_GUARD_RANGE;
+    if (env.TOLI_GUARD_HOOK === "1") return stagedScope();
+    const range = env.TOLI_GUARD_RANGE;
     if (range) return rangeScope(range);
     return treeScope();
 }
@@ -162,5 +162,5 @@ export function eachLine(text: string, visit: (line: string, number: number) => 
 
 /** TypeScript source and test files the code-only rules apply to. */
 export function isCode(path: string): boolean {
-    return path.endsWith(".ts") || path === "bin/mate";
+    return path.endsWith(".ts") || path === "bin/toli";
 }

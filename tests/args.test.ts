@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Args, parseArgs } from "../src/args.ts";
-import { MateError } from "../src/util.ts";
+import { ToliError } from "../src/util.ts";
 
 describe("parseArgs", () => {
     test("value flags take the next word or an inline value; booleans never consume a word", () => {
@@ -28,7 +28,7 @@ describe("parseArgs", () => {
 
 describe("Args", () => {
     test("unknown long options are rejected", () => {
-        expect(() => new Args(["--sahpe", "ship"], { values: ["shape"] })).toThrow(MateError);
+        expect(() => new Args(["--sahpe", "ship"], { values: ["shape"] })).toThrow(ToliError);
         expect(() => new Args(["--sahpe", "ship"], { values: ["shape"] })).toThrow("unknown option --sahpe");
     });
 

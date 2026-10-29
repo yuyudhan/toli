@@ -1,6 +1,6 @@
 // Runs every rule in scripts/guard/*.ts (globbed, so adding a file registers it), numbers each
 // `[n/N] name`, keeps going past failures, and exits 1 with a tally if any rule failed.
-// Scope: see scripts/guard-lib.ts (MATE_GUARD_HOOK=1, MATE_GUARD_RANGE=A..B, or the full tree).
+// Scope: see scripts/guard-lib.ts (TOLI_GUARD_HOOK=1, TOLI_GUARD_RANGE=A..B, or the full tree).
 import { collectScope, type Guard, ROOT, type Scope } from "./guard-lib.ts";
 
 function isGuard(value: unknown): value is Guard {

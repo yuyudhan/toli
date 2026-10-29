@@ -97,9 +97,9 @@ describe("digest", () => {
             "--coordinator-ssh",
             "m1",
             "--coordinator-root",
-            "/srv/mate",
+            "/srv/toli",
         ]);
-        const result = box.mate(["digest", "--fleet"]);
+        const result = box.toli(["digest", "--fleet"]);
         expect(result.code).toBe(1);
         expect(result.stderr).toContain("coordinator only");
     });
