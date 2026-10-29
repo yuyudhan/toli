@@ -46,7 +46,10 @@ async function runHeadless(name: string, begun: BegunRun): Promise<string> {
     });
     let result: { code: number; output: string };
     try {
-        result = await runCombined(headlessOmpArgs(begun.prompt), { cwd: paths.root(), timeoutMs: HEADLESS_KILL_MS });
+        result = await runCombined(headlessOmpArgs(begun.prompt), {
+            cwd: paths.root(),
+            timeoutMs: HEADLESS_KILL_MS,
+        });
     } finally {
         removeRun(begun.runId);
     }

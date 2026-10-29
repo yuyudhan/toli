@@ -31,7 +31,8 @@ Work the backlog under the normal rules; being away never loosens them.
 
         bin/toli task hold <id> --question "<the question in plain words>"
 
-  Then move on to the next task. Never guess on his behalf.
+    Then move on to the next task. Never guess on his behalf.
+
 - Scheduled jobs that fire meanwhile are handled as usual (`skill://toli-schedule`).
 - Append each outcome to `data/afk/<stamp>.md` as it happens, so nothing is lost if the session ends:
 

@@ -9,13 +9,13 @@ description: Create and manage recurring Sardar jobs from plain-language schedul
 
 Convert Malik's words to a 5-field cron (`minute hour day-of-month month day-of-week`, local time):
 
-| Malik says | cron |
-|---|---|
-| every day at 5 pm | `0 17 * * *` |
-| weekdays 9:30 | `30 9 * * 1-5` |
-| every Monday 8 am | `0 8 * * 1` |
-| every hour | `0 * * * *` |
-| first of the month at 6 am | `0 6 1 * *` |
+| Malik says                 | cron           |
+| -------------------------- | -------------- |
+| every day at 5 pm          | `0 17 * * *`   |
+| weekdays 9:30              | `30 9 * * 1-5` |
+| every Monday 8 am          | `0 8 * * 1`    |
+| every hour                 | `0 * * * *`    |
+| first of the month at 6 am | `0 6 1 * *`    |
 
 Confirm it back in words before adding: "Ji Malik, that runs every weekday at 9:30 am. Adding it." If the time is
 ambiguous ("in the morning", "evening"), ask once.

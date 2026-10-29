@@ -45,8 +45,9 @@ Only when Malik asked for a branch or PR on this work.
         bin/toli push <project>
         bin/toli pr create <project> --title "<title>" --body-file <file> [--base <branch>] [--draft]
 
-   `pr create` refuses until the branch is pushed and prints the PR/MR URL. Never push with raw `git push`, never
-   force, and never call `gh`/`glab`/the Bitbucket API directly for these steps.
+    `pr create` refuses until the branch is pushed and prints the PR/MR URL. Never push with raw `git push`, never
+    force, and never call `gh`/`glab`/the Bitbucket API directly for these steps.
+
 5. Record it: `bin/toli task done <id> --commit <sha> --note "<full PR URL>"`.
 6. Follow up with `bin/toli pr status <project> [<id>]` (state, mergeable, CI). `bin/toli pr merge <project> <id>`
    only on Malik's explicit word to merge that PR.

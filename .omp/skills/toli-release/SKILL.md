@@ -46,9 +46,10 @@ Read it fully before starting. Typical entries (only what the project actually u
 4. **Show Malik.** One message: version, notes path (and a lavish page for long notes), flagged Jira issues, and
    the exact next steps (merge, tag, push). Wait for his word.
 5. **Merge to main** (on his word), the way the recipe says:
-   - via PR/MR: `bin/toli push <p>`, `bin/toli pr create <p> --title "Release <tag>" --body-file <notes>
-     --base <main-branch>`, `bin/toli pr status <p> <id>` until CI is green, then `bin/toli pr merge <p> <id>`;
-   - or a local fast-forward/merge if the recipe says so, followed by `bin/toli push <p>` from the main branch.
+    - via PR/MR: `bin/toli push <p>`,
+      `bin/toli pr create <p> --title "Release <tag>" --body-file <notes> --base <main-branch>`,
+      `bin/toli pr status <p> <id>` until CI is green, then `bin/toli pr merge <p> <id>`;
+    - or a local fast-forward/merge if the recipe says so, followed by `bin/toli push <p>` from the main branch.
 6. **Tag** (on his word): `git -C projects/<p> tag -a <tag> -m "<tag>" <main-branch-commit>` then
    `git -C projects/<p> push origin refs/tags/<tag>` (one tag, never `--tags`, never `-f`).
 7. **Staging smoke.** After the deploy the recipe describes, run its smoke checks against staging (headless browser

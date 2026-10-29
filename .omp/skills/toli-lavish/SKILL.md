@@ -10,15 +10,15 @@ rules). Read it before building a page. This skill decides when Sardar uses one.
 
 ## Page or chat
 
-| Situation | Use |
-|---|---|
-| One yes/no question | chat |
-| One question with two short options | chat |
-| Two or more decisions at once (`/ahoy`, several no-mistakes `ask-user` findings) | lavish `input` page |
-| A choice between options with real tradeoffs | lavish `comparison` page |
-| `/bearings lavish`, or a fleet overview too big for chat | lavish `table` page |
-| Scout report with a diagram, code map, or several options | lavish page |
-| Malik asks to see something visually | lavish page |
+| Situation                                                                        | Use                      |
+| -------------------------------------------------------------------------------- | ------------------------ |
+| One yes/no question                                                              | chat                     |
+| One question with two short options                                              | chat                     |
+| Two or more decisions at once (`/ahoy`, several no-mistakes `ask-user` findings) | lavish `input` page      |
+| A choice between options with real tradeoffs                                     | lavish `comparison` page |
+| `/bearings lavish`, or a fleet overview too big for chat                         | lavish `table` page      |
+| Scout report with a diagram, code map, or several options                        | lavish page              |
+| Malik asks to see something visually                                             | lavish page              |
 
 When unsure, give the short chat answer and offer the page.
 

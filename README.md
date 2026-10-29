@@ -4,13 +4,13 @@ Sardar is a personal orchestrator for omp (Oh My Pi). Malik talks to one omp ses
 in this repo; Sardar turns each request into work for omp `task` subagents (the "jawan"), checks their evidence, commits
 the result, and reports back in plain words. Sardar itself never edits project code.
 
-| Name   | Who                                                 |
-| ------ | --------------------------------------------------- |
-| Malik  | you                                                 |
-| Sardar | the lead: the omp session you talk to               |
-| Jawan  | one helper (an omp `task` subagent) doing one task  |
-| Toli   | a group of jawan sent out together for one request  |
-| Paltan | all jawan working across all your machines          |
+| Name   | Who                                                |
+| ------ | -------------------------------------------------- |
+| Malik  | you                                                |
+| Sardar | the lead: the omp session you talk to              |
+| Jawan  | one helper (an omp `task` subagent) doing one task |
+| Toli   | a group of jawan sent out together for one request |
+| Paltan | all jawan working across all your machines         |
 
 The repo is cloned on three machines. Rules, skills, slash commands, and the CLI are tracked in git; everything
 private (projects, backlog, notes, config, logs) is gitignored and stays on each machine.
@@ -57,16 +57,16 @@ the actual work, checks their work, and tells you the result.
 
 Everyday commands you type inside omp:
 
-| Command | What it does |
-|---|---|
-| `/bearings` | "Where did I leave off?" - status of all projects, work in progress, waiting decisions |
-| `/ahoy` | Walk through decisions that are waiting for you |
-| `/schedule` | Add, list, pause, or remove timed jobs ("every day at 5 pm ...") |
-| `/add-project`, `/drop-project` | Add or remove a project |
-| `/stow` | Save what was learned this session |
-| `/afk` | "I'm away" - keep working through queued tasks and give one summary when you are back |
-| `/quiet` | "I'm here, keep it short" - only results, failures, and decisions |
-| `/sync-toli` | Pull the latest Sardar rules onto this machine (or all machines) |
+| Command                         | What it does                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| `/bearings`                     | "Where did I leave off?" - status of all projects, work in progress, waiting decisions |
+| `/ahoy`                         | Walk through decisions that are waiting for you                                        |
+| `/schedule`                     | Add, list, pause, or remove timed jobs ("every day at 5 pm ...")                       |
+| `/add-project`, `/drop-project` | Add or remove a project                                                                |
+| `/stow`                         | Save what was learned this session                                                     |
+| `/afk`                          | "I'm away" - keep working through queued tasks and give one summary when you are back  |
+| `/quiet`                        | "I'm here, keep it short" - only results, failures, and decisions                      |
+| `/sync-toli`                    | Pull the latest Sardar rules onto this machine (or all machines)                       |
 
 ## First-time setup (each machine)
 
@@ -166,16 +166,16 @@ then prints the PR/MR URL. Pushing, opening and merging all need Malik's word fo
 
 ## Slash commands
 
-| Command | What it does |
-|---|---|
-| `/bearings [lavish]` | Status overview: work in flight, questions waiting, job results, inbox |
-| `/ahoy` | Go through every task waiting on a decision |
-| `/stow` | Save session learnings and preferences; tidy the backlog |
-| `/afk [off]` | Keep working the queue while away; one report on return |
-| `/quiet [off]` | Only outcomes, failures, and decisions while present |
-| `/add-project`, `/drop-project` | Register or remove a project |
-| `/schedule add\|list\|pause\|resume\|remove` | Recurring jobs |
-| `/sync-toli [--all]` | Update the toli repo (fast-forward only) |
+| Command                                      | What it does                                                           |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| `/bearings [lavish]`                         | Status overview: work in flight, questions waiting, job results, inbox |
+| `/ahoy`                                      | Go through every task waiting on a decision                            |
+| `/stow`                                      | Save session learnings and preferences; tidy the backlog               |
+| `/afk [off]`                                 | Keep working the queue while away; one report on return                |
+| `/quiet [off]`                               | Only outcomes, failures, and decisions while present                   |
+| `/add-project`, `/drop-project`              | Register or remove a project                                           |
+| `/schedule add\|list\|pause\|resume\|remove` | Recurring jobs                                                         |
+| `/sync-toli [--all]`                         | Update the toli repo (fast-forward only)                               |
 
 ## Periodic jobs
 
@@ -217,17 +217,38 @@ ask questions.
 
 ## Developing Sardar
 
-Run `bun run hooks` (or `just hooks`) once per clone to point git at `.githooks/`:
+Run `just setup` once per clone: `bun install`, points git at `.githooks/`, and lists any missing system tools with
+their `brew install` command (shfmt, shellcheck, actionlint, just, gitleaks). Format and lint steps that need a missing
+tool fail with that hint instead of skipping.
 
-- **pre-commit**: gitleaks over the staged changes, Biome formats staged `.ts`/`.json` files and re-stages them (so
-  unstaged hunks in a staged file get committed too; `git stash push --keep-index` first for a partial commit), then
-  the guards over the staged files.
+Every file type has one formatter, all at 4-space indentation, driven by `scripts/format.ts`:
+
+| Files                           | Formatter (config)            | Lint         |
+| ------------------------------- | ----------------------------- | ------------ |
+| `.ts`, `.json`, `.jsonc`        | Biome (`biome.json`)          | `tsc`, Biome |
+| `.md`, `.yml`, `.yaml`          | Prettier (`.prettierrc.json`) |              |
+| `.toml`                         | Taplo (`.taplo.toml`)         |              |
+| `.githooks/*`, `*.sh`, `*.bash` | shfmt (`.editorconfig`)       | shellcheck   |
+| `Justfile`                      | `just --fmt`                  |              |
+| `.github/workflows/*.yml`       | Prettier                      | actionlint   |
+
+Day to day: `just fmt` formats everything, `just fmt-check` reports without writing, `just lint` (tsc, Biome, the
+other formatters in check mode, shellcheck, actionlint, guards), `just test`, `just check` (lint then tests),
+`just guard`; plain `just` lists them, and each wraps the matching `bun run` script. `.vscode/` recommends the
+matching editor extensions with format-on-save.
+
+Git hooks:
+
+- **pre-commit**: gitleaks over the staged changes, then `scripts/format.ts` formats the staged files of every type
+  above and re-stages the ones it changed (so unstaged hunks in a reformatted file get committed too;
+  `git stash push --keep-index` first for a partial commit), then the guards over the staged files.
 - **commit-msg**: subject of at most 72 characters with no trailing period, a blank line before the body, and no AI
   co-author or Generated-by trailers.
 - **pre-push**: gitleaks over the pushed commits, then `bun run check`.
 
-Day to day: `bun run check` (tsc, Biome, guards, tests), `bun run format`, `bun run guard`; `just` lists the same
-recipes. CI runs lint, `bun test --coverage` (threshold in `bunfig.toml`), and gitleaks on every push and PR.
+CI installs the pinned, checksum-verified shfmt, shellcheck, actionlint, and just, uses the Bun version in
+`.bun-version`, and runs `bun run lint`, `bun test --coverage` (threshold in `bunfig.toml`), and gitleaks on every push
+and PR.
 
 ## File layout
 
@@ -242,9 +263,11 @@ Tracked (shared by all machines):
     docs/brief-template.md       template for every jawan brief
     tests/                       bun tests (temp TOLI_ROOT, stubbed ssh/omp/crontab)
     scripts/guard.ts, guard/     hygiene guards; file-size-exceptions.txt ratchets oversized files
+    scripts/format.ts            runs every formatter and file-type linter (write, check, lint, tools)
     .githooks/                   pre-commit, commit-msg, pre-push
     .github/workflows/ci.yml     CI: lint, tests with coverage, gitleaks
     biome.json, .gitleaks.toml   formatter/linter and secrets-scan config
+    .prettierrc.json, .taplo.toml, .editorconfig, .gitattributes, .bun-version, .vscode/   formatting and editor setup
 
 Private (gitignored, per machine):
 

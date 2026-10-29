@@ -38,10 +38,11 @@ blocks work, and there is no locking between jawan.
 
         bin/toli remote auto "<Malik's request, verbatim>" --project <project>
 
-  It picks the best available machine (this machine wins near-ties, then one that already has the clone). If it
-  prints `local`, continue at step 4 here. Otherwise it clones the project on that machine if needed, runs the
-  request there, and saves the output in `data/remote/<stamp>-<machine>.md`; summarise it for Malik and stop here
-  for that project. `bin/toli pick --project <project>` answers "where" without dispatching.
+    It picks the best available machine (this machine wins near-ties, then one that already has the clone). If it
+    prints `local`, continue at step 4 here. Otherwise it clones the project on that machine if needed, runs the
+    request there, and saves the output in `data/remote/<stamp>-<machine>.md`; summarise it for Malik and stop here
+    for that project. `bin/toli pick --project <project>` answers "where" without dispatching.
+
 - Several independent tasks (a toli): spread them across machines (one `remote auto` per task, or `bin/toli remote <machine>`
   with the machines `bin/toli fleet status` shows as available) instead of stacking them on one machine.
 - Nothing available (`pick`/`remote auto` exit 2 with each machine's reasons): queue it with
@@ -73,14 +74,14 @@ first (`skill://toli-stacks`) or tell jawan in the Spec to use the declared comm
 
 Pick the agent from the routing table:
 
-| Work | agent | effort |
-|---|---|---|
-| find/read/map code, investigations | `scout` (read-only) | lo/med |
-| mechanical edits, renames, data collection | `sonic` | lo |
-| normal implementation | `task` (default; omit agent) | med |
-| ambiguous design / hard bugs | `task` | hi |
-| review of a diff | `reviewer` | med |
-| prove UI/CLI behaviour | `qa-tester` | med |
+| Work                                       | agent                        | effort |
+| ------------------------------------------ | ---------------------------- | ------ |
+| find/read/map code, investigations         | `scout` (read-only)          | lo/med |
+| mechanical edits, renames, data collection | `sonic`                      | lo     |
+| normal implementation                      | `task` (default; omit agent) | med    |
+| ambiguous design / hard bugs               | `task`                       | hi     |
+| review of a diff                           | `reviewer`                   | med    |
+| prove UI/CLI behaviour                     | `qa-tester`                  | med    |
 
 - A toli of jawan for work in different projects goes out in a single `task` call.
 - Several jawan on the same project in parallel is allowed, even in the same files. Give each its own task id.

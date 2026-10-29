@@ -32,7 +32,10 @@ export function sessionCommand(argv: string[]): void {
         case "start": {
             const pid = parsePid(args);
             withLock(paths.lock("session"), () => {
-                writeJsonAtomic(paths.session(), { pid, startedAt: now().toISOString() } satisfies SessionFile);
+                writeJsonAtomic(paths.session(), {
+                    pid,
+                    startedAt: now().toISOString(),
+                } satisfies SessionFile);
             });
             out(`session ${pid} registered`);
             break;

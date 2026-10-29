@@ -25,7 +25,9 @@ lists only the clones on that machine; a project may be cloned on several machin
     - install, build, test, lint, and smoke commands
     - main entry points and directory map
     - gotchas the project's own docs call out
-   Write the result into the notes file. Keep it short; it is fed into every brief for this project.
+
+    Write the result into the notes file. Keep it short; it is fed into every brief for this project.
+
 5. Report no-mistakes readiness. `toli project add` prints whether a `no-mistakes` git remote exists. If it does not,
    tell Malik and offer to run `no-mistakes init` in the clone. Run it only after Malik approves. Readiness only
    matters if he will ever want branch/PR delivery through the gate (`skill://toli-nm`).
