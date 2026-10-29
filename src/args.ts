@@ -1,0 +1,101 @@
+import { MateError } from "./util.ts";
+
+export type ParsedArgs = {
+    positional: string[];
+    /** Paths after a bare `--`. */
+    rest: string[];
+    flags: Map<string, string | true>;
+};
+
+const SHORT_FLAGS: Record<string, string> = { m: "message" };
+
+/**
+ * Parse `argv` into positionals, `--flag value` / `--flag=value` options and booleans.
+ * Flags listed in `booleans` never consume the next word; every other flag requires a value.
+ */
+export function parseArgs(argv: string[], booleans: readonly string[] = []): ParsedArgs {
+    const positional: string[] = [];
+    const rest: string[] = [];
+    const flags = new Map<string, string | true>();
+    for (let i = 0; i < argv.length; i++) {
+        const word = argv[i] as string;
+        if (word === "--") {
+            rest.push(...argv.slice(i + 1));
+            break;
+        }
+        let name: string | undefined;
+        let inline: string | undefined;
+        if (word.startsWith("--") && word.length > 2) {
+            const eq = word.indexOf("=");
+            name = eq === -1 ? word.slice(2) : word.slice(2, eq);
+            inline = eq === -1 ? undefined : word.slice(eq + 1);
+        } else if (/^-[A-Za-z]$/.test(word)) {
+            const long = SHORT_FLAGS[word.slice(1)];
+            if (long === undefined) throw new MateError(`unknown option ${word}`);
+            name = long;
+        }
+        if (name === undefined) {
+            positional.push(word);
+            continue;
+        }
+        if (booleans.includes(name)) {
+            if (inline !== undefined) throw new MateError(`--${name} takes no value`);
+            flags.set(name, true);
+            continue;
+        }
+        if (inline !== undefined) {
+            flags.set(name, inline);
+            continue;
+        }
+        const value = argv[i + 1];
+        if (value === undefined) throw new MateError(`--${name} needs a value`);
+        flags.set(name, value);
+        i++;
+    }
+    return { positional, rest, flags };
+}
+
+export class Args {
+    readonly positional: string[];
+    readonly rest: string[];
+    private readonly flags: Map<string, string | true>;
+    private readonly allowed: Set<string>;
+
+    constructor(argv: string[], options: { booleans?: readonly string[]; values?: readonly string[] } = {}) {
+        const booleans = options.booleans ?? [];
+        const parsed = parseArgs(argv, booleans);
+        this.positional = parsed.positional;
+        this.rest = parsed.rest;
+        this.flags = parsed.flags;
+        this.allowed = new Set([...booleans, ...(options.values ?? [])]);
+        for (const name of this.flags.keys()) {
+            if (!this.allowed.has(name)) throw new MateError(`unknown option --${name}`);
+        }
+    }
+
+    bool(name: string): boolean {
+        return this.flags.get(name) === true;
+    }
+
+    str(name: string): string | undefined {
+        const value = this.flags.get(name);
+        return typeof value === "string" ? value : undefined;
+    }
+
+    has(name: string): boolean {
+        return this.flags.has(name);
+    }
+
+    pos(index: number, label: string): string {
+        const value = this.positional[index];
+        if (value === undefined || value === "") throw new MateError(`missing <${label}>`);
+        return value;
+    }
+
+    /** Fail on positionals beyond `count` so typos do not pass silently. */
+    maxPositional(count: number): void {
+        if (this.positional.length > count) {
+            throw new MateError(`unexpected argument "${this.positional[count]}"`);
+        }
+    }
+}

@@ -1,0 +1,22 @@
+{
+    "name": "yuyudhan-mate",
+    "private": true,
+    "type": "module",
+    "bin": {
+        "mate": "bin/mate"
+    },
+    "scripts": {
+        "format": "biome check --write --linter-enabled=false .",
+        "format:check": "biome check --linter-enabled=false .",
+        "lint": "tsc --noEmit && biome check . && bun scripts/guard.ts",
+        "test": "bun test",
+        "check": "bun run lint && bun run test",
+        "guard": "bun scripts/guard.ts",
+        "hooks": "git config core.hooksPath .githooks"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "2.6.4",
+        "@types/bun": "1.3.14",
+        "typescript": "^5.9.3"
+    }
+}

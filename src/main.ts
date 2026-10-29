@@ -1,0 +1,113 @@
+import { taskCommand } from "./backlog.ts";
+import { branchCommand, commitCommand } from "./commit.ts";
+import { digestCommand } from "./digest.ts";
+import { doctorCommand } from "./doctor.ts";
+import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet.ts";
+import { inboxCommand } from "./inbox.ts";
+import { fleetCommand, pickCommand } from "./pick.ts";
+import { projectCommand } from "./projects.ts";
+import { resourcesCommand } from "./resources.ts";
+import { scheduleCommand } from "./schedule.ts";
+import { sessionCommand } from "./session.ts";
+import { jobCommand } from "./tick.ts";
+import { MateError, out, warn } from "./util.ts";
+
+const USAGE = `usage: bin/mate <command> [args]
+
+  init --name <machine> --role coordinator|worker [--coordinator-ssh <host> --coordinator-root <path>]
+  doctor [--json]
+  digest [--json] [--fleet]
+  project add <name> <git-url> [--mode commit|pr|no-mistakes]
+  project ensure <name> <git-url> [--mode commit|pr|no-mistakes]
+  project list [--json] | path <name> | set <name> --mode <m>
+  project drop <name> [--delete-clone] | import [--dir projects]
+  task add <project> "<title>" [--shape ship|scout] [--note "..."]
+  task list [--json] [--status queued|active|held|done|dropped]
+  task start <id> | done <id> [--report <path>] [--commit <sha>] [--note "..."]
+  task hold <id> --question "..." | answer <id> "<answer>" | drop <id>
+  commit <project> -m "<message>" -- <path>...
+  branch <project> <branch>
+  job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
+  job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | tick
+  job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
+  job results [--unseen] [--json] | ack
+  schedule install|uninstall|status
+  inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack
+  sync [--all]
+  resources [--json]
+  fleet status [--json]
+  pick [--project <name>] [--json]
+  exec [--from <machine>] [--task <id>] (prompt on stdin)
+  remote <machine|auto> "<prompt>" [--project <name>]
+  session start|end --pid <n>`;
+
+/** Dispatch one CLI invocation; resolves to the process exit code. */
+export async function main(argv: string[]): Promise<number> {
+    const [command, ...rest] = argv;
+    try {
+        switch (command) {
+            case "init":
+                initCommand(rest);
+                return 0;
+            case "doctor":
+                return await doctorCommand(rest);
+            case "digest":
+                await digestCommand(rest);
+                return 0;
+            case "project":
+                projectCommand(rest);
+                return 0;
+            case "task":
+                taskCommand(rest);
+                return 0;
+            case "commit":
+                commitCommand(rest);
+                return 0;
+            case "branch":
+                branchCommand(rest);
+                return 0;
+            case "job":
+                await jobCommand(rest);
+                return 0;
+            case "schedule":
+                scheduleCommand(rest);
+                return 0;
+            case "inbox":
+                inboxCommand(rest);
+                return 0;
+            case "sync":
+                return syncCommand(rest);
+            case "resources":
+                resourcesCommand(rest);
+                return 0;
+            case "fleet":
+                await fleetCommand(rest);
+                return 0;
+            case "pick":
+                return await pickCommand(rest);
+            case "exec":
+                return await execCommand(rest);
+            case "remote":
+                return await remoteCommand(rest);
+            case "session":
+                sessionCommand(rest);
+                return 0;
+            case undefined:
+            case "help":
+            case "--help":
+            case "-h":
+                out(USAGE);
+                return command === undefined ? 2 : 0;
+            default:
+                warn(`mate: unknown command "${command}"`);
+                warn(USAGE);
+                return 2;
+        }
+    } catch (error) {
+        if (error instanceof MateError) {
+            warn(`mate: ${error.message}`);
+            return 1;
+        }
+        throw error;
+    }
+}
