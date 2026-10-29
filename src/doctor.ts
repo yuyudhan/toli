@@ -3,6 +3,7 @@ import { hasMachine, loadMachine } from "./config.ts";
 import { forgeReadiness, projectForge } from "./forge.ts";
 import { bitbucketCredentials } from "./forge-bitbucket.ts";
 import { isGitRepo } from "./git.ts";
+import { memoryCheck } from "./memory.ts";
 import { paths } from "./paths.ts";
 import { fleetStatus } from "./pick.ts";
 import { type Forge, loadProjects } from "./projects.ts";
@@ -106,6 +107,7 @@ export async function runChecks(): Promise<Check[]> {
             ? { level: "ok", name: "no-mistakes", detail: noMistakes }
             : { level: "warn", name: "no-mistakes", detail: "not found (needed only for branch/PR gating)" },
     );
+    checks.push({ name: "memory", ...memoryCheck() });
 
     if (!hasMachine()) {
         checks.push({ level: "fail", name: "machine", detail: "config/machine.json missing: run bin/toli init" });

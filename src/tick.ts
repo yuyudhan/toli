@@ -13,6 +13,7 @@ import {
     STALE_RUN_MS,
 } from "./jobs.ts";
 import { paths } from "./paths.ts";
+import { weeklyPruneReport } from "./prune.ts";
 import { registerRun, removeRun } from "./resources.ts";
 import { liveSession } from "./session.ts";
 import { now, out, runCombined, ToliError } from "./util.ts";
@@ -92,6 +93,12 @@ function failStaleRuns(): string[] {
 
 export async function tick(): Promise<void> {
     const machine = loadMachine();
+    try {
+        const report = weeklyPruneReport(machine);
+        if (report) log(report);
+    } catch (error) {
+        log(`prune report failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const outbox = deliverOutbox(machine);
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
     for (const error of outbox.errors) log(`outbox: pending ${error}`);

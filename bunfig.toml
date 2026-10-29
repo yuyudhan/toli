@@ -5,5 +5,7 @@
 # floor the weakest in-process file actually reaches (src/projects.ts, ~10.5% of lines; several files
 # have 0% of functions, so functions is pinned to 0; leaving it out makes Bun reuse the lines value).
 # Raise both as in-process tests are added.
+# Discover tests only in tests/: projects/ holds full clones whose own test files must never run here.
+root = "tests"
 coveragePathIgnorePatterns = ["tests/**"]
 coverageThreshold = { lines = 0.1, functions = 0.0 }

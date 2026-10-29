@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "./args.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
-import { loadMachine, otherFleetMachines, sshArgs } from "./config.ts";
+import { loadMachine, otherFleetMachines, remoteToliCommand, sshArgs } from "./config.ts";
 import { isGitRepo, type RepoStatus, repoStatus } from "./git.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
 import { type JobResult, listResults, loadJobState } from "./jobs.ts";
@@ -10,7 +10,7 @@ import { paths } from "./paths.ts";
 import { fleetStatus } from "./pick.ts";
 import { loadProjects, type Mode } from "./projects.ts";
 import { type FleetEntry as AvailabilityEntry, availabilityLine } from "./resources.ts";
-import { now, out, printJson, run, shellQuote, ToliError } from "./util.ts";
+import { now, out, printJson, run, ToliError } from "./util.ts";
 
 export type ProjectDigest = {
     name: string;
@@ -98,7 +98,7 @@ export function buildDigest(): Digest {
 
 function fleetDigests(): FleetEntry[] {
     return otherFleetMachines().map((machine): FleetEntry => {
-        const result = run([...sshArgs(machine.ssh, 15), `cd ${shellQuote(machine.root)} && bin/toli digest --json`], {
+        const result = run([...sshArgs(machine.ssh, 15), remoteToliCommand(machine.root, "digest --json")], {
             timeoutMs: 90_000,
         });
         if (result.code !== 0) {

@@ -5,8 +5,10 @@ import { doctorCommand } from "./doctor.ts";
 import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge.ts";
 import { inboxCommand } from "./inbox.ts";
+import { memoryCommand } from "./memory.ts";
 import { fleetCommand, pickCommand } from "./pick.ts";
 import { projectCommand } from "./projects.ts";
+import { pruneCommand } from "./prune.ts";
 import { resourcesCommand } from "./resources.ts";
 import { scheduleCommand } from "./schedule.ts";
 import { sessionCommand } from "./session.ts";
@@ -40,6 +42,8 @@ const USAGE = `usage: bin/toli <command> [args]
   job results [--unseen] [--json] | ack
   schedule install|uninstall|status
   inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack
+  memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
+  prune [--apply] [--json]
   sync [--all]
   resources [--json]
   fleet status [--json]
@@ -90,6 +94,12 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "inbox":
                 inboxCommand(rest);
+                return 0;
+            case "memory":
+                memoryCommand(rest);
+                return 0;
+            case "prune":
+                pruneCommand(rest);
                 return 0;
             case "sync":
                 return syncCommand(rest);

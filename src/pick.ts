@@ -1,8 +1,8 @@
 import { Args } from "./args.ts";
-import { loadFleet, sshArgs } from "./config.ts";
+import { loadFleet, remoteToliCommand, sshArgs } from "./config.ts";
 import { loadProjects } from "./projects.ts";
 import { availabilityLine, type FleetEntry, localResources, type Resources } from "./resources.ts";
-import { out, printJson, runAsync, shellQuote, ToliError } from "./util.ts";
+import { out, printJson, runAsync, ToliError } from "./util.ts";
 
 export type Candidate = { machine: string; local: boolean; hasClone: boolean; score: number };
 
@@ -84,7 +84,7 @@ async function probe(machine: { name: string; ssh: string; root: string }): Prom
         resources: null,
     });
     const result = await runAsync(
-        [...sshArgs(machine.ssh, PROBE_CONNECT_SECONDS), `cd ${shellQuote(machine.root)} && bin/toli resources --json`],
+        [...sshArgs(machine.ssh, PROBE_CONNECT_SECONDS), remoteToliCommand(machine.root, "resources --json")],
         {
             timeoutMs: PROBE_CAP_MS,
         },

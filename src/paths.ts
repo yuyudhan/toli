@@ -15,7 +15,12 @@ export const paths = {
     projects: () => join(repoRoot(), "data", "projects.json"),
     backlog: () => join(repoRoot(), "data", "backlog.json"),
     projectDir: (name: string) => join(repoRoot(), "projects", name),
+    malik: () => join(repoRoot(), "data", "malik.md"),
+    learnings: () => join(repoRoot(), "data", "learnings.md"),
+    notesDir: () => join(repoRoot(), "data", "notes"),
     notes: (project: string) => join(repoRoot(), "data", "notes", `${project}.md`),
+    /** Cold storage for archived memory entries and old tasks; never loaded into a session. */
+    archive: (file: string) => join(repoRoot(), "data", "archive", file),
     reportsDir: () => join(repoRoot(), "data", "reports"),
     jobResultsDir: (name?: string) =>
         name === undefined ? join(repoRoot(), "data", "jobs") : join(repoRoot(), "data", "jobs", name),
@@ -24,6 +29,7 @@ export const paths = {
     session: () => join(repoRoot(), "state", "session.json"),
     jobsState: () => join(repoRoot(), "state", "jobs.json"),
     acks: () => join(repoRoot(), "state", "acks.json"),
+    pruneState: () => join(repoRoot(), "state", "prune.json"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
     runsDir: () => join(repoRoot(), "state", "runs"),
     runRecord: (runId: string) => join(repoRoot(), "state", "runs", `${runId}.json`),
