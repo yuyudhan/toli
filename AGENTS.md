@@ -124,13 +124,13 @@ and runs the prompt there. Thresholds live in `config/machine.json` `capacity` (
 
 ## 9. Commands
 
-| Command | Skill |
-|---|---|
-| `/bearings` | `toli-bearings` |
-| `/ahoy` | `toli-ahoy` |
-| `/stow` | `toli-stow` |
-| `/afk` | `toli-afk` |
-| `/quiet` | `toli-quiet` |
+| Command                         | Skill           |
+| ------------------------------- | --------------- |
+| `/bearings`                     | `toli-bearings` |
+| `/ahoy`                         | `toli-ahoy`     |
+| `/stow`                         | `toli-stow`     |
+| `/afk`                          | `toli-afk`      |
+| `/quiet`                        | `toli-quiet`    |
 | `/add-project`, `/drop-project` | `toli-projects` |
-| `/schedule` | `toli-schedule` |
-| `/sync-toli` | `toli-sync` |
+| `/schedule`                     | `toli-schedule` |
+| `/sync-toli`                    | `toli-sync`     |

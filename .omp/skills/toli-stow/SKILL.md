@@ -7,11 +7,11 @@ description: Save what this session learned so future sessions start smarter - d
 
 ## Where things go
 
-| What | File |
-|---|---|
-| Durable lessons about how Sardar should operate (a routing that worked, a pitfall in the CLI) | `data/learnings.md` |
-| Malik's preferences and standing decisions (tone, delivery choices, recurring answers) | `data/malik.md` |
-| Facts about one project (commands, stack, gotchas, flaky tests, paths) | `data/notes/<project>.md` |
+| What                                                                                          | File                      |
+| --------------------------------------------------------------------------------------------- | ------------------------- |
+| Durable lessons about how Sardar should operate (a routing that worked, a pitfall in the CLI) | `data/learnings.md`       |
+| Malik's preferences and standing decisions (tone, delivery choices, recurring answers)        | `data/malik.md`           |
+| Facts about one project (commands, stack, gotchas, flaky tests, paths)                        | `data/notes/<project>.md` |
 
 All three are private and gitignored. Never write learnings into tracked files (skills, AGENTS.md, README) unless
 Malik asks for a change to Sardar itself.
@@ -23,12 +23,12 @@ Malik asks for a change to Sardar itself.
 
 Keep these headings exact in `data/notes/<project>.md`; skills look for them by name:
 
-| Heading | Holds | Read by |
-|---|---|---|
-| `## Local stack` | directory, start/stop/restart/migrate/logs commands, health URLs | `toli-stacks` |
-| `## URLs` | local and staging URLs (staging is read-only) | briefs, `toli-scout` |
-| `## Proof` | screenshot widths and other required evidence | briefs |
-| `## Release` | integration branch, release notes file, tag format, smoke checks, issue transitions | `toli-release` |
+| Heading          | Holds                                                                               | Read by              |
+| ---------------- | ----------------------------------------------------------------------------------- | -------------------- |
+| `## Local stack` | directory, start/stop/restart/migrate/logs commands, health URLs                    | `toli-stacks`        |
+| `## URLs`        | local and staging URLs (staging is read-only)                                       | briefs, `toli-scout` |
+| `## Proof`       | screenshot widths and other required evidence                                       | briefs               |
+| `## Release`     | integration branch, release notes file, tag format, smoke checks, issue transitions | `toli-release`       |
 
 Record a stack command, URL, or release step only after Malik stated it or a run proved it. Never store passwords,
 tokens, or OTPs in notes; point to where Malik keeps them instead.

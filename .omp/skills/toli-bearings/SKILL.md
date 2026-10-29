@@ -56,5 +56,6 @@ When Malik passes `lavish`, or the digest is too large for chat (many projects o
         bin/toli job ack
         bin/toli inbox ack
 
-  Only acknowledge what was actually shown to him.
+    Only acknowledge what was actually shown to him.
+
 - Never start new work from the overview alone; wait for Malik's word.
