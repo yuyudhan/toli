@@ -1,0 +1,7 @@
+# Secret scanning for yuyudhan-mate: gitleaks' default rule set, extended in place.
+# Used by .githooks/pre-commit (staged), .githooks/pre-push (pushed range), and CI (full history).
+# Add an allowlist here only for a proven false positive, with a comment saying why.
+title = "yuyudhan-mate"
+
+[extend]
+useDefault = true

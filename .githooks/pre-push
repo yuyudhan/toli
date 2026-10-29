@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# pre-push: the full gate. `bun run check` (tsc, Biome, guards, tests) plus a gitleaks scan of the
+# commits being pushed. The gate checks the working tree, so push from a clean checkout of what you push.
+#
+# git feeds one line per ref: <local ref> <local sha> <remote ref> <remote sha>. Per ref:
+#   - deletion (local sha all zeros): no commits to check
+#   - new ref (remote sha all zeros): count/scan `<local sha> --not --remotes=<remote>`
+#   - existing ref: count/scan exactly `<remote sha>..<local sha>`; never `--not --remotes`, which
+#     excludes commits reachable from ANY remote ref and can skip a real push after a branch merge
+# The gate is skipped only when at least one ref line was read, every count succeeded, and the total
+# is zero (e.g. a tag on an already-pushed commit). Zero ref lines means the input is unknown, not
+# empty, so the gate runs with a full-history secrets scan; so does any count that fails.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+remote="${1:-origin}"
+
+for tool in gitleaks bun; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "pre-push: $tool not found on PATH; install it before pushing" >&2
+        exit 1
+    fi
+done
+
+zero="$(git hash-object --stdin </dev/null | tr '0-9a-f' '0')"
+refs=0
+commits=0
+unknown=0
+scans=()
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [[ -n "${local_ref:-}" ]] || continue
+    refs=$((refs + 1))
+    [[ "$local_sha" != "$zero" ]] || continue
+    if [[ "$remote_sha" == "$zero" ]]; then
+        log_opts="$local_sha --not --remotes=$remote"
+        count="$(git rev-list --count "$local_sha" --not --remotes="$remote")" || count=""
+    else
+        log_opts="$remote_sha..$local_sha"
+        count="$(git rev-list --count "$remote_sha..$local_sha" 2>/dev/null)" || count=""
+    fi
+    if [[ -z "$count" ]]; then
+        echo "pre-push: cannot count commits for $local_ref -> $remote_ref; treating as unknown"
+        unknown=1
+    elif ((count > 0)); then
+        commits=$((commits + count))
+        scans+=("$log_opts")
+    fi
+done
+
+if ((refs > 0 && unknown == 0 && commits == 0)); then
+    echo "pre-push: $refs ref(s), no new commits; skipping the gate"
+    exit 0
+fi
+
+if ((refs == 0 || unknown == 1)); then
+    echo "pre-push: pushed range unknown; secrets scan over full history"
+    gitleaks git --config .gitleaks.toml --redact --no-banner --log-level warn
+else
+    echo "pre-push: secrets scan over $commits pushed commit(s)"
+    for log_opts in "${scans[@]}"; do
+        gitleaks git --config .gitleaks.toml --redact --no-banner --log-level warn --log-opts="$log_opts"
+    done
+fi
+
+echo "pre-push: bun run check"
+bun run check

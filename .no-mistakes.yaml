@@ -1,0 +1,12 @@
+# Per-repo no-mistakes settings for yuyudhan-mate.
+#
+# The gate agent is omp (global config: agent: acp:omp with an `omp acp`
+# override). That override makes `disable_project_settings: true` fail closed,
+# so it is deliberately absent. Gate agents instead stop at AGENTS.md
+# section 0, which tells any agent running with NO_MISTAKES_GATE set to ignore
+# the mate role.
+# Gate worktrees start without node_modules, so lint installs the locked
+# devDependencies (typescript, @types/bun, @biomejs/biome) first; tests need none.
+commands:
+    lint: "bun install --frozen-lockfile && bun run lint"
+    test: "bun test"

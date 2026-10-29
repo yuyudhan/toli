@@ -1,0 +1,7 @@
+# Code files over the 400-line limit when the limit was introduced, each with its own ceiling.
+# An entry is debt with a ceiling, never permission:
+#   - the file fails the file-size guard if it grows past its ceiling;
+#   - it also fails once it drops to 400 lines or fewer, so delete its line then;
+#   - files not listed here get the real 400-line limit.
+# Format: <ceiling> <path>
+431 src/jobs.ts

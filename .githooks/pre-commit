@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# pre-commit: fast checks on what is being committed. Enable with `bun run hooks`.
+#   1. Secrets scan of the staged changes (first: a leaked key cannot be undone by a later commit).
+#   2. Biome formats staged .ts/.json/.jsonc files and re-stages them.
+#      Partial staging caveat: formatting rewrites the whole working-tree file and `git add` re-stages
+#      all of it, so unstaged hunks in a staged file get committed too. Stash them first
+#      (`git stash push --keep-index`) if you need a partial commit.
+#   3. Guards over the staged files only (MATE_GUARD_HOOK=1).
+# The test suite runs in pre-push, not here; commits stay fast on purpose.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+for tool in gitleaks bun; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "pre-commit: $tool not found on PATH; install it (brew install $tool) before committing" >&2
+        exit 1
+    fi
+done
+
+echo "pre-commit: secrets scan (staged)"
+gitleaks git --staged --config .gitleaks.toml --redact --no-banner --log-level warn
+
+biome="$root/node_modules/.bin/biome"
+if [[ ! -x "$biome" ]]; then
+    echo "pre-commit: $biome missing; run \`bun install\`" >&2
+    exit 1
+fi
+
+files=()
+while IFS= read -r -d '' file; do
+    case "$file" in
+        *.ts | *.json | *.jsonc) [[ -f "$file" ]] && files+=("$file") ;;
+    esac
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+
+if ((${#files[@]} > 0)); then
+    echo "pre-commit: formatting ${#files[@]} staged file(s)"
+    "$biome" check --write --linter-enabled=false --no-errors-on-unmatched --files-ignore-unknown=true -- "${files[@]}"
+    git add -- "${files[@]}"
+fi
+
+echo "pre-commit: guards (staged)"
+MATE_GUARD_HOOK=1 bun scripts/guard.ts
