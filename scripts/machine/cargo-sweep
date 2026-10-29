@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Sweep stale Rust build output in the toli project clones and the ~/.treehouse worktrees.
+# Removes target/ artifacts not touched for SWEEP_DAYS days (cargo-sweep keeps anything a recent build used), so
+# active work stays warm while old output goes. Below LOW_DISK_GB free on the data volume it sweeps anything older
+# than 1 day instead. Skips any target written in the last ACTIVE_MINUTES: APFS-cloned worktree targets keep their old
+# timestamps, so sweeping them by age deleted files an in-progress build still needed (2026-10-24).
+# Run hourly by launchd (com.yuyudhan.toli.cargo-sweep, installed by scripts/machine/install-launchd).
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SWEEP_DAYS="${SWEEP_DAYS:-2}"
+LOW_DISK_GB="${LOW_DISK_GB:-60}"
+ACTIVE_MINUTES="${ACTIVE_MINUTES:-120}"
+PROJECTS="${TOLI_PROJECTS_DIR:-$root/projects}"
+WORKTREES="${TOLI_WORKTREES_DIR:-$HOME/.treehouse}"
+SWEEP="${CARGO_SWEEP:-$HOME/.cargo/bin/cargo-sweep}"
+# cargo-sweep shells out to `cargo metadata`; launchd's PATH has no ~/.cargo/bin.
+export PATH="$HOME/.cargo/bin:$PATH"
+
+free_gb() {
+    /bin/df -g /System/Volumes/Data | awk 'NR == 2 { print $4 }'
+}
+
+if [ "$(free_gb)" -lt "$LOW_DISK_GB" ]; then
+    SWEEP_DAYS=1
+fi
+
+echo "== $(date '+%Y-%m-%d %H:%M:%S') sweep start (older than ${SWEEP_DAYS} days)"
+df -h /System/Volumes/Data | tail -1
+
+for manifest in "$PROJECTS"/*/Cargo.toml "$PROJECTS"/*/apps/*/Cargo.toml \
+    "$WORKTREES"/*/Cargo.toml "$WORKTREES"/*/apps/*/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    workspace="$(dirname "$manifest")"
+    [ -d "$workspace/target" ] || continue
+    if [ -n "$(find "$workspace/target" -maxdepth 3 -mmin "-$ACTIVE_MINUTES" -print -quit 2>/dev/null)" ]; then
+        echo "-- $workspace (skipped: built in the last ${ACTIVE_MINUTES} min)"
+        continue
+    fi
+    echo "-- $workspace"
+    "$SWEEP" sweep --time "$SWEEP_DAYS" "$workspace" || echo "   sweep failed for $workspace"
+done
+
+df -h /System/Volumes/Data | tail -1

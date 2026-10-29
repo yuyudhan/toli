@@ -51,8 +51,8 @@ registers. `bin/toli remote auto --project` runs it on the target machine before
 
 ## Importing existing clones
 
-About 100 existing clones will be migrated from `~/code/firstmate/projects/` into `projects/` and registered with
-`bin/toli project import` (check `bin/toli project import --help` for its arguments). After an import, seed missing
+Clones copied or moved into `projects/` by hand are registered with `bin/toli project import` (no URL needed; it reads
+`origin`). A clone that had a no-mistakes gate needs `no-mistakes init` again in its new place. After an import, seed missing
 notes files and report no-mistakes readiness the same way as for `/add-project`; batch the readiness list into one
 message (or a lavish table) instead of asking per project.
 

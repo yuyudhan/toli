@@ -104,9 +104,17 @@ Optional per-machine capacity thresholds go in `config/machine.json` (defaults s
 
     "capacity": {"maxRuns": 2, "maxLoadPerCpu": 0.8, "minMemAvailableMB": 2048, "minDiskFreeGB": 5}
 
-Note: `~/.omp/agent` is a symlink into the `yuyudhan-dotfiles` project clone. If that clone moves (for example into
-`projects/yuyudhan-dotfiles` during the migration below), re-point the symlink, or omp loses its global config and
-skills.
+Note: `~/.omp/agent` (and other dotfile links) point into the `projects/yuyudhan-dotfiles` clone. If that clone moves,
+re-point the links, or omp loses its global config and skills.
+
+### Machine helpers (macOS)
+
+`scripts/machine/` holds per-machine maintenance that runs from launchd as `com.yuyudhan.toli.<helper>` (logs in
+`~/Library/Logs/toli-<helper>.log`). Install the ones a machine needs; re-running is safe:
+
+    scripts/machine/install-launchd cargo-sweep target-reaper    # disk: hourly cargo-sweep, low-disk target/ reaper
+    scripts/machine/install-launchd netbird-watch                # reconnect NetBird (Keychain item fm-netbird-setup-key)
+    TOLI_AUTH_BROKER_BIND=<tailnet-ip>:<port> scripts/machine/install-launchd omp-auth-broker
 
 ## Coordinator and workers
 
@@ -140,8 +148,7 @@ In the omp session: `/add-project <name> <git-url>`, or directly:
 This clones into `projects/<name>`, records it, and reports whether the clone is ready for no-mistakes. Sardar then
 writes a short notes file (`data/notes/<name>.md`: stack, commands, gotchas) that is fed into every jawan brief.
 
-About 100 existing clones will be migrated from `~/code/firstmate/projects/` into `projects/` and registered with
-`bin/toli project import`.
+To register clones that are already in `projects/` (copied or moved in by hand), run `bin/toli project import`.
 
 Other project commands: `bin/toli project list`, `bin/toli project path <name>`,
 `bin/toli project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none]
