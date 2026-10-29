@@ -1,0 +1,96 @@
+#!/bin/bash
+# Keeps NetBird connected unattended. Run every minute by launchd (com.yuyudhan.toli.netbird-watch, installed by
+# scripts/machine/install-launchd).
+#
+# Two ways in, both kept on purpose (Malik, 2026-10-21):
+#   1. Profile `setup-key` (preferred): registered with a NetBird setup key, so its login never
+#      expires and reconnecting needs no browser. The key lives only in the macOS Keychain
+#      (service fm-netbird-setup-key); it is written to a 0600 temp file for one `netbird up`
+#      and deleted straight after.
+#   2. Profile `default` (fallback): Malik's Google SSO login. Used only if the setup-key
+#      path fails; its sign-in page opens in the Chrome profile signed in as ankur@signzy.com,
+#      where the existing Google session usually completes it. At most one SSO attempt per
+#      10 minutes, so the browser isn't flooded and a pending login isn't cancelled.
+set -u
+
+PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+management_url="https://netbird.signzy.io:443"
+key_profile="setup-key"
+sso_profile="default"
+key_service="fm-netbird-setup-key"
+profile_email="ankur@signzy.com"
+log="$HOME/Library/Logs/toli-netbird-watch.log"
+lock="/tmp/toli-netbird-watch.lock"
+stamp="$HOME/.cache/toli-netbird-watch.last-sso"
+mkdir -p "$(dirname "$stamp")"
+
+# Signzy's NetBird login (Dex) offers "Continue with Email" and "Continue with Google". Adding
+# connector_id sends the login straight to Google, so no click is needed.
+google_connector="google-d71q2e6shvtg00fdj5b0"
+note() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$log"; }
+connected() { netbird status 2>&1 | grep -q '^Management: Connected'; }
+
+mkdir "$lock" 2>/dev/null || exit 0
+out=$(mktemp -t toli-netbird-up)
+keyfile=""
+trap 'rm -f "$out" ${keyfile:+"$keyfile"}; rmdir "$lock"' EXIT
+
+connected && exit 0
+
+# 1. Setup-key profile: no expiry, no browser.
+if security find-generic-password -s "$key_service" >/dev/null 2>&1; then
+    note "management not connected; reconnecting with profile $key_profile"
+    netbird profile select "$key_profile" >/dev/null 2>&1
+    keyfile=$(mktemp -t fm-netbird-key)
+    chmod 600 "$keyfile"
+    security find-generic-password -s "$key_service" -w >"$keyfile"
+    if timeout 120 netbird up --profile "$key_profile" -m "$management_url" --setup-key-file "$keyfile" >"$out" 2>&1 &&
+        connected; then
+        rm -f "$keyfile"
+        keyfile=""
+        note "connected with profile $key_profile"
+        exit 0
+    fi
+    rm -f "$keyfile"
+    keyfile=""
+    note "profile $key_profile failed: $(tail -n 2 "$out" | tr '\n' ' '); falling back to $sso_profile (SSO)"
+fi
+
+# 2. SSO fallback, throttled.
+now=$(date +%s)
+last=$(cat "$stamp" 2>/dev/null || echo 0)
+if [ $((now - last)) -lt 600 ]; then
+    exit 0
+fi
+printf '%s\n' "$now" >"$stamp"
+netbird profile select "$sso_profile" >/dev/null 2>&1
+note "running netbird up on profile $sso_profile with the SSO page in Chrome ($profile_email)"
+
+# --no-browser makes netbird print the SSO URL instead of opening the default browser's
+# last-used profile; open it ourselves in the right profile while netbird waits for the login.
+timeout 300 netbird up --profile "$sso_profile" --no-browser >"$out" 2>&1 &
+up_pid=$!
+opened=0
+while kill -0 "$up_pid" 2>/dev/null; do
+    if [ "$opened" -eq 0 ]; then
+        url=$(grep -oE 'https://[^[:space:]]+' "$out" | head -n 1)
+        if [ -n "$url" ]; then
+            case "$url" in
+            */oauth2/auth\?*connector_id=*) ;;
+            */oauth2/auth\?*) url="$url&connector_id=$google_connector" ;;
+            esac
+            # netbird asks for prompt=login, which makes Google ask for the account again; without
+            # it the existing Google session in the Work profile completes the sign-in by itself.
+            url=$(printf '%s' "$url" | sed -E 's/([?&])prompt=login&?/\1/; s/[?&]$//')
+            open -na "Google Chrome" --args --profile-email="$profile_email" "$url"
+            note "opened SSO login in Chrome ($profile_email)"
+            opened=1
+        fi
+    fi
+    sleep 2
+done
+if wait "$up_pid"; then
+    note "netbird up ($sso_profile): $(tail -n 1 "$out")"
+else
+    note "netbird up ($sso_profile) failed (exit $?): $(tail -n 2 "$out" | tr '\n' ' ')"
+fi
