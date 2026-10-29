@@ -18,6 +18,10 @@ export type ProjectDigest = {
     path: string;
     cloned: boolean;
     status: RepoStatus | null;
+    /** The configured fixed working branch, if any. */
+    branch: string | null;
+    /** The clone is not on `branch` (always false when no branch is configured). */
+    branchMismatch: boolean;
     error?: string;
 };
 
@@ -55,15 +59,18 @@ export function buildDigest(): Digest {
     const machine = loadMachine();
     const projects = loadProjects().map((project): ProjectDigest => {
         const dir = paths.projectDir(project.name);
-        const base = { name: project.name, mode: project.mode, path: dir };
-        if (!isGitRepo(dir)) return { ...base, cloned: false, status: null };
+        const branch = project.branch ?? null;
+        const base = { name: project.name, mode: project.mode, path: dir, branch };
+        if (!isGitRepo(dir)) return { ...base, cloned: false, status: null, branchMismatch: false };
         try {
-            return { ...base, cloned: true, status: repoStatus(dir) };
+            const status = repoStatus(dir);
+            return { ...base, cloned: true, status, branchMismatch: branch !== null && status.branch !== branch };
         } catch (error) {
             return {
                 ...base,
                 cloned: true,
                 status: null,
+                branchMismatch: false,
                 error: error instanceof Error ? error.message : String(error),
             };
         }
@@ -118,7 +125,8 @@ function projectLine(project: ProjectDigest): string {
         status.upstream === null
             ? "no upstream"
             : `ahead ${status.ahead}, behind ${status.behind} of ${status.upstream}`;
-    return `  ${project.name}: ${status.branch}, ${status.dirty ? "dirty" : "clean"}, ${sync} (${project.mode})`;
+    const mismatch = project.branchMismatch ? `, BRANCH MISMATCH: working branch is ${project.branch}` : "";
+    return `  ${project.name}: ${status.branch}, ${status.dirty ? "dirty" : "clean"}, ${sync} (${project.mode})${mismatch}`;
 }
 
 function taskLine(task: Task): string {

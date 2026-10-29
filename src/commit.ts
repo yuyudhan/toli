@@ -1,6 +1,6 @@
 import { Args } from "./args.ts";
-import { git, gitOk } from "./git.ts";
-import { projectCloneDir } from "./projects.ts";
+import { currentBranch, git, gitOk } from "./git.ts";
+import { findProject, projectCloneDir } from "./projects.ts";
 import { MateError, out } from "./util.ts";
 
 // Word boundaries keep human sign-offs such as "<dev@gmail.com>" (contains "ai") intact.
@@ -13,10 +13,25 @@ export function stripAiTrailers(message: string): string {
     return lines.join("\n");
 }
 
+/** Refuse when the project has a fixed working branch and the clone is on another one (or detached). */
+function requireWorkingBranch(name: string, dir: string): void {
+    const expected = findProject(name).branch;
+    if (!expected) return;
+    const actual = currentBranch(dir);
+    if (actual === expected) return;
+    throw new MateError(
+        `refusing: projects/${name} is on ${actual === null ? "a detached HEAD" : `"${actual}"`}, but its working branch is "${expected}". ` +
+            `If this work belongs on "${expected}", switch first (git -C ${dir} switch ${expected}, only with a clean tree); ` +
+            `otherwise ask Malik, and change the setting only on his word (bin/mate project set ${name} --branch <b>|none).`,
+    );
+}
+
 export function commitCommand(argv: string[]): void {
     const args = new Args(argv, { values: ["message"] });
     args.maxPositional(1);
-    const dir = projectCloneDir(args.pos(0, "project"));
+    const name = args.pos(0, "project");
+    const dir = projectCloneDir(name);
+    requireWorkingBranch(name, dir);
     const raw = args.str("message");
     if (raw === undefined) throw new MateError('commit needs -m "<message>"');
     const message = stripAiTrailers(raw);

@@ -3,6 +3,7 @@ import { branchCommand, commitCommand } from "./commit.ts";
 import { digestCommand } from "./digest.ts";
 import { doctorCommand } from "./doctor.ts";
 import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet.ts";
+import { forgeCommand, prCommand, pushCommand } from "./forge.ts";
 import { inboxCommand } from "./inbox.ts";
 import { fleetCommand, pickCommand } from "./pick.ts";
 import { projectCommand } from "./projects.ts";
@@ -19,7 +20,8 @@ const USAGE = `usage: bin/mate <command> [args]
   digest [--json] [--fleet]
   project add <name> <git-url> [--mode commit|pr|no-mistakes]
   project ensure <name> <git-url> [--mode commit|pr|no-mistakes]
-  project list [--json] | path <name> | set <name> --mode <m>
+  project list [--json] | path <name>
+  project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
   project drop <name> [--delete-clone] | import [--dir projects]
   task add <project> "<title>" [--shape ship|scout] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped]
@@ -27,6 +29,11 @@ const USAGE = `usage: bin/mate <command> [args]
   task hold <id> --question "..." | answer <id> "<answer>" | drop <id>
   commit <project> -m "<message>" -- <path>...
   branch <project> <branch>
+  forge <project> [--json]
+  push <project>
+  pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft]
+  pr status <project> [<id>] [--json] | list <project> [--json]
+  pr merge <project> <id> [--method merge|squash|rebase]
   job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
   job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | tick
   job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
@@ -65,6 +72,15 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "branch":
                 branchCommand(rest);
+                return 0;
+            case "forge":
+                forgeCommand(rest);
+                return 0;
+            case "push":
+                await pushCommand(rest);
+                return 0;
+            case "pr":
+                await prCommand(rest);
                 return 0;
             case "job":
                 await jobCommand(rest);

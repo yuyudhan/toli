@@ -28,12 +28,14 @@ export type RepoStatus = {
     behind: number | null;
 };
 
+/** The checked-out branch, or null on a detached HEAD. */
+export function currentBranch(dir: string): string | null {
+    const result = git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    return result.code === 0 ? result.stdout.trim() : null;
+}
+
 export function repoStatus(dir: string): RepoStatus {
-    const branchResult = git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-    const branch =
-        branchResult.code === 0
-            ? branchResult.stdout.trim()
-            : `(detached ${gitOk(dir, ["rev-parse", "--short", "HEAD"])})`;
+    const branch = currentBranch(dir) ?? `(detached ${gitOk(dir, ["rev-parse", "--short", "HEAD"])})`;
     const dirty = gitOk(dir, ["status", "--porcelain"]) !== "";
     const upstreamResult = git(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
     if (upstreamResult.code !== 0) return { branch, dirty, upstream: null, ahead: null, behind: null };

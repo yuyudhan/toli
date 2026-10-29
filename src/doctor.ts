@@ -1,9 +1,11 @@
 import { Args } from "./args.ts";
 import { hasMachine, loadMachine } from "./config.ts";
+import { forgeReadiness, projectForge } from "./forge.ts";
+import { bitbucketCredentials } from "./forge-bitbucket.ts";
 import { isGitRepo } from "./git.ts";
 import { paths } from "./paths.ts";
 import { fleetStatus } from "./pick.ts";
-import { loadProjects } from "./projects.ts";
+import { type Forge, loadProjects } from "./projects.ts";
 import { availabilityLine } from "./resources.ts";
 import { scheduleStatus } from "./schedule.ts";
 import { out, printJson, run } from "./util.ts";
@@ -32,20 +34,72 @@ function toolCheck(name: string, cmd: string[], missing: CheckLevel): Check {
     return { level: "ok", name, detail: firstLine(result.stdout || result.stderr) };
 }
 
+function nameList(names: string[]): string {
+    return names.length <= 5 ? names.join(", ") : `${names.slice(0, 5).join(", ")} +${names.length - 5} more`;
+}
+
+/**
+ * Forge readiness per forge host the registered projects use: `gh auth status` / `glab auth status --hostname`,
+ * Bitbucket credentials present. GitHub (github.com) is always checked; unused gitlab/bitbucket only reported.
+ */
+function forgeChecks(): Check[] {
+    const used = new Map<string, { forge: Forge; host: string; projects: string[] }>();
+    const undetected: string[] = [];
+    for (const project of loadProjects()) {
+        try {
+            const target = projectForge(project);
+            const key = `${target.forge} ${target.host}`;
+            const entry = used.get(key) ?? { forge: target.forge, host: target.host, projects: [] };
+            entry.projects.push(project.name);
+            used.set(key, entry);
+        } catch {
+            undetected.push(project.name);
+        }
+    }
+    if (!used.has("github github.com"))
+        used.set("github github.com", { forge: "github", host: "github.com", projects: [] });
+    const checks: Check[] = [...used.values()].map(({ forge, host, projects }) => {
+        const readiness = forgeReadiness(forge, host);
+        const scope = projects.length === 0 ? "no registered projects" : `projects: ${nameList(projects)}`;
+        return {
+            level: readiness.ready ? "ok" : "warn",
+            name: `forge-${forge}`,
+            detail: `${readiness.detail} (${scope})`,
+        };
+    });
+    const forges = new Set([...used.values()].map((entry) => entry.forge));
+    if (!forges.has("gitlab")) {
+        const glab = Bun.which("glab", { PATH: process.env.PATH ?? "" });
+        checks.push({
+            level: "ok",
+            name: "forge-gitlab",
+            detail: `${glab ? `glab at ${glab}` : "glab not found"} (no registered gitlab projects)`,
+        });
+    }
+    if (!forges.has("bitbucket")) {
+        const credentials = bitbucketCredentials();
+        checks.push({
+            level: "ok",
+            name: "forge-bitbucket",
+            detail: `${credentials ? `credentials from ${credentials.source}` : "no credentials set"} (no registered bitbucket projects)`,
+        });
+    }
+    if (undetected.length > 0)
+        checks.push({
+            level: "warn",
+            name: "forge",
+            detail: `forge not detected for ${nameList(undetected)} (bin/mate forge <project>; set --forge)`,
+        });
+    return checks;
+}
+
 export async function runChecks(): Promise<Check[]> {
     const checks: Check[] = [
         { level: "ok", name: "bun", detail: `${Bun.version} (${process.execPath})` },
         toolCheck("omp", ["omp", "--version"], "fail"),
         toolCheck("git", ["git", "--version"], "fail"),
+        ...forgeChecks(),
     ];
-    const gh = run(["gh", "auth", "status"], { timeoutMs: 20_000 });
-    checks.push(
-        gh.code === 127
-            ? { level: "warn", name: "gh-auth", detail: "gh not found (needed only for PRs)" }
-            : gh.code === 0
-              ? { level: "ok", name: "gh-auth", detail: "authenticated" }
-              : { level: "warn", name: "gh-auth", detail: `not authenticated: ${firstLine(gh.stderr || gh.stdout)}` },
-    );
     const noMistakes = Bun.which("no-mistakes", { PATH: process.env.PATH ?? "" });
     checks.push(
         noMistakes

@@ -8,19 +8,38 @@ import { MateError, now, out, printJson, readJson, requireName, run, withLock, w
 export const MODES = ["commit", "pr", "no-mistakes"] as const;
 export type Mode = (typeof MODES)[number];
 
-/** A project cloned on this machine; `data/projects.json` lists only this machine's clones. */
-export type Project = { name: string; url: string; mode: Mode; addedAt: string };
+export const FORGES = ["github", "gitlab", "bitbucket"] as const;
+export type Forge = (typeof FORGES)[number];
+
+/**
+ * A project cloned on this machine; `data/projects.json` lists only this machine's clones.
+ * `branch`: the fixed working branch `mate commit` requires. `forge`/`forgeHost`: override origin-based detection.
+ */
+export type Project = {
+    name: string;
+    url: string;
+    mode: Mode;
+    addedAt: string;
+    branch?: string;
+    forge?: Forge;
+    forgeHost?: string;
+};
 
 type ProjectsFile = { projects: Project[] };
 
 /** Registered projects. Fields from older files (e.g. the removed `owner`) are dropped here, so the next write omits them. */
 export function loadProjects(): Project[] {
-    return readJson<ProjectsFile>(paths.projects(), { projects: [] }).projects.map(({ name, url, mode, addedAt }) => ({
-        name,
-        url,
-        mode,
-        addedAt,
-    }));
+    return readJson<ProjectsFile>(paths.projects(), { projects: [] }).projects.map(
+        ({ name, url, mode, addedAt, branch, forge, forgeHost }) => ({
+            name,
+            url,
+            mode,
+            addedAt,
+            ...(branch ? { branch } : {}),
+            ...(forge ? { forge } : {}),
+            ...(forgeHost ? { forgeHost } : {}),
+        }),
+    );
 }
 
 function updateProjects<T>(fn: (projects: Project[]) => T): T {
@@ -42,6 +61,33 @@ function parseMode(value: string | undefined): Mode | undefined {
     if (value === undefined) return undefined;
     if (!(MODES as readonly string[]).includes(value)) throw new MateError(`--mode must be one of ${MODES.join(", ")}`);
     return value as Mode;
+}
+
+/** `--forge`: one of FORGES, or `none` (null) to clear the override. */
+function parseForge(value: string | undefined): Forge | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === "none") return null;
+    if (!(FORGES as readonly string[]).includes(value))
+        throw new MateError(`--forge must be one of ${FORGES.join(", ")}, or none`);
+    return value as Forge;
+}
+
+/** `--branch`: a valid branch name, or `none` (null) to clear it. */
+function parseBranch(value: string | undefined): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === "none") return null;
+    if (run(["git", "check-ref-format", "--branch", value]).code !== 0)
+        throw new MateError(`--branch "${value}" is not a valid branch name`);
+    return value;
+}
+
+/** `--forge-host`: a bare host name (no scheme, path or user), or `none` (null) to clear it. */
+function parseForgeHost(value: string | undefined): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === "none") return null;
+    if (!/^[A-Za-z0-9.-]+(:\d+)?$/.test(value))
+        throw new MateError(`--forge-host must be a host name such as gitlab.example.com, got "${value}"`);
+    return value.toLowerCase();
 }
 
 /** The local clone of a registered project. */
@@ -129,6 +175,7 @@ function list(argv: string[]): void {
         printJson(
             projects.map((entry) => ({
                 ...entry,
+                branch: entry.branch ?? null,
                 path: paths.projectDir(entry.name),
                 cloned: isGitRepo(paths.projectDir(entry.name)),
             })),
@@ -141,8 +188,17 @@ function list(argv: string[]): void {
     }
     for (const entry of projects) {
         const clone = isGitRepo(paths.projectDir(entry.name)) ? "cloned" : "not cloned";
-        out(`${entry.name}\tmode=${entry.mode}\t${clone}\t${entry.url}`);
+        out([entry.name, `mode=${entry.mode}`, ...overrideLabels(entry), clone, entry.url].join("\t"));
     }
+}
+
+/** `branch=`, `forge=`, `forge-host=` labels for the fields that are set. */
+function overrideLabels(project: Project): string[] {
+    return [
+        ...(project.branch ? [`branch=${project.branch}`] : []),
+        ...(project.forge ? [`forge=${project.forge}`] : []),
+        ...(project.forgeHost ? [`forge-host=${project.forgeHost}`] : []),
+    ];
 }
 
 function path(argv: string[]): void {
@@ -153,18 +209,30 @@ function path(argv: string[]): void {
 }
 
 function set(argv: string[]): void {
-    const args = new Args(argv, { values: ["mode"] });
+    const args = new Args(argv, { values: ["mode", "branch", "forge", "forge-host"] });
     args.maxPositional(1);
     const name = args.pos(0, "name");
     const mode = parseMode(args.str("mode"));
-    if (mode === undefined) throw new MateError("nothing to set: pass --mode <m>");
+    const branch = parseBranch(args.str("branch"));
+    const forge = parseForge(args.str("forge"));
+    const forgeHost = parseForgeHost(args.str("forge-host"));
+    if (mode === undefined && branch === undefined && forge === undefined && forgeHost === undefined)
+        throw new MateError(
+            "nothing to set: pass --mode <m>, --branch <b>|none, --forge <f>|none or --forge-host <h>|none",
+        );
     const updated = updateProjects((projects) => {
         const project = projects.find((entry) => entry.name === name);
         if (!project) throw new MateError(`unknown project "${name}"`);
-        project.mode = mode;
+        if (mode !== undefined) project.mode = mode;
+        if (branch === null) delete project.branch;
+        else if (branch !== undefined) project.branch = branch;
+        if (forge === null) delete project.forge;
+        else if (forge !== undefined) project.forge = forge;
+        if (forgeHost === null) delete project.forgeHost;
+        else if (forgeHost !== undefined) project.forgeHost = forgeHost;
         return { ...project };
     });
-    out(`${updated.name}: mode=${updated.mode}`);
+    out([`${updated.name}: mode=${updated.mode}`, ...overrideLabels(updated)].join(" "));
 }
 
 function drop(argv: string[]): void {
