@@ -1,4 +1,4 @@
-import { MateError } from "./util.ts";
+import { ToliError } from "./util.ts";
 
 /** A parsed 5-field cron expression: minute hour day-of-month month day-of-week. */
 export type Cron = {
@@ -25,10 +25,10 @@ const FIELDS: readonly FieldSpec[] = [
 ];
 
 function parseNumber(text: string, spec: FieldSpec, expr: string): number {
-    if (!/^\d+$/.test(text)) throw new MateError(`cron "${expr}": bad ${spec.label} value "${text}"`);
+    if (!/^\d+$/.test(text)) throw new ToliError(`cron "${expr}": bad ${spec.label} value "${text}"`);
     const value = Number(text);
     if (value < spec.min || value > spec.max) {
-        throw new MateError(`cron "${expr}": ${spec.label} ${value} outside ${spec.min}-${spec.max}`);
+        throw new ToliError(`cron "${expr}": ${spec.label} ${value} outside ${spec.min}-${spec.max}`);
     }
     return value;
 }
@@ -39,10 +39,10 @@ function parseField(field: string, spec: FieldSpec, expr: string): ParsedField {
     const values = new Set<number>();
     let star = false;
     for (const part of field.split(",")) {
-        if (part === "") throw new MateError(`cron "${expr}": empty item in ${spec.label} field`);
+        if (part === "") throw new ToliError(`cron "${expr}": empty item in ${spec.label} field`);
         const [rangeText, stepText, extra] = part.split("/");
         if (extra !== undefined || rangeText === undefined) {
-            throw new MateError(`cron "${expr}": bad ${spec.label} item "${part}"`);
+            throw new ToliError(`cron "${expr}": bad ${spec.label} item "${part}"`);
         }
         let step = 1;
         if (stepText !== undefined) {
@@ -57,11 +57,11 @@ function parseField(field: string, spec: FieldSpec, expr: string): ParsedField {
         } else if (rangeText.includes("-")) {
             const [lowText, highText, more] = rangeText.split("-");
             if (lowText === undefined || highText === undefined || more !== undefined) {
-                throw new MateError(`cron "${expr}": bad ${spec.label} range "${rangeText}"`);
+                throw new ToliError(`cron "${expr}": bad ${spec.label} range "${rangeText}"`);
             }
             low = parseNumber(lowText, spec, expr);
             high = parseNumber(highText, spec, expr);
-            if (low > high) throw new MateError(`cron "${expr}": ${spec.label} range ${rangeText} is reversed`);
+            if (low > high) throw new ToliError(`cron "${expr}": ${spec.label} range ${rangeText} is reversed`);
         } else {
             low = parseNumber(rangeText, spec, expr);
             high = stepText === undefined ? low : spec.max;
@@ -73,7 +73,7 @@ function parseField(field: string, spec: FieldSpec, expr: string): ParsedField {
 
 export function parseCron(expr: string): Cron {
     const fields = expr.trim().split(/\s+/);
-    if (fields.length !== 5) throw new MateError(`cron "${expr}": expected 5 fields (m h dom mon dow)`);
+    if (fields.length !== 5) throw new ToliError(`cron "${expr}": expected 5 fields (m h dom mon dow)`);
     const parsed = fields.map((field, index) => parseField(field, FIELDS[index] as FieldSpec, expr));
     const [minute, hour, dom, month, dow] = parsed as [ParsedField, ParsedField, ParsedField, ParsedField, ParsedField];
     return {

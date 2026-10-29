@@ -1,17 +1,17 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { MateError, type RunResult, run } from "./util.ts";
+import { type RunResult, run, ToliError } from "./util.ts";
 
 export function git(dir: string, args: string[], stdin?: string): RunResult {
     return run(["git", "-C", dir, ...args], stdin === undefined ? {} : { stdin });
 }
 
-/** Run git and return trimmed stdout, throwing a MateError with git's own message on failure. */
+/** Run git and return trimmed stdout, throwing a ToliError with git's own message on failure. */
 export function gitOk(dir: string, args: string[]): string {
     const result = git(dir, args);
     if (result.code !== 0) {
         const detail = (result.stderr || result.stdout).trim();
-        throw new MateError(`git ${args.join(" ")} failed in ${dir}${detail ? `: ${detail}` : ""}`);
+        throw new ToliError(`git ${args.join(" ")} failed in ${dir}${detail ? `: ${detail}` : ""}`);
     }
     return result.stdout.trim();
 }

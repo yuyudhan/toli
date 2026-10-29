@@ -1,14 +1,14 @@
 import { join, resolve } from "node:path";
 
-/** The repo root: the directory holding bin/mate (resolved from this file, never cwd); `MATE_ROOT` overrides for tests. */
+/** The repo root: the directory holding bin/toli (resolved from this file, never cwd); `TOLI_ROOT` overrides for tests. */
 export function repoRoot(): string {
-    const override = process.env.MATE_ROOT;
+    const override = process.env.TOLI_ROOT;
     return override ? resolve(override) : resolve(import.meta.dir, "..");
 }
 
 export const paths = {
     root: () => repoRoot(),
-    mateBin: () => join(repoRoot(), "bin", "mate"),
+    toliBin: () => join(repoRoot(), "bin", "toli"),
     machine: () => join(repoRoot(), "config", "machine.json"),
     fleet: () => join(repoRoot(), "config", "fleet.json"),
     jobsConfig: () => join(repoRoot(), "config", "jobs.json"),

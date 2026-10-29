@@ -11,9 +11,9 @@ import { resourcesCommand } from "./resources.ts";
 import { scheduleCommand } from "./schedule.ts";
 import { sessionCommand } from "./session.ts";
 import { jobCommand } from "./tick.ts";
-import { MateError, out, warn } from "./util.ts";
+import { out, ToliError, warn } from "./util.ts";
 
-const USAGE = `usage: bin/mate <command> [args]
+const USAGE = `usage: bin/toli <command> [args]
 
   init --name <machine> --role coordinator|worker [--coordinator-ssh <host> --coordinator-root <path>]
   doctor [--json]
@@ -115,13 +115,13 @@ export async function main(argv: string[]): Promise<number> {
                 out(USAGE);
                 return command === undefined ? 2 : 0;
             default:
-                warn(`mate: unknown command "${command}"`);
+                warn(`toli: unknown command "${command}"`);
                 warn(USAGE);
                 return 2;
         }
     } catch (error) {
-        if (error instanceof MateError) {
-            warn(`mate: ${error.message}`);
+        if (error instanceof ToliError) {
+            warn(`toli: ${error.message}`);
             return 1;
         }
         throw error;

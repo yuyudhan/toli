@@ -38,7 +38,7 @@ describe("job due", () => {
         const box = hourlyJob();
         box.ok(["job", "begin", "hourly", "--via", "session", "--json"], { now: "2026-03-04T11:00:00" });
         expect(due(box, "2026-03-04T12:01:00")).toEqual([]);
-        expect(box.mate(["job", "begin", "hourly", "--via", "headless"], { now: "2026-03-04T12:01:00" }).code).toBe(1);
+        expect(box.toli(["job", "begin", "hourly", "--via", "headless"], { now: "2026-03-04T12:01:00" }).code).toBe(1);
     });
 
     test("job for another machine is never due here; paused jobs are not due", () => {
@@ -57,8 +57,8 @@ describe("job begin/finish", () => {
         const begun = JSON.parse(
             box.ok(["job", "begin", "hourly", "--via", "session", "--json"], { now: "2026-03-04T11:00:05" }),
         ) as Begun;
-        expect(begun.prompt.startsWith(`[mate job hourly ${begun.runId}]`)).toBe(true);
-        expect(begun.prompt).toContain(`bin/mate job finish hourly ${begun.runId}`);
+        expect(begun.prompt.startsWith(`[toli job hourly ${begun.runId}]`)).toBe(true);
+        expect(begun.prompt).toContain(`bin/toli job finish hourly ${begun.runId}`);
         expect(begun.prompt).toContain("check things");
         const path = box.ok(["job", "finish", "hourly", begun.runId], {
             stdin: "all green\n",
@@ -79,7 +79,7 @@ describe("job begin/finish", () => {
             jobs: Record<string, { running?: unknown }>;
         };
         expect(state.jobs.hourly?.running).toBeUndefined();
-        expect(box.mate(["job", "finish", "hourly", begun.runId], { stdin: "again" }).code).toBe(1);
+        expect(box.toli(["job", "finish", "hourly", begun.runId], { stdin: "again" }).code).toBe(1);
         expect((JSON.parse(box.ok(["job", "results", "--unseen", "--json"])) as unknown[]).length).toBe(1);
         box.ok(["job", "ack"]);
         expect((JSON.parse(box.ok(["job", "results", "--unseen", "--json"])) as unknown[]).length).toBe(0);
@@ -110,7 +110,7 @@ describe("job tick", () => {
         box.ok(["session", "start", "--pid", String(child.pid)]);
         box.ok(["job", "tick"], { now: "2026-03-04T10:05:00" });
         const args = readFileSync(join(box.root, "omp-args"), "utf8");
-        expect(args).toContain(`-p --cwd ${box.root} --no-title --approval-mode yolo --max-time 45m [mate job every`);
+        expect(args).toContain(`-p --cwd ${box.root} --no-title --approval-mode yolo --max-time 45m [toli job every`);
         expect(existsSync(join(box.root, "state", "session.json"))).toBe(false);
         const results = readdirSync(join(box.root, "data", "jobs", "every"));
         expect(results.length).toBe(1);
@@ -142,7 +142,7 @@ describe("worker outbox", () => {
             "--coordinator-ssh",
             "coord",
             "--coordinator-root",
-            "/srv/mate",
+            "/srv/toli",
         ]);
         const flag = join(box.root, "ssh-fail");
         const log = join(box.root, "ssh-log");
@@ -162,7 +162,7 @@ describe("worker outbox", () => {
         box.ok(["job", "tick"]);
         const delivered = readFileSync(log, "utf8");
         expect(delivered.match(/^DELIVERY /gm)?.length).toBe(1);
-        expect(delivered).toContain("bin/mate inbox add --from w1 --title 'job nightly'");
+        expect(delivered).toContain("bin/toli inbox add --from w1 --title 'job nightly'");
         expect(delivered).toContain("report body");
         expect(readdirSync(join(box.root, "state", "outbox")).length).toBe(0);
     });

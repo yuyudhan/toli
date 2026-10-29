@@ -7,7 +7,6 @@ import { cronFiredBetween, parseCron } from "./cron.ts";
 import { paths } from "./paths.ts";
 import { findProject } from "./projects.ts";
 import {
-    MateError,
     now,
     out,
     printJson,
@@ -17,6 +16,7 @@ import {
     run,
     shellQuote,
     stamp,
+    ToliError,
     withLock,
     writeJsonAtomic,
     writeTextAtomic,
@@ -88,7 +88,7 @@ export function updateJobState<T>(fn: (state: Record<string, JobState>) => T): T
 
 export function findJob(name: string): JobConfig {
     const job = loadJobs().find((entry) => entry.name === name);
-    if (!job) throw new MateError(`unknown job "${name}" (see \`bin/mate job list\`)`);
+    if (!job) throw new ToliError(`unknown job "${name}" (see \`bin/toli job list\`)`);
     return job;
 }
 
@@ -118,15 +118,15 @@ function newRunId(at: Date): string {
 
 export function buildPrompt(job: JobConfig, runId: string, via: Via, machine: Machine): string {
     const lines = [
-        `[mate job ${job.name} ${runId}]`,
-        `Scheduled mate job "${job.name}" on machine ${machine.name} (run ${runId}, via ${via}).`,
+        `[toli job ${job.name} ${runId}]`,
+        `Scheduled toli job "${job.name}" on machine ${machine.name} (run ${runId}, via ${via}).`,
         "",
         "Rules for scheduled runs:",
         "- Never push, merge, or open a PR. Never ask questions: nobody is watching this run.",
         "- Put anything that needs the user's decision into the result instead of asking.",
         job.shape === "scout"
             ? "- This is a scout job: read and report only; do not edit files."
-            : '- If the work needs a commit, use `bin/mate commit <project> -m "..." -- <paths>` on the current branch only.',
+            : '- If the work needs a commit, use `bin/toli commit <project> -m "..." -- <paths>` on the current branch only.',
     ];
     if (job.project) lines.push("", `Project: ${job.project} at ${paths.projectDir(job.project)}`);
     lines.push(
@@ -135,7 +135,7 @@ export function buildPrompt(job: JobConfig, runId: string, via: Via, machine: Ma
         job.prompt,
         "",
         `When done, pipe the final result (outcome, evidence, anything needing a decision) from ${paths.root()} into:`,
-        `bin/mate job finish ${job.name} ${runId} <<'EOF'`,
+        `bin/toli job finish ${job.name} ${runId} <<'EOF'`,
         "<result>",
         "EOF",
     );
@@ -151,7 +151,7 @@ export function beginJob(name: string, via: Via): BegunRun {
         const jobState = state[name] ?? {};
         state[name] = jobState;
         if (jobState.running) {
-            throw new MateError(
+            throw new ToliError(
                 `job ${name} is already running (run ${jobState.running.runId} since ${jobState.running.startedAt})`,
             );
         }
@@ -171,7 +171,7 @@ export function finishJob(name: string, runId: string, body: string, status: Run
         const jobState = state[name];
         const running = jobState?.running;
         if (!jobState || !running || running.runId !== runId) {
-            throw new MateError(
+            throw new ToliError(
                 `job ${name} has no running run ${runId}${running ? ` (running: ${running.runId})` : ""}`,
             );
         }
@@ -240,7 +240,7 @@ export function deliverOutbox(machine: Machine): { delivered: number; pending: n
         const item = readJson<OutboxItem>(claimed, { from: machine.name, title: file, body: "" });
         const remote = [
             `cd ${shellQuote(coordinator.root)}`,
-            `bin/mate inbox add --from ${shellQuote(item.from)} --title ${shellQuote(item.title)}`,
+            `bin/toli inbox add --from ${shellQuote(item.from)} --title ${shellQuote(item.title)}`,
         ].join(" && ");
         const sent = run([...sshArgs(coordinator.ssh), remote], { stdin: item.body, timeoutMs: 120_000 });
         if (sent.code === 0) {
@@ -281,17 +281,17 @@ function add(argv: string[]): void {
     const name = requireName("job", args.positional[0]);
     const cron = args.str("cron");
     const prompt = args.str("prompt");
-    if (!cron) throw new MateError('job add needs --cron "<m h dom mon dow>"');
-    if (!prompt) throw new MateError('job add needs --prompt "<text>"');
+    if (!cron) throw new ToliError('job add needs --cron "<m h dom mon dow>"');
+    if (!prompt) throw new ToliError('job add needs --prompt "<text>"');
     parseCron(cron);
     const shape = args.str("shape") ?? "scout";
-    if (shape !== "scout" && shape !== "ship") throw new MateError("--shape must be scout or ship");
+    if (shape !== "scout" && shape !== "ship") throw new ToliError("--shape must be scout or ship");
     const project = args.str("project");
     if (project !== undefined) findProject(project);
     const machineName = args.str("machine");
     if (machineName !== undefined) requireName("machine", machineName);
     updateJobs((jobs) => {
-        if (jobs.some((entry) => entry.name === name)) throw new MateError(`job "${name}" already exists`);
+        if (jobs.some((entry) => entry.name === name)) throw new ToliError(`job "${name}" already exists`);
         jobs.push({
             name,
             cron,
@@ -340,7 +340,7 @@ function setEnabled(argv: string[], enabled: boolean): void {
     const name = args.pos(0, "name");
     updateJobs((jobs) => {
         const job = jobs.find((entry) => entry.name === name);
-        if (!job) throw new MateError(`unknown job "${name}"`);
+        if (!job) throw new ToliError(`unknown job "${name}"`);
         job.enabled = enabled;
     });
     out(`${enabled ? "resumed" : "paused"} job ${name}`);
@@ -352,7 +352,7 @@ function remove(argv: string[]): void {
     const name = args.pos(0, "name");
     updateJobs((jobs) => {
         const index = jobs.findIndex((entry) => entry.name === name);
-        if (index === -1) throw new MateError(`unknown job "${name}"`);
+        if (index === -1) throw new ToliError(`unknown job "${name}"`);
         jobs.splice(index, 1);
     });
     updateJobState((state) => {
@@ -377,7 +377,7 @@ function due(argv: string[]): void {
 }
 
 function parseVia(value: string | undefined): Via {
-    if (value !== "session" && value !== "headless") throw new MateError("--via must be session or headless");
+    if (value !== "session" && value !== "headless") throw new ToliError("--via must be session or headless");
     return value;
 }
 
@@ -393,9 +393,9 @@ function finish(argv: string[]): void {
     const args = new Args(argv, { values: ["status"] });
     args.maxPositional(2);
     const status = args.str("status") ?? "ok";
-    if (status !== "ok" && status !== "failed") throw new MateError("--status must be ok or failed");
+    if (status !== "ok" && status !== "failed") throw new ToliError("--status must be ok or failed");
     const body = readStdin();
-    if (body.trim() === "") throw new MateError("job finish needs the result on stdin");
+    if (body.trim() === "") throw new ToliError("job finish needs the result on stdin");
     out(finishJob(args.pos(0, "name"), args.pos(1, "runId"), body, status));
 }
 

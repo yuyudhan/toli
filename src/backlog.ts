@@ -1,7 +1,7 @@
 import { Args } from "./args.ts";
 import { paths } from "./paths.ts";
 import { findProject } from "./projects.ts";
-import { MateError, now, out, printJson, readJson, withLock, writeJsonAtomic } from "./util.ts";
+import { now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "./util.ts";
 
 export const STATUSES = ["queued", "active", "held", "done", "dropped"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -44,7 +44,7 @@ function updateBacklog<T>(fn: (backlog: BacklogFile) => T): T {
 function updateTask(id: string, fn: (task: Task) => void): Task {
     return updateBacklog((backlog) => {
         const task = backlog.tasks.find((entry) => entry.id === id.toUpperCase());
-        if (!task) throw new MateError(`unknown task "${id}"`);
+        if (!task) throw new ToliError(`unknown task "${id}"`);
         fn(task);
         task.updatedAt = now().toISOString();
         return { ...task };
@@ -53,7 +53,7 @@ function updateTask(id: string, fn: (task: Task) => void): Task {
 
 function parseShape(value: string | undefined, fallback: Shape): Shape {
     if (value === undefined) return fallback;
-    if (value !== "ship" && value !== "scout") throw new MateError("--shape must be ship or scout");
+    if (value !== "ship" && value !== "scout") throw new ToliError("--shape must be ship or scout");
     return value;
 }
 
@@ -96,7 +96,7 @@ function list(argv: string[]): void {
     args.maxPositional(0);
     const status = args.str("status");
     if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
-        throw new MateError(`--status must be one of ${STATUSES.join(", ")}`);
+        throw new ToliError(`--status must be one of ${STATUSES.join(", ")}`);
     }
     const project = args.str("project");
     const tasks = loadBacklog().tasks.filter(
@@ -119,7 +119,7 @@ function start(argv: string[]): void {
     args.maxPositional(1);
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status === "done" || entry.status === "dropped")
-            throw new MateError(`${entry.id} is ${entry.status}`);
+            throw new ToliError(`${entry.id} is ${entry.status}`);
         entry.status = "active";
         entry.startedAt ??= now().toISOString();
     });
@@ -146,10 +146,10 @@ function hold(argv: string[]): void {
     const args = new Args(argv, { values: ["question"] });
     args.maxPositional(1);
     const question = args.str("question");
-    if (!question) throw new MateError('hold needs --question "..."');
+    if (!question) throw new ToliError('hold needs --question "..."');
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status === "done" || entry.status === "dropped")
-            throw new MateError(`${entry.id} is ${entry.status}`);
+            throw new ToliError(`${entry.id} is ${entry.status}`);
         entry.status = "held";
         entry.question = question;
         delete entry.answer;
@@ -162,7 +162,7 @@ function answer(argv: string[]): void {
     args.maxPositional(2);
     const reply = args.pos(1, "answer");
     const task = updateTask(args.pos(0, "id"), (entry) => {
-        if (entry.status !== "held") throw new MateError(`${entry.id} is ${entry.status}, not waiting on an answer`);
+        if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
         entry.answer = reply;
         entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}`);
         entry.status = entry.startedAt === undefined ? "queued" : "active";
@@ -204,6 +204,6 @@ export function taskCommand(argv: string[]): void {
             drop(rest);
             break;
         default:
-            throw new MateError("usage: mate task add|list|start|done|hold|answer|drop");
+            throw new ToliError("usage: toli task add|list|start|done|hold|answer|drop");
     }
 }

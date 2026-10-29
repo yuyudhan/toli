@@ -15,7 +15,7 @@ import {
 import { currentBranch, git, gitOk, isGitRepo } from "./git.ts";
 import { paths } from "./paths.ts";
 import { type Forge, findProject, type Project, projectCloneDir } from "./projects.ts";
-import { MateError, out, platform, printJson, run, runInherit } from "./util.ts";
+import { out, platform, printJson, run, runInherit, ToliError } from "./util.ts";
 
 /** A remote URL split into host and repository path (`owner/repo`, `group/sub/repo`). */
 export type Remote = { host: string; path: string; ssh: boolean };
@@ -104,7 +104,7 @@ export type ForgeTarget = {
 /** Detect the forge of a remote URL; per-project `forge`/`forgeHost` overrides win over detection. */
 export function detectForge(url: string, overrides: { forge?: Forge; forgeHost?: string } = {}): ForgeTarget {
     const remote = parseRemote(url);
-    if (!remote) throw new MateError(`cannot read a host and repository path from remote "${url}"`);
+    if (!remote) throw new ToliError(`cannot read a host and repository path from remote "${url}"`);
     // For ssh remotes match both the written host and the ~/.ssh/config HostName it resolves to.
     const resolved = remote.ssh ? resolveSshHost(remote.host) : remote.host;
     const candidates = [remote.host, resolved];
@@ -118,8 +118,8 @@ export function detectForge(url: string, overrides: { forge?: Forge; forgeHost?:
         else if (glabKnown || candidates.some((host) => host.includes("gitlab"))) forge = "gitlab";
     }
     if (forge === undefined)
-        throw new MateError(
-            `cannot tell which forge serves ${remote.host}: set it with bin/mate project set <name> --forge github|gitlab|bitbucket`,
+        throw new ToliError(
+            `cannot tell which forge serves ${remote.host}: set it with bin/toli project set <name> --forge github|gitlab|bitbucket`,
         );
     const base = { forge, repo: remote.path, remote: url, remoteHost: remote.host };
     if (overrides.forgeHost) return { ...base, host: overrides.forgeHost, hostSource: "forgeHost" };
@@ -136,7 +136,7 @@ export function projectForge(project: Project): ForgeTarget {
     const dir = paths.projectDir(project.name);
     const origin = isGitRepo(dir) ? git(dir, ["config", "--get", "remote.origin.url"]) : null;
     const url = origin && origin.code === 0 ? origin.stdout.trim() : project.url;
-    if (!url) throw new MateError(`${project.name} has no origin remote and no registered URL`);
+    if (!url) throw new ToliError(`${project.name} has no origin remote and no registered URL`);
     return detectForge(url, project);
 }
 
@@ -151,7 +151,7 @@ function firstLine(text: string): string {
     );
 }
 
-/** Whether mate can talk to this forge host: CLI authenticated (gh/glab) or credentials present (Bitbucket). */
+/** Whether toli can talk to this forge host: CLI authenticated (gh/glab) or credentials present (Bitbucket). */
 export function forgeReadiness(forge: Forge, host: string): Readiness {
     if (forge === "bitbucket") {
         const credentials = bitbucketCredentials();
@@ -194,7 +194,7 @@ export function forgeCommand(argv: string[]): void {
 /** The checked-out branch, refusing a detached HEAD. */
 function requireBranch(dir: string, action: string): string {
     const branch = currentBranch(dir);
-    if (branch === null) throw new MateError(`refusing to ${action}: ${dir} is on a detached HEAD`);
+    if (branch === null) throw new ToliError(`refusing to ${action}: ${dir} is on a detached HEAD`);
     return branch;
 }
 
@@ -213,20 +213,20 @@ export async function pushCommand(argv: string[]): Promise<void> {
         "origin",
         `refs/heads/${branch}:refs/heads/${branch}`,
     ]);
-    if (code !== 0) throw new MateError(`git push -u origin ${branch} failed (exit ${code})`);
+    if (code !== 0) throw new ToliError(`git push -u origin ${branch} failed (exit ${code})`);
 }
 
 /** Refuse unless origin has `branch` and it contains the local HEAD. */
 function requirePushed(dir: string, project: string, branch: string): void {
     const remote = git(dir, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
     if (remote.code !== 0)
-        throw new MateError(`git ls-remote origin failed: ${(remote.stderr || remote.stdout).trim()}`);
+        throw new ToliError(`git ls-remote origin failed: ${(remote.stderr || remote.stdout).trim()}`);
     const remoteSha = remote.stdout.trim().split(/\s+/)[0] ?? "";
-    const push = `run bin/mate push ${project} first (only with Malik's word to push)`;
-    if (remoteSha === "") throw new MateError(`refusing: branch ${branch} is not on origin; ${push}`);
+    const push = `run bin/toli push ${project} first (only with Malik's word to push)`;
+    if (remoteSha === "") throw new ToliError(`refusing: branch ${branch} is not on origin; ${push}`);
     const head = gitOk(dir, ["rev-parse", "HEAD"]);
     if (remoteSha !== head && git(dir, ["merge-base", "--is-ancestor", head, remoteSha]).code !== 0)
-        throw new MateError(`refusing: origin/${branch} does not contain local HEAD ${head.slice(0, 12)}; ${push}`);
+        throw new ToliError(`refusing: origin/${branch} does not contain local HEAD ${head.slice(0, 12)}; ${push}`);
 }
 
 function statusLines(pr: PrStatus): string[] {
@@ -252,12 +252,12 @@ async function prCreate(argv: string[]): Promise<void> {
     const project = findProject(args.pos(0, "project"));
     const dir = projectCloneDir(project.name);
     const title = args.str("title");
-    if (!title) throw new MateError("pr create needs --title <title>");
+    if (!title) throw new ToliError("pr create needs --title <title>");
     const bodyText = args.str("body");
     const bodyFile = args.str("body-file");
     if ((bodyText === undefined) === (bodyFile === undefined))
-        throw new MateError("pr create needs exactly one of --body <text> or --body-file <file>");
-    if (bodyFile !== undefined && !existsSync(bodyFile)) throw new MateError(`--body-file ${bodyFile} does not exist`);
+        throw new ToliError("pr create needs exactly one of --body <text> or --body-file <file>");
+    if (bodyFile !== undefined && !existsSync(bodyFile)) throw new ToliError(`--body-file ${bodyFile} does not exist`);
     const body = bodyText ?? readFileSync(bodyFile as string, "utf8");
     const branch = requireBranch(dir, "open a pull request");
     const target = projectForge(project);
@@ -302,7 +302,7 @@ async function prMerge(argv: string[]): Promise<void> {
     const id = args.pos(1, "id");
     const method = args.str("method");
     if (method !== undefined && !(MERGE_METHODS as readonly string[]).includes(method))
-        throw new MateError(`--method must be one of ${MERGE_METHODS.join(", ")}`);
+        throw new ToliError(`--method must be one of ${MERGE_METHODS.join(", ")}`);
     const client = clientFor(projectForge(project), projectCloneDir(project.name));
     out(await client.merge(id, method as MergeMethod | undefined));
 }
@@ -317,6 +317,6 @@ const PR_SUBCOMMANDS: Record<string, (argv: string[]) => Promise<void>> = {
 export async function prCommand(argv: string[]): Promise<void> {
     const [sub, ...rest] = argv;
     const handler = sub !== undefined && Object.hasOwn(PR_SUBCOMMANDS, sub) ? PR_SUBCOMMANDS[sub] : undefined;
-    if (!handler) throw new MateError("usage: mate pr create|status|list|merge <project> ...");
+    if (!handler) throw new ToliError("usage: toli pr create|status|list|merge <project> ...");
     await handler(rest);
 }

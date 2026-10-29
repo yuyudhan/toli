@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-export const MATE_BIN = resolve(import.meta.dir, "..", "bin", "mate");
+export const TOLI_BIN = resolve(import.meta.dir, "..", "bin", "toli");
 
 /** Git identity and an empty global config, so user hooks (e.g. secret scanners) never run in tests. */
 export const GIT_ENV: Record<string, string> = {
@@ -14,34 +14,34 @@ export const GIT_ENV: Record<string, string> = {
     GIT_CONFIG_NOSYSTEM: "1",
 };
 
-export type MateRun = { code: number; stdout: string; stderr: string };
+export type ToliRun = { code: number; stdout: string; stderr: string };
 
 export type Sandbox = {
     root: string;
     stubs: string;
-    mate(args: string[], options?: { stdin?: string; now?: string; env?: Record<string, string> }): MateRun;
-    /** `mate` that must succeed; returns trimmed stdout. */
+    toli(args: string[], options?: { stdin?: string; now?: string; env?: Record<string, string> }): ToliRun;
+    /** `toli` that must succeed; returns trimmed stdout. */
     ok(args: string[], options?: { stdin?: string; now?: string; env?: Record<string, string> }): string;
     stub(name: string, script: string): void;
     git(dir: string, args: string[]): string;
 };
 
-/** A temp MATE_ROOT with its own stub-binaries dir first on PATH. */
+/** A temp TOLI_ROOT with its own stub-binaries dir first on PATH. */
 export function sandbox(): Sandbox {
-    const root = mkdtempSync(join(tmpdir(), "mate-test-"));
+    const root = mkdtempSync(join(tmpdir(), "toli-test-"));
     const stubs = join(root, ".stubs");
     mkdirSync(stubs);
     const path = [stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
-    const mate: Sandbox["mate"] = (args, options = {}) => {
-        const proc = Bun.spawnSync([process.execPath, MATE_BIN, ...args], {
+    const toli: Sandbox["toli"] = (args, options = {}) => {
+        const proc = Bun.spawnSync([process.execPath, TOLI_BIN, ...args], {
             cwd: root,
             env: {
                 ...process.env,
                 ...GIT_ENV,
                 PATH: path,
-                MATE_ROOT: root,
-                MATE_DRY_RUN: "1",
-                ...(options.now === undefined ? {} : { MATE_NOW: options.now }),
+                TOLI_ROOT: root,
+                TOLI_DRY_RUN: "1",
+                ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),
                 ...options.env,
             },
             stdin: options.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
@@ -53,11 +53,11 @@ export function sandbox(): Sandbox {
     return {
         root,
         stubs,
-        mate,
+        toli,
         ok(args, options) {
-            const result = mate(args, options);
+            const result = toli(args, options);
             if (result.code !== 0)
-                throw new Error(`mate ${args.join(" ")} exited ${result.code}: ${result.stderr}${result.stdout}`);
+                throw new Error(`toli ${args.join(" ")} exited ${result.code}: ${result.stderr}${result.stdout}`);
             return result.stdout.trim();
         },
         stub(name, script) {
@@ -77,7 +77,7 @@ export function sandbox(): Sandbox {
     };
 }
 
-/** A bare "origin" repo with one commit on main, plus `projects/<name>` registered via `mate project add`. */
+/** A bare "origin" repo with one commit on main, plus `projects/<name>` registered via `toli project add`. */
 export function withProject(box: Sandbox, name: string): string {
     const origin = join(box.root, ".origin", `${name}.git`);
     const seed = join(box.root, ".seed", name);

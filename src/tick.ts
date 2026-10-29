@@ -15,7 +15,7 @@ import {
 import { paths } from "./paths.ts";
 import { registerRun, removeRun } from "./resources.ts";
 import { liveSession } from "./session.ts";
-import { MateError, now, out, runCombined } from "./util.ts";
+import { now, out, runCombined, ToliError } from "./util.ts";
 
 /** Hard ceiling for omp's own --max-time, so a wedged process is still reaped. */
 const HEADLESS_MAX_TIME = "45m";
@@ -53,7 +53,7 @@ async function runHeadless(name: string, begun: BegunRun): Promise<string> {
     const stillRunning = loadJobState()[name]?.running?.runId === begun.runId;
     if (!stillRunning) return `job ${name} ${begun.runId}: finished by the agent (omp exit ${result.code})`;
     const body = [
-        `omp exited ${result.code} without calling \`bin/mate job finish\`; captured output follows.`,
+        `omp exited ${result.code} without calling \`bin/toli job finish\`; captured output follows.`,
         "",
         "```text",
         result.output.trimEnd(),
@@ -118,7 +118,7 @@ export async function tick(): Promise<void> {
     await Promise.all(runs);
 }
 
-/** `mate job run <name>`: run a job once, now, headless, regardless of its schedule. */
+/** `toli job run <name>`: run a job once, now, headless, regardless of its schedule. */
 async function runNow(argv: string[]): Promise<void> {
     const args = new Args(argv);
     args.maxPositional(1);
@@ -162,6 +162,6 @@ export async function jobCommand(argv: string[]): Promise<void> {
             new Args(rest).maxPositional(0);
             return tick();
         default:
-            throw new MateError("usage: mate job add|list|pause|resume|remove|due|begin|finish|run|tick|results|ack");
+            throw new ToliError("usage: toli job add|list|pause|resume|remove|due|begin|finish|run|tick|results|ack");
     }
 }

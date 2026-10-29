@@ -10,7 +10,7 @@ import { paths } from "./paths.ts";
 import { fleetStatus } from "./pick.ts";
 import { loadProjects, type Mode } from "./projects.ts";
 import { type FleetEntry as AvailabilityEntry, availabilityLine } from "./resources.ts";
-import { MateError, now, out, printJson, run, shellQuote } from "./util.ts";
+import { now, out, printJson, run, shellQuote, ToliError } from "./util.ts";
 
 export type ProjectDigest = {
     name: string;
@@ -98,7 +98,7 @@ export function buildDigest(): Digest {
 
 function fleetDigests(): FleetEntry[] {
     return otherFleetMachines().map((machine): FleetEntry => {
-        const result = run([...sshArgs(machine.ssh, 15), `cd ${shellQuote(machine.root)} && bin/mate digest --json`], {
+        const result = run([...sshArgs(machine.ssh, 15), `cd ${shellQuote(machine.root)} && bin/toli digest --json`], {
             timeoutMs: 90_000,
         });
         if (result.code !== 0) {
@@ -118,7 +118,7 @@ function fleetDigests(): FleetEntry[] {
 
 function projectLine(project: ProjectDigest): string {
     if (!project.cloned)
-        return `  ${project.name}: registered but not cloned here (bin/mate project ensure ${project.name} <url>)`;
+        return `  ${project.name}: registered but not cloned here (bin/toli project ensure ${project.name} <url>)`;
     if (!project.status) return `  ${project.name}: ${project.error ?? "status unavailable"}`;
     const status = project.status;
     const sync =
@@ -178,7 +178,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
     args.maxPositional(0);
     const digest = buildDigest();
     if (args.bool("fleet") && digest.role !== "coordinator")
-        throw new MateError("--fleet runs on the coordinator only");
+        throw new ToliError("--fleet runs on the coordinator only");
     if (!args.bool("fleet")) {
         if (args.bool("json")) printJson(digest);
         else out(render(digest));

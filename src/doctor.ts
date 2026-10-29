@@ -88,7 +88,7 @@ function forgeChecks(): Check[] {
         checks.push({
             level: "warn",
             name: "forge",
-            detail: `forge not detected for ${nameList(undetected)} (bin/mate forge <project>; set --forge)`,
+            detail: `forge not detected for ${nameList(undetected)} (bin/toli forge <project>; set --forge)`,
         });
     return checks;
 }
@@ -108,7 +108,7 @@ export async function runChecks(): Promise<Check[]> {
     );
 
     if (!hasMachine()) {
-        checks.push({ level: "fail", name: "machine", detail: "config/machine.json missing: run bin/mate init" });
+        checks.push({ level: "fail", name: "machine", detail: "config/machine.json missing: run bin/toli init" });
         return checks;
     }
     let machineOk = false;
@@ -168,7 +168,7 @@ export async function runChecks(): Promise<Check[]> {
             : {
                   level: "warn",
                   name: "scheduler",
-                  detail: `${schedule.scheduler} ${schedule.installed ? "installed" : "not installed"}, ${schedule.loaded ? "loaded" : "not loaded"} (bin/mate schedule install)`,
+                  detail: `${schedule.scheduler} ${schedule.installed ? "installed" : "not installed"}, ${schedule.loaded ? "loaded" : "not loaded"} (bin/toli schedule install)`,
               },
     );
     return checks;

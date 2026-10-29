@@ -1,9 +1,9 @@
 {
-    "name": "yuyudhan-mate",
+    "name": "toli",
     "private": true,
     "type": "module",
     "bin": {
-        "mate": "bin/mate"
+        "toli": "bin/toli"
     },
     "scripts": {
         "format": "biome check --write --linter-enabled=false .",

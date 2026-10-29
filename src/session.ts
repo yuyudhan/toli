@@ -1,7 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { Args } from "./args.ts";
 import { paths } from "./paths.ts";
-import { MateError, now, out, pidAlive, readJson, withLock, writeJsonAtomic } from "./util.ts";
+import { now, out, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from "./util.ts";
 
 export type SessionFile = { pid: number; startedAt: string };
 
@@ -20,7 +20,7 @@ export function liveSession(): SessionFile | null {
 
 function parsePid(args: Args): number {
     const pid = Number(args.str("pid"));
-    if (!Number.isInteger(pid) || pid <= 0) throw new MateError("session needs --pid <n>");
+    if (!Number.isInteger(pid) || pid <= 0) throw new ToliError("session needs --pid <n>");
     return pid;
 }
 
@@ -49,6 +49,6 @@ export function sessionCommand(argv: string[]): void {
             break;
         }
         default:
-            throw new MateError("usage: mate session start|end --pid <n>");
+            throw new ToliError("usage: toli session start|end --pid <n>");
     }
 }
