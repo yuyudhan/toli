@@ -6,9 +6,10 @@
         "toli": "bin/toli"
     },
     "scripts": {
-        "format": "biome check --write --linter-enabled=false .",
-        "format:check": "biome check --linter-enabled=false .",
-        "lint": "tsc --noEmit && biome check . && bun scripts/guard.ts",
+        "format": "bun scripts/format.ts write",
+        "format:check": "bun scripts/format.ts check",
+        "lint": "tsc --noEmit && biome check . && bun scripts/format.ts lint && bun scripts/guard.ts",
+        "tools": "bun scripts/format.ts tools",
         "test": "bun test",
         "check": "bun run lint && bun run test",
         "guard": "bun scripts/guard.ts",
@@ -16,7 +17,9 @@
     },
     "devDependencies": {
         "@biomejs/biome": "2.6.4",
+        "@taplo/cli": "0.7.0",
         "@types/bun": "1.3.14",
+        "prettier": "3.9.10",
         "typescript": "^5.9.3"
     }
 }

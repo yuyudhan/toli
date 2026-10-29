@@ -13,3 +13,8 @@ trim_trailing_whitespace = false
 
 [Makefile]
 indent_style = tab
+
+# shfmt reads these when run without formatting flags (scripts/format.ts relies on that).
+[{*.sh,*.bash,.githooks/*}]
+switch_case_indent = true
+binary_next_line = true

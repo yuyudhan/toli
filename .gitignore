@@ -49,4 +49,7 @@ Thumbs.db
 .#*
 *.~undo-tree~
 .idea/
-.vscode/
+# VS Code: only the shared formatter setup is tracked.
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
