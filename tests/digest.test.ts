@@ -152,6 +152,7 @@ describe("digest", () => {
             urls: new Map<string, string>(),
             setup: [],
             setupSteps: [],
+            setupSnoozed: false,
             missingHarnesses: [],
             unattended: [],
         };
@@ -176,6 +177,20 @@ describe("digest", () => {
         expect(second).not.toMatch(/^Setup:/m);
         expect(section(second, "Next")).toEqual(next);
         expect(section(first, "jawan runs")).toEqual(["jawan runs (0):", "  none"]);
+    });
+
+    test("after setup snooze the Next block keeps only a quiet setup line", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        box.stub("omp", "true");
+        box.ok(["setup", "snooze"]);
+        const text = box.ok(["digest"], { now: NOW });
+        expect(text).not.toMatch(/^Setup:/m);
+        expect(text).not.toContain("set up toli");
+        expect(section(text, "Next")).toEqual([
+            "Next (1):",
+            expect.stringMatching(/^ {2}- Setup snoozed: \d+ steps? remains?: bin\/toli setup status lists them$/),
+        ]);
     });
 
     test("an active task with no recorded jawan is flagged until one is recorded with task start --agent", () => {
