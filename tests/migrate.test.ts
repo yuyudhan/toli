@@ -186,6 +186,23 @@ describe("migrate", () => {
         expect(readFileSync(join(box.root, "data/projects/app/notes.md"), "utf8")).toBe("# app (newer, different)\n");
     });
 
+    test("a brief named by a task id moves to that task's project, as its report does", () => {
+        const box = sandbox();
+        put(box, "data/backlog.json", JSON.stringify({ nextId: 11, tasks: [task("T10", "app")] }));
+        put(box, "data/archive/tasks.json", JSON.stringify({ tasks: [task("T3", "web")] }));
+        put(box, "data/briefs/T10.md", "brief ten");
+        put(box, "data/briefs/T3.md", "archived task brief");
+        put(box, "data/briefs/T77.md", "orphan brief");
+        const dry = plan(box, ["--dry-run"]);
+        expect(dry.moves.map((move) => [move.kind, move.from, move.to])).toEqual([
+            ["brief", "data/briefs/T10.md", "data/projects/app/briefs/T10.md"],
+            ["brief", "data/briefs/T3.md", "data/projects/web/briefs/T3.md"],
+        ]);
+        expect(dry.kept).toEqual([
+            { path: "data/briefs/T77.md", reason: "task T77 not found in the backlog or task archive" },
+        ]);
+    });
+
     test("moves the persona-named preferences file and its archive, rewriting mentions; refuses to overwrite", () => {
         const box = sandbox();
         put(box, "data/malik.md", "# Preferences\n\n- 2026-10-01: short replies\n");

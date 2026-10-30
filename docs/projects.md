@@ -141,10 +141,11 @@ Installs from before this layout kept everything flat under `data/` (`notes/<nam
 
 - Notes move to `data/projects/<name>/notes.md`; task reports to the reports directory of the task's project (looked up
   in the backlog and the task archive); remote runs that name their project to its `runs/`; briefs to the `briefs/`
-  of the project whose scheduled job uses them, else of the project the file name names (`myapp.md`,
-  `myapp-review.md`). A name that fits several projects (`myapp-admin-x.md` with `myapp` and `myapp-admin`) stays.
-- Everything else stays where it is and is listed as kept: toli-wide reports, reports of unknown tasks, project-less
-  remote runs, briefs that name no project.
+  of the project whose scheduled job uses them, else, for a task brief (`T10.md`), of the task's project (looked up
+  like reports), else of the project the file name names (`myapp.md`, `myapp-review.md`). A name that fits several
+  projects (`myapp-admin-x.md` with `myapp` and `myapp-admin`) stays.
+- Everything else stays where it is and is listed as kept: toli-wide reports, reports and briefs of unknown tasks,
+  project-less remote runs, briefs that name no project.
 - The old persona-named preferences file (and its archive in `data/archive/`) moves to `data/preferences.md`
   (`data/archive/preferences.md`).
 - Nothing is overwritten. A different file already at a destination is a conflict: the plan shows it and `migrate`
