@@ -8,7 +8,7 @@ the data volume is below LOW_GB, it deletes cargo `target/` directories, least
 recently built first, until free space reaches HIGH_GB. A target directory is
 eligible only if:
 
-- it is a cargo target (it contains CACHEDIR.TAG),
+- it is a cargo target (CACHEDIR.TAG or .rustc_info.json inside, or a Cargo.toml beside it),
 - no build has used it for at least IDLE_HOURS (30 minutes by default, so only a
   build that is running or just finished keeps its folder), and
 - no process currently holds any of its `.cargo-lock` files open.
@@ -54,6 +54,13 @@ def free_gb() -> float:
     return stats.f_bavail * stats.f_frsize / 2**30
 
 
+def is_cargo_target(path: Path) -> bool:
+    """Cargo writes CACHEDIR.TAG and .rustc_info.json into target/; custom-profile-only targets may lack the tag."""
+    return any((path / marker).is_file() for marker in ("CACHEDIR.TAG", ".rustc_info.json")) or (
+        path.parent / "Cargo.toml"
+    ).is_file()
+
+
 def find_targets() -> list[Path]:
     found: list[Path] = []
     for root in ROOTS:
@@ -70,7 +77,7 @@ def find_targets() -> list[Path]:
                 if name in SKIP_DIRS:
                     continue
                 child = here / name
-                if name == "target" and (child / "CACHEDIR.TAG").is_file():
+                if name == "target" and is_cargo_target(child):
                     found.append(child)
                     continue
                 if child.is_symlink():
