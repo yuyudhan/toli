@@ -35,7 +35,9 @@ Jobs never run inside your chat. Every minute something checks for due jobs and 
   `systemctl --user` works, else a crontab line tagged `# toli tick`; `TOLI_SCHEDULER` forces one). The ticker
   leaves due jobs to a live session when there is one. Installing (or, on systemd, uninstalling) the launchd or
   systemd tick also removes a `# toli tick` crontab line, such as the one a v0.1.0 Linux machine got; until then
-  `schedule status`, doctor and the setup checklist warn about the leftover line (two ticks a minute).
+  `schedule status`, doctor and the setup checklist warn about the leftover line (two ticks a minute). The tick and
+  helpers record the bun and PATH found at install time, skipping bun's `bun-node-*` temp dirs (a reboot deletes
+  them); those three also warn when the tick's recorded bun no longer exists (`bin/toli schedule install` fixes it).
 
 A machine that was asleep through a scheduled minute runs the job once to catch up, not once per missed window. A
 claimed job is never run twice, and a run still marked running after 3 hours is recorded as failed so the schedule

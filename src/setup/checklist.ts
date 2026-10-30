@@ -16,7 +16,7 @@ import {
     SPECS,
 } from "../harness/harness.ts";
 import { syncShims } from "../harness/sync.ts";
-import { CRON_LEFTOVER_WARNING, scheduleStatus } from "../jobs/schedule.ts";
+import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
 import { loadProjects } from "../projects/projects.ts";
 
 export const SETUP_ITEM_IDS = [
@@ -108,6 +108,8 @@ export type SchedulerFacts = {
     loaded: boolean;
     /** The `bin/toli` an installed tick runs when that is another toli checkout; null when it runs this one. */
     otherBin: string | null;
+    /** The absolute bun this checkout's installed tick runs when that file is gone; null when it exists. */
+    missingBun: string | null;
     /** A crontab tick line left beside a launchd or systemd tick (two ticks a minute). */
     cronLeftover: boolean;
 };
@@ -231,6 +233,13 @@ function schedulerItem(probe: SetupProbe): SetupItem {
             who: "user",
             detail: `${status.scheduler} tick runs ${status.otherBin}, not this checkout`,
             fix: `Question: move this machine's tick from ${status.otherBin} to this checkout? Then: bin/toli schedule install`,
+        };
+    if (status.missingBun !== null)
+        return {
+            ...base,
+            status: "missing",
+            detail: missingBunWarning(status.missingBun),
+            fix: "bin/toli schedule install",
         };
     if (status.cronLeftover)
         return { ...base, status: "missing", detail: CRON_LEFTOVER_WARNING, fix: "bin/toli schedule install" };

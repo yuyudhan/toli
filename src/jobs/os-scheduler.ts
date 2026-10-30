@@ -2,7 +2,7 @@
 // the launchd, systemd --user and crontab primitives both share.
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { platform, run, ToliError, writeTextAtomic } from "../core/util.ts";
 
 /** `TOLI_DRY_RUN=1`: print what would be written and run, touching nothing. */
@@ -59,18 +59,30 @@ export function systemdEnv(key: string, value: string): string {
 }
 
 /**
- * The bun on PATH (e.g. Homebrew's /opt/homebrew/bin/bun symlink) survives upgrades, unlike the versioned
- * Cellar path in process.execPath; fall back to the running binary when bun is not on PATH.
+ * PATH without bun's `bun-node-*` temp dirs: bun prepends one (under /tmp or $TMPDIR, holding bun and node shims)
+ * when `bin/toli` runs from toli's root, and a reboot deletes it, so nothing installed may point into it.
+ */
+function stablePath(): string {
+    return (process.env.PATH ?? "")
+        .split(":")
+        .filter((dir) => !basename(dir).startsWith("bun-node-"))
+        .join(":");
+}
+
+/**
+ * The bun on the stable PATH (e.g. Homebrew's /opt/homebrew/bin/bun symlink) survives upgrades, unlike the
+ * versioned Cellar path in process.execPath; fall back to the running binary when bun is not on that PATH.
  */
 export function bunPath(): string {
-    return Bun.which("bun", { PATH: process.env.PATH ?? "" }) ?? process.execPath;
+    return Bun.which("bun", { PATH: stablePath() }) ?? process.execPath;
 }
 
 /** PATH for the scheduled tick: the directories of every tool a job may call, resolved now. */
 export function schedulePath(): string {
+    const path = stablePath();
     const dirs: string[] = [dirname(bunPath())];
     for (const tool of ["omp", "git", "gh", "no-mistakes", "ssh"]) {
-        const found = Bun.which(tool, { PATH: process.env.PATH ?? "" });
+        const found = Bun.which(tool, { PATH: path });
         if (found) dirs.push(dirname(found));
     }
     dirs.push("/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin");

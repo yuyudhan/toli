@@ -1,27 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { type Sandbox, sandbox } from "./helpers.ts";
+import { type Sandbox, sandbox, withCrontab, withSystemd } from "./helpers.ts";
 
 const TAG = "# toli tick";
 
 function plist(box: Sandbox): string {
     return box.ok(["schedule", "install"], { env: { TOLI_PLATFORM: "darwin", TOLI_LAUNCH_AGENTS_DIR: box.root } });
-}
-
-/** A file-backed `crontab` stub: `-l` prints the file (exit 1 when absent), `-` replaces it from stdin. */
-function withCrontab(box: Sandbox, initial: string | null): string {
-    const file = join(box.root, ".crontab");
-    if (initial !== null) writeFileSync(file, initial);
-    box.stub(
-        "crontab",
-        `case "$1" in
-    -l) [ -f "${file}" ] || { echo "no crontab for test" >&2; exit 1; }; cat "${file}" ;;
-    -) cat > "${file}" ;;
-    *) exit 2 ;;
-esac`,
-    );
-    return file;
 }
 
 const linux = { TOLI_PLATFORM: "linux", TOLI_DRY_RUN: "0" };
@@ -130,30 +115,6 @@ describe("schedule on Linux (crontab)", () => {
     });
 });
 
-/**
- * A working `systemctl --user` stub: every call is appended to `.systemctl`; `enable` / `disable` flip whether
- * `is-active` answers "active". Units go to `units/` via TOLI_SYSTEMD_USER_DIR.
- */
-function withSystemd(box: Sandbox): { env: Record<string, string>; units: string; calls: () => string[] } {
-    const log = join(box.root, ".systemctl");
-    const active = join(box.root, ".active");
-    box.stub(
-        "systemctl",
-        `printf '%s\\n' "$*" >> "${log}"
-case "$2" in
-    is-active) if [ -f "${active}" ]; then echo active; else echo inactive; exit 3; fi ;;
-    enable) touch "${active}" ;;
-    disable) rm -f "${active}" ;;
-esac`,
-    );
-    const units = join(box.root, "units");
-    return {
-        env: { ...linux, TOLI_SYSTEMD_USER_DIR: units },
-        units,
-        calls: () => (existsSync(log) ? readFileSync(log, "utf8").trimEnd().split("\n") : []),
-    };
-}
-
 describe("schedule on Linux (systemd user units)", () => {
     test("install writes a oneshot service and a 60s timer, enables it, and status and doctor see it", () => {
         const box = sandbox();
@@ -185,6 +146,7 @@ describe("schedule on Linux (systemd user units)", () => {
             loaded: true,
             detail: join(systemd.units, "toli-tick.timer"),
             otherBin: null,
+            missingBun: null,
             cronLeftover: false,
         });
         const doctor = JSON.parse(box.toli(["doctor", "--json"], { env: systemd.env }).stdout) as {

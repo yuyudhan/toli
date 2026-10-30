@@ -11,7 +11,14 @@ const saved = process.env.TOLI_ROOT;
 const bareProbe: SetupProbe = {
     which: () => null,
     harness: () => ({ ready: null, detail: "none on PATH", loggedOut: [] }),
-    scheduler: () => ({ scheduler: "launchd", installed: false, loaded: false, otherBin: null, cronLeftover: false }),
+    scheduler: () => ({
+        scheduler: "launchd",
+        installed: false,
+        loaded: false,
+        otherBin: null,
+        missingBun: null,
+        cronLeftover: false,
+    }),
     hooksPath: () => null,
 };
 
@@ -19,7 +26,14 @@ const bareProbe: SetupProbe = {
 const readyProbe: SetupProbe = {
     which: (tool) => `/usr/bin/${tool}`,
     harness: () => ({ ready: "omp", detail: "omp installed", loggedOut: [] }),
-    scheduler: () => ({ scheduler: "launchd", installed: true, loaded: true, otherBin: null, cronLeftover: false }),
+    scheduler: () => ({
+        scheduler: "launchd",
+        installed: true,
+        loaded: true,
+        otherBin: null,
+        missingBun: null,
+        cronLeftover: false,
+    }),
     hooksPath: () => ".githooks",
 };
 
@@ -50,12 +64,31 @@ describe("setup checklist", () => {
                 installed: true,
                 loaded: true,
                 otherBin: null,
+                missingBun: null,
                 cronLeftover: true,
             }),
         };
         const item = setupChecklist(probe).find((entry) => entry.id === "scheduler");
         expect(item?.status).toBe("missing");
         expect(item?.detail).toContain("leftover crontab tick line");
+        expect(item?.fix).toBe("bin/toli schedule install");
+    });
+
+    test("a tick whose bun no longer exists keeps the scheduler step open", () => {
+        const probe: SetupProbe = {
+            ...readyProbe,
+            scheduler: () => ({
+                scheduler: "crontab",
+                installed: true,
+                loaded: true,
+                otherBin: null,
+                missingBun: "/tmp/bun-node-0-1a2b/bun",
+                cronLeftover: false,
+            }),
+        };
+        const item = setupChecklist(probe).find((entry) => entry.id === "scheduler");
+        expect(item?.status).toBe("missing");
+        expect(item?.detail).toContain("/tmp/bun-node-0-1a2b/bun, which no longer exists");
         expect(item?.fix).toBe("bin/toli schedule install");
     });
 
