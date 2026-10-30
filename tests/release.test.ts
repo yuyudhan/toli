@@ -153,6 +153,7 @@ describe("drafted sections", () => {
             "# Changelog\n\n## v0.2.0 - 2026-11-02\n\n- drafted\n\n## v0.1.0 - 2026-10-30\n\n- one\n",
         );
         expect(changelogHas(text, "0.2.0")).toBe(true);
+        expect(dateChangelogSection(text, "0.1.0", "2026-11-02")).toBe(text);
     });
 });
 

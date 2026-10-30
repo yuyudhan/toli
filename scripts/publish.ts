@@ -119,7 +119,7 @@ function succeeds(root: string, cmd: string[]): boolean {
 }
 
 /** Step 1's branch rules: on develop, main exists, is contained in develop, and is checked out nowhere. */
-function checkBranches(root: string): void {
+function checkBranches(root: string): string {
     const head = Bun.spawnSync(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: root });
     const current = head.exitCode === 0 ? head.stdout.toString().trim() : null;
     const main = `refs/heads/${RELEASE_BRANCH}`;
@@ -132,11 +132,14 @@ function checkBranches(root: string): void {
         mainCheckedOutAt: checkedOutAt(root, RELEASE_BRANCH),
     });
     if (problem !== null) throw new ReleaseError(problem);
+    return capture(root, ["git", "rev-parse", main]);
 }
 
 /** Steps 1-4 in `root`; returns the tag created. */
 function cutRelease(root: string, request: string): string {
-    checkBranches(root);
+    // The main this check saw: the fast-forward below is compare-and-swapped against it, so a main that moves
+    // during the verify run fails the release instead of losing its new commits.
+    const checkedMain = checkBranches(root);
     const dirty = capture(root, ["git", "status", "--porcelain"]);
     if (dirty !== "") throw new ReleaseError(`the working tree is not clean:\n${dirty}`);
 
@@ -151,11 +154,11 @@ function cutRelease(root: string, request: string): string {
 
     stream(root, ["bun", "run", "verify"]);
 
+    const date = now().toISOString().slice(0, 10);
     let updated = changelog;
     if (!seeded) {
         const commits = commitsSince(root, lastTag);
         if (commits.length === 0) throw new ReleaseError(`no commits since ${lastTag}; nothing to release`);
-        const date = now().toISOString().slice(0, 10);
         // A section drafted on develop (`## vX.Y.Z - unreleased`) is kept and dated; otherwise one is generated.
         updated = changelogHas(changelog, version)
             ? dateChangelogSection(changelog, version, date)
@@ -170,6 +173,12 @@ function cutRelease(root: string, request: string): string {
         stream(root, ["git", "add", "--", "CHANGELOG.md", "package.json"]);
         stream(root, ["git", "commit", "--quiet", "-m", `Release ${tag}`, "--", "CHANGELOG.md", "package.json"]);
         updated = readFileSync(changelogFile, "utf8");
+    } else if (dateChangelogSection(changelog, version, date) !== changelog) {
+        // The seeded section still carries a draft heading (`- unreleased`): date it in the release commit.
+        writeFileSync(changelogFile, dateChangelogSection(changelog, version, date));
+        stream(root, ["bun", "scripts/format.ts", "write", "--", "CHANGELOG.md"]);
+        stream(root, ["git", "commit", "--quiet", "-m", `Release ${tag}`, "--", "CHANGELOG.md"]);
+        updated = readFileSync(changelogFile, "utf8");
     }
     // Only this release's section: after the previous version (package.json's before the bump; the last tag when
     // tagging the seeded section). verbatim keeps the `### Added` headings git would strip as comments.
@@ -177,8 +186,7 @@ function cutRelease(root: string, request: string): string {
     // Merge develop into main: main is contained in develop (checked above), so this is a fast-forward of the ref,
     // compare-and-swapped against the main the check saw.
     const release = capture(root, ["git", "rev-parse", "HEAD"]);
-    const oldMain = capture(root, ["git", "rev-parse", `refs/heads/${RELEASE_BRANCH}`]);
-    stream(root, ["git", "update-ref", "-m", `release ${tag}`, `refs/heads/${RELEASE_BRANCH}`, release, oldMain]);
+    stream(root, ["git", "update-ref", "-m", `release ${tag}`, `refs/heads/${RELEASE_BRANCH}`, release, checkedMain]);
     say(`release: ${RELEASE_BRANCH} fast-forwarded to ${DEVELOP_BRANCH} at ${release.slice(0, 12)}`);
     stream(root, ["git", "tag", "--annotate", "--cleanup=verbatim", tag, "--message", `toli ${tag}\n\n${notes}`]);
     return tag;

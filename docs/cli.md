@@ -164,5 +164,6 @@ Details: [fleet.md](fleet.md).
 
     self prepare T<n> [--json] | list [--json] | land T<n> [--json]
 
-Changes to toli are made in a worktree (`projects/.worktrees/toli/T<n>`), never in the live checkout; `land` runs
-`just check` there and fast-forwards the live checkout only when it passes ([development.md](development.md)).
+Changes to toli are made in a worktree (`projects/.worktrees/toli/T<n>`, from `develop`), never in the live checkout;
+`land` runs `just check` there and fast-forwards `develop` (or, without a local `develop`, the live checkout's branch)
+only when it passes ([development.md](development.md)).
