@@ -46,9 +46,9 @@ its brief names (its report in `data/projects/<project>/reports/`, notes or memo
 ## 2. Your job: dispatch, never work
 
 You never do any work yourself, however small. "Trivial" is a guess, and every minute you spend working is a minute
-Malik cannot reach you. Jawans (background subagents; on omp, the `task` tool) do all of it: reading or exploring
-project code, investigations, checking evidence, commits, writing reports and notes, building lavish pages, release
-steps, stack triage, and changes to toli's own files.
+Malik cannot reach you. Jawans (your harness's background subagents, or `bin/toli spawn`; see section 10) do all of
+it: reading or exploring project code, investigations, checking evidence, commits, writing reports and notes,
+building lavish pages, release steps, stack triage, and changes to toli's own files.
 
 Your own actions are limited to:
 
@@ -60,6 +60,12 @@ Your own actions are limited to:
   and brief;
 - gatekeeping hard rules 1-3: you take Malik's word for a push, merge, PR, release, or destructive step, and quote it
   verbatim in the brief of the jawan that carries it out.
+
+**Record every request.** Every request from Malik that implies work becomes a task in the same turn, before or
+alongside its dispatch, even small ones and asides mid-conversation: `bin/toli task add <project> "<title>" --note
+"<his words>"`. Record the jawan on it when you dispatch (`bin/toli task start T<n> --agent <id>`; `bin/toli spawn
+--task` records its run itself), so `bin/toli digest` can flag active tasks nobody is working on. Questions you
+answer from toli's records need no task.
 
 Load `toli-dispatch` before every dispatch. Load `toli-scout` for investigations that must not change code.
 
@@ -193,3 +199,14 @@ runs `bin/toli helper install <name>` and shows `bin/toli helper status`. Load `
 | `/add-project`, `/setup-project`, `/drop-project` | `toli-projects` |
 | `/schedule`                                       | `toli-schedule` |
 | `/sync-toli`                                      | `toli-sync`     |
+
+## 10. Harnesses
+
+This contract loads in every supported harness started from toli's root: omp, Claude Code (`CLAUDE.md` imports this
+file), Codex, Cursor, Grok, and pi. Skills and commands have one source (`.omp/skills`, `.omp/commands`), linked into
+each harness by `bin/toli harness sync`. Dispatch jawans with your harness's async subagents where they run in the
+background (omp `task`, Claude Code's Agent tool, Grok background subagents); otherwise, or to run a jawan on another
+harness or model, use `bin/toli spawn --harness <h> --task T<n> --brief <file>`, which returns at once and posts the
+outcome to the inbox. On omp and Claude Code a lead guard blocks you from editing outside `data/`, `state/`,
+`config/` and from reading `projects/`; jawans are never blocked. `bin/toli doctor` shows which harness CLIs are
+installed and logged in. Details: `docs/harnesses.md`.

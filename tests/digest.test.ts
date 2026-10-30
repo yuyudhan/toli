@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Digest = {
@@ -102,5 +104,59 @@ describe("digest", () => {
         const result = box.toli(["digest", "--fleet"]);
         expect(result.code).toBe(1);
         expect(result.stderr).toContain("coordinator only");
+    });
+
+    test("Next recommends concrete actions from state, most urgent first", () => {
+        const box = coordinator();
+        box.stub("omp", "true");
+        const machinePath = join(box.root, "config", "machine.json");
+        const machine = JSON.parse(readFileSync(machinePath, "utf8"));
+        writeFileSync(machinePath, JSON.stringify({ ...machine, harness: { byWork: { verify: "codex" } } }));
+        box.ok(["task", "add", "alpha", "ask first"]);
+        box.ok(["task", "add", "alpha", "build it", "--shape", "ship"]);
+        box.ok(["task", "hold", "T1", "--question", "which db?"]);
+        box.ok(["inbox", "add", "--from", "m2", "--title", "news"], { stdin: "x", now: "2026-03-04T09:00:00Z" });
+        const next = section(box.ok(["digest"], { now: NOW }), "Next");
+        expect(next[0]).toBe("Next (5):");
+        expect(next[1]).toBe(
+            '  - Ask the user about T1 (alpha): which db?: bin/toli task answer T1 "<answer>" (several questions: /ahoy, the toli-ahoy skill)',
+        );
+        expect(next[2]).toStartWith("  - Relay 1 new result to the user in plain words: then bin/toli inbox ack");
+        expect(next[3]).toStartWith(
+            "  - Dispatch T2 (alpha, ship): build it: load the toli-dispatch skill, then a background jawan recorded on the task (bin/toli task start T2 --agent <id>",
+        );
+        expect(next[4]).toMatch(/^ {2}- 1 project needs setup \(alpha: .*\): \/setup-project alpha/);
+        expect(next[5]).toStartWith(
+            "  - Install Codex CLI: config/machine.json routes jawans to it: npm install -g @openai/codex",
+        );
+        const json = JSON.parse(box.ok(["digest", "--json"], { now: NOW })) as { next: { action: string }[] };
+        expect(json.next).toHaveLength(5);
+    });
+
+    test("Next says nothing is pending when there is nothing to do; persona line heads the digest", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        box.stub("omp", "true");
+        const text = box.ok(["digest"], { now: NOW });
+        expect(text.split("\n")[1]).toStartWith('Names: the user is "Malik"');
+        expect(section(text, "Next")).toEqual([
+            "Next (1):",
+            "  - Nothing pending: greet the user and wait for a request",
+        ]);
+        expect(section(text, "jawan runs")).toEqual(["jawan runs (0):", "  none"]);
+    });
+
+    test("an active task with no recorded jawan is flagged until one is recorded with task start --agent", () => {
+        const box = coordinator();
+        box.stub("omp", "true");
+        box.ok(["task", "add", "alpha", "fix kb"]);
+        box.ok(["task", "start", "T1"]);
+        const flagged = section(box.ok(["digest"], { now: NOW }), "Next");
+        expect(flagged[1]).toStartWith("  - T1 (alpha) is active but no running jawan is recorded on it: dispatch one");
+        box.ok(["task", "start", "T1", "--agent", "FixKb"]);
+        const text = box.ok(["digest"], { now: NOW });
+        expect(section(text, "in flight")).toEqual(["in flight (1):", "  T1 alpha: fix kb [jawan FixKb]"]);
+        expect(section(text, "Next").some((line) => line.includes("no running jawan"))).toBe(false);
+        expect(box.ok(["task", "list"])).toContain("(agent: FixKb)");
     });
 });

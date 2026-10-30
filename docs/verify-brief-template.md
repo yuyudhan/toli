@@ -2,7 +2,8 @@ TOLI_BRIEF v1
 
 <!--
 Verifier brief template. After an implementing jawan reports on ship work, Sardar spawns a second, independent jawan
-with this brief: `reviewer` for code changes, `qa-tester` when the acceptance lines are UI/CLI/API behaviour. Sardar
+with this brief: a full-access jawan (omp `task`, or `bin/toli spawn --work verify`), never omp's read-only `reviewer`,
+which cannot run checks, write the report, or commit; it may use qa-tester or browser helpers for UI/CLI/API lines. Sardar
 does not read or judge the evidence itself; it pastes the original brief and the implementer's full report (or its
 `agent://<id>` reference) below and dispatches. Copy the whole file, replace each `<...>`, drop this comment, and keep
 the Rules section unchanged. `TOLI_BRIEF v1` must stay the first line.

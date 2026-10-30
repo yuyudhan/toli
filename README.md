@@ -134,6 +134,13 @@ directory, are registered in `local/helpers.json`, and are scheduled with launch
 `bin/toli helper install <name>`. Ask Sardar for one and a jawan writes it; nothing in `local/` is ever committed.
 Details: [docs/helpers.md](docs/helpers.md).
 
+### Any harness: omp, Claude Code, Codex, Cursor, Grok, pi
+
+Start the lead in toli's root with any of them: one contract (`AGENTS.md`, imported by `CLAUDE.md`) and one set of
+skills and commands (`.omp/`, linked into each harness by `bin/toli harness sync`). Jawans run as the lead's
+background subagents or on any installed harness with `bin/toli spawn --harness <h> --task T<n> --brief <file>`,
+which returns at once and posts the outcome to the inbox. Details: [docs/harnesses.md](docs/harnesses.md).
+
 ## Coordinator and workers
 
 - **Coordinator**: the Sardar Malik talks to day to day. Sees the whole fleet (`bin/toli digest --fleet`), syncs every
