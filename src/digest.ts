@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "./args.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
-import { loadMachine, otherFleetMachines, remoteToliCommand, sshArgs } from "./config.ts";
+import { hasMachine, loadMachine, otherFleetMachines, remoteToliCommand, sshArgs } from "./config.ts";
 import { isGitRepo, type RepoStatus, repoStatus } from "./git.ts";
 import { configuredHarnesses, type Harness, harnessPath, SPECS } from "./harness.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
@@ -14,6 +14,7 @@ import { projectsNeedingSetup } from "./project-setup.ts";
 import { loadProjects, type Mode } from "./projects.ts";
 import { type FleetEntry as AvailabilityEntry, availabilityLine } from "./resources.ts";
 import { activeRuns, type JawanRun, runLine } from "./runs.ts";
+import { takeSetupNotice } from "./setup.ts";
 import { now, out, printJson, run, ToliError } from "./util.ts";
 
 export type ProjectDigest = {
@@ -83,7 +84,8 @@ function recentReports(): ReportEntry[] {
 }
 
 export function buildDigest(): Digest {
-    const machine = loadMachine();
+    // A fresh clone has no config/machine.json yet; the digest still works and the setup notice says what to do.
+    const machine = hasMachine() ? loadMachine() : { name: "(unnamed)", role: "not initialized" };
     const projects = loadProjects().map((project): ProjectDigest => {
         const dir = paths.projectDir(project.name);
         const branch = project.branch ?? null;
@@ -246,9 +248,11 @@ function taskLine(task: Task): string {
     return `  ${task.id} ${task.project}: ${task.title}${question}${agent}`;
 }
 
-function render(digest: Digest): string {
+/** `setup`: the told-once setup notice for this machine's own digest; never set for fleet digests. */
+function render(digest: Digest, setup: string | null = null): string {
     const lines = [`machine ${digest.machine} (${digest.role}) at ${digest.generatedAt}`];
     if (digest.persona) lines.push(digest.persona);
+    if (setup !== null) lines.push(setup);
     lines.push("");
     lines.push(`projects (${digest.projects.length}):`);
     lines.push(...(digest.projects.length === 0 ? ["  none"] : digest.projects.map(projectLine)));
@@ -304,7 +308,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
         throw new ToliError("--fleet runs on the coordinator only");
     if (!args.bool("fleet")) {
         if (args.bool("json")) printJson(digest);
-        else out(render(digest));
+        else out(render(digest, takeSetupNotice()));
         return;
     }
     const availability: AvailabilityEntry[] = await fleetStatus();
@@ -313,7 +317,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
         printJson({ ...digest, availability, fleet });
         return;
     }
-    out(render(digest));
+    out(render(digest, takeSetupNotice()));
     out("");
     out(`fleet availability (${availability.length}):`);
     for (const entry of availability) out(`  ${availabilityLine(entry)}`);

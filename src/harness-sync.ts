@@ -29,6 +29,7 @@ function claudeSettings(): string {
         hooks: {
             PreToolUse: [{ matcher: CLAUDE_HOOK_MATCHER, hooks: [hookCommand("claude-pre-tool")] }],
             UserPromptSubmit: [{ hooks: [hookCommand("claude-prompt")] }],
+            SessionStart: [{ hooks: [hookCommand("claude-session-start")] }],
         },
     };
     return `${JSON.stringify(settings, null, 4)}\n`;
@@ -67,7 +68,7 @@ export function shimItems(): ShimItem[] {
             path: ".claude/settings.json",
             kind: "file",
             content: claudeSettings(),
-            why: "Claude Code hooks: lead guard (PreToolUse) and per-turn guidance + results (UserPromptSubmit)",
+            why: "Claude Code hooks: lead guard (PreToolUse), per-turn guidance + results (UserPromptSubmit), told-once setup notice (SessionStart)",
         },
         { path: ".agents/skills", kind: "symlink", target: "../.omp/skills", why: "Codex, pi and Cursor skills" },
         { path: ".cursor/commands", kind: "symlink", target: "../.omp/commands", why: "Cursor slash commands" },

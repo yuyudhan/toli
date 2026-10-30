@@ -96,6 +96,10 @@ Everyday commands you type inside omp:
 
 ## First-time setup (each machine)
 
+Easiest: after cloning, open your agent in this directory and say **"set up toli"** (or `/setup`). It checks what is
+missing (`bin/toli setup status`), asks you once, and does the rest. Details: [docs/setup.md](docs/setup.md). The
+manual steps are below.
+
 Requirements: [bun](https://bun.sh), omp, git, `gh` (logged in), and optionally `no-mistakes`. For GitLab projects,
 `glab` logged in to each GitLab host in use; for Bitbucket Cloud projects, `BITBUCKET_USERNAME` and
 `BITBUCKET_API_TOKEN` (environment or the gitignored `.env` in this repo) or a bitbucket.org login in the git credential

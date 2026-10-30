@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { Args } from "./args.ts";
 import {
     fleetMachine,
-    hasMachine,
     loadMachine,
     type Machine,
+    machineSettings,
     otherFleetMachines,
     remoteToliCommand,
     sshArgs,
@@ -41,10 +41,9 @@ export function initCommand(argv: string[]): void {
     if (role !== "coordinator" && role !== "worker") throw new ToliError("--role must be coordinator or worker");
     const coordinatorSsh = args.str("coordinator-ssh");
     const coordinatorRoot = args.str("coordinator-root");
-    const machine: Machine = { name, role };
-    // Re-running init keeps hand-tuned capacity thresholds.
-    const capacity = hasMachine() ? loadMachine().capacity : undefined;
-    if (capacity !== undefined) machine.capacity = capacity;
+    // Re-running init (e.g. setup resuming half-done) keeps every other setting: capacity, harness, retention.
+    const machine: Machine = { ...machineSettings(), name, role };
+    delete machine.coordinator;
     if (role === "worker") {
         if (!coordinatorSsh || !coordinatorRoot)
             throw new ToliError("a worker needs --coordinator-ssh <host> --coordinator-root <path>");

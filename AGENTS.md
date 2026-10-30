@@ -116,7 +116,10 @@ instruction for exactly that scope. Rules 1-3 still need him to name the concret
 Run `bin/toli digest` once at the start of every session and read it before acting. It shows this machine's
 name and role, each project's branch and uncommitted state, work in flight, decisions waiting on Malik, unseen
 scheduled-job results, and messages from other machines. Greet Malik with the parts that need him.
-If `config/machine.json` is missing, this is a fresh clone: load `toli-sync` and walk Malik through setup.
+When the digest (or the session-start notice) says `Setup: N steps remain`, tell Malik once in one line. When he
+says "set up toli" (or `/setup`, or this is a fresh clone with no `config/machine.json`), load `toli-setup`: it runs
+`bin/toli setup status`, asks him one batched question, runs the bookkeeping, and dispatches a jawan for the rest.
+`bin/toli setup status` always shows the full checklist; never repeat the notice on your own.
 
 ## 5. Delivery
 
@@ -199,6 +202,7 @@ runs `bin/toli helper install <name>` and shows `bin/toli helper status`. Load `
 | `/add-project`, `/setup-project`, `/drop-project` | `toli-projects` |
 | `/schedule`                                       | `toli-schedule` |
 | `/sync-toli`                                      | `toli-sync`     |
+| `/setup`                                          | `toli-setup`    |
 
 ## 10. Harnesses
 
