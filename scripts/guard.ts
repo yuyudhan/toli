@@ -38,7 +38,7 @@ for (const [index, module] of modules.entries()) {
         // Dynamic import is the point: rules are discovered by glob, so there is no static list.
         const loaded: unknown = (await import(`${ROOT}${module}`)).default;
         if (!isGuard(loaded)) throw new Error(`${module} must default-export { name, run(files) }`);
-        const violations = loaded.run(scope.files);
+        const violations = await loaded.run(scope.files);
         if (violations.length === 0) {
             out(`${label} ${loaded.name}: OK`);
             continue;

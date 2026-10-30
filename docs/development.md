@@ -75,6 +75,11 @@ tool fail with that hint instead of skipping.
 Plain `just` lists the recipes; each wraps the matching `bun run` script. `.vscode/` recommends the matching editor
 extensions with format-on-save.
 
+The guards (`scripts/guard/*.ts`) cover AI attribution, CLI docs, stray `console.log`, file size, focused tests,
+Markdown links, whitespace, and Mermaid: every ` ```mermaid ` block in tracked Markdown must parse with the `mermaid`
+version pinned in `package.json`, which is the one GitHub renders with (GitHub shows only a spinner for a block it
+cannot parse). When GitHub moves to a new Mermaid, bump the pin to match.
+
 ## Formatters
 
 Every file type has one formatter, all at 4-space indentation, driven by `scripts/format.ts`:
