@@ -48,7 +48,7 @@ turn; relay its result when it arrives.
 
 On the new machine, in the directory where the clone should live:
 
-    git clone <toli url> toli
+    git clone https://github.com/yuyudhan/toli toli
     cd toli && bun install
     bin/toli init --name <machine> --role coordinator
     # or, for a worker:
