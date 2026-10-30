@@ -1,10 +1,10 @@
-// One entry point for every formatter and file-type linter, so `bun run format`, `just fmt`, the pre-commit hook,
-// and CI agree on which tool owns which file.
+// One entry point for every formatter and file-type linter, so `just fmt`, `just lint`, the pre-commit hook, and CI
+// agree on which tool owns which file.
 //
 //   bun scripts/format.ts write [-- <paths>]   format in place
 //   bun scripts/format.ts check [-- <paths>]   report unformatted files (exit 1), change nothing
-//   bun scripts/format.ts lint                 check every non-Biome formatter, then shellcheck and actionlint
-//                                              (`bun run lint` runs `biome check` itself, formatting included)
+//   bun scripts/format.ts lint [-- <paths>]    lint only: Biome lint rules, shellcheck, actionlint (formatting is
+//                                              `check`'s job; `just check` runs both)
 //   bun scripts/format.ts tools                list the system tools and how to install the missing ones
 //
 // Without paths the scope is every tracked or untracked-but-not-ignored file; with paths (the pre-commit hook passes
@@ -98,15 +98,28 @@ function requireSystemTools(plan: Step[]): void {
 }
 
 function steps(mode: Mode, scoped: boolean, files: FileSets): Step[] {
-    const write = mode === "write";
     const list: Step[] = [];
-    if (mode !== "lint" && files.biome.length > 0) {
-        const target = scoped
-            ? ["--no-errors-on-unmatched", "--files-ignore-unknown=true", "--", ...files.biome]
-            : ["."];
+    const biomeTarget = scoped
+        ? ["--no-errors-on-unmatched", "--files-ignore-unknown=true", "--", ...files.biome]
+        : ["."];
+    if (mode === "lint") {
+        if (files.biome.length > 0)
+            list.push({ name: "biome lint", command: [localBin("biome"), "lint", ...biomeTarget] });
+        if (files.shell.length > 0) list.push({ name: "shellcheck", command: ["shellcheck", "--", ...files.shell] });
+        if (files.workflows.length > 0) list.push({ name: "actionlint", command: ["actionlint", ...files.workflows] });
+        return list;
+    }
+    const write = mode === "write";
+    if (files.biome.length > 0) {
         list.push({
             name: "biome",
-            command: [localBin("biome"), "check", ...(write ? ["--write"] : []), "--linter-enabled=false", ...target],
+            command: [
+                localBin("biome"),
+                "check",
+                ...(write ? ["--write"] : []),
+                "--linter-enabled=false",
+                ...biomeTarget,
+            ],
         });
     }
     if (files.prettier.length > 0) {
@@ -137,10 +150,6 @@ function steps(mode: Mode, scoped: boolean, files: FileSets): Step[] {
             command: ["just", "--unstable", "--fmt", ...(write ? [] : ["--check"]), "--justfile", justfile],
         });
     }
-    if (mode === "lint") {
-        if (files.shell.length > 0) list.push({ name: "shellcheck", command: ["shellcheck", "--", ...files.shell] });
-        if (files.workflows.length > 0) list.push({ name: "actionlint", command: ["actionlint", ...files.workflows] });
-    }
     return list;
 }
 
@@ -159,7 +168,6 @@ if (mode === "tools") listTools();
 if (mode !== "write" && mode !== "check" && mode !== "lint")
     fail("usage: format.ts <write|check|lint|tools> [-- <paths>]");
 const paths = rest[0] === "--" ? rest.slice(1) : rest;
-if (mode === "lint" && paths.length > 0) fail("lint mode always covers the whole repo; drop the paths");
 const scoped = paths.length > 0;
 const files = classify(scoped ? paths.filter(isRegularFile) : repoFiles());
 const plan = steps(mode, scoped, files);

@@ -56,8 +56,15 @@ jobs:
                   tar -xzf just.tar.gz -C "$bin" just
                   echo "$bin" >> "$GITHUB_PATH"
 
-            - name: Lint (tsc, Biome, Prettier, Taplo, shfmt, just --fmt, shellcheck, actionlint, guards)
+            # The same steps as `just check` (package.json "check"), with coverage on the tests.
+            - name: Format check (Biome, Prettier, Taplo, shfmt, just --fmt)
+              run: bun run format:check
+
+            - name: Lint (Biome rules, shellcheck, actionlint, guards)
               run: bun run lint
+
+            - name: Type-check (tsc)
+              run: bun run typecheck
 
             - name: Test with coverage threshold (bunfig.toml)
               run: bun test --coverage

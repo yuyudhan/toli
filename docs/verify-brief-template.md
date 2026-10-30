@@ -60,6 +60,8 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
 - Browsers run headless only. Stop and report at any OTP, captcha, or second factor. Staging is read-only.
 - Build hygiene: after your last test run, apply the project notes' build and cleanup rules (build output
   location, what to delete, disk limits), if any.
+- Work on toli itself (the toli repository, not a project): run `just check` yourself before landing; a failing run
+  is a GAP.
 
 ## Report format
 

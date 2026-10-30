@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# pre-commit: fast checks on what is being committed. Enable with `bun run hooks`.
+# pre-commit: fast checks on what is being committed. Enable with `just hooks` (or `bun run hooks`).
 #   1. Secrets scan of the staged changes (first: a leaked key cannot be undone by a later commit).
 #   2. scripts/format.ts formats the staged files of every type it owns (Biome, Prettier, Taplo, shfmt,
 #      just --fmt) and re-stages the ones it changed.
 #      Partial staging caveat: formatting rewrites the whole working-tree file and `git add` re-stages
 #      all of it, so unstaged hunks in a reformatted staged file get committed too. Stash them first
 #      (`git stash push --keep-index`) if you need a partial commit.
-#   3. Guards over the staged files only (TOLI_GUARD_HOOK=1).
-# The test suite runs in pre-push, not here; commits stay fast on purpose.
+#   3. Lint of the staged files (Biome rules, shellcheck, actionlint).
+#   4. Type-check (tsc) of the staged tree, exported to a temp directory, when a staged file is TypeScript: other
+#      agents' unfinished edits in the working tree neither break nor pass this commit.
+#   5. Guards over the staged files only (TOLI_GUARD_HOOK=1).
+# The test suite runs in pre-push (`just check`), not here; commits stay fast on purpose.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -43,6 +46,22 @@ if ((${#files[@]} > 0)); then
         echo "pre-commit: re-staging ${#changed[@]} reformatted file(s)"
         git add -- "${changed[@]}"
     fi
+fi
+
+if ((${#files[@]} > 0)); then
+    echo "pre-commit: lint (staged)"
+    bun scripts/format.ts lint -- "${files[@]}"
+    for file in "${files[@]}"; do
+        if [[ "$file" == *.ts ]]; then
+            echo "pre-commit: typecheck (staged tree)"
+            staged="$(mktemp -d)"
+            trap 'rm -rf "$staged"' EXIT
+            git checkout-index --all --prefix="$staged/"
+            ln -s "$root/node_modules" "$staged/node_modules"
+            (cd "$staged" && "$root/node_modules/.bin/tsc" --noEmit --project tsconfig.json)
+            break
+        fi
+    done
 fi
 
 echo "pre-commit: guards (staged)"

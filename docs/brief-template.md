@@ -77,6 +77,7 @@ task needs, and never revert or reformat changes you did not make.
 - Build hygiene: follow the project notes' build and cleanup rules (where build output may go, what to delete
   after your last test run, disk limits). If the notes say nothing, keep build output in the project's default
   locations and leave no stray files outside the project path.
+- Work on toli itself (the toli repository, not a project): run `just check` before committing and paste its tail.
 
 ## Landing and bookkeeping
 
