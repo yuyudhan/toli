@@ -12,7 +12,8 @@ import { loadBacklog, type Task } from "./backlog.ts";
  *   data/reports/T<n>.md         -> data/projects/<task's project>/reports/T<n>.md
  *   data/remote/<stamp>-<m>.md   -> data/projects/<p>/runs/<stamp>-<m>.md  (when the file names its project)
  *   data/briefs/<file>.md        -> data/projects/<p>/briefs/<file>.md     (the project of the job using it, else
- *                                   the project the file name names; ambiguous names stay)
+ *                                   the task's project for T<n>.md, else the project the file name names;
+ *                                   ambiguous names and unknown tasks stay)
  *   data/malik.md                -> data/preferences.md                    (the persona-named preferences file)
  *   data/archive/malik.md        -> data/archive/preferences.md            (its archived entries)
  *   data/projects.json entries without a `workspace` strategy get the one they already followed (R16):
@@ -82,16 +83,25 @@ function jobBriefProjects(): Map<string, string> {
 }
 
 /**
- * A brief's project: the project of the scheduled job that uses it; else the project whose name is the file stem;
- * else the one project whose name is a `<project>-` prefix. Several prefixes (kalki, kalki-release) are ambiguous.
+ * A brief's project: the project of the scheduled job that uses it; else, for `T<n>.md`, the task's project (as
+ * reports are matched); else the project whose name is the file stem; else the one project whose name is a
+ * `<project>-` prefix. Several prefixes (kalki, kalki-release) are ambiguous.
  */
 function briefProject(
     file: string,
     projects: Set<string>,
     jobOwners: Map<string, string>,
+    tasks: Map<string, string>,
 ): { project: string } | { reason: string } {
     const owner = jobOwners.get(file);
     if (owner !== undefined && isValidName(owner)) return { project: owner };
+    const id = TASK_REPORT.exec(file)?.[1];
+    if (id !== undefined) {
+        const project = tasks.get(id);
+        return project !== undefined && isValidName(project)
+            ? { project }
+            : { reason: `task ${id} not found in the backlog or task archive` };
+    }
     const stem = file.replace(/\.md$/, "");
     if (projects.has(stem)) return { project: stem };
     const prefixed = [...projects].filter((project) => stem.startsWith(`${project}-`)).sort();
@@ -206,7 +216,7 @@ export function planMigration(): MigrationPlan {
     const jobOwners = jobBriefProjects();
     for (const file of mdFiles(briefsDir)) {
         const path = join(briefsDir, file);
-        const owner = briefProject(file, projects, jobOwners);
+        const owner = briefProject(file, projects, jobOwners, tasks);
         if ("project" in owner) candidate("brief", path, join(paths.projectBriefsDir(owner.project), file));
         else kept.push({ path: rel(path), reason: owner.reason });
     }
