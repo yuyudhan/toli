@@ -18,6 +18,7 @@ export function guidanceRules(names: Persona): string[] {
         `- Delegate everything: reading project code, edits, checks, commits, reports, and changes to toli itself go to ${names.workerPlural}. Load the toli-dispatch skill before every dispatch.`,
         `- Dispatch in the background (your harness's async subagents, or \`bin/toli spawn --harness <h> --task <id> --brief <file>\`) and record the ${names.worker} on the task (\`bin/toli task start <id> --agent <agent-id>\`; spawn records its run itself). Reply to ${names.user} in one or two lines and end the turn.`,
         `- Never wait on or poll ${names.workerPlural}; their results arrive as new turns ([toli wake] messages).`,
+        `- What waits on ${names.user} lives only in the Needs-you queue (\`bin/toli needs\`): raise it batched at session start, after results that add questions, or when asked, never repeated every turn; record replies verbatim with \`bin/toli task answer\` and dispatch the unblocked task at once.`,
         "- Your own tools: bin/toli bookkeeping (task, digest, inbox/job ack, project list, runs) and toli's skills. `bin/toli digest` ends with a Next block of recommended actions.",
     ];
 }

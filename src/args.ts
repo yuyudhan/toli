@@ -5,6 +5,8 @@ export type ParsedArgs = {
     /** Paths after a bare `--`. */
     rest: string[];
     flags: Map<string, string | true>;
+    /** Every value given for each value flag, in order (a repeated `--flag` keeps all of them). */
+    lists: Map<string, string[]>;
 };
 
 const SHORT_FLAGS: Record<string, string> = { m: "message" };
@@ -17,6 +19,13 @@ export function parseArgs(argv: string[], booleans: readonly string[] = []): Par
     const positional: string[] = [];
     const rest: string[] = [];
     const flags = new Map<string, string | true>();
+    const lists = new Map<string, string[]>();
+    const setValue = (name: string, value: string): void => {
+        flags.set(name, value);
+        const list = lists.get(name);
+        if (list === undefined) lists.set(name, [value]);
+        else list.push(value);
+    };
     for (let i = 0; i < argv.length; i++) {
         const word = argv[i] as string;
         if (word === "--") {
@@ -44,21 +53,22 @@ export function parseArgs(argv: string[], booleans: readonly string[] = []): Par
             continue;
         }
         if (inline !== undefined) {
-            flags.set(name, inline);
+            setValue(name, inline);
             continue;
         }
         const value = argv[i + 1];
         if (value === undefined) throw new ToliError(`--${name} needs a value`);
-        flags.set(name, value);
+        setValue(name, value);
         i++;
     }
-    return { positional, rest, flags };
+    return { positional, rest, flags, lists };
 }
 
 export class Args {
     readonly positional: string[];
     readonly rest: string[];
     private readonly flags: Map<string, string | true>;
+    private readonly lists: Map<string, string[]>;
     private readonly allowed: Set<string>;
 
     constructor(argv: string[], options: { booleans?: readonly string[]; values?: readonly string[] } = {}) {
@@ -67,6 +77,7 @@ export class Args {
         this.positional = parsed.positional;
         this.rest = parsed.rest;
         this.flags = parsed.flags;
+        this.lists = parsed.lists;
         this.allowed = new Set([...booleans, ...(options.values ?? [])]);
         for (const name of this.flags.keys()) {
             if (!this.allowed.has(name)) throw new ToliError(`unknown option --${name}`);
@@ -80,6 +91,11 @@ export class Args {
     str(name: string): string | undefined {
         const value = this.flags.get(name);
         return typeof value === "string" ? value : undefined;
+    }
+
+    /** Every value of a repeatable value flag, in the order given; empty when absent. */
+    all(name: string): string[] {
+        return this.lists.get(name) ?? [];
     }
 
     has(name: string): boolean {

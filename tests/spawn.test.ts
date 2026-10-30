@@ -159,4 +159,39 @@ describe("spawn", () => {
             'unknown task "T9"',
         );
     });
+
+    test("a ship brief without a Goal section is warned about but still spawned; scouts and goal briefs are not", () => {
+        const box = coordinator();
+        box.stub("omp", "true");
+        const warning = 'has no "## Goal" section';
+        const bare = box.toli([
+            "spawn",
+            "--harness",
+            "omp",
+            "--work",
+            "ship",
+            "--brief",
+            brief(box),
+            "--cwd",
+            box.root,
+        ]);
+        expect(bare.code).toBe(0);
+        expect(bare.stderr).toContain(warning);
+        const scout = box.toli([
+            "spawn",
+            "--harness",
+            "omp",
+            "--work",
+            "scout",
+            "--brief",
+            brief(box),
+            "--cwd",
+            box.root,
+        ]);
+        expect(scout.stderr).not.toContain(warning);
+        const goal = brief(box, "## Goal\n\n- Objective: say hi\n- Stop when: hi was said");
+        const withGoal = box.toli(["spawn", "--harness", "omp", "--work", "ship", "--brief", goal, "--cwd", box.root]);
+        expect(withGoal.code).toBe(0);
+        expect(withGoal.stderr).not.toContain(warning);
+    });
 });

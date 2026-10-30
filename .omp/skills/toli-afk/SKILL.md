@@ -30,7 +30,9 @@ Work the backlog under the normal rules; being away never loosens them, and Sard
 - Anything needing Malik (an ambiguous spec, a design choice, a destructive or security-sensitive step, gaps after two
   fix rounds) becomes:
 
-        bin/toli task hold <id> --question "<the question in plain words>"
+        bin/toli task hold <id> --question "<one crisp question>" \
+            --option "<choice> => <what happens then>" --option "<choice> => <what happens then>" \
+            --recommend <n> --blocks "<what waits on it>"
 
     Then move on to the next task. Never guess on his behalf.
 
@@ -53,10 +55,11 @@ Malik is back on any message from him, or `/afk off`.
 
         Ji Malik, welcome back. While you were away:
         Done: <n> tasks - <task, project, commit or report>, one line each.
-        Needs your answer: <n> - <task, question>, one line each.
+        Needs your answer: <n> - one numbered line each from `bin/toli needs`: task, question, options, your pick.
         Still running: <n>.
         Not started: <n>.
         Job results: <one line each, if any>.
 
-3. If two or more tasks need answers, offer `/ahoy`.
+3. Ask the Needs-you questions together in that one report (`skill://toli-ahoy`), never one per message; record each
+   reply verbatim with `bin/toli task answer` and dispatch the unblocked task at once.
 4. Then handle whatever his message asked for.

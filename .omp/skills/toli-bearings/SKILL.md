@@ -15,8 +15,9 @@ with `async: true` and `timeout: 0`, give the local overview now, and add the fl
 
     bin/toli digest --json --fleet
 
-The digest covers: machine, projects (branch, fixed branch and any mismatch, dirty, ahead/behind), backlog (in
-flight / waiting on Malik / queued), unseen job results, inbox from other machines, and recent reports. With
+The digest covers: machine, `needs` (the Needs-you queue: held tasks grouped by project, blocking and oldest first,
+with question, options, recommendation, and age), projects (branch, fixed branch and any mismatch, dirty,
+ahead/behind), backlog (in flight / queued), unseen job results, inbox from other machines, and recent reports. With
 `--fleet` it also has `availability`: one entry per machine saying whether it is free for work and, if not, why
 (load, memory, disk, runs, unreachable). If a worker is unreachable over ssh, say so in one line rather than
 failing the whole overview.
@@ -34,12 +35,15 @@ Lead with what needs Malik, then what changed, then the rest. Translate everythi
     Projects with uncommitted or unpushed work: <project - state>.
     Off their working branch: <project - on <current>, should be <fixed branch>>.
 
-- "waiting on Malik" becomes "needs your answer"; "queued" becomes "not started yet"; "inbox" becomes "from <machine>".
+- The Needs-you queue becomes "needs your answer"; "queued" becomes "not started yet"; "inbox" becomes "from
+  <machine>".
 - Omit empty sections entirely.
 - Keep it under about 15 lines. Offer detail instead of dumping it.
 - Use the one-line titles and statuses the digest gives; to summarise a long job result or report, dispatch a
   `sonic` jawan rather than reading it yourself.
-- If anything needs his answer, offer `/ahoy` to go through it.
+- Needs you: one line per held task (id, project, the question, the recommended option). With two or more, offer
+  `/ahoy` to answer them together as one numbered list (`skill://toli-ahoy`). A question already raised this session
+  and unchanged is counted ("2 questions still open"), not re-asked.
 - A project off its fixed branch needs Malik: say how to switch back (or that he may want to change the configured
   branch) and never switch it yourself.
 - This layout is also the while-you-were-away block (AGENTS.md section 1): after 30 or more minutes of silence from

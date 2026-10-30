@@ -11,15 +11,16 @@ chat stays free.
 
 ## Page or chat
 
-| Situation                                                                        | Use                      |
-| -------------------------------------------------------------------------------- | ------------------------ |
-| One yes/no question                                                              | chat                     |
-| One question with two short options                                              | chat                     |
-| Two or more decisions at once (`/ahoy`, several no-mistakes `ask-user` findings) | lavish `input` page      |
-| A choice between options with real tradeoffs                                     | lavish `comparison` page |
-| `/bearings lavish`, or a fleet overview too big for chat                         | lavish `table` page      |
-| Scout report with a diagram, code map, or several options                        | lavish page              |
-| Malik asks to see something visually                                             | lavish page              |
+| Situation                                                                          | Use                       |
+| ---------------------------------------------------------------------------------- | ------------------------- |
+| One yes/no question                                                                | chat                      |
+| One question with two short options                                                | chat                      |
+| Two or more Needs-you decisions (`/ahoy`, several no-mistakes `ask-user` findings) | one numbered list in chat |
+| The same, when the user prefers pages (`data/preferences.md`) or asks for one      | lavish `input` page       |
+| A choice between options with real tradeoffs                                       | lavish `comparison` page  |
+| `/bearings lavish`, or a fleet overview too big for chat                           | lavish `table` page       |
+| Scout report with a diagram, code map, or several options                          | lavish page               |
+| Malik asks to see something visually                                               | lavish page               |
 
 When unsure, give the short chat answer and offer the page.
 
@@ -27,7 +28,8 @@ When unsure, give the short chat answer and offer the page.
 
 Spawn a `task` jawan (effort lo/med) with a `TOLI_BRIEF v1` brief that holds:
 
-- the content: the questions, options, and tradeoffs verbatim, or the paths it must read (digest JSON, report files);
+- the content: the questions, options, and tradeoffs verbatim, or the paths it must read (`bin/toli needs --json` for
+  held tasks, digest JSON, report files);
 - the playbook (`input`, `comparison`, `table`) and the page path (below);
 - "Read `skill://lavish` first. Build and open the page, then run `npx -y lavish-axi poll <file>` through `bash`
   with `async: true` until the user submits. Return every answer verbatim, keyed by item. Never run

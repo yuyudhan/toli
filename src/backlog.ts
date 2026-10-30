@@ -13,6 +13,13 @@ export const STATUSES = ["queued", "active", "held", "done", "dropped"] as const
 export type Status = (typeof STATUSES)[number];
 export type Shape = "ship" | "scout";
 
+/** One answer a held task offers the user, and what the lead does if it is chosen. */
+export type HoldOption = { choice: string; outcome: string };
+
+/** How many options a held question offers when it offers any. */
+export const HOLD_OPTIONS_MIN = 2;
+export const HOLD_OPTIONS_MAX = 4;
+
 export type Task = {
     id: string;
     project: string;
@@ -20,7 +27,18 @@ export type Task = {
     shape: Shape;
     status: Status;
     notes: string[];
+    /** The held question for the user: the task's entry in the Needs-you queue (`bin/toli needs`). */
     question?: string;
+    /** The answers offered with the question (2-4), each with its consequence. */
+    options?: HoldOption[];
+    /** The lead's or jawan's recommended answer: one of the option choices, or free text when there are none. */
+    recommend?: string;
+    /** What waits on the answer (other tasks, a release, a deadline). */
+    blocks?: string;
+    /** When the task was last held; the Needs-you queue's age. */
+    heldAt?: string;
+    /** When the digest last re-surfaced this hold as stale (once per hold). */
+    staleSurfacedAt?: string;
     answer?: string;
     report?: string;
     commit?: string;
@@ -155,46 +173,102 @@ function done(argv: string[]): void {
     out(describe(task));
 }
 
+/** Parse one `--option "<choice> => <what happens then>"`. */
+function parseOption(value: string): HoldOption {
+    const at = value.indexOf("=>");
+    const choice = at === -1 ? "" : value.slice(0, at).trim();
+    const outcome = at === -1 ? "" : value.slice(at + 2).trim();
+    if (choice === "" || outcome === "")
+        throw new ToliError(`--option must be "<choice> => <what happens then>", got "${value}"`);
+    return { choice, outcome };
+}
+
+/** The option a reply or recommendation names: its 1-based number or its exact choice text (any case). */
+export function matchOption(options: HoldOption[], value: string): HoldOption | undefined {
+    const text = value.trim();
+    if (/^\d+$/.test(text)) return options[Number(text) - 1];
+    return options.find((option) => option.choice.toLowerCase() === text.toLowerCase());
+}
+
+/**
+ * `task hold <id> --question "..." [--option "<choice> => <then>"]... [--recommend <n|choice|text>] [--blocks "..."]`:
+ * put the task in the Needs-you queue. Re-holding replaces every hold field.
+ */
 function hold(argv: string[]): void {
-    const args = new Args(argv, { values: ["question"] });
+    const args = new Args(argv, { values: ["question", "option", "recommend", "blocks"] });
     args.maxPositional(1);
-    const question = args.str("question");
+    const question = args.str("question")?.trim();
     if (!question) throw new ToliError('hold needs --question "..."');
+    const options = args.all("option").map(parseOption);
+    if (options.length > 0 && (options.length < HOLD_OPTIONS_MIN || options.length > HOLD_OPTIONS_MAX))
+        throw new ToliError(`give ${HOLD_OPTIONS_MIN}-${HOLD_OPTIONS_MAX} --option values, or none`);
+    const recommendValue = args.str("recommend")?.trim();
+    let recommend: string | undefined;
+    if (recommendValue) {
+        if (options.length === 0) recommend = recommendValue;
+        else {
+            const match = matchOption(options, recommendValue);
+            if (match === undefined)
+                throw new ToliError(`--recommend must be an option's number (1-${options.length}) or its choice text`);
+            recommend = match.choice;
+        }
+    }
+    const blocks = args.str("blocks")?.trim();
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status === "done" || entry.status === "dropped")
             throw new ToliError(`${entry.id} is ${entry.status}`);
         entry.status = "held";
         entry.question = question;
+        entry.heldAt = now().toISOString();
+        if (options.length > 0) entry.options = options;
+        else delete entry.options;
+        if (recommend !== undefined) entry.recommend = recommend;
+        else delete entry.recommend;
+        if (blocks) entry.blocks = blocks;
+        else delete entry.blocks;
+        delete entry.staleSurfacedAt;
         delete entry.answer;
     });
     out(describe(task));
 }
 
+/** `task answer <id> "<answer>"`: record the user's words verbatim, release the task, and say it is ready to dispatch. */
 function answer(argv: string[]): void {
     const args = new Args(argv);
     args.maxPositional(2);
     const reply = args.pos(1, "answer");
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
+        const chosen = matchOption(entry.options ?? [], reply);
         entry.answer = reply;
-        entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}`);
+        entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}`);
         entry.status = entry.startedAt === undefined ? "queued" : "active";
     });
     out(describe(task));
     if (isValidName(task.project)) recordDecision(task, reply);
+    out(
+        `unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, data/projects/${task.project}/briefs/${task.id}.md)`,
+    );
 }
 
-/** Append the held question and the user's answer to `data/projects/<p>/decisions.md`, the project's decision log. */
+/** Append the held question, its options, and the user's verbatim answer to `data/projects/<p>/decisions.md`. */
 function recordDecision(task: Task, reply: string): void {
     const file = paths.projectDecisions(task.project);
+    const options = task.options ?? [];
+    const chosen = matchOption(options, reply);
+    const lines = [`- Q: ${task.question ?? ""}`];
+    if (options.length > 0)
+        lines.push(
+            `- Options: ${options.map((option, index) => `${index + 1}. ${option.choice} => ${option.outcome}`).join("; ")}`,
+        );
+    if (task.recommend !== undefined) lines.push(`- Recommended: ${task.recommend}`);
+    lines.push(`- A: ${reply}`);
+    if (chosen !== undefined) lines.push(`- Chosen: ${chosen.choice} => ${chosen.outcome}`);
     withLock(paths.lock("decisions"), () => {
         mkdirSync(dirname(file), { recursive: true });
         const head = existsSync(file) ? "" : `# ${task.project} decisions\n`;
         const day = now().toISOString().slice(0, 10);
-        appendFileSync(
-            file,
-            `${head}\n## ${day} ${task.id}: ${task.title}\n\n- Q: ${task.question ?? ""}\n- A: ${reply}\n`,
-        );
+        appendFileSync(file, `${head}\n## ${day} ${task.id}: ${task.title}\n\n${lines.join("\n")}\n`);
     });
 }
 

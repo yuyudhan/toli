@@ -23,7 +23,7 @@ import { paths } from "./paths.ts";
 import { findProject } from "./projects.ts";
 import { activeRuns, type JawanRun, killRun, listRuns, loadRun, runLine, updateRun } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
-import { now, out, printJson, ToliError, writeJsonAtomic } from "./util.ts";
+import { now, out, printJson, ToliError, warn, writeJsonAtomic } from "./util.ts";
 import { prepareWorkspace, workspaceBrief } from "./workspace.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
@@ -103,6 +103,11 @@ function plan(options: SpawnOptions): {
 export function spawnJawan(options: SpawnOptions): JawanRun {
     const resolved = plan(options);
     loadMachine();
+    // Ship briefs carry a goal contract (docs/brief-template.md `## Goal`); a missing one is warned about, not refused.
+    if (resolved.work === "ship" && !/^## Goal\b/m.test(resolved.brief))
+        warn(
+            `the ship brief ${options.briefPath} has no "## Goal" section (Objective, Validate, Stop when; docs/brief-template.md); spawning anyway`,
+        );
     if (resolved.task !== null && resolved.project !== null && resolved.work !== "scout") {
         const workspace = prepareWorkspace(resolved.task);
         resolved.cwd = workspace.path;

@@ -66,11 +66,17 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     task add <project> "<title>" [--shape ship|scout] [--note "..."]
     task list [--json] [--status queued|active|held|done|dropped]
     task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
-    task hold <id> --question "..." | answer <id> "<answer>" | drop <id>
+    task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."]
+    task answer <id> "<answer>" | drop <id>
+    needs [--json]
 
 Every request becomes a task (`data/backlog.json`). `start` records which jawan carries it; `hold` parks it on a
-question for you; `answer` records your reply in the project's `decisions.md`
-([how-it-works.md](how-it-works.md#a-request-start-to-finish)).
+question for you, with 2-4 options (each with what happens next), a recommendation, and what it blocks; `answer`
+records your reply verbatim in the project's `decisions.md` and prints `unblocked: dispatch T<n>`
+([how-it-works.md](how-it-works.md#a-request-start-to-finish)). `needs` is the Needs-you queue: every held task,
+grouped by project, blocking and oldest first, with a one-line reply hint each; the digest opens with the same list,
+flags holds with no question, and re-surfaces a hold unanswered for `needs.staleDays` days (`config/machine.json`,
+default 7) once.
 
 ### Landing work
 

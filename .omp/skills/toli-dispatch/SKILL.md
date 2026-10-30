@@ -61,15 +61,39 @@ blocks work, and there is no locking between jawans.
 
     bin/toli task add <project> "<short title>" --shape ship|scout --note "<Malik's words>"
 
-This prints the task id `T<n>`. Fill in `docs/brief-template.md` for the task: Malik's intent verbatim, project path
-(`bin/toli project path <project>`), the notes file, the fixed branch (step 2), spec, acceptance evidence, out of
-scope, the rules block unchanged, and the Landing section (keep exactly one option). Every brief keeps
-`TOLI_BRIEF v1` as its exact first line; AGENTS.md uses that line to tell jawans apart from Sardar, so a brief without
-it makes the jawan act as Sardar. Save the filled brief as `data/projects/<project>/briefs/T<n>.md` (verifier and fix
-briefs as `T<n>-verify.md`, `T<n>-fix<k>.md`) so a re-dispatch or a later question can reuse it.
+This prints the task id `T<n>`. Fill in `docs/brief-template.md` for the task: Malik's intent verbatim, the goal
+(below), project path (`bin/toli project path <project>`), the notes file, the fixed branch (step 2), spec,
+acceptance evidence, out of scope, the rules block unchanged, and the Landing section (keep exactly one option).
+Every brief keeps `TOLI_BRIEF v1` as its exact first line; AGENTS.md uses that line to tell jawans apart from Sardar,
+so a brief without it makes the jawan act as Sardar. Save the filled brief as
+`data/projects/<project>/briefs/T<n>.md` (verifier and fix briefs as `T<n>-verify.md`, `T<n>-fix<k>.md`) so a
+re-dispatch or a later question can reuse it.
 
 If `bin/toli project setup <project>` would flag the delivery mode or the notes as missing (digest says the project
 needs setup), still dispatch the request, and offer `/setup-project <project>` in the same reply.
+
+### The goal
+
+Every brief's `## Goal` tells the jawan when it is done, so it loops (plan, act, validate) instead of stopping at
+"looks done". Write it from the user's words and the project notes:
+
+- **Full form** (Objective, Constraints / out of scope, Validate, Stop when, Record): every ship brief, and any scout
+  that is long or multi-step (an audit across many files, a reproduction that needs the stack running).
+- **Short form** (Objective, Stop when = the exact questions the report answers): scouts and quick lookups.
+- Objective: one concrete outcome in one sentence, taken from the user's words; never "improve" or "look into".
+- Validate: a literal command, runnable as-is. Take the test or smoke command from `data/projects/<project>/notes.md`
+  (or the project's AGENTS.md), narrowed to the files touched when the notes say how, plus any check the task adds
+  (a curl, a CLI call). Unknown or flaky? Dispatch a scout first whose Stop when is "the report names the exact
+  Validate command for this task, shows it running green on the current code, and names a machine-checkable Stop
+  when"; then write the ship brief from its report.
+- Stop when: machine-checkable ("Validate exits 0 with 0 skipped and the new test is among the passes"), never a
+  judgement ("works well").
+- Record: the brief's report format (scouts: the report path).
+- Keep the template's clause against weakening checks unchanged. The verifier re-checks Stop when independently.
+
+`bin/toli spawn` warns when a ship brief has no `## Goal`; a native-subagent dispatch gets no warning, so check it
+yourself. A jawan reports `Stop when: met`, or `not met` with what blocked it; a blocked jawan that needs the user
+holds its task (step 6).
 
 Build the acceptance lines from the notes file:
 
@@ -158,9 +182,13 @@ The verifier re-runs the checks against every acceptance line and either lands t
 `bin/toli task done`) and returns `PASS <sha>`, or returns `GAPS` without committing.
 
 - `GAPS`: spawn a fix jawan with the original brief plus the gaps verbatim in its Spec, then verify again. After two
-  rounds of gaps, `bin/toli task hold T<n> --question "..."` and ask Malik how to proceed.
-- `HELD` or an implementer that reports an open question: relay the question to Malik; the jawan already recorded the
-  hold. Record his answer with `bin/toli task answer T<n> "<answer>"` and dispatch the next step.
+  rounds of gaps, hold the task in the Needs-you format (`bin/toli task hold T<n> --question "..." --option "<choice>
+=> <what happens then>"` with 2-4 options, `--recommend <n> --blocks "..."`) and raise it with the queue.
+- `HELD` or an implementer that reports an open question: the jawan already recorded the hold. Check `bin/toli
+needs`; if the hold lacks options or a recommendation the answer needs, re-hold it with them from the report. Raise
+  it as AGENTS.md section 2 "Needs you" says (batched with any other open questions, never one by one across turns),
+  record the reply verbatim with `bin/toli task answer T<n> "<answer>"`, and dispatch the unblocked task in the same
+  turn (`skill://toli-ahoy`).
 - A jawan that died without a result (session ended, crash): check `bin/toli task list --json`; re-dispatch the task
   with the same brief.
 

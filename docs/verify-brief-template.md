@@ -33,8 +33,13 @@ acceptance lines of the original brief, then either land it or report the gaps. 
 
 ## Checks
 
-For every acceptance line in the original brief, record PASS or GAP with your own evidence:
+For the original brief's `## Goal` and every acceptance line, record PASS or GAP with your own evidence:
 
+- Goal: run its Validate command yourself and check its Stop when independently; never take the implementer's
+  "met" on trust. Stop when not holding in your own run is a GAP. A brief without a Goal is checked on its
+  acceptance lines alone.
+- No reward hacking: the diff deletes, skips, weakens, narrows, or special-cases no test, assertion, or check, and
+  adds no skip markers, to make Validate pass. Any such change is a GAP.
 - Re-run the project's real test or smoke command (from the notes file or the project's AGENTS.md) yourself; paste
   the command and its output. The output must show a pass, not a skipped, filtered, or truncated run.
 - UI/API lines: check the logs and the local URL yourself (headless browser or HTTP request) and paste what came back.
@@ -59,9 +64,15 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
       branch), then `bin/toli task done <T-id> --commit <sha> --note "verified: <full PR/MR URL>"`. A push-only grant
       pushes and then holds for the PR, as below.
     - per-task, not granted: `bin/toli task hold <T-id> --question "<branch> is verified at <sha>; push it and open
-the PR/MR?"` and report.
+the PR/MR?" --option "yes => a jawan pushes and opens the PR/MR" --option "no => it stays a local branch"
+--blocks "landing <T-id>"` and report.
 - Any GAP: do not commit and do not close the task. Report the gaps; Sardar dispatches a fix.
-- A gap only Malik can decide (scope, design, risk): `bin/toli task hold <T-id> --question "<plain words>"`.
+- A gap only the user can decide (scope, design, risk): hold the task in the Needs-you format and report; never ask
+  the user directly:
+
+        bin/toli task hold <T-id> --question "<plain words>" \
+            --option "<choice> => <what happens then>" --option "<choice> => <what happens then>" \
+            --recommend <n> --blocks "<what waits on the answer>"
 
 ## Rules
 
@@ -85,7 +96,7 @@ the PR/MR?"` and report.
 ## Report format
 
     Verdict: <PASS <sha> | GAPS | HELD> - one sentence
-    Checks: <acceptance line - PASS/GAP - evidence>, one per line
+    Checks: <Goal Stop when / acceptance line - PASS/GAP - evidence>, one per line
     Evidence:
         $ <command>
         <output excerpt>

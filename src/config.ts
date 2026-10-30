@@ -34,6 +34,8 @@ export type Machine = {
     harness?: HarnessConfig;
     /** Defaults for new projects; `workspace` is the branching/worktree strategy, validated in src/project-strategy.ts. */
     defaults?: { workspace?: string };
+    /** The Needs-you queue (`bin/toli needs`): a hold unanswered for `staleDays` (default 7) is re-surfaced once. */
+    needs?: { staleDays?: number };
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */
