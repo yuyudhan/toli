@@ -93,6 +93,38 @@ export function tagsFromLsRemote(output: string): string[] {
     return tags;
 }
 
+/** Feature work lands on DEVELOP_BRANCH (`bin/toli self land`); RELEASE_BRANCH only moves at a release. */
+export const DEVELOP_BRANCH = "develop";
+export const RELEASE_BRANCH = "main";
+
+export type ReleaseBranches = {
+    /** The branch checked out where `just release` runs, or null on a detached HEAD. */
+    current: string | null;
+    /** Whether a local RELEASE_BRANCH exists. */
+    mainExists: boolean;
+    /** Whether RELEASE_BRANCH is an ancestor of (or equal to) DEVELOP_BRANCH, so it can be fast-forwarded. */
+    mainContained: boolean;
+    /** A worktree that has RELEASE_BRANCH checked out, or null. */
+    mainCheckedOutAt: string | null;
+};
+
+/**
+ * Why a release cannot merge DEVELOP_BRANCH into RELEASE_BRANCH, or null when it can. A release is cut on develop
+ * and fast-forwards main to the release commit, so main must exist, be contained in develop, and not be checked out
+ * anywhere (moving a checked-out branch would leave that worktree's files behind).
+ */
+export function releaseBranchProblem(facts: ReleaseBranches): string | null {
+    if (facts.current !== DEVELOP_BRANCH)
+        return `releases are cut from ${DEVELOP_BRANCH}, not ${facts.current ?? "a detached HEAD"}; git switch ${DEVELOP_BRANCH} first`;
+    if (!facts.mainExists)
+        return `no local ${RELEASE_BRANCH} branch; create it from the remote first: git branch ${RELEASE_BRANCH} origin/${RELEASE_BRANCH}`;
+    if (!facts.mainContained)
+        return `${RELEASE_BRANCH} has commits ${DEVELOP_BRANCH} does not; merge them first: git merge ${RELEASE_BRANCH}`;
+    if (facts.mainCheckedOutAt !== null)
+        return `${RELEASE_BRANCH} is checked out in ${facts.mainCheckedOutAt}; switch that worktree to another branch first`;
+    return null;
+}
+
 export const BUMPS = ["patch", "minor", "major"] as const;
 export type Bump = (typeof BUMPS)[number];
 
@@ -210,6 +242,17 @@ export function prependChangelog(existing: string, section: string): string {
 /** Whether CHANGELOG.md already has a section for `vX.Y.Z`. */
 export function changelogHas(text: string, version: string): boolean {
     return text.split("\n").some((line) => SECTION_HEADING.exec(line)?.[1] === `v${version}`);
+}
+
+/**
+ * Stamp a section drafted ahead of its release (`## vX.Y.Z - unreleased`, written on develop) with the release date:
+ * its heading becomes `## vX.Y.Z - YYYY-MM-DD`; the body is kept as written.
+ */
+export function dateChangelogSection(text: string, version: string, date: string): string {
+    return text
+        .split("\n")
+        .map((line) => (SECTION_HEADING.exec(line)?.[1] === `v${version}` ? `## v${version} - ${date}` : line))
+        .join("\n");
 }
 
 /** The CHANGELOG.md sections for versions after `from` (exclusive; null = from the start) up to `to` (inclusive). */

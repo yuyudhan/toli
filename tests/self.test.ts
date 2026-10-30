@@ -108,4 +108,51 @@ describe("self worktrees", () => {
         );
         expect(box.toli(["self", "land", "T6"], { env }).stderr).toContain("no self worktree for T6");
     });
+
+    test("with a develop branch, prepare starts from develop and land moves develop, not the live main", () => {
+        const { box, env } = liveRepo();
+        box.git(box.root, ["branch", "develop"]);
+        const prepared = JSON.parse(box.ok(["self", "prepare", "T8", "--json"], { env }));
+        expect(prepared).toMatchObject({ branch: "toli/T8", base: "develop" });
+        commitIn(box, prepared.path, "feature.txt", "feature\n");
+        const main = box.git(box.root, ["rev-parse", "main"]);
+        const landed = JSON.parse(box.ok(["self", "land", "T8", "--json"], { env }));
+        expect(landed).toMatchObject({ task: "T8", base: "develop", commits: 1, updated: null });
+        expect(box.git(box.root, ["rev-parse", "develop"])).toBe(landed.head);
+        expect(box.git(box.root, ["log", "--format=%s", "-1", "develop"])).toBe("add feature.txt");
+        expect(box.git(box.root, ["rev-parse", "main"])).toBe(main);
+        expect(box.git(box.root, ["branch", "--show-current"])).toBe("main");
+        expect(existsSync(join(box.root, "feature.txt"))).toBe(false);
+        expect(existsSync(prepared.path)).toBe(false);
+    });
+
+    test("with the live checkout on develop, land fast-forwards the live checkout", () => {
+        const { box, env } = liveRepo();
+        box.git(box.root, ["switch", "--quiet", "-c", "develop"]);
+        const path = JSON.parse(box.ok(["self", "prepare", "T9", "--json"], { env })).path as string;
+        commitIn(box, path, "feature.txt", "feature\n");
+        const main = box.git(box.root, ["rev-parse", "main"]);
+        const text = box.ok(["self", "land", "T9"], { env });
+        expect(text).toContain("on develop at");
+        expect(text).not.toContain("git switch develop");
+        expect(readFileSync(join(box.root, "feature.txt"), "utf8")).toBe("feature\n");
+        expect(box.git(box.root, ["rev-parse", "main"])).toBe(main);
+    });
+
+    test("land says when no checkout is on develop, and fast-forwards a worktree that holds develop", () => {
+        const { box, env } = liveRepo();
+        box.git(box.root, ["branch", "develop"]);
+        const path = JSON.parse(box.ok(["self", "prepare", "T10", "--json"], { env })).path as string;
+        commitIn(box, path, "feature.txt", "feature\n");
+        const text = box.ok(["self", "land", "T10"], { env });
+        expect(text).toContain("no checkout is on develop (git switch develop to run it)");
+        const path2 = JSON.parse(box.ok(["self", "prepare", "T11", "--json"], { env })).path as string;
+        commitIn(box, path2, "other.txt", "other\n");
+        // A worktree holding develop is fast-forwarded in place.
+        const holder = join(box.root, "projects", "holder");
+        box.git(box.root, ["worktree", "add", "--quiet", holder, "develop"]);
+        const landed = JSON.parse(box.ok(["self", "land", "T11", "--json"], { env }));
+        expect(landed.updated).toBe(realpathSync(holder));
+        expect(readFileSync(join(holder, "other.txt"), "utf8")).toBe("other\n");
+    });
 });

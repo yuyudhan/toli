@@ -3,29 +3,39 @@
 This page is for changes to toli itself: where the work happens, the quality gate, formatters, hooks, CI and the file
 layout. Cutting a release is in [releasing.md](releasing.md); installing and upgrading in [install.md](install.md).
 
+## Branches: `develop` and `main`
+
+Feature work lands on `develop`; `main` moves only at a release, when `just release` merges `develop` into it and
+tags `vX.Y.Z` there ([releasing.md](releasing.md)). The installer and `bin/toli upgrade` use the tags, and the README
+fetches `install.sh` from `main`, so users only ever see released code. A development checkout (the live one included)
+stays on `develop`. Contributors branch from `develop` and open pull requests against it.
+
 ## Working on toli itself: self worktrees
 
 The checkout you start `omp` in is live: Sardar's session, the extension's minute tick (`bin/toli job due`,
 `bin/toli wake`) and the OS ticker all run `bin/toli` from it. A half-edited file there breaks them mid-edit (an
 export renamed in one file but not yet in its importer fails every `bin/toli` call). So nobody edits the live checkout;
-every change to toli is made in a git worktree of this repository and lands as one fast-forward after the gate passes.
+every change to toli is made in a git worktree of this repository and lands on `develop` as one fast-forward after the
+gate passes.
 
 ```sh
-bin/toli self prepare T12       # projects/.worktrees/toli/T12 on branch toli/T12-<slug>, from the live branch
+bin/toli self prepare T12       # projects/.worktrees/toli/T12 on branch toli/T12-<slug>, from develop
 cd projects/.worktrees/toli/T12  # edit, run just check, commit with plain git on that branch
-bin/toli self land T12          # rebase, just check, fast-forward the live checkout, remove worktree and branch
+bin/toli self land T12          # rebase onto develop, just check, fast-forward develop, remove worktree and branch
 bin/toli self list              # self worktrees with branch, base and clean/dirty
 ```
 
 - `self prepare <T-id>` creates `projects/.worktrees/toli/<T-id>` on `toli/<T-id>-<slug of the task title>` (or
-  `toli/<T-id>` when the backlog has no such task), starting at the branch the live checkout is on, and runs
-  `bun install --frozen-lockfile` in it. It is idempotent: a second call reports the existing worktree.
-- `self land <T-id>` refuses, leaving the live checkout untouched, when the worktree has uncommitted changes, when the
-  branch does not rebase cleanly onto the live branch (the rebase is aborted), when `just check` fails in the worktree
-  (it prints the last 30 lines), or when the live branch cannot be fast-forwarded (it moved, or uncommitted changes
-  there overlap; run land again). On success the live checkout moves in one `git merge --ff-only` to exactly the
-  commits that passed the gate, then the worktree and its branch are removed. A worktree without commits is just
-  removed.
+  `toli/<T-id>` when the backlog has no such task), starting at `develop` (or, in a clone without a local `develop`
+  branch, at the branch the live checkout is on), and runs `bun install --frozen-lockfile` in it. It is idempotent: a
+  second call reports the existing worktree.
+- `self land <T-id>` refuses, leaving `develop` and the live checkout untouched, when the worktree has uncommitted
+  changes, when the branch does not rebase cleanly onto `develop` (the rebase is aborted), when `just check` fails in
+  the worktree (it prints the last 30 lines), or when `develop` cannot be fast-forwarded (it moved, or uncommitted
+  changes there overlap; run land again). On success `develop` moves to exactly the commits that passed the gate: by
+  one `git merge --ff-only` in the checkout that has `develop` checked out (normally the live one), or, when no
+  checkout is on `develop`, by moving the branch alone (the output then says `git switch develop` to run it). Then the
+  worktree and its branch are removed. A worktree without commits is just removed.
 - Both commands work from the live checkout or from inside a self worktree: toli finds the live checkout as the main
   worktree of the repository.
 - Inside a worktree, `bin/toli` has no `config/` or `data/` of its own, so toli's bookkeeping commands (`task`,
