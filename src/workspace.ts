@@ -37,7 +37,7 @@ export function taskBranch(task: Pick<Task, "id" | "title">): string {
     return branch;
 }
 
-function refExists(dir: string, ref: string): boolean {
+export function refExists(dir: string, ref: string): boolean {
     return git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).code === 0;
 }
 
@@ -60,16 +60,17 @@ function baseRef(clone: string, base: string): string {
     throw new ToliError(`base branch ${base} exists neither locally nor on origin in ${clone}`);
 }
 
-function dirty(dir: string): string {
+/** `git status --porcelain` of a checkout: "" when clean. */
+export function dirty(dir: string): string {
     return gitOk(dir, ["status", "--porcelain"]);
 }
 
-function samePath(a: string, b: string): boolean {
+export function samePath(a: string, b: string): boolean {
     return existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
 }
 
-/** Worktrees registered in the clone: path and checked-out branch (null when detached). */
-function gitWorktrees(clone: string): { path: string; branch: string | null }[] {
+/** Worktrees registered in the clone, the main checkout first: path and checked-out branch (null when detached). */
+export function gitWorktrees(clone: string): { path: string; branch: string | null }[] {
     const entries: { path: string; branch: string | null }[] = [];
     for (const block of gitOk(clone, ["worktree", "list", "--porcelain"]).split("\n\n")) {
         const path = /^worktree (.+)$/m.exec(block)?.[1];

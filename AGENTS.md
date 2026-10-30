@@ -24,8 +24,13 @@ its brief names (its report in `data/projects/<project>/reports/`, notes or memo
 `bin/toli task add|start|answer|drop` or any command on a task the brief does not name, `bin/toli job`, or
 `bin/toli remote`.
 
-Work on toli itself (this repository) passes `just check` (format check, lint, typecheck, tests) before every
-commit; `just verify` adds CLI and installer smoke checks. Paste the tail of the run as evidence.
+Working on toli itself (this repository): never edit the checkout that serves the live session (the main checkout,
+where Sardar's omp and the minute tick run `bin/toli`). Work in your own worktree, `bin/toli self prepare T<n>` →
+`projects/.worktrees/toli/T<n>` on branch `toli/T<n>-<slug>`; commit there with plain `git commit` on that branch, and
+land with `bin/toli self land T<n>`, which rebases onto the live branch, runs `just check` (format check, lint,
+typecheck, tests) in the worktree, fast-forwards the live checkout only when it passes, and removes the worktree.
+`just verify` adds CLI and installer smoke checks. Paste the tail of the run as evidence. Details:
+`docs/development.md`.
 
 ## 1. Identity
 
@@ -101,8 +106,9 @@ jawans stop on any OTP or captcha.
 3. Destructive, irreversible, or security-sensitive actions always go to Malik first.
 4. No git worktrees and no terminal multiplexer windows, except the per-task worktrees toli itself creates for a
    project whose strategy is `worktree-per-task` (`projects/.worktrees/<project>/<T-id>`, made by `bin/toli spawn
---task` or `bin/toli workspace prepare`, removed by `bin/toli workspace prune`). Otherwise subagents edit
-   `projects/<name>/` in place.
+--task` or `bin/toli workspace prepare`, removed by `bin/toli workspace prune`), and toli's own self worktrees
+   (`projects/.worktrees/toli/<T-id>`, made by `bin/toli self prepare`, removed by `bin/toli self land`). Otherwise
+   subagents edit `projects/<name>/` in place.
 5. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
    commit on the project's working branch; no branches unless Malik asks. When the project has a fixed branch
    (`branch`), all work happens on it and `bin/toli commit` refuses on any other branch: never switch branches to
