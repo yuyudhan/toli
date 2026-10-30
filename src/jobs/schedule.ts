@@ -18,6 +18,8 @@ import {
     type Scheduler,
     schedulePath,
     systemctl,
+    systemdEnv,
+    systemdPath,
     systemdUserDir,
     systemdWord,
     unloadLaunchAgent,
@@ -62,15 +64,15 @@ export function cronLine(): string {
 
 /** The tick as systemd user units: a oneshot service and a timer that starts it a second after load, then every 60s. */
 export function renderTickSystemd(): { service: string; timer: string } {
-    const log = join(paths.logsDir(), "systemd.log").replace(/%/g, "%%");
+    const log = systemdPath(join(paths.logsDir(), "systemd.log"));
     const service = [
         "[Unit]",
         "Description=toli tick (bin/toli job tick)",
         "",
         "[Service]",
         "Type=oneshot",
-        `WorkingDirectory=${systemdWord(paths.root())}`,
-        `Environment=${systemdWord(`PATH=${schedulePath()}`)}`,
+        `WorkingDirectory=${systemdPath(paths.root())}`,
+        `Environment=${systemdEnv("PATH", schedulePath())}`,
         `ExecStart=${[bunPath(), paths.toliBin(), "job", "tick"].map(systemdWord).join(" ")}`,
         `StandardOutput=append:${log}`,
         `StandardError=append:${log}`,
@@ -93,6 +95,22 @@ export function renderTickSystemd(): { service: string; timer: string } {
     return { service, timer };
 }
 
+/**
+ * Drop a `# toli tick` crontab line once launchd or systemd runs the tick: a machine first set up on crontab (v0.1.0
+ * on Linux) would otherwise tick twice a minute. Prints what it removed; dry run only says what it would remove.
+ */
+function dropCronTick(): void {
+    const lines = readCrontab();
+    const kept = lines.filter((entry) => !entry.includes(CRON_TAG));
+    if (kept.length === lines.length) return;
+    if (dryRun()) {
+        out("# dry run: would remove the toli tick line from the crontab");
+        return;
+    }
+    writeCrontab(kept);
+    out("removed the leftover toli tick line from the crontab");
+}
+
 function install(): void {
     mkdirSync(paths.logsDir(), { recursive: true });
     const scheduler = osScheduler();
@@ -108,6 +126,7 @@ function install(): void {
         }
         loadLaunchAgent(LABEL, target, plist);
         out(`installed and loaded ${target}: bin/toli job tick runs every minute`);
+        dropCronTick();
         return;
     }
     if (scheduler === "systemd") {
@@ -130,6 +149,7 @@ function install(): void {
         mustRun(systemctl("enable", timer));
         mustRun(systemctl("restart", timer));
         out(`installed and started ${files.timer}: bin/toli job tick runs every minute`);
+        dropCronTick();
         return;
     }
     const line = cronLine();
@@ -163,6 +183,7 @@ function uninstall(): void {
         }
         if (!existsSync(files.timer) && !existsSync(files.service)) {
             out("no toli tick units installed");
+            dropCronTick();
             return;
         }
         // A timer systemd no longer knows is not an error here; the files go either way.
@@ -171,6 +192,7 @@ function uninstall(): void {
         rmSync(files.service, { force: true });
         mustRun(systemctl("daemon-reload"));
         out(`uninstalled ${files.timer}`);
+        dropCronTick();
         return;
     }
     const lines = readCrontab();
@@ -191,6 +213,8 @@ export type ScheduleStatus = {
     detail: string;
     /** The `bin/toli` an installed tick runs when that is another toli checkout; null when it runs this one. */
     otherBin: string | null;
+    /** launchd or systemd runs the tick and the crontab still holds a toli tick line: two ticks a minute. */
+    cronLeftover: boolean;
 };
 
 /**
@@ -205,30 +229,36 @@ function otherTickBin(installedText: string, ours: string): string | null {
 export function scheduleStatus(): ScheduleStatus {
     const scheduler = osScheduler();
     const bin = paths.toliBin();
+    const cronLines = readCrontab().filter((entry) => entry.includes(CRON_TAG));
+    const cronLeftover = scheduler !== "crontab" && cronLines.length > 0;
     if (scheduler === "launchd") {
         const target = plistPath();
         const installed = existsSync(target);
         const loaded = launchctlLoaded(LABEL);
         const otherBin = installed ? otherTickBin(readFileSync(target, "utf8"), `<string>${bin}</string>`) : null;
-        return { scheduler, installed, loaded, detail: target, otherBin };
+        return { scheduler, installed, loaded, detail: target, otherBin, cronLeftover };
     }
     if (scheduler === "systemd") {
         const files = tickUnitFiles();
         const installed = existsSync(files.service) && existsSync(files.timer);
         const loaded = run(systemctl("is-active", `${TICK_UNIT}.timer`)).stdout.trim() === "active";
         const otherBin = installed ? otherTickBin(readFileSync(files.service, "utf8"), ` ${systemdWord(bin)} `) : null;
-        return { scheduler, installed, loaded, detail: files.timer, otherBin };
+        return { scheduler, installed, loaded, detail: files.timer, otherBin, cronLeftover };
     }
-    const lines = readCrontab().filter((entry) => entry.includes(CRON_TAG));
-    const installed = lines.length > 0;
+    const installed = cronLines.length > 0;
     return {
         scheduler,
         installed,
         loaded: installed,
         detail: installed ? "crontab line present" : "no crontab line",
-        otherBin: installed ? otherTickBin(lines.join("\n"), ` ${shellQuote(bin)} `) : null,
+        otherBin: installed ? otherTickBin(cronLines.join("\n"), ` ${shellQuote(bin)} `) : null,
+        cronLeftover,
     };
 }
+
+/** The warning for a leftover crontab tick; shared by `schedule status`, doctor and the setup checklist. */
+export const CRON_LEFTOVER_WARNING =
+    "crontab still holds a toli tick line besides this tick (a leftover crontab tick line: two ticks a minute); bin/toli schedule install removes it";
 
 export function scheduleCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
@@ -252,6 +282,7 @@ export function scheduleCommand(argv: string[]): void {
                     out(
                         `warn: the tick runs ${status.otherBin}, not this checkout (bin/toli schedule install moves it here)`,
                     );
+                if (status.cronLeftover) out(`warn: ${CRON_LEFTOVER_WARNING}`);
             }
             break;
         }

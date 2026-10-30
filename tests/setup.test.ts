@@ -11,7 +11,7 @@ const saved = process.env.TOLI_ROOT;
 const bareProbe: SetupProbe = {
     which: () => null,
     harness: () => ({ ready: null, detail: "none on PATH", loggedOut: [] }),
-    scheduler: () => ({ scheduler: "launchd", installed: false, loaded: false, otherBin: null }),
+    scheduler: () => ({ scheduler: "launchd", installed: false, loaded: false, otherBin: null, cronLeftover: false }),
     hooksPath: () => null,
 };
 
@@ -19,7 +19,7 @@ const bareProbe: SetupProbe = {
 const readyProbe: SetupProbe = {
     which: (tool) => `/usr/bin/${tool}`,
     harness: () => ({ ready: "omp", detail: "omp installed", loggedOut: [] }),
-    scheduler: () => ({ scheduler: "launchd", installed: true, loaded: true, otherBin: null }),
+    scheduler: () => ({ scheduler: "launchd", installed: true, loaded: true, otherBin: null, cronLeftover: false }),
     hooksPath: () => ".githooks",
 };
 
@@ -42,6 +42,23 @@ afterEach(() => {
 });
 
 describe("setup checklist", () => {
+    test("a crontab tick left beside the launchd or systemd tick keeps the scheduler step open", () => {
+        const probe: SetupProbe = {
+            ...readyProbe,
+            scheduler: () => ({
+                scheduler: "systemd",
+                installed: true,
+                loaded: true,
+                otherBin: null,
+                cronLeftover: true,
+            }),
+        };
+        const item = setupChecklist(probe).find((entry) => entry.id === "scheduler");
+        expect(item?.status).toBe("missing");
+        expect(item?.detail).toContain("leftover crontab tick line");
+        expect(item?.fix).toBe("bin/toli schedule install");
+    });
+
     test("a fresh clone has every required step missing; persona and fleet are optional", () => {
         const items = setupChecklist(bareProbe);
         expect(status(items)).toEqual({

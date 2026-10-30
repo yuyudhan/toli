@@ -206,12 +206,21 @@ describe("rendering (dry run)", () => {
 
     test("systemd: words with spaces, % and $ are quoted the systemd way", () => {
         const box = withHelpers([
-            { name: "odd", exec: "local/scripts/odd", args: ["a b", "50%", "$HOME"], schedule: { every: "1h" } },
+            {
+                name: "odd",
+                exec: "local/scripts/odd",
+                args: ["a b", "50%", "$HOME"],
+                env: { GREETING: "hi $USER, 50%" },
+                schedule: { every: "1h" },
+            },
         ]);
         const output = box.ok(["helper", "install", "odd"], {
             env: { TOLI_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: join(box.root, "units") },
         });
         expect(output).toContain(`ExecStart=${join(box.root, "local", "scripts", "odd")} "a b" 50%% $$HOME`);
+        // Environment= expands % specifiers but never $ variables.
+        expect(output).toContain('\nEnvironment="GREETING=hi $USER, 50%%"\n');
+        expect(output).toContain(`\nWorkingDirectory=${box.root}\n`);
     });
 
     test("crontab: tagged line with cd, env, nice and log; always-running refused", () => {

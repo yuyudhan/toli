@@ -9,7 +9,7 @@ import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
 import { syncShims } from "../harness/sync.ts";
-import { scheduleStatus } from "../jobs/schedule.ts";
+import { CRON_LEFTOVER_WARNING, scheduleStatus } from "../jobs/schedule.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
 
@@ -224,6 +224,7 @@ export async function runChecks(): Promise<Check[]> {
                       detail: `${schedule.scheduler} ${schedule.installed ? "installed" : "not installed"}, ${schedule.loaded ? "loaded" : "not loaded"} (bin/toli schedule install)`,
                   },
         );
+    if (schedule.cronLeftover) checks.push({ level: "warn", name: "scheduler", detail: CRON_LEFTOVER_WARNING });
     return checks;
 }
 
