@@ -17,6 +17,7 @@ import { pruneCommand } from "./prune.ts";
 import { resourcesCommand } from "./resources.ts";
 import { scheduleCommand } from "./schedule.ts";
 import { sessionCommand } from "./session.ts";
+import { setupCommand } from "./setup.ts";
 import { runCommand, runsCommand, spawnCommand } from "./spawn.ts";
 import { jobCommand } from "./tick.ts";
 import { out, ToliError, warn } from "./util.ts";
@@ -25,6 +26,7 @@ import { wakeCommand } from "./wake.ts";
 const USAGE = `usage: bin/toli <command> [args]
 
   init --name <machine> --role coordinator|worker [--coordinator-ssh <host> --coordinator-root <path>]
+  setup status [--json] | notice [--json] | snooze | seed-local
   doctor [--json]
   digest [--json] [--fleet]
   project add <name> <git-url> [--mode commit|pr|no-mistakes]
@@ -66,7 +68,7 @@ const USAGE = `usage: bin/toli <command> [args]
         [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--json]
   runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   harness sync [--check] [--json] | status [--json]
-  hook claude-pre-tool|claude-prompt (hook JSON on stdin)
+  hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
   guidance`;
 
 /** Dispatch one CLI invocation; resolves to the process exit code. */
@@ -76,6 +78,9 @@ export async function main(argv: string[]): Promise<number> {
         switch (command) {
             case "init":
                 initCommand(rest);
+                return 0;
+            case "setup":
+                setupCommand(rest);
                 return 0;
             case "doctor":
                 return await doctorCommand(rest);

@@ -269,8 +269,8 @@ function envKey(names: string[]): string | undefined {
     return names.find((name) => (process.env[name] ?? "") !== "");
 }
 
-/** Whether the harness has a usable login, without printing or storing any credential. */
-function loginStatus(harness: Harness): { loggedIn: boolean | null; detail: string } {
+/** Whether the harness has a usable login, without printing or storing any credential (spawns its status CLI). */
+export function harnessLogin(harness: Harness): { loggedIn: boolean | null; detail: string } {
     switch (harness) {
         case "omp":
             return { loggedIn: null, detail: "logins live in omp's profile (`omp login` adds one)" };
@@ -330,6 +330,6 @@ export function harnessStatus(harness: Harness): HarnessStatus {
         };
     const versionRun = run([found, "--version"], { timeoutMs: 20_000 });
     const version = versionRun.code === 0 ? firstLine(versionRun.stdout || versionRun.stderr) || null : null;
-    const login = loginStatus(harness);
+    const login = harnessLogin(harness);
     return { harness, label: spec.label, installed: true, path: found, version, ...login };
 }

@@ -3,7 +3,9 @@
 // omp auto-discovers this file from <repo>/.omp/extensions when the user starts
 // `omp` inside toli. Only the main interactive session (the lead) acts:
 //   - session_start registers the live session (bin/toli session start), so the
-//     OS ticker (bin/toli job tick) leaves due jobs to this session;
+//     OS ticker (bin/toli job tick) leaves due jobs to this session, and takes
+//     the told-once setup notice (`bin/toli setup notice --json`): shown to
+//     the user as a notification and handed to the lead on the first turn only;
 //   - every turn (before_agent_start) it appends the lead guidance
 //     (`bin/toli guidance`: delegate everything, reply short, never wait, use
 //     bin/toli and the skills) to the system prompt for that turn only;
@@ -55,6 +57,7 @@ type ExtensionAPI = {
 
 type DueJob = { name: string };
 type Wake = { message: string };
+type SetupNotice = { notice: string; context: string };
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOLI_BIN = resolve(REPO_ROOT, "bin", "toli");
@@ -108,6 +111,8 @@ export default function toliExtension(pi: ExtensionAPI): void {
     // A brief pasted as the first prompt makes this interactive session a jawan: no guidance, no guard.
     let briefed = false;
     let prompted = false;
+    // The told-once setup notice for the lead's first turn; "" when nothing is due.
+    let setupContext = "";
 
     async function refreshGuidance(ctx: Context): Promise<void> {
         try {
@@ -151,6 +156,18 @@ export default function toliExtension(pi: ExtensionAPI): void {
         registered = true;
         await runToli(["session", "start", "--pid", String(process.pid)]);
         await refreshGuidance(ctx);
+        try {
+            const setup = JSON.parse(await runToli(["setup", "notice", "--json"])) as SetupNotice;
+            if (setup.notice !== "") {
+                ctx.ui.notify(setup.notice, "info");
+                setupContext = setup.context;
+            }
+        } catch (error) {
+            ctx.ui.notify(
+                `toli setup check failed: ${error instanceof Error ? error.message : String(error)}`,
+                "warning",
+            );
+        }
         ctx.setInterval(() => tick(ctx), TICK_MS);
     });
 
@@ -160,7 +177,9 @@ export default function toliExtension(pi: ExtensionAPI): void {
             briefed = isBrief(event.prompt);
         }
         if (briefed || guidance === "" || !isMainInteractiveSession(ctx)) return undefined;
-        return { systemPrompt: [...event.systemPrompt, guidance] };
+        const extra = setupContext === "" ? [guidance] : [guidance, setupContext];
+        setupContext = "";
+        return { systemPrompt: [...event.systemPrompt, ...extra] };
     });
 
     pi.on("tool_call", (event, ctx) => {

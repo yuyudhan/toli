@@ -47,6 +47,8 @@ export const paths = {
     jobsState: () => join(repoRoot(), "state", "jobs.json"),
     acks: () => join(repoRoot(), "state", "acks.json"),
     pruneState: () => join(repoRoot(), "state", "prune.json"),
+    /** The setup steps the user was last told about (or snoozed), so session start says it once. */
+    setupShown: () => join(repoRoot(), "state", "setup-shown.json"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
     runsDir: () => join(repoRoot(), "state", "runs"),
     runRecord: (runId: string) => join(repoRoot(), "state", "runs", `${runId}.json`),

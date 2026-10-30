@@ -5,6 +5,7 @@ import { closeSync, openSync, readSync } from "node:fs";
 import { leadGuidance } from "./guidance.ts";
 import { claudeAction, guardDecision, isBrief, jawanEnv } from "./lead-guard.ts";
 import { paths } from "./paths.ts";
+import { leadNoticeContext, takeSetupNotice } from "./setup.ts";
 import { out, readStdin, ToliError, warn } from "./util.ts";
 import { takeWake, wakeMessage } from "./wake.ts";
 
@@ -83,6 +84,14 @@ export function claudePromptContext(input: ClaudeHookInput, env: Record<string, 
     return wake === "" ? leadGuidance() : `${leadGuidance()}\n\n${wake}`;
 }
 
+/** SessionStart context for the lead: the told-once setup notice; null when nothing is due or for jawans. */
+export function claudeSessionContext(input: ClaudeHookInput, env: Record<string, string | undefined>): string | null {
+    if (jawanEnv(env)) return null;
+    if (input.cwd !== undefined && input.cwd !== paths.root()) return null;
+    const notice = takeSetupNotice();
+    return notice === null ? null : leadNoticeContext(notice);
+}
+
 function guarded(name: string, body: () => void): void {
     try {
         body();
@@ -111,17 +120,19 @@ export function hookCommand(argv: string[]): void {
             });
             return;
         case "claude-prompt":
+        case "claude-session-start":
             guarded(name, () => {
-                const context = claudePromptContext(parseInput(), process.env);
+                const input = parseInput();
+                const event = name === "claude-prompt" ? "UserPromptSubmit" : "SessionStart";
+                const context =
+                    name === "claude-prompt"
+                        ? claudePromptContext(input, process.env)
+                        : claudeSessionContext(input, process.env);
                 if (context === null) return;
-                out(
-                    JSON.stringify({
-                        hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context },
-                    }),
-                );
+                out(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } }));
             });
             return;
         default:
-            throw new ToliError("usage: toli hook claude-pre-tool|claude-prompt (JSON on stdin)");
+            throw new ToliError("usage: toli hook claude-pre-tool|claude-prompt|claude-session-start (JSON on stdin)");
     }
 }
