@@ -93,7 +93,7 @@ export function tagsFromLsRemote(output: string): string[] {
     return tags;
 }
 
-/** Feature work lands on DEVELOP_BRANCH (`bin/toli self land`); RELEASE_BRANCH only moves at a release. */
+/** Feature work lands on DEVELOP_BRANCH (`bin/toli commit toli`); RELEASE_BRANCH only moves at a release. */
 export const DEVELOP_BRANCH = "develop";
 export const RELEASE_BRANCH = "main";
 

@@ -1,14 +1,46 @@
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-/** The repo root: the directory holding bin/toli (resolved from this file, never cwd); `TOLI_ROOT` overrides for tests. */
+/** The directory holding this code's bin/toli and src/: the working tree, or an installed runtime snapshot. */
+const CODE_ROOT = resolve(import.meta.dir, "..", "..");
+
+/** Written into each installed runtime snapshot (src/release/runtime.ts): `{checkout, commit, syncedAt}`. */
+export const RUNTIME_MARKER = ".toli-runtime.json";
+
+let servedCheckout: string | null | undefined;
+
+/** The checkout an installed runtime serves (from its marker), or null when this code runs from a checkout. */
+function runtimeCheckout(): string | null {
+    if (servedCheckout !== undefined) return servedCheckout;
+    servedCheckout = null;
+    const marker = join(CODE_ROOT, RUNTIME_MARKER);
+    if (existsSync(marker)) {
+        const parsed: unknown = JSON.parse(readFileSync(marker, "utf8"));
+        const checkout = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "checkout") : undefined;
+        if (typeof checkout === "string") servedCheckout = checkout;
+    }
+    return servedCheckout;
+}
+
+/** Where this process's code runs from (see CODE_ROOT); never the data root. */
+export function codeRoot(): string {
+    return CODE_ROOT;
+}
+
+/**
+ * The repo root: the checkout holding bin/toli, config/, data/ and state/ (resolved from this file, never cwd). Code
+ * running from an installed runtime serves the checkout its marker names; `TOLI_ROOT` overrides both for tests.
+ */
 export function repoRoot(): string {
     const override = process.env.TOLI_ROOT;
-    return override ? resolve(override) : resolve(import.meta.dir, "..", "..");
+    return override ? resolve(override) : (runtimeCheckout() ?? CODE_ROOT);
 }
 
 export const paths = {
     root: () => repoRoot(),
     toliBin: () => join(repoRoot(), "bin", "toli"),
+    /** The active installed runtime snapshot of a checkout (one line, read by bin/toli; src/release/runtime.ts). */
+    runtimePointer: (checkout: string = repoRoot()) => join(checkout, "state", "runtime"),
     machine: () => join(repoRoot(), "config", "machine.json"),
     fleet: () => join(repoRoot(), "config", "fleet.json"),
     jobsConfig: () => join(repoRoot(), "config", "jobs.json"),

@@ -83,9 +83,9 @@ function deliveryText(project: Project): string {
 }
 
 const WORKSPACE_TEXT: Record<Project["workspace"], string> = {
-    "same-branch": "every jawan works in the one clone on the project's branch",
+    "same-branch": "every jawan works in the one clone on the project's branch (recommended)",
     "branch-per-task": "one clone, a toli/<T-id> branch and PR/MR per task",
-    "worktree-per-task": "a worktree under projects/.worktrees and a branch and PR/MR per task",
+    "worktree-per-task": "opt-in: a worktree under projects/.worktrees and a branch and PR/MR per task",
 };
 
 function workspaceText(project: Project): string {

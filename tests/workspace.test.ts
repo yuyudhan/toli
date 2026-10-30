@@ -169,7 +169,7 @@ describe("branch-per-task", () => {
         const conflict = box.toli(["workspace", "prepare", "T2"]);
         expect(conflict.code).toBe(1);
         expect(conflict.stderr).toContain("T1 (active) is using it on toli/T1-add-login-page");
-        expect(conflict.stderr).toContain("--workspace worktree-per-task");
+        expect(conflict.stderr).toContain("--workspace same-branch");
         expect(box.git(dir, ["branch", "--show-current"])).toBe("toli/T1-add-login-page");
 
         writeFileSync(join(dir, "login.txt"), "login\n");

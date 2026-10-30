@@ -1,4 +1,19 @@
 #!/usr/bin/env bun
-import { main } from "../src/main.ts";
+// The toli CLI launcher. When this checkout has an installed runtime (state/runtime, written by `bin/toli self sync`),
+// it runs that pinned snapshot of committed code, so the live session (Sardar, the extension's tick, the OS ticker)
+// survives half-edited files in the working tree. TOLI_DEV=1, or TOLI_ROOT (set by the tests), runs the working tree.
+// Keep this file free of src/ imports: it must work while src/ is mid-edit. See src/release/runtime.ts.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
+function entry() {
+    const own = join(import.meta.dir, "..", "src", "main.ts");
+    if (process.env.TOLI_DEV || process.env.TOLI_ROOT) return own;
+    const pointer = join(import.meta.dir, "..", "state", "runtime");
+    if (!existsSync(pointer)) return own;
+    const installed = join(readFileSync(pointer, "utf8").trim(), "src", "main.ts");
+    return existsSync(installed) ? installed : own;
+}
+
+const { main } = await import(entry());
 process.exitCode = await main(process.argv.slice(2));

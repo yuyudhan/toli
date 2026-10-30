@@ -3,7 +3,8 @@
 //   install.sh under POSIX sh (`sh -n`, `dash -n` when dash is installed, `shellcheck -s sh`), and a file:// install
 //   of the committed HEAD into a temp directory with install.sh --yes (run by `sh`: dash on Debian/Ubuntu).
 // doctor's "fail" lines are tolerated only on a checkout without config/machine.json (a fresh clone or the release
-// dry-run clone), where they are first-run setup rather than breakage.
+// dry-run clone), where they are first-run setup rather than breakage. TOLI_DEV=1 makes bin/toli run this working
+// tree even when the checkout has an installed runtime (src/release/runtime.ts).
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,7 +18,7 @@ const say = (line: string) => process.stdout.write(`${line}\n`);
 function exec(cmd: string[], options: { cwd?: string; env?: Record<string, string> } = {}) {
     const result = Bun.spawnSync(cmd, {
         cwd: options.cwd ?? ROOT,
-        env: { ...process.env, ...options.env },
+        env: { ...process.env, TOLI_DEV: "1", ...options.env },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

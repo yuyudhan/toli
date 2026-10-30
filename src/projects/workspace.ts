@@ -110,8 +110,8 @@ function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspa
     if (holders.length > 0)
         throw new ToliError(
             `refusing to switch projects/${project.name} to ${branch}: ${holdersText(holders)}. ` +
-                `Wait for that task to land, or give each task its own checkout: ` +
-                `bin/toli project set ${project.name} --workspace worktree-per-task (on ${persona().user}'s word).`,
+                `Wait for that task to land, or let parallel tasks share the clone: ` +
+                `bin/toli project set ${project.name} --workspace same-branch (on ${persona().user}'s word).`,
         );
     const changes = dirty(clone);
     if (changes !== "")
