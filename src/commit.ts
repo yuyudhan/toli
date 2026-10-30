@@ -40,7 +40,7 @@ export function commitCommand(argv: string[]): void {
     if (files.length === 0)
         throw new ToliError('commit needs paths after --: toli commit <project> -m "..." -- <path>...');
     gitOk(dir, ["add", "--", ...files]);
-    // --only commits exactly these paths even when other paths are staged by other jawan in the same toli.
+    // --only commits exactly these paths even when other paths are staged by other jawans in the same toli.
     const commit = git(dir, ["commit", "--only", "-m", message, "--", ...files]);
     if (commit.code !== 0) throw new ToliError(`git commit failed: ${(commit.stderr || commit.stdout).trim()}`);
     out(gitOk(dir, ["rev-parse", "HEAD"]));

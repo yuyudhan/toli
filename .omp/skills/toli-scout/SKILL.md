@@ -18,14 +18,15 @@ environment.
 2. Brief from `docs/brief-template.md`. In "Spec" state that the work is read-only: no edits, no commits. In "Acceptance" ask for concrete
    evidence: file paths with line numbers, command output, log excerpts, and, when the notes list `## URLs`, what
    the local or staging URL returned (headless browser or HTTP request; staging read-only). In "Report format" ask
-   for the structure below.
-   If the investigation needs the stack running and the notes declare `## Local stack`, start it with
-   `skill://toli-stacks` or tell jawan to use the declared commands.
-3. Spawn with the routing table: `scout` agent (effort lo for lookups, med for investigations). Use `task` with effort
-   hi only for hard root-cause hunts that need running code; even then the brief forbids edits.
-4. Write the jawan's report to `data/reports/T<n>.md` and close:
-
-        bin/toli task done T<n> --report data/reports/T<n>.md
+   for the structure below. In "Landing" keep the Scout option: the jawan writes its report to
+   `data/reports/T<n>.md` and closes the task itself with `bin/toli task done T<n> --report data/reports/T<n>.md`.
+   If the investigation needs the stack running and the notes declare `## Local stack`, tell jawans to use the
+   declared commands (`skill://toli-stacks`).
+3. Spawn with the routing table: `task` agent (effort lo for lookups, med for investigations, hi only for hard
+   root-cause hunts that need running code); the brief forbids edits to the project. Not the read-only `scout` agent:
+   it cannot write the report or close the task. Then end the turn (`skill://toli-dispatch`, the async rule).
+4. When the result arrives, the report is already written and the task closed. Relay the answer; never write or
+   rewrite the report yourself. If the jawan could not close the task, dispatch a `sonic` jawan to do it.
 
 ## Report structure
 
