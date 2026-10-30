@@ -1,6 +1,6 @@
 // The install-level setup checklist behind `bin/toli setup status`: one item per step, with a stable id, its state,
 // who closes it, and the exact fix. Probes that touch the machine outside TOLI_ROOT are injectable for tests.
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hasMachine, loadFleet, loadMachine, type Machine } from "./config.ts";
 import { git } from "./git.ts";
@@ -17,7 +17,8 @@ import { syncShims } from "./harness-sync.ts";
 import { paths } from "./paths.ts";
 import { DEFAULT_PERSONA, persona } from "./persona.ts";
 import { loadProjects } from "./projects.ts";
-import { scheduleStatus } from "./schedule.ts";
+import { CRON_TAG, plistPath, readCrontab, scheduleStatus } from "./schedule.ts";
+import { platform, shellQuote } from "./util.ts";
 
 export const SETUP_ITEM_IDS = [
     "tools",
@@ -65,7 +66,7 @@ export type HarnessReadiness = {
 export type SetupProbe = {
     which(tool: string): string | null;
     harness(): HarnessReadiness;
-    scheduler(): { scheduler: string; installed: boolean; loaded: boolean };
+    scheduler(): SchedulerFacts;
     hooksPath(): string | null;
 };
 
@@ -102,11 +103,35 @@ function liveHarnessReadiness(): HarnessReadiness {
     };
 }
 
+export type SchedulerFacts = {
+    scheduler: string;
+    installed: boolean;
+    loaded: boolean;
+    /** The `bin/toli` an installed tick runs when that is another toli checkout; null when it runs this one. */
+    otherBin: string | null;
+};
+
+/** scheduleStatus plus whether the one per-machine tick runs this checkout (a second clone shares the label). */
+function liveScheduler(): SchedulerFacts {
+    const status = scheduleStatus();
+    if (!status.installed) return { ...status, otherBin: null };
+    const bin = paths.toliBin();
+    const darwin = platform() === "darwin";
+    const text = darwin
+        ? readFileSync(plistPath(), "utf8")
+        : readCrontab()
+              .filter((line) => line.includes(CRON_TAG))
+              .join("\n");
+    if (text.includes(darwin ? `<string>${bin}</string>` : ` ${shellQuote(bin)} `))
+        return { ...status, otherBin: null };
+    return { ...status, otherBin: /[^\s<>'"]*\/bin\/toli(?=[\s<'"])/.exec(text)?.[0] ?? "another toli checkout" };
+}
+
 export function liveProbe(): SetupProbe {
     return {
         which: (tool) => Bun.which(tool, { PATH: process.env.PATH ?? "" }),
         harness: liveHarnessReadiness,
-        scheduler: scheduleStatus,
+        scheduler: liveScheduler,
         hooksPath: () => {
             const result = git(paths.root(), ["config", "--get", "core.hooksPath"]);
             return result.code === 0 ? result.stdout.trim() : null;
@@ -214,6 +239,14 @@ function schedulerItem(probe: SetupProbe): SetupItem {
         who: "jawan" as const,
     };
     const status = probe.scheduler();
+    if (status.otherBin !== null)
+        return {
+            ...base,
+            status: "missing",
+            who: "user",
+            detail: `${status.scheduler} tick runs ${status.otherBin}, not this checkout`,
+            fix: `Question: move this machine's tick from ${status.otherBin} to this checkout? Then: bin/toli schedule install`,
+        };
     return status.installed && status.loaded
         ? { ...base, status: "done", detail: `${status.scheduler} installed and loaded`, fix: "" }
         : {
