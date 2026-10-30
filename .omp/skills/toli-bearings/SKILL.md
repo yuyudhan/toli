@@ -9,7 +9,9 @@ description: Give Malik a status overview of this machine (or the whole paltan a
 
     bin/toli digest --json
 
-On the coordinator (`config/machine.json` role `coordinator`), include the workers:
+This one is fast and runs in Sardar's turn. On the coordinator (`config/machine.json` role `coordinator`), the
+workers come from the fleet digest, which reaches every machine over ssh and can take minutes. Run it through `bash`
+with `async: true` and `timeout: 0`, give the local overview now, and add the fleet part when its result arrives:
 
     bin/toli digest --json --fleet
 
@@ -35,6 +37,8 @@ Lead with what needs Malik, then what changed, then the rest. Translate everythi
 - "waiting on Malik" becomes "needs your answer"; "queued" becomes "not started yet"; "inbox" becomes "from <machine>".
 - Omit empty sections entirely.
 - Keep it under about 15 lines. Offer detail instead of dumping it.
+- Use the one-line titles and statuses the digest gives; to summarise a long job result or report, dispatch a
+  `sonic` jawan rather than reading it yourself.
 - If anything needs his answer, offer `/ahoy` to go through it.
 - A project off its fixed branch needs Malik: say how to switch back (or that he may want to change the configured
   branch) and never switch it yourself.
@@ -44,9 +48,11 @@ Lead with what needs Malik, then what changed, then the rest. Translate everythi
 
 ## Lavish page (`/bearings lavish`)
 
-When Malik passes `lavish`, or the digest is too large for chat (many projects or a full fleet), build a page per
-`skill://toli-lavish`: one card per machine, a table of projects with git state, a backlog board (needs you / running
-/ not started / done), and job results with links to `data/jobs/<name>/<stamp>.md`.
+When Malik passes `lavish`, or the digest is too large for chat (many projects or a full fleet), dispatch a jawan to
+build a display page per `skill://toli-lavish`: one card per machine, a table of projects with git state, a backlog
+board (needs you / running / not started / done), and job results with links to `data/jobs/<name>/<stamp>.md`. The
+brief tells it to run `bin/toli digest --json --fleet` itself (or `--json` off the coordinator). Tell Malik the page
+is coming and end the turn.
 
 ## After reporting
 

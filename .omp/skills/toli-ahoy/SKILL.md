@@ -26,9 +26,9 @@ Yes/no questions stay in chat.
 ## Two or more: one at a time, or one page
 
 - Two or three short questions: ask them one at a time in chat, oldest first. Wait for each answer before the next.
-- More than that, or any question with several options to weigh: build a lavish input page (`skill://toli-lavish`,
-  `input` playbook) with one card per task: project, title, the question, the options with tradeoffs, and a free-text
-  answer field. Malik answers them all in one pass.
+- More than that, or any question with several options to weigh: dispatch a jawan to build a lavish input page
+  (`skill://toli-lavish`, `input` playbook) with one card per task: project, title, the question, the options with
+  tradeoffs, and a free-text answer field. Malik answers them all in one pass; the jawan returns his answers.
 
 Relay no-mistakes `ask-user` findings verbatim (id, file, full description); never paraphrase them.
 
@@ -38,8 +38,8 @@ For each answer, record it exactly as Malik gave it:
 
     bin/toli task answer T<n> "<Malik's answer>"
 
-Then resume the work through `skill://toli-dispatch`: update the brief with the answer and re-spawn jawan, or respond
-to the no-mistakes gate. A task Malik says to abandon is dropped:
+Then resume the work through `skill://toli-dispatch`: update the brief with the answer and re-spawn jawans, or
+dispatch a gate jawan to respond to the no-mistakes gate (`skill://toli-nm`). A task Malik says to abandon is dropped:
 
     bin/toli task drop T<n>
 

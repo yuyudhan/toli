@@ -34,6 +34,9 @@ thresholds live in `config/machine.json` `capacity` (`maxRuns`, default cpus/4; 
     bin/toli sync          # this machine: fast-forward-only pull
     bin/toli sync --all    # coordinator: this machine, then every fleet machine over ssh
 
+Run `sync --all` through `bash` with `async: true` and `timeout: 0` (it reaches every machine over ssh) and end the
+turn; relay its result when it arrives.
+
 - Sync refuses a dirty repo. Report what is uncommitted and ask Malik; never stash, reset, or clean to get past it.
 - A non-fast-forward (diverged history) is also a stop: report it, do not merge or rebase on your own.
 - After a sync that changed skills or the extension, tell Malik a session restart picks up the new behaviour.
@@ -51,14 +54,16 @@ On the new machine, from Malik's home directory:
     bin/toli doctor
     bin/toli schedule install
 
-- Read `bin/toli doctor` output line by line and fix or report each failure (bun, omp, git, gh auth, no-mistakes,
-  machine config, project clones, fleet reachability and availability, scheduler).
+- Run `bin/toli doctor` through `bash` with `async: true`. Relay each failure (bun, omp, git, gh auth, no-mistakes,
+  machine config, project clones, fleet reachability and availability, scheduler) in plain words; fixes that need
+  more than Malik's own action go to a jawan.
 - On the coordinator, add the new machine to `config/fleet.json` so `--fleet`, `--all`, `fleet status`, and `pick`
   reach it. Every machine that should pick or dispatch needs the full fleet list in its own `config/fleet.json`.
 - Re-add the projects cloned on this machine with `/add-project` (`skill://toli-projects`).
 
 ## Results flowing to the coordinator
 
+- New inbox items and job results reach the open Sardar session by themselves as `[toli wake]` messages (each once).
 - On a worker, every job result is also sent to the coordinator's inbox over ssh (`bin/toli inbox add`).
 - If the coordinator is unreachable, results wait in `state/outbox/` and retry every minute.
 - On the coordinator, `bin/toli inbox list --unseen` (and `/bearings`) shows them; `bin/toli inbox ack` clears them

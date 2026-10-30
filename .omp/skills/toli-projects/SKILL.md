@@ -11,26 +11,29 @@ lists only the clones on that machine; a project may be cloned on several machin
 ## Adding a project (/add-project)
 
 1. Get the name and git URL from Malik's arguments. If the URL is missing, ask once.
-2. Decide where the clone lives. Default is this machine. If Malik names another machine, run it there:
-   `bin/toli remote <machine> "/add-project <name> <git-url>"`. Work is sent to whichever machine is free later
-   (`bin/toli remote auto ... --project <name>` clones it on demand with `bin/toli project ensure`).
+2. Decide where the clone lives. Default is this machine. If Malik names another machine, run it there through
+   `bash` with `async: true` and `timeout: 0`: `bin/toli remote <machine> "/add-project <name> <git-url>"`, and end
+   the turn. Work is sent to whichever machine is free later (`bin/toli remote auto ... --project <name>` clones it on
+   demand with `bin/toli project ensure`).
 3. Decide the delivery mode: `commit` (default), `pr`, or `no-mistakes`. Only set a non-default mode when Malik says
    so.
+4. Dispatch one `task` jawan (effort lo; it must write a file, so not the read-only `scout` agent) whose brief says:
 
         bin/toli project add <name> <git-url> [--mode commit|pr|no-mistakes]
 
-4. Seed the notes file `data/notes/<name>.md`. Dispatch one `scout` subagent (effort lo) to read the project's
-   README, AGENTS.md / CLAUDE.md, and build files, and return:
+    then read the project's README, AGENTS.md / CLAUDE.md, and build files, and write `data/notes/<name>.md`
+    (short; it is fed into every brief for this project) with:
     - stack and package manager
     - install, build, test, lint, and smoke commands
     - main entry points and directory map
     - gotchas the project's own docs call out
 
-    Write the result into the notes file. Keep it short; it is fed into every brief for this project.
+    and report the clone path, the notes written, and the no-mistakes readiness line `project add` printed. End the
+    turn after dispatching.
 
-5. Report no-mistakes readiness. `toli project add` prints whether a `no-mistakes` git remote exists. If it does not,
-   tell Malik and offer to run `no-mistakes init` in the clone. Run it only after Malik approves. Readiness only
-   matters if he will ever want branch/PR delivery through the gate (`skill://toli-nm`).
+5. Report no-mistakes readiness from the jawan's report. If no `no-mistakes` git remote exists, tell Malik and offer
+   `no-mistakes init` in the clone; on his approval a jawan runs it. Readiness only matters if he will ever want
+   branch/PR delivery through the gate (`skill://toli-nm`).
 6. Confirm to Malik: name, path, machine, mode, notes seeded, no-mistakes ready or not.
 
 ## Changing settings

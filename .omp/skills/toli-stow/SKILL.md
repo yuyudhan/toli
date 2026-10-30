@@ -5,6 +5,21 @@ description: Save what this session learned so future sessions start smarter - d
 
 # Saving session knowledge (/stow)
 
+## Who does what
+
+Only Sardar knows what this session learned, and only Sardar may take Malik's word, but Sardar never edits files.
+So Sardar writes one `TOLI_BRIEF v1` brief for a `task` jawan (effort lo) and ends the turn:
+
+- the candidate entries from this session, each with its target file and tier, and Malik's exact words for any
+  `data/malik.md` change (adding, changing, or dropping a pinned entry);
+- the memory pass below, the "What qualifies" rules, and "never archive a `data/malik.md` entry the brief does not
+  name with Malik's word";
+- the task ids from "Reconcile the backlog" that landed but are still `active`, with their sha or report path, for
+  `bin/toli task done`;
+- the report: what was saved where, tokens before -> after, what was archived or moved, and any shortfall.
+
+Everything below describes that jawan's work unless it says Sardar.
+
 ## Where things go
 
 | What                                                                                          | File                      | Tier   |
@@ -92,15 +107,16 @@ him once.
 
 For every task this session touched:
 
-- Work landed and verified, but still `active`: `bin/toli task done <id> --commit <sha>` or `--report <path>`.
-- Waiting on Malik but not recorded: `bin/toli task hold <id> --question "..."`.
-- Abandoned by Malik: `bin/toli task drop <id>` (only on his word).
-- Jawan still running: leave `active` and mention it.
+- Work landed and verified, but still `active`: the stow jawan runs `bin/toli task done <id> --commit <sha>` or
+  `--report <path>`.
+- Waiting on Malik but not recorded: Sardar runs `bin/toli task hold <id> --question "..."`.
+- Abandoned by Malik: Sardar runs `bin/toli task drop <id>` (only on his word).
+- Jawans still running: leave `active` and mention it.
 
 Do not touch tasks the session did not work on. Old records (job results, finished tasks, logs) are `bin/toli prune`'s
 job, not stow's; run `prune --apply` only when Malik says so.
 
 ## Report
 
-A few lines to Malik: what was saved where, memory tokens before -> after (and budget), what was archived or moved,
-which tasks were closed or held, anything still running.
+From the jawan's report, a few lines to Malik: what was saved where, memory tokens before -> after (and budget), what
+was archived or moved, which tasks were closed or held, anything still running.

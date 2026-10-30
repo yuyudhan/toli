@@ -1,16 +1,16 @@
 # toli
 
 Sardar is a personal orchestrator for omp (Oh My Pi). Malik talks to one omp session started
-in this repo; Sardar turns each request into work for omp `task` subagents (the "jawan"), checks their evidence, commits
-the result, and reports back in plain words. Sardar itself never edits project code.
+in this repo; Sardar turns each request into work for omp `task` subagents (the "jawans"), and they do all of it:
+the code, the checks, the commits, the reports. Sardar itself never does any work, so it is always free to talk.
 
-| Name   | Who                                                |
-| ------ | -------------------------------------------------- |
-| Malik  | you                                                |
-| Sardar | the lead: the omp session you talk to              |
-| Jawan  | one helper (an omp `task` subagent) doing one task |
-| Toli   | a group of jawan sent out together for one request |
-| Paltan | all jawan working across all your machines         |
+| Name   | Plural   | Who                                                 |
+| ------ | -------- | --------------------------------------------------- |
+| Malik  |          | you                                                 |
+| Sardar | Saradars | the lead: the omp session you talk to               |
+| Jawan  | Jawans   | one helper (an omp `task` subagent) doing one task  |
+| Toli   |          | a group of jawans sent out together for one request |
+| Paltan |          | all jawans working across all your machines         |
 
 The repo is cloned on three machines. Rules, skills, slash commands, and the CLI are tracked in git; everything
 private (projects, backlog, notes, config, logs) is gitignored and stays on each machine.
@@ -20,7 +20,25 @@ private (projects, backlog, notes, config, logs) is gitignored and stays on each
 ## What Sardar does for you (in simple words)
 
 Think of Sardar as your personal assistant manager. You talk only to Sardar; Sardar hires helpers (omp subagents) to do
-the actual work, checks their work, and tells you the result.
+all the actual work, including checking each other's work, and tells you the result.
+
+**The one principle: Sardar never works; jawans do everything; Sardar stays available.** Sardar does not read code,
+investigate, check proof, commit, write reports or notes, build pages, or run releases itself, not even "quick"
+ones. Its own job is only: listening to you, picking the project, asking at most one question, writing the task
+down for a jawan, keeping the task list, and asking you before anything that pushes, merges, releases, or
+destroys. Everything else goes to a jawan.
+
+How a request flows, without ever blocking the chat:
+
+- You ask. Sardar writes the task, sends a jawan off in the background, replies in a line or two, and is free
+  again. You can keep talking to it (or ask for more work) while the jawan runs.
+- When the jawan finishes, its result arrives in the chat by itself. For code changes, Sardar sends a second,
+  independent jawan to check the proof against what you asked for; that jawan commits the work and closes the
+  task, or reports what is missing (and Sardar sends a fix).
+- Sardar tells you the outcome in plain words. Long things (work on other machines, timed jobs, fleet status)
+  also run in the background and arrive in the chat when they finish.
+
+What that gives you:
 
 1. **One place to talk.** Start `omp` in this folder and just say what you want: "fix the login bug in billing-api",
    "find why the build is slow in web-app". Sardar answers you as "Malik" and replies "Ji Malik".
@@ -34,17 +52,18 @@ the actual work, checks their work, and tells you the result.
    When your notes for a project list its URLs, the helper also checks the logs and opens the local page in a
    headless browser; UI changes come with before/after screenshots at your chosen widths, and bug fixes show the
    test failing first and passing after. Staging is only looked at, never changed, and helpers stop at any OTP.
-   Sardar checks that proof before it calls the work finished.
+   A second jawan checks that proof before the work counts as finished.
 6. **Safe by default.** Sardar commits on the branch you are already on (or the project's fixed branch, if you set
    one), and stops there. It never pushes, merges, releases, or opens a pull request unless you say so. It never
    throws away your unsaved work. Branches are created only when you ask.
 7. **Careful review when you want it.** Ask for a branch or PR and Sardar can run your `no-mistakes` pipeline
    (review, tests, docs, lint) with omp. Sardar settles review questions that clearly follow what you already agreed
    and brings you only the ones that widen scope, are unclear, destructive, or touch security.
-8. **Three machines, one paltan.** The same Sardar runs on all your machines, and all jawan on them form the paltan. Sardar checks which machine is free
+8. **Three machines, one paltan.** The same Sardar runs on all your machines, and all jawans on them form the paltan. Sardar checks which machine is free
    (CPU, memory, disk, how busy it is) and sends heavy work there. A machine that is asleep or busy is skipped.
-9. **Timed jobs.** Say "every day at 5 pm, check X" and Sardar runs it on time: inside your open omp session if
-   one is running, otherwise in the background. Results from other machines come back to your main machine.
+9. **Timed jobs.** Say "every day at 5 pm, check X" and Sardar runs it on time, always in the background (never
+   inside your chat). When the result is ready it shows up in your chat by itself. Results from other machines come
+   back to your main machine.
 10. **Picture pages for decisions.** When there are several options, Sardar opens a lavish page in your browser so
     you can tick choices instead of typing.
 11. **Memory that stays small.** Sardar keeps notes per project, your preferences, and lessons learned in `data/`,
@@ -52,8 +71,8 @@ the actual work, checks their work, and tells you the result.
     stop being confirmed for 30 days (7 for "until X" ones) are re-checked or moved to an archive, never deleted.
     Your preferences are never archived unless you say so. Once a week Sardar also lists old job results, finished
     tasks, and logs that could be cleaned up; nothing is removed until you say "prune".
-12. **Local stacks.** If a project's notes list how to start, stop, migrate, and read logs of its local stack, Sardar
-    runs exactly those commands itself. Nothing else.
+12. **Local stacks.** If a project's notes list how to start and stop its local stack, Sardar starts and stops it in
+    the background with exactly those commands. Migrations, logs, and health checks go to a jawan.
 13. **Quiet or away.** `/quiet` keeps Sardar to results, failures, and decisions while you are here; `/afk` lets it
     work the queue while you are gone. After half an hour without a message from you, Sardar's next reply starts with
     what needs you, what finished, and what is still running.
@@ -134,7 +153,7 @@ Sardar uses the machines that are free:
 
 `pick` scores each available machine by min(cpu headroom, memory headroom) minus its share of busy run slots; within
 0.1 of the best it prefers this machine, then one that already has the clone, then name order. `remote auto` prints
-`local` when this machine wins (Sardar then dispatches jawan here); otherwise it runs `bin/toli project ensure` on the
+`local` when this machine wins (Sardar then dispatches jawans here); otherwise it runs `bin/toli project ensure` on the
 target when the project's URL is known here, then pipes the prompt to `bin/toli exec` there. `exec` and headless job
 runs leave a record in `state/runs/` while they run, which is what `activeRuns` counts. Nothing is ever locked or
 refused because a machine is busy; availability only steers where work goes.
@@ -145,8 +164,9 @@ In the omp session: `/add-project <name> <git-url>`, or directly:
 
     bin/toli project add <name> <git-url> [--mode commit|pr|no-mistakes]
 
-This clones into `projects/<name>`, records it, and reports whether the clone is ready for no-mistakes. Sardar then
-writes a short notes file (`data/notes/<name>.md`: stack, commands, gotchas) that is fed into every jawan brief.
+This clones into `projects/<name>`, records it, and reports whether the clone is ready for no-mistakes. In the omp
+session a jawan does the clone and then writes a short notes file (`data/notes/<name>.md`: stack, commands, gotchas)
+that is fed into every jawan brief.
 
 To register clones that are already in `projects/` (copied or moved in by hand), run `bin/toli project import`.
 
@@ -197,10 +217,12 @@ becomes
 
     bin/toli job add billing-daily-summary --cron "0 17 * * *" --prompt "Summarise yesterday's commits..." --project billing-api --shape scout
 
-While the omp session is open, the Sardar extension checks every minute and runs due jobs inside the session. When no
-session is open, the OS ticker runs them headless (`omp -p`) and saves output to `data/jobs/<name>/<stamp>.md`.
-Results appear in `/bearings` until acknowledged (`bin/toli job ack`). Scheduled runs never push, merge, open PRs, or
-ask questions.
+Jobs never run inside the chat. While the omp session is open, the Sardar extension checks every minute and starts
+due jobs in the background (`bin/toli job run-due`, one headless `omp -p` per job); when no session is open, the OS
+ticker (`bin/toli job tick`) does the same. Output goes to `data/jobs/<name>/<stamp>.md`. On the same minute the
+extension takes new results (`bin/toli wake`: local job results and inbox items, each delivered once) and puts them
+into the chat, so Sardar relays them without being asked. Results stay in `/bearings` until acknowledged
+(`bin/toli job ack`, `bin/toli inbox ack`). Scheduled runs never push, merge, open PRs, or ask questions.
 
 ## Memory and pruning
 
@@ -230,17 +252,18 @@ coordinator's inbox); it never applies it.
 
 ## no-mistakes and lavish
 
-- **no-mistakes** is used only when Malik asks for a branch or PR on a piece of work. Sardar creates the branch
-  (`bin/toli branch`), commits, and drives the gate with a full intent in Malik's words. The gate runs omp as its agent
-  (`~/.no-mistakes/config.yaml`: `agent: acp:omp`, `omp: omp acp`); never set `disable_project_settings`. Mechanics:
-  the global `no-mistakes` skill; Sardar policy: `.omp/skills/toli-nm`.
+- **no-mistakes** is used only when Malik asks for a branch or PR on a piece of work. A jawan creates the branch
+  (`bin/toli branch`), the verifier jawan commits, and a gate jawan drives the gate with a full intent in Malik's
+  words. The gate runs omp as its agent (`~/.no-mistakes/config.yaml`: `agent: acp:omp`, `omp: omp acp`); never set
+  `disable_project_settings`. Mechanics: the global `no-mistakes` skill; Sardar policy: `.omp/skills/toli-nm`.
 - **lavish** (`npx -y lavish-axi`) renders review pages for multi-option decisions, batches of questions, and large
-  reports. Yes/no questions stay in chat. Pages live in `.lavish/`; `lavish-axi share` is never used. Mechanics: the
-  global `lavish` skill; Sardar policy: `.omp/skills/toli-lavish`.
+  reports. Yes/no questions stay in chat. A jawan builds and polls each page, so the chat stays free. Pages live in
+  `.lavish/`; `lavish-axi share` is never used. Mechanics: the global `lavish` skill; Sardar policy:
+  `.omp/skills/toli-lavish`.
 
 ## Hard rules
 
-- No git worktrees and no tmux/herdr/zellij windows. Jawan are omp `task` subagents editing `projects/<name>/` directly.
+- No git worktrees and no tmux/herdr/zellij windows. Jawans are omp `task` subagents editing `projects/<name>/` directly.
 - Default delivery is a commit on the current branch (`bin/toli commit`). Branches only on request.
 - Never push, merge, or open a PR without Malik's explicit word for that specific change.
 - Never discard uncommitted work: no `git reset --hard`, `git checkout -- .`, `git stash`, `git clean`, branch
@@ -248,7 +271,7 @@ coordinator's inbox); it never applies it.
 - Destructive, irreversible, or security-sensitive actions go to Malik first.
 - No AI co-author trailers (`bin/toli commit` strips them). Malik's name appears in chat only, never in commits, PRs,
   or code.
-- Parallel jawan on the same project is allowed, even in the same files; each commits only the paths it changed.
+- Parallel jawans on the same project are allowed, even in the same files; each commits only the paths it changed.
 - Scheduled and headless runs never push, merge, open PRs, or ask questions; they write results to files.
 
 ## Developing Sardar
@@ -293,10 +316,11 @@ Tracked (shared by all machines):
     bin/toli                     CLI entry point (Bun TypeScript)
     src/                         CLI implementation
     AGENTS.md                    Sardar's role and rules for omp
-    .omp/extensions/toli.ts      in-session job runner and session tracking
+    .omp/extensions/toli.ts      session tracking, background job hand-off, result delivery into the chat
     .omp/skills/toli-*/          Sardar skills (dispatch, projects, deliver, scout, ...)
     .omp/commands/*.md           slash commands
     docs/brief-template.md       template for every jawan brief
+    docs/verify-brief-template.md  template for the independent verifier jawan on ship work
     tests/                       bun tests (temp TOLI_ROOT, stubbed ssh/omp/crontab)
     scripts/guard.ts, guard/     hygiene guards; file-size-exceptions.txt ratchets oversized files
     scripts/format.ts            runs every formatter and file-type linter (write, check, lint, tools)
@@ -319,6 +343,6 @@ Private (gitignored, per machine):
     data/reports/<taskId>.md     investigation reports
     data/jobs/<name>/<stamp>.md  job results
     data/archive/                archived memory entries (<file>.md) and old tasks (tasks.json); never loaded
-    data/inbox/, data/remote/, data/afk/
-    state/                       session.json, jobs.json, prune.json, afk flag, outbox/, runs/
+    data/inbox/, data/remote/
+    state/                       session.json, jobs.json, acks.json, prune.json, afk flag, outbox/, runs/
     logs/, .env*, .lavish/

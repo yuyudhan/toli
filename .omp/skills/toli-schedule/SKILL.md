@@ -32,7 +32,8 @@ ambiguous ("in the morning", "evening"), ask once.
 - `--prompt`: a self-contained instruction; the run will not see this conversation.
 - `--shape`: `scout` (default choice for reports and checks) unless the job must change code.
 - `--machine`: run the job only on that machine (e.g. where the project is cloned), when that is not this one.
-- `bin/toli job run <name>` runs a job once now, for testing.
+- `bin/toli job run <name>` runs a job once now, for testing. It takes as long as the job (up to 45 minutes), so run
+  it only through `bash` with `async: true` and `timeout: 0`, then end the turn; its result arrives as a new turn.
 
 Present `list` as a short table: name, schedule in words, project, paused or active, last result.
 
@@ -47,27 +48,32 @@ If it is not installed, offer `bin/toli schedule install` (one launchd agent on 
 
 How jobs run, in plain words for Malik:
 
-- **While this session is open**, the Sardar extension checks every minute and drops due jobs into this conversation.
-- **When no session is open**, the OS ticker runs the job headless (`omp -p`) and saves the output to
-  `data/jobs/<name>/<stamp>.md`. A headless run counts as load on its machine (`bin/toli resources`) while it runs.
+- Jobs never run inside this conversation, so Sardar stays free to talk.
+- **While this session is open**, the Sardar extension checks every minute and starts due jobs in the background
+  (`bin/toli job run-due`), each in its own headless `omp -p` run.
+- **When no session is open**, the OS ticker does the same.
+- Either way the output is saved to `data/jobs/<name>/<stamp>.md`, and a headless run counts as load on its machine
+  (`bin/toli resources`) while it runs.
 - On a worker machine, results are also sent to the coordinator; undelivered ones retry every minute.
-- Results appear in `/bearings` until acknowledged.
+- New results reach an open session as a `[toli wake]` message (each result once). Relay the outcome and any
+  decision to Malik in plain words, dispatch follow-up work to jawans, then `bin/toli job ack` / `bin/toli inbox ack`.
+  Results also appear in `/bearings` until acknowledged.
 
 ## Scheduled-run rules
 
-Every scheduled run, interactive or headless: never push, merge, open PRs, or ask questions. Ship jobs commit only
-with `bin/toli commit` on the current branch. Anything needing Malik becomes `bin/toli task hold <id> --question "..."`
-and is noted in the result.
+Every scheduled run: never push, merge, open PRs, or ask questions. Ship jobs commit only with `bin/toli commit` on
+the current branch. Anything needing Malik becomes `bin/toli task hold <id> --question "..."` and is noted in the
+result.
 
 ## Handling `[toli job <name> <runId>]`
 
-A prompt starting with that prefix was submitted by the extension. Do the job it describes under the scheduled-run
-rules (dispatch jawan as usual via `skill://toli-dispatch`), then record the result by piping a short markdown summary
+A prompt starting with that prefix is a headless job run (`omp -p`), not the live Sardar chat. Do the job it
+describes under the scheduled-run rules (dispatch jawans as usual via `skill://toli-dispatch`; nobody is chatting
+with this run, so it may wait for its jawans to finish), then record the result by piping a short markdown summary
 to the CLI:
 
     bin/toli job finish <name> <runId> <<'EOF'
     <outcome, evidence, tasks held, files written>
     EOF
 
-Always call `job finish`, even on failure (say what failed). Do not interrupt Malik with the result unless it needs
-him; it will show up in `/bearings`.
+Always call `job finish`, even on failure (say what failed). The live session relays the result to Malik.

@@ -24,7 +24,7 @@ Check `state/quiet` before replying. When it exists, a message to Malik contains
 - **Failures**: what failed, in plain words, and what Sardar is doing about it.
 - **Decisions**: a question that needs his answer, in the ask-user format when it comes from a review gate.
 
-Drop everything else: acknowledgements beyond "Ji Malik", restating the request, plans, progress, "dispatched jawan",
+Drop everything else: acknowledgements beyond "Ji Malik", restating the request, plans, progress, "dispatched jawans",
 "still running", and summaries of evidence that passed (the outcome line is enough). If nothing qualifies, a turn may
 end without a message to Malik.
 
