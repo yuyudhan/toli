@@ -12,9 +12,9 @@ In the lead session:
 
 Before anything is cloned, the lead asks one batched, multiple-choice question (full text in the `toli-projects`
 skill): checkout (`clone` fresh, or `link <path>` to an existing checkout), workspace strategy (`same-branch
-[<branch>]`, `branch`, `worktree`; default from `defaults.workspace` in `config/machine.json`), PR or MR (per-task
-strategies), the no-mistakes gate, the test/smoke command, and an optional standing push/PR grant. Reply like
-`clone, same-branch, no, detect` or `link ~/code/shop, worktree, mr, yes, bun test`.
+[<branch>]`, recommended, `branch`, or `worktree`; default from `defaults.workspace` in `config/machine.json`), PR or
+MR (per-task strategies), the no-mistakes gate, the test/smoke command, and an optional standing push/PR grant. Reply
+like `clone, same-branch, no, detect` or `link ~/code/shop, branch, mr, yes, bun test`.
 
 With the answer, a jawan clones the repo (`bin/toli project add`) or links it (`bin/toli project link`), records the
 choices (`bin/toli project set`), checks the forge and its auth (`bin/toli forge <name>`), and seeds
@@ -26,7 +26,7 @@ What each delivery choice means: [delivery.md](delivery.md).
 Without a lead session, the same steps by hand:
 
     bin/toli project add <name> <git-url>        or   bin/toli project link <name> <path>
-    bin/toli project set <name> --workspace worktree-per-task --mode pr --branch none
+    bin/toli project set <name> --workspace same-branch --mode commit --branch main
     bin/toli project setup <name>
 
 `bin/toli project link <name> <path>` registers a checkout the user already has: it checks it is a git repo,
@@ -38,7 +38,8 @@ removes only that symlink, never the checkout, and `project setup`/digest flag a
 ## Workspace strategy
 
 Each project records where its jawans work (`workspace` in `bin/toli project list`; asked at registration and by
-`/setup-project`; new projects start on the machine default, `defaults.workspace` in `config/machine.json`):
+`/setup-project`; new projects start on the machine default, `defaults.workspace` in `config/machine.json`, which is
+`same-branch` when unset):
 
 | Strategy            | Where jawans work                                                                  | Landing                    |
 | ------------------- | ---------------------------------------------------------------------------------- | -------------------------- |
@@ -46,11 +47,19 @@ Each project records where its jawans work (`workspace` in `bin/toli project lis
 | `branch-per-task`   | the one clone, switched to `toli/<T-id>-<slug>` before the jawan starts            | task branch pushed + PR/MR |
 | `worktree-per-task` | `projects/.worktrees/<project>/<T-id>`, a worktree on its own `toli/<T-id>-<slug>` | task branch pushed + PR/MR |
 
+`same-branch` is the recommended default: many jawans work in one clone at once, each `bin/toli commit` builds its
+commit from the branch tip in a private index with only its own paths, and refuses when the branch moved twice, a
+recent commit would be reverted, a lock file does not parse, or a secret is staged
+([cli.md](cli.md#landing-work)). That scales to many fast parallel agents; a worktree per task does not (a full
+checkout, dependency install and build per task, and merges at the end). `worktree-per-task` stays an opt-in for a
+project whose owner wants a branch and PR/MR per task with tasks side by side; toli never picks it by default, and
+toli itself never uses worktrees.
+
 - `bin/toli spawn --task T<n>` prepares the workspace (or `bin/toli workspace prepare T<n>` for native subagents)
   and records it on the task; the brief carries the strategy, path, and branch, and the verifier reuses it.
   Task branches start from the base branch: the project's `--branch`, else origin's default branch.
 - `branch-per-task` refuses to switch the clone while another active or held task of the project uses it on a
-  different branch, or while the clone has uncommitted changes; use `worktree-per-task` for parallel tasks.
+  different branch, or while the clone has uncommitted changes; use `same-branch` for parallel tasks.
 - `bin/toli commit|push|pr create <project> --task T<n>` act in the task's workspace (commands run from inside a
   task worktree find it themselves). Per-task projects refuse a commit without `--task`.
 - Pushing the task branch and opening its PR/MR need the user's word for that change, unless the project carries an

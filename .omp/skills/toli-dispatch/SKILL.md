@@ -120,12 +120,20 @@ nothing for `bin/toli spawn --task`, which records its run id itself:
 
 ### Workspace per strategy
 
-Ship work on a `branch-per-task` or `worktree-per-task` project runs on the task's own branch, prepared before the
+`same-branch` projects, and toli itself, need no preparation: every jawan edits the one checkout in place, in
+parallel, and lands with `bin/toli commit <project> -m "..." -- <its paths>` (`toli` for toli itself, after
+`just check`). That commit is built from the branch tip in a private index, so other jawans' half-done edits and
+commits are safe. Never put a git worktree in a brief, not even a temporary one for a clean build or commit; the
+brief template already says so. Briefs for toli itself say: edit in place on `develop`, `just check`, then
+`bin/toli commit toli`.
+
+Ship work on a `branch-per-task` or `worktree-per-task` project (opt-in strategies Malik chose for that project)
+runs on the task's own branch, prepared before the
 jawan starts. `bin/toli spawn --task T<n>` does it itself (switches the clone to `toli/T<n>-<slug>`, or adds the
 worktree `projects/.worktrees/<project>/T<n>`), runs the jawan there, and appends the path and branch to the brief.
 For a native subagent, run `bin/toli workspace prepare T<n>` first (fast bookkeeping) and put the path and branch
 it prints into the brief's Project section. Branch-per-task refuses while another live task holds the clone on a
-different branch: tell Malik, and either wait for that task or offer `worktree-per-task` for the project. The
+different branch: tell Malik, and either wait for that task or offer `same-branch` for the project. The
 verifier reuses the same workspace (`spawn --task T<n> --work verify`, or the path from `bin/toli task list --json`).
 Scouts read the plain clone. Finished worktrees are cleaned with `bin/toli workspace prune` (a jawan runs it);
 it keeps unmerged, dirty, or live ones, and `--force` (abandon unmerged commits) needs Malik's word.

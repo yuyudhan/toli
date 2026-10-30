@@ -66,10 +66,13 @@ unless he granted that project a standing grant in plain words; merging always n
     >
     > 1. **Checkout**: `clone` a fresh copy into projects/<name>, or `link <path>` to a checkout you already have
     >    (default clone)
-    > 2. **Workspace** (default <machine default>)
-    >     - `same-branch [<branch>]`: every jawan works in the one clone on the checked-out (or that fixed) branch
+    > 2. **Workspace** (default <machine default>; recommended `same-branch`)
+    >     - `same-branch [<branch>]` (recommended): every jawan works in the one clone on the checked-out (or that
+    >       fixed) branch; `bin/toli commit` commits only each jawan's own paths from the branch tip, so many jawans
+    >       run in parallel safely and nothing needs merging later
     >     - `branch`: one clone, a new branch and PR/MR per task, one task at a time in the clone
-    >     - `worktree`: a separate worktree and branch per task, PR/MR per task, tasks side by side
+    >     - `worktree`: a separate worktree and branch per task, PR/MR per task (a full checkout and build per task;
+    >       slow with many agents, only if you want a PR per task with tasks side by side)
     > 3. **PR or MR** (branch/worktree only; forge: <GitHub | GitLab at host | Bitbucket | detected after clone>):
     >    `pr` / `mr` (same flow; say which word your forge uses)
     > 4. **no-mistakes gate** before PRs: yes / no (default no)
