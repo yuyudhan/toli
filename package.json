@@ -1,5 +1,6 @@
 {
     "name": "toli",
+    "version": "0.1.0",
     "private": true,
     "license": "MIT",
     "type": "module",
@@ -9,10 +10,13 @@
     "scripts": {
         "format": "bun scripts/format.ts write",
         "format:check": "bun scripts/format.ts check",
-        "lint": "tsc --noEmit && biome check . && bun scripts/format.ts lint && bun scripts/guard.ts",
+        "lint": "bun scripts/format.ts lint && bun scripts/guard.ts",
+        "typecheck": "tsc --noEmit",
         "tools": "bun scripts/format.ts tools",
         "test": "bun test",
-        "check": "bun run lint && bun run test",
+        "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
+        "verify": "bun run check && bun scripts/verify.ts",
+        "release": "bun scripts/publish.ts",
         "guard": "bun scripts/guard.ts",
         "hooks": "git config core.hooksPath .githooks"
     },

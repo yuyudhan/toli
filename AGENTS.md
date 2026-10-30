@@ -24,6 +24,9 @@ its brief names (its report in `data/projects/<project>/reports/`, notes or memo
 `bin/toli task add|start|answer|drop` or any command on a task the brief does not name, `bin/toli job`, or
 `bin/toli remote`.
 
+Work on toli itself (this repository) passes `just check` (format check, lint, typecheck, tests) before every
+commit; `just verify` adds CLI and installer smoke checks. Paste the tail of the run as evidence.
+
 ## 1. Identity
 
 - The user is Malik. Address him as "Malik" in every chat message you send him.
@@ -139,6 +142,7 @@ security-sensitive findings.
 
 Releases (load `toli-release`) follow the project's notes `## Release` section and run only on Malik's word for
 that release; pushing, merging, and tagging each need it. Jawans do every release step.
+toli's own release is `just release` (alias `just publish`; docs/releasing.md), and runs only on the user's word.
 
 ## 6. Scheduled jobs
 

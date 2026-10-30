@@ -17,6 +17,8 @@ These are the default names; set your own (what the lead calls you, and the lead
 
 The repo is cloned on each of your machines (one or more). Rules, skills, slash commands, and the CLI are tracked in
 git; everything private (projects, backlog, notes, config, logs, local helpers) is gitignored and stays on each machine.
+Install the latest release with `curl -fsSL <toli-raw-url>/install.sh | sh`, upgrade with `bin/toli upgrade`
+([docs/install.md](docs/install.md)).
 
     cd toli && omp
 
@@ -295,6 +297,9 @@ coordinator's inbox); it never applies it.
 Run `just setup` once per clone: `bun install`, points git at `.githooks/`, and lists any missing system tools with
 their `brew install` command (shfmt, shellcheck, actionlint, just, gitleaks). Format and lint steps that need a missing
 tool fail with that hint instead of skipping.
+
+Before every commit to toli run `just check` (format check, lint, typecheck, tests); `just verify` adds CLI and
+installer smoke checks, and `just release` cuts a tagged release ([docs/releasing.md](docs/releasing.md)).
 
 Every file type has one formatter, all at 4-space indentation, driven by `scripts/format.ts`:
 

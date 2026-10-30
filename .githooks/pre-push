@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pre-push: the full gate. `bun run check` (tsc, Biome, guards, tests) plus a gitleaks scan of the
+# pre-push: the full gate. `bun run check` (= `just check`: fmt-check, lint, typecheck, tests) plus a gitleaks scan of the
 # commits being pushed. The gate checks the working tree, so push from a clean checkout of what you push.
 #
 # git feeds one line per ref: <local ref> <local sha> <remote ref> <remote sha>. Per ref:
@@ -64,5 +64,5 @@ else
     done
 fi
 
-echo "pre-push: bun run check"
+echo "pre-push: bun run check (just check)"
 bun run check

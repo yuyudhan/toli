@@ -20,6 +20,7 @@ import { sessionCommand } from "./session.ts";
 import { setupCommand } from "./setup.ts";
 import { runCommand, runsCommand, spawnCommand } from "./spawn.ts";
 import { jobCommand } from "./tick.ts";
+import { upgradeCommand, versionCommand } from "./upgrade.ts";
 import { out, ToliError, warn } from "./util.ts";
 import { wakeCommand } from "./wake.ts";
 
@@ -69,7 +70,9 @@ const USAGE = `usage: bin/toli <command> [args]
   runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   harness sync [--check] [--json] | status [--json]
   hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
-  guidance`;
+  guidance
+  version [--json]
+  upgrade [vX.Y.Z|--latest] [--check]`;
 
 /** Dispatch one CLI invocation; resolves to the process exit code. */
 export async function main(argv: string[]): Promise<number> {
@@ -165,6 +168,12 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "guidance":
                 guidanceCommand(rest);
+                return 0;
+            case "upgrade":
+                return await upgradeCommand(rest);
+            case "version":
+            case "--version":
+                versionCommand(rest);
                 return 0;
             case undefined:
             case "help":
