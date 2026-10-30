@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../src/core/paths.ts";
-import { type Sandbox, sandbox, withProject } from "./helpers.ts";
+import { projectSetCommand } from "../src/projects/set.ts";
+import { projectSetupCommand } from "../src/projects/setup.ts";
+import { commandIn, type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Check = { key: string; status: string; detail: string; fill?: string };
 type Report = { project: string; ready: boolean; checks: Check[] };
@@ -187,5 +189,42 @@ describe("project decisions", () => {
         expect(readFileSync(join(box.root, "data/projects/app/decisions.md"), "utf8")).toBe(
             "# app decisions\n\n## 2026-10-30 T1: Pick a cache\n\n- Q: Redis or in-memory?\n- A: in-memory\n",
         );
+    });
+});
+
+describe("project setup in process", () => {
+    test("renders the checklist, lists gaps across projects, and flags delivery-specific gaps", () => {
+        const box = registered();
+        const setupIn = commandIn(box.root, projectSetupCommand);
+        const file = notes(box, "app", FULL_NOTES);
+        const text = setupIn(["app"]).split("\n");
+        expect(text[0]).toBe("app: needs setup");
+        expect(text).toContain(
+            "  [ ] delivery     never chosen; defaulted to commit on the checked-out branch (ask the user)",
+        );
+        expect(text).toContain("  [x] test         test command recorded");
+        expect(text).toContain("  [x] freshness    notes changed 0 days ago");
+        expect(setupIn(["--all"]).split("\n")).toEqual([
+            "1 of 1 project need setup",
+            "  app\tdelivery, workspace",
+            "details: bin/toli project setup <name>; flow: /setup-project <name>",
+        ]);
+        expect(JSON.parse(setupIn(["--all", "--json"]))).toEqual([{ name: "app", missing: ["delivery", "workspace"] }]);
+        expect(() => setupIn(["app", "--all"])).toThrow("project setup takes a name or --all, not both");
+
+        commandIn(
+            box.root,
+            projectSetCommand,
+        )(["app", "--mode", "no-mistakes", "--branch", "release", "--workspace", "same-branch"]);
+        const old = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
+        utimesSync(file, old, old);
+        expect(status(JSON.parse(setupIn(["app", "--json"])) as Report)).toMatchObject({
+            delivery: "ok",
+            workspace: "ok",
+            branch: "missing",
+            forge: "missing",
+            "no-mistakes": "missing",
+            freshness: "stale",
+        });
     });
 });

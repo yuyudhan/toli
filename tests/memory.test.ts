@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox } from "./helpers.ts";
+import { memoryCheck, memoryCommand } from "../src/records/memory.ts";
+import { commandIn, inProcess, type Sandbox, sandbox } from "./helpers.ts";
 
 const NOW = "2026-10-30T12:00:00Z";
 
@@ -185,5 +186,50 @@ describe("memory archive", () => {
             "not inside a memory entry",
         );
         expect(box.toli(["memory", "archive", "learnings", "6"], { now: NOW }).stderr).toContain("--reason");
+    });
+});
+
+describe("memory commands in process", () => {
+    test("report, stale and archive against the sandbox, with refusals", () => {
+        const box = memoryBox();
+        const memory = commandIn(box.root, memoryCommand, { TOLI_NOW: NOW });
+        const summary = memory([]).split("\n");
+        expect(summary[0]).toMatch(/^memory: \d+\/7500 estimated tokens \(\d+ under budget\)$/);
+        expect(summary).toContain("notes (loaded per brief, not counted): 26 tokens across 1 files");
+        expect((JSON.parse(memory(["--json"])) as Report).files.map((file) => file.file)).toEqual([
+            "data/preferences.md",
+            "data/learnings.md",
+        ]);
+        const listed = memory(["stale"]).split("\n");
+        expect(listed[0]).toBe("memory: 4 stale entries (re-confirm and refresh the date, or archive)");
+        expect(listed[1]).toMatch(/^ {2}data\/learnings\.md:6\t[0-9a-f]{7}\t2026-09-01\t59d\taging\t- 2026-09-01: old/);
+        const found = JSON.parse(memory(["stale", "--json"])) as Stale[];
+        expect(found).toHaveLength(4);
+
+        expect(memory(["archive", "learnings", found[0]?.id ?? "", "--reason", "stale"])).toBe(
+            `archived data/learnings.md:6 (${found[0]?.id}) -> data/archive/learnings.md: - 2026-09-01: old aging fact`,
+        );
+        const refusals: [string[], string][] = [
+            [["archive", "learnings", "3", "--reason", "x"], "line 3 is not inside a memory entry"],
+            [["archive", "learnings", "fffffff", "--reason", "x"], 'no entry with id "fffffff"'],
+            [["archive", "learnings", "6"], "memory archive needs --reason <text>"],
+            [["archive", "notes/ghost", "1", "--reason", "x"], 'unknown memory file "notes/ghost"'],
+            [["archive", "preferences", "3", "--reason", "old"], "is pinned"],
+            [["forget"], "usage: toli memory"],
+        ];
+        for (const [argv, message] of refusals) expect(() => memory(argv)).toThrow(message);
+        expect(memory(["archive", "notes/kalki", "5", "--reason", "stale"])).toContain("-> data/archive/kalki.md");
+
+        inProcess(box.root, () => expect(memoryCheck().level).toBe("ok"));
+        write(box, "config/machine.json", JSON.stringify({ memoryBudgetTokens: 1 }));
+        inProcess(box.root, () => expect(memoryCheck().detail).toContain("over budget by"));
+        write(box, "config/machine.json", JSON.stringify({ memoryBudgetTokens: 0 }));
+        inProcess(box.root, () => expect(memoryCheck()).toMatchObject({ level: "warn" }));
+    });
+
+    test("no stale entries says so", () => {
+        const box = sandbox();
+        write(box, "data/learnings.md", "- 2026-10-29: fresh\n");
+        expect(commandIn(box.root, memoryCommand, { TOLI_NOW: NOW })(["stale"])).toBe("memory: no stale entries");
     });
 });

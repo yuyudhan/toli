@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { type Sandbox, sandbox, withProject } from "./helpers.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type BacklogFile, loadBacklog, matchOption, taskCommand } from "../src/records/backlog.ts";
+import { commandIn, inProcess, type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type TaskJson = { id: string; status: string; question?: string; answer?: string; notes: string[]; startedAt?: string };
 
@@ -99,5 +102,111 @@ describe("task lifecycle", () => {
         expect(held.map((entry) => entry.id)).toEqual(["T2"]);
         expect(box.ok(["task", "list", "--status", "done"])).toBe("no tasks");
         expect(box.toli(["task", "list", "--status", "waiting"]).code).toBe(1);
+    });
+});
+
+describe("task commands in process", () => {
+    test("add, list, start, hold with options, answer by number, done and drop", () => {
+        const box = project();
+        const task = commandIn(box.root, taskCommand);
+        expect(task(["add", "alpha", "Draft plan", "--shape", "scout", "--note", "from chat"])).toBe("T1");
+        expect(task(["add", "alpha", "Ship it"])).toBe("T2");
+        expect(task(["start", "t1", "--agent", "jawan-1"])).toBe(
+            "T1\tactive\talpha\tscout\tDraft plan\t(agent: jawan-1)",
+        );
+        expect(
+            task([
+                "hold",
+                "T1",
+                "--question",
+                " Which store? ",
+                "--option",
+                "Postgres => keep one database",
+                "--option",
+                "SQLite => embed it",
+                "--recommend",
+                "2",
+                "--blocks",
+                "T2",
+            ]),
+        ).toBe("T1\theld\talpha\tscout\tDraft plan\t(question: Which store?; agent: jawan-1)");
+        const backlog = JSON.parse(readFileSync(join(box.root, "data", "backlog.json"), "utf8")) as BacklogFile;
+        expect(backlog.tasks[0]).toMatchObject({
+            options: [
+                { choice: "Postgres", outcome: "keep one database" },
+                { choice: "SQLite", outcome: "embed it" },
+            ],
+            recommend: "SQLite",
+            blocks: "T2",
+        });
+
+        expect(task(["answer", "T1", "1"]).split("\n")).toEqual([
+            "T1\tactive\talpha\tscout\tDraft plan\t(agent: jawan-1)",
+            "unblocked: dispatch T1 now (toli-dispatch skill; put the answer in its brief, data/projects/alpha/briefs/T1.md)",
+        ]);
+        const decisions = readFileSync(join(box.root, "data", "projects", "alpha", "decisions.md"), "utf8");
+        expect(decisions).toStartWith("# alpha decisions\n");
+        expect(decisions).toContain("T1: Draft plan");
+        expect(decisions).toContain("- Options: 1. Postgres => keep one database; 2. SQLite => embed it");
+        expect(decisions).toContain("- Recommended: SQLite\n- A: 1\n- Chosen: Postgres => keep one database");
+
+        expect(task(["done", "T1", "--report", "r.md", "--commit", "abc1234", "--note", "landed"])).toBe(
+            "T1\tdone\talpha\tscout\tDraft plan\t(agent: jawan-1; commit: abc1234; report: r.md)",
+        );
+        expect(task(["drop", "T2"])).toBe("T2\tdropped\talpha\tship\tShip it");
+        expect(task(["list", "--project", "alpha"]).split("\n")).toHaveLength(2);
+        expect(task(["list", "--project", "beta"])).toBe("no tasks");
+        const listed = JSON.parse(task(["list", "--status", "done", "--json"])) as { id: string; notes: string[] }[];
+        expect(listed.map((entry) => entry.id)).toEqual(["T1"]);
+        expect(listed[0]?.notes).toEqual(["from chat", "Q: Which store?\nA: 1 (= Postgres)", "landed"]);
+    });
+
+    test("refusals leave the backlog unchanged", () => {
+        const box = project();
+        const task = commandIn(box.root, taskCommand);
+        task(["add", "alpha", "One"]);
+        const refusals: [string[], string][] = [
+            [["hold", "T1"], 'hold needs --question "..."'],
+            [["hold", "T1", "--question", "q", "--option", "a => b"], "give 2-4 --option values, or none"],
+            [["hold", "T1", "--question", "q", "--option", "no arrow", "--option", "x => y"], "--option must be"],
+            [
+                ["hold", "T1", "--question", "q", "--option", "a => b", "--option", "c => d", "--recommend", "e"],
+                "--recommend must be",
+            ],
+            [["answer", "T1", "yes"], "T1 is queued, not waiting on an answer"],
+            [["start", "T7"], 'unknown task "T7"'],
+            [["list", "--status", "waiting"], "--status must be one of"],
+            [["add", "alpha", "Two", "--shape", "build"], "--shape must be ship or scout"],
+            [["rename", "T1"], "usage: toli task add|list|start|done|hold|answer|drop"],
+        ];
+        for (const [argv, message] of refusals) expect(() => task(argv)).toThrow(message);
+        task(["drop", "T1"]);
+        expect(() => task(["start", "T1"])).toThrow("T1 is dropped");
+        expect(() => task(["hold", "T1", "--question", "q"])).toThrow("T1 is dropped");
+        inProcess(box.root, () => expect(loadBacklog()).toMatchObject({ nextId: 2, tasks: [{ status: "dropped" }] }));
+    });
+
+    test("a free-text recommendation stands when the hold offers no options", () => {
+        const box = project();
+        const task = commandIn(box.root, taskCommand);
+        task(["add", "alpha", "One"]);
+        task(["hold", "T1", "--question", "go?", "--recommend", "wait for Monday"]);
+        task(["answer", "T1", "later"]);
+        const decisions = readFileSync(join(box.root, "data", "projects", "alpha", "decisions.md"), "utf8");
+        expect(decisions).toContain("- Q: go?\n- Recommended: wait for Monday\n- A: later\n");
+        expect(decisions).not.toContain("Options:");
+    });
+});
+
+describe("matchOption", () => {
+    const options = [
+        { choice: "Yes", outcome: "ship" },
+        { choice: "No", outcome: "wait" },
+    ];
+    test("takes a 1-based number or the exact choice in any case", () => {
+        expect(matchOption(options, " 2 ")).toEqual({ choice: "No", outcome: "wait" });
+        expect(matchOption(options, "yes")).toEqual({ choice: "Yes", outcome: "ship" });
+        expect(matchOption(options, "3")).toBeUndefined();
+        expect(matchOption(options, "maybe")).toBeUndefined();
     });
 });
