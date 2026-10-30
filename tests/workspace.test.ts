@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { GIT_ENV, type Sandbox, sandbox, TOLI_BIN, withProject } from "./helpers.ts";
+
+// Each test runs a dozen git processes plus several bin/toli runs (~2 s idle); on a loaded machine (parallel jawans)
+// that passes Bun's 5 s default, so this file allows 60 s per test.
+setDefaultTimeout(60_000);
 
 type ProjectJson = {
     name: string;

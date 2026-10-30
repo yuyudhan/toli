@@ -19,6 +19,10 @@
 //     items such as finished `bin/toli spawn` jawans, worker job results and the
 //     weekly prune listing, and local job results), each exactly once, and
 //     pushes them into the chat: a new turn when idle, a follow-up when busy;
+//   - a failing bin/toli (e.g. a broken checkout) is reported once per distinct
+//     error with a pointer to `bin/toli doctor` (src/cli-health.ts); the tick
+//     keeps retrying quietly, re-registers the session if that failed, and
+//     recovers silently once the CLI works again;
 //   - session_shutdown unregisters the session so the OS ticker takes over.
 // Headless runs (omp -p: the ticker, toli remote, spawned jawans) and subagent
 // sessions load this file too; they must not claim jobs, take results, get the
@@ -26,6 +30,7 @@
 import { execFile, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CliHealth } from "../../src/cli-health.ts";
 import { guardDecision, isBrief, jawanEnv, ompAction } from "../../src/lead-guard.ts";
 
 // omp ships no installable type package; declare the surface this file uses.
@@ -105,6 +110,7 @@ function isMainInteractiveSession(ctx: Context): boolean {
 
 export default function toliExtension(pi: ExtensionAPI): void {
     pi.setLabel("toli lead");
+    // Set once `bin/toli session start` succeeded (retried by the tick until it does).
     let registered = false;
     let ticking = false;
     let guidance = "";
@@ -114,38 +120,43 @@ export default function toliExtension(pi: ExtensionAPI): void {
     // The told-once setup notice for the lead's first turn; "" when nothing is due.
     let setupContext = "";
 
-    async function refreshGuidance(ctx: Context): Promise<void> {
+    const health = new CliHealth();
+
+    /** Run CLI work; a failure is shown once per distinct error, a success clears it silently. */
+    async function guarded(ctx: Context, work: () => Promise<void>): Promise<void> {
         try {
-            guidance = (await runToli(["guidance"])).trim();
+            await work();
+            health.succeeded();
         } catch (error) {
-            ctx.ui.notify(
-                `toli guidance unavailable: ${error instanceof Error ? error.message : String(error)}`,
-                "warning",
-            );
+            const notice = health.failed(error);
+            if (notice !== null) ctx.ui.notify(notice, "warning");
         }
+    }
+
+    async function register(): Promise<void> {
+        await runToli(["session", "start", "--pid", String(process.pid)]);
+        registered = true;
     }
 
     async function tick(ctx: Context): Promise<void> {
         if (ticking) return;
         ticking = true;
         try {
-            const due = JSON.parse(await runToli(["job", "due", "--json"])) as DueJob[];
-            if (due.length > 0)
-                startDueJobs(
-                    ctx,
-                    due.map((job) => job.name),
-                );
-            const wake = JSON.parse(await runToli(["wake", "--json"])) as Wake;
-            if (wake.message !== "") {
-                if (ctx.isIdle()) pi.sendUserMessage(wake.message, { attribution: "agent" });
-                else pi.sendUserMessage(wake.message, { deliverAs: "followUp", attribution: "agent" });
-            }
-            await refreshGuidance(ctx);
-        } catch (error) {
-            ctx.ui.notify(
-                `toli background check failed: ${error instanceof Error ? error.message : String(error)}`,
-                "warning",
-            );
+            await guarded(ctx, async () => {
+                if (!registered) await register();
+                const due = JSON.parse(await runToli(["job", "due", "--json"])) as DueJob[];
+                if (due.length > 0)
+                    startDueJobs(
+                        ctx,
+                        due.map((job) => job.name),
+                    );
+                const wake = JSON.parse(await runToli(["wake", "--json"])) as Wake;
+                if (wake.message !== "") {
+                    if (ctx.isIdle()) pi.sendUserMessage(wake.message, { attribution: "agent" });
+                    else pi.sendUserMessage(wake.message, { deliverAs: "followUp", attribution: "agent" });
+                }
+                guidance = (await runToli(["guidance"])).trim();
+            });
         } finally {
             ticking = false;
         }
@@ -153,21 +164,15 @@ export default function toliExtension(pi: ExtensionAPI): void {
 
     pi.on("session_start", async (_event, ctx) => {
         if (!isMainInteractiveSession(ctx)) return;
-        registered = true;
-        await runToli(["session", "start", "--pid", String(process.pid)]);
-        await refreshGuidance(ctx);
-        try {
+        await guarded(ctx, async () => {
+            await register();
+            guidance = (await runToli(["guidance"])).trim();
             const setup = JSON.parse(await runToli(["setup", "notice", "--json"])) as SetupNotice;
             if (setup.notice !== "") {
                 ctx.ui.notify(setup.notice, "info");
                 setupContext = setup.context;
             }
-        } catch (error) {
-            ctx.ui.notify(
-                `toli setup check failed: ${error instanceof Error ? error.message : String(error)}`,
-                "warning",
-            );
-        }
+        });
         ctx.setInterval(() => tick(ctx), TICK_MS);
     });
 

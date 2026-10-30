@@ -27,3 +27,6 @@ one. See docs/releasing.md.
 - `doctor`, `digest`, `wake`, `inbox` and `runs` for status at a glance.
 - Repo quality: Biome, Prettier, Taplo, shfmt, shellcheck, actionlint, guards, git hooks, gitleaks and CI.
 - `install.sh` one-line installer, `bin/toli version|upgrade`, and `just release` for tagged releases.
+- Self-hosting: `bin/toli self prepare|list|land` develop toli in worktrees (`projects/.worktrees/toli/<T-id>`) and
+  land them by fast-forward only after `just check` passes there, so the live checkout never holds half-edited code;
+  the extension reports a failing CLI once per distinct error and points to `bin/toli doctor`.

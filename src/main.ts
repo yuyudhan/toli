@@ -16,6 +16,7 @@ import { projectCommand } from "./projects.ts";
 import { pruneCommand } from "./prune.ts";
 import { resourcesCommand } from "./resources.ts";
 import { scheduleCommand } from "./schedule.ts";
+import { selfCommand } from "./self.ts";
 import { sessionCommand } from "./session.ts";
 import { setupCommand } from "./setup.ts";
 import { runCommand, runsCommand, spawnCommand } from "./spawn.ts";
@@ -47,6 +48,7 @@ const USAGE = `usage: bin/toli <command> [args]
   commit <project> [--task T<n>] -m "<message>" -- <path>...
   branch <project> <branch>
   workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
+  self prepare T<n> [--json] | list [--json] | land T<n> [--json]
   forge <project> [--json]
   push <project> [--task T<n>]
   pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
@@ -109,6 +111,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "workspace":
                 workspaceCommand(rest);
+                return 0;
+            case "self":
+                await selfCommand(rest);
                 return 0;
             case "forge":
                 forgeCommand(rest);
