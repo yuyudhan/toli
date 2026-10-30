@@ -2,29 +2,43 @@ name: ci
 
 on:
     push:
+        branches: [main, develop]
     pull_request:
+        branches: [main, develop]
 
 permissions:
     contents: read
 
 jobs:
     check:
-        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    # Checksums of the pinned tools' release assets for each runner (ubuntu x86_64, macOS arm64).
+                    - os: ubuntu-latest
+                      shfmt_sha256: fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1
+                      shellcheck_sha256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+                      actionlint_sha256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+                      just_sha256: 4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
+                    - os: macos-latest
+                      shfmt_sha256: 9680526be4a66ea1ffe988ed08af58e1400fe1e4f4aef5bd88b20bb9b3da33f8
+                      shellcheck_sha256: 56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79
+                      actionlint_sha256: aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f
+                      just_sha256: 50ae3e996c974a0bf32ea7d10f495070df33f1b43e0616b2769e3d4821ed8f48
+        runs-on: ${{ matrix.os }}
         env:
+            SHFMT_VERSION: 3.13.1
+            SHELLCHECK_VERSION: 0.11.0
+            ACTIONLINT_VERSION: 1.7.12
+            JUST_VERSION: 1.58.0
             GITLEAKS_VERSION: 8.30.1
             GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-            SHFMT_VERSION: 3.13.1
-            SHFMT_SHA256: fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1
-            SHELLCHECK_VERSION: 0.11.0
-            SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
-            ACTIONLINT_VERSION: 1.7.12
-            ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
-            JUST_VERSION: 1.58.0
-            JUST_SHA256: 4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
         steps:
             - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
               with:
-                  # Full history so the secrets scan covers every commit, not just the tip.
+                  # Full history (and tags) so the secrets scan covers every commit and verify's install finds the
+                  # release tags.
                   fetch-depth: 0
 
             - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -34,42 +48,59 @@ jobs:
             - run: bun install --frozen-lockfile
 
             - name: Install shfmt, shellcheck, actionlint, just (pinned, checksum-verified)
+              env:
+                  SHFMT_SHA256: ${{ matrix.shfmt_sha256 }}
+                  SHELLCHECK_SHA256: ${{ matrix.shellcheck_sha256 }}
+                  ACTIONLINT_SHA256: ${{ matrix.actionlint_sha256 }}
+                  JUST_SHA256: ${{ matrix.just_sha256 }}
               run: |
+                  case "$RUNNER_OS/$RUNNER_ARCH" in
+                      Linux/X64)
+                          shfmt="shfmt_v${SHFMT_VERSION}_linux_amd64"
+                          shellcheck="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+                          actionlint="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+                          just="just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+                          ;;
+                      macOS/ARM64)
+                          shfmt="shfmt_v${SHFMT_VERSION}_darwin_arm64"
+                          shellcheck="shellcheck-v${SHELLCHECK_VERSION}.darwin.aarch64.tar.xz"
+                          actionlint="actionlint_${ACTIONLINT_VERSION}_darwin_arm64.tar.gz"
+                          just="just-${JUST_VERSION}-aarch64-apple-darwin.tar.gz"
+                          ;;
+                      *)
+                          echo "no pinned tools for $RUNNER_OS/$RUNNER_ARCH" >&2
+                          exit 1
+                          ;;
+                  esac
                   bin="$RUNNER_TEMP/bin"
                   mkdir -p "$bin"
                   cd "$RUNNER_TEMP"
                   fetch() { # <url> <file> <sha256>
                       curl -sSfL -o "$2" "$1"
-                      echo "$3  $2" | sha256sum --check
+                      echo "$3  $2" | shasum -a 256 --check
                   }
-                  fetch "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64" \
-                      shfmt "$SHFMT_SHA256"
+                  fetch "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/${shfmt}" shfmt "$SHFMT_SHA256"
                   install -m 0755 shfmt "$bin/shfmt"
-                  fetch "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+                  fetch "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${shellcheck}" \
                       shellcheck.tar.xz "$SHELLCHECK_SHA256"
                   tar -xJf shellcheck.tar.xz --strip-components=1 -C "$bin" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
-                  fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+                  fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${actionlint}" \
                       actionlint.tar.gz "$ACTIONLINT_SHA256"
                   tar -xzf actionlint.tar.gz -C "$bin" actionlint
-                  fetch "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-                      just.tar.gz "$JUST_SHA256"
+                  fetch "https://github.com/casey/just/releases/download/${JUST_VERSION}/${just}" just.tar.gz "$JUST_SHA256"
                   tar -xzf just.tar.gz -C "$bin" just
                   echo "$bin" >> "$GITHUB_PATH"
 
-            # The same steps as `just check` (package.json "check"), with coverage on the tests.
-            - name: Format check (Biome, Prettier, Taplo, shfmt, just --fmt)
-              run: bun run format:check
+            # The gate (fmt-check, lint, typecheck, test) plus the CLI and install.sh smoke checks.
+            - name: just verify (just check, then smoke runs and a file:// install)
+              run: just verify
 
-            - name: Lint (Biome rules, shellcheck, actionlint, guards)
-              run: bun run lint
-
-            - name: Type-check (tsc)
-              run: bun run typecheck
-
-            - name: Test with coverage threshold (bunfig.toml)
-              run: bun test --coverage
+            - name: Test coverage threshold (bunfig.toml)
+              if: runner.os == 'Linux'
+              run: bun test --coverage --timeout 60000
 
             - name: Secrets scan (gitleaks, full history)
+              if: runner.os == 'Linux'
               run: |
                   archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
                   curl -sSfL -o "$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"

@@ -54,9 +54,11 @@ again (`src/harness/cli-health.ts`).
 
 ## Setup
 
-Run `just setup` once per clone: `bun install`, points git at `.githooks/`, and lists any missing system tools with
-their `brew install` command (shfmt, shellcheck, actionlint, just, gitleaks). Format and lint steps that need a missing
-tool fail with that hint instead of skipping.
+Run `just setup` once per clone: `bun install`, points git at `.githooks/`, and lists any missing system tools
+(shfmt, shellcheck, actionlint, just, gitleaks) with the install command for this machine: `brew install` on macOS,
+`sudo apt install` (Debian/Ubuntu/WSL2) or `sudo dnf install` (Fedora) on Linux, or the tool's release page when the
+distribution does not package it (actionlint and gitleaks on both). Format and lint steps that need a missing tool
+fail with that hint instead of skipping.
 
 ## The gate: `just check`
 
@@ -102,9 +104,15 @@ Every file type has one formatter, all at 4-space indentation, driven by `script
   co-author or Generated-by trailers.
 - **pre-push**: gitleaks over the pushed commits, then `bun run check`.
 
-CI (`.github/workflows/ci.yml`) installs the pinned, checksum-verified shfmt, shellcheck, actionlint, and just, uses
-the Bun version in `.bun-version`, and runs `bun run lint`, `bun test --coverage` (threshold in `bunfig.toml`), and a
-full-history gitleaks scan on every push and PR.
+CI (`.github/workflows/ci.yml`) runs on pushes and pull requests to `main` and `develop`, on `ubuntu-latest` and
+`macos-latest`. Each runner installs the pinned, checksum-verified shfmt, shellcheck, actionlint, and just for its
+OS and architecture, uses the Bun version in `.bun-version`, and runs `just verify` (which is `just check` plus the
+smoke runs). The Ubuntu runner also runs `bun test --coverage` (threshold in `bunfig.toml`) and a full-history
+gitleaks scan.
+
+Tests never touch the host's scheduler: `TOLI_DRY_RUN=1` is the sandbox default, `systemctl` is stubbed as "no user
+session", and `TOLI_PLATFORM`, `TOLI_SCHEDULER`, `TOLI_LAUNCH_AGENTS_DIR`, `TOLI_SYSTEMD_USER_DIR` and `TOLI_PROC_DIR`
+select a platform, scheduler, unit directories and `/proc` fixtures on any host.
 
 ## File layout
 
@@ -115,7 +123,8 @@ Tracked (shared by all machines):
     src/core/                    shared plumbing: args, config, paths, persona, git, cron, util (output, errors,
                                  JSON files, locks, processes)
     src/records/                 toli's own records: backlog, needs, digest, memory, inbox, acks, wake, migrate, prune
-    src/jobs/                    scheduled jobs: jobs, schedule (OS ticker), tick
+    src/jobs/                    scheduled jobs: jobs, schedule (OS ticker), os-scheduler (launchd, systemd --user,
+                                 crontab: choice and primitives shared with helpers), tick
     src/jawans/                  `bin/toli spawn` on any harness: spawn, supervise, runs
     src/harness/                 agent harnesses: headless commands, hooks, sync of generated files, lead guard,
                                  guidance, live session, CLI health for the extension
@@ -137,7 +146,7 @@ Tracked (shared by all machines):
     scripts/useless-await.ts     fails on TS80007 (`await` on a non-promise), which tsc --noEmit never reports
     docs/*.md                    focused guides
     .githooks/                   pre-commit, commit-msg, pre-push
-    .github/workflows/ci.yml     CI: lint, tests with coverage, gitleaks
+    .github/workflows/ci.yml     CI: just verify on Ubuntu and macOS, coverage, gitleaks
     biome.json, .gitleaks.toml   formatter/linter and secrets-scan config
     .prettierrc.json, .taplo.toml, .editorconfig, .gitattributes, .bun-version, .vscode/   formatting and editor setup
 

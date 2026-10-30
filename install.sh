@@ -93,7 +93,7 @@ yes_no() { # <prompt> <default y|n>; succeeds on yes
     esac
 }
 
-command -v git >/dev/null 2>&1 || die "git is required: install it first (macOS: xcode-select --install; Debian/Ubuntu: sudo apt install git)"
+command -v git >/dev/null 2>&1 || die "git is required: install it first (macOS: xcode-select --install; Debian/Ubuntu/WSL2: sudo apt install git; Fedora: sudo dnf install git)"
 
 # Release tags, newest first: vX.Y.Z only (pre-releases install only when named with --version).
 tags="$(git ls-remote --tags --refs "$TOLI_REPO_URL")" || die "cannot list tags at $TOLI_REPO_URL"
@@ -162,7 +162,7 @@ if command -v bun >/dev/null 2>&1; then
 else
     say ""
     say "bun is not installed; toli needs it. Install it, then run: cd \"$dir\" && bin/toli doctor"
-    say "  curl -fsSL https://bun.sh/install | bash      (or: brew install oven-sh/bun/bun)"
+    say "  curl -fsSL https://bun.sh/install | bash      (Linux needs unzip first; macOS also: brew install oven-sh/bun/bun)"
 fi
 
 say ""
