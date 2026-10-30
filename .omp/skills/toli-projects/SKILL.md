@@ -17,7 +17,7 @@ project lives in `data/projects/<name>/`:
 | `data/projects/<name>/runs/`        | jawan and remote run outputs                                  |
 | `data/projects/<name>/decisions.md` | held questions and Malik's answers (`bin/toli task answer`)   |
 
-Cross-project files stay at the top of `data/` (`malik.md`, `learnings.md`, `jobs/`, `inbox/`, `archive/`,
+Cross-project files stay at the top of `data/` (`preferences.md`, `learnings.md`, `jobs/`, `inbox/`, `archive/`,
 toli-wide `reports/`). Details: `docs/projects.md`.
 
 ## Delivery modes

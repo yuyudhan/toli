@@ -19,9 +19,29 @@ export class ToliError extends Error {
     }
 }
 
-/** CLI output: one line (or block) to stdout. */
+/** Set once the reader of stdout is gone (`toli digest | head -3`): later output is dropped, the command still finishes. */
+let stdoutClosed = false;
+let stdoutWatched = false;
+
+/** A failed stdout write: a broken pipe closes stdout for the rest of the run; anything else is a real error. */
+function stdoutFailed(error: unknown): void {
+    if ((error as NodeJS.ErrnoException | null)?.code !== "EPIPE") throw error;
+    stdoutClosed = true;
+}
+
+/** CLI output: one line (or block) to stdout. A closed pipe is not an error: the reader has all it wanted. */
 export function out(text: string): void {
-    process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+    if (stdoutClosed) return;
+    if (!stdoutWatched) {
+        stdoutWatched = true;
+        // Asynchronous write failures arrive as an 'error' event; without a listener they crash the process.
+        process.stdout.on("error", stdoutFailed);
+    }
+    try {
+        process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+    } catch (error) {
+        stdoutFailed(error);
+    }
 }
 
 /** Diagnostics: one line to stderr. */

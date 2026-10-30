@@ -27,7 +27,7 @@ export type Machine = {
     role: Role;
     coordinator?: { ssh: string; root: string };
     capacity?: CapacityConfig;
-    /** Token budget for the always-loaded memory files (data/malik.md + data/learnings.md). */
+    /** Token budget for the always-loaded memory files (data/preferences.md + data/learnings.md). */
     memoryBudgetTokens?: number;
     retention?: RetentionConfig;
     /** Which harness runs jawans (`bin/toli spawn`): default, per-work-type overrides, models. See docs/harnesses.md. */

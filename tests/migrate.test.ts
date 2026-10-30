@@ -186,6 +186,39 @@ describe("migrate", () => {
         expect(readFileSync(join(box.root, "data/projects/app/notes.md"), "utf8")).toBe("# app (newer, different)\n");
     });
 
+    test("moves the persona-named preferences file and its archive, rewriting mentions; refuses to overwrite", () => {
+        const box = sandbox();
+        put(box, "data/malik.md", "# Preferences\n\n- 2026-10-01: short replies\n");
+        put(box, "data/archive/malik.md", "## 2026-10-02\n\n- 2026-09-01: old preference\n");
+        put(box, "data/learnings.md", "- 2026-10-01: standing answers live in data/malik.md\n");
+        const before = snapshot(box);
+        const dry = plan(box, ["--dry-run"]);
+        expect(dry.moves.map((move) => [move.kind, move.from, move.to])).toEqual([
+            ["preferences", "data/malik.md", "data/preferences.md"],
+            ["preferences", "data/archive/malik.md", "data/archive/preferences.md"],
+        ]);
+        expect(dry.references).toEqual([{ file: "data/learnings.md", references: 1 }]);
+        expect(snapshot(box)).toEqual(before);
+
+        put(box, "data/preferences.md", "# Preferences (already moved, different)\n");
+        const refused = box.toli(["migrate"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("data/malik.md -> data/preferences.md");
+        expect(existsSync(join(box.root, "data/malik.md"))).toBe(true);
+        expect(existsSync(join(box.root, "data/archive/preferences.md"))).toBe(false);
+
+        writeFileSync(join(box.root, "data/preferences.md"), before["data/malik.md"] ?? "");
+        const applied = plan(box, []);
+        expect(applied.moves.find((move) => move.from === "data/malik.md")?.duplicate).toBe(true);
+        const after = snapshot(box);
+        expect(after["data/preferences.md"]).toBe(before["data/malik.md"]);
+        expect(after["data/archive/preferences.md"]).toBe(before["data/archive/malik.md"]);
+        expect(after["data/learnings.md"]).toBe("- 2026-10-01: standing answers live in data/preferences.md\n");
+        expect(existsSync(join(box.root, "data/malik.md"))).toBe(false);
+        expect(existsSync(join(box.root, "data/archive/malik.md"))).toBe(false);
+        expect(plan(box, []).moves).toEqual([]);
+    });
+
     test("an empty data directory has nothing to migrate", () => {
         expect(sandbox().ok(["migrate", "--dry-run"])).toBe("migrate: nothing to move; the layout is current");
     });

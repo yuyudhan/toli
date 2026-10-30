@@ -11,8 +11,8 @@ Only Sardar knows what this session learned, and only Sardar may take Malik's wo
 So Sardar writes one `TOLI_BRIEF v1` brief for a `task` jawan (effort lo) and ends the turn:
 
 - the candidate entries from this session, each with its target file and tier, and Malik's exact words for any
-  `data/malik.md` change (adding, changing, or dropping a pinned entry);
-- the memory pass below, the "What qualifies" rules, and "never archive a `data/malik.md` entry the brief does not
+  `data/preferences.md` change (adding, changing, or dropping a pinned entry);
+- the memory pass below, the "What qualifies" rules, and "never archive a `data/preferences.md` entry the brief does not
   name with Malik's word";
 - the task ids from "Reconcile the backlog" that landed but are still `active`, with their sha or report path, for
   `bin/toli task done`;
@@ -24,7 +24,7 @@ Everything below describes that jawan's work unless it says Sardar.
 
 | What                                                                                          | File                               | Tier   |
 | --------------------------------------------------------------------------------------------- | ---------------------------------- | ------ |
-| Malik's preferences and standing decisions (tone, delivery choices, recurring answers)        | `data/malik.md`                    | pinned |
+| Malik's preferences and standing decisions (tone, delivery choices, recurring answers)        | `data/preferences.md`              | pinned |
 | Durable lessons about how Sardar should operate (a routing that worked, a pitfall in the CLI) | `data/learnings.md`                | aging  |
 | Facts about one project (commands, stack, gotchas, flaky tests, paths)                        | `data/projects/<project>/notes.md` | aging  |
 
@@ -32,7 +32,7 @@ All private and gitignored. Never write learnings into tracked files (skills, AG
 for a change to Sardar itself. **Never edit a project's committed AGENTS.md, CLAUDE.md, or other docs** as part of
 stow; if they are wrong, tell Malik and offer a ship task.
 
-`data/malik.md` and `data/learnings.md` load into every session and count against the budget; notes load only into
+`data/preferences.md` and `data/learnings.md` load into every session and count against the budget; notes load only into
 briefs for their project.
 
 ## Entries and lifetimes
@@ -41,7 +41,7 @@ An entry is a top-level bullet (with its indented lines) or a `## YYYY-MM-DD ...
 after the marker: `- 2026-10-29: billing-api tests need DATABASE_URL from .env.test`. The date is when it was last
 confirmed.
 
-- **pinned** (`data/malik.md`): never ages. Change only when Malik says so.
+- **pinned** (`data/preferences.md`): never ages. Change only when Malik says so.
 - **aging** (learnings, notes): stale 30 days after its date.
 - **perishable**: an aging-file entry with a checkable end condition, `(until: PR #12 merges)` or
   `(until: v2 ships)`; stale after 7 days. No checkable condition means it is aging, not perishable.
@@ -66,13 +66,13 @@ Re-confirming = changing the date to today. Undated aging entries are listed as 
     2. Move conditional, project-specific facts from `data/learnings.md` into `data/projects/<project>/notes.md` (they then
        load only into that project's briefs). Write the note first, then remove the learnings line.
     3. Still over: tell Malik the shortfall and the largest pinned sections; offer raising `memoryBudgetTokens` or
-       trimming named entries. Never trim `data/malik.md` on your own.
+       trimming named entries. Never trim `data/preferences.md` on your own.
 6. **Measure again** and report before -> after totals.
 
 Archive never means delete: `memory archive` moves the entry to `data/archive/<file>.md` under a `## YYYY-MM-DD`
 heading with its source, original date, and reason. Recovery is copy-back. Never delete memory lines by hand.
 
-**Pinned entries are never archived automatically.** `bin/toli memory archive malik <line> --force` only when Malik
+**Pinned entries are never archived automatically.** `bin/toli memory archive preferences <line> --force` only when Malik
 explicitly says to drop that specific entry.
 
 ## Project notes sections Sardar reads

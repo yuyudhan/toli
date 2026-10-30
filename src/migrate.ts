@@ -13,11 +13,16 @@ import { isValidName, out, printJson, readJson, ToliError, withLock, writeTextAt
  *   data/remote/<stamp>-<m>.md   -> data/projects/<p>/runs/<stamp>-<m>.md  (when the file names its project)
  *   data/briefs/<file>.md        -> data/projects/<p>/briefs/<file>.md     (the project of the job using it, else
  *                                   the project the file name names; ambiguous names stay)
+ *   data/malik.md                -> data/preferences.md                    (the persona-named preferences file)
+ *   data/archive/malik.md        -> data/archive/preferences.md            (its archived entries)
  * Everything else stays where it is. Nothing is ever overwritten: a different file already at a destination is a
  * conflict and the whole migration refuses; an identical one makes the old copy a duplicate that is removed.
  */
 
-export type MoveKind = "notes" | "report" | "run" | "brief";
+export type MoveKind = "notes" | "report" | "run" | "brief" | "preferences";
+
+/** The preferences file's old, persona-named location (before it became data/preferences.md). */
+const LEGACY_PREFERENCES = "malik.md";
 
 /** Repo-relative paths. `duplicate`: the destination already holds identical bytes, so the source is just removed. */
 export type MigrationMove = { kind: MoveKind; from: string; to: string; duplicate: boolean };
@@ -111,7 +116,7 @@ function referenceFiles(moves: MigrationMove[], applied: boolean): string[] {
     const files = [
         paths.jobsConfig(),
         paths.backlog(),
-        paths.malik(),
+        paths.preferences(),
         paths.learnings(),
         ...mdFiles(looseBriefs).map((file) => join(looseBriefs, file)),
     ];
@@ -123,9 +128,12 @@ function referenceFiles(moves: MigrationMove[], applied: boolean): string[] {
             const briefs = paths.projectBriefsDir(entry.name);
             files.push(...mdFiles(briefs).map((file) => join(briefs, file)));
         }
+    // Live files that are themselves moving are rewritten at their new path; dry runs read them at the old one.
+    const preferences = rel(paths.preferences());
     if (!applied)
         for (const move of moves)
-            if (move.kind === "notes" && !move.duplicate) files.push(join(paths.root(), move.from));
+            if ((move.kind === "notes" || move.to === preferences) && !move.duplicate)
+                files.push(join(paths.root(), move.from));
     return [...new Set(files)].filter((file) => existsSync(file));
 }
 
@@ -200,6 +208,11 @@ export function planMigration(): MigrationPlan {
         if ("project" in owner) candidate("brief", path, join(paths.projectBriefsDir(owner.project), file));
         else kept.push({ path: rel(path), reason: owner.reason });
     }
+
+    const legacyPreferences = join(paths.root(), "data", LEGACY_PREFERENCES);
+    if (existsSync(legacyPreferences)) candidate("preferences", legacyPreferences, paths.preferences());
+    const legacyArchive = paths.archive(LEGACY_PREFERENCES);
+    if (existsSync(legacyArchive)) candidate("preferences", legacyArchive, paths.archive("preferences.md"));
 
     const conflicts = moves.filter((move) => !move.duplicate && existsSync(join(paths.root(), move.to)));
     const clean = moves.filter((move) => !conflicts.includes(move));

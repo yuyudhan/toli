@@ -243,15 +243,15 @@ into the chat, so Sardar relays them without being asked. Results stay in `/bear
 
 ## Memory and pruning
 
-    bin/toli memory [--json]          # always-loaded memory (data/malik.md + data/learnings.md) in estimated tokens vs budget; notes listed separately
+    bin/toli memory [--json]          # always-loaded memory (data/preferences.md + data/learnings.md) in estimated tokens vs budget; notes listed separately
     bin/toli memory stale [--json]    # entries past their lifetime: file, line, id, date, age, tier
     bin/toli memory archive <file> <line-or-id> --reason "<why>" [--force]   # move one entry to data/archive/<file>.md
     bin/toli prune [--apply] [--json] # dry run by default: old job results, finished tasks, logs, seen inbox items
-    bin/toli migrate [--dry-run]      # one time: move old flat data files into data/projects/<p>/ (never overwrites)
+    bin/toli migrate [--dry-run]      # one time: move old flat data files into data/projects/<p>/ and the old preferences file to data/preferences.md (never overwrites)
 
 Tokens are estimated as UTF-8 bytes / 3. The budget is `memoryBudgetTokens` in `config/machine.json` (default 7500);
 `bin/toli doctor` warns when memory is over it. Entries are dated (`- 2026-10-29: ...`); the date is when the entry was
-last confirmed. `data/malik.md` is pinned (never ages; archiving needs `--force` on Malik's word); `data/learnings.md`
+last confirmed. `data/preferences.md` is pinned (never ages; archiving needs `--force` on Malik's word); `data/learnings.md`
 and `data/projects/*/notes.md` entries go stale after 30 days, or 7 days when marked `(until: <condition>)`. Archived entries
 keep their source file, original date, and reason under a dated heading.
 
@@ -363,7 +363,7 @@ Private (gitignored, per machine):
     data/backlog.json            tasks
     data/projects/<p>/           per-project notes.md, briefs/, reports/, runs/, decisions.md (docs/projects.md)
     data/learnings.md            durable lessons
-    data/malik.md                Malik's preferences
+    data/preferences.md          Malik's preferences
     data/reports/                toli-wide reports
     data/jobs/<name>/<stamp>.md  job results
     data/archive/                archived memory entries (<file>.md) and old tasks (tasks.json); never loaded

@@ -30,9 +30,7 @@ function forgeBox(url: string): ForgeBox {
     const box = sandbox();
     box.ok(["init", "--name", "m1", "--role", "coordinator"]);
     const dir = withProject(box, "app");
-    const bare = join(box.root, ".origin", "app.git");
-    box.git(dir, ["remote", "set-url", "origin", url]);
-    box.git(dir, ["config", `url.${bare}.insteadOf`, url]);
+    pointOrigin({ box, dir }, url);
     const glabDir = join(box.root, ".glab");
     mkdirSync(glabDir);
     writeFileSync(join(glabDir, "config.yml"), GLAB_CONFIG);
@@ -63,6 +61,16 @@ esac`,
     );
     const env = { GLAB_CONFIG_DIR: glabDir, BITBUCKET_USERNAME: "", BITBUCKET_API_TOKEN: "", GIT_LOG: "" };
     return { box, dir, log, env };
+}
+
+/**
+ * Point the project's origin at `url`, still served by the local bare repo. Each forgeBox costs several CLI and git
+ * processes, so a test that checks several remotes repoints one box: building one per remote pushed those tests past
+ * the 5s test timeout whenever the machine was busy.
+ */
+function pointOrigin(fb: Pick<ForgeBox, "box" | "dir">, url: string): void {
+    fb.box.git(fb.dir, ["remote", "set-url", "origin", url]);
+    fb.box.git(fb.dir, ["config", `url.${join(fb.box.root, ".origin", "app.git")}.insteadOf`, url]);
 }
 
 /** Each logged stub invocation as its argv lines (program first, GITLAB_HOST last). */
@@ -97,39 +105,40 @@ describe("parseRemote", () => {
 
 describe("toli forge detection", () => {
     test("github over https and through an ssh alias", () => {
-        const https = forgeBox("https://github.com/acme/app.git");
-        expect(forgeJson(https)).toMatchObject({ forge: "github", host: "github.com", repo: "acme/app", ready: true });
-        const alias = forgeBox("git@gh-alias:acme/app.git");
-        expect(forgeJson(alias)).toMatchObject({ forge: "github", host: "github.com", remoteHost: "gh-alias" });
+        const fb = forgeBox("https://github.com/acme/app.git");
+        expect(forgeJson(fb)).toMatchObject({ forge: "github", host: "github.com", repo: "acme/app", ready: true });
+        pointOrigin(fb, "git@gh-alias:acme/app.git");
+        expect(forgeJson(fb)).toMatchObject({ forge: "github", host: "github.com", remoteHost: "gh-alias" });
     });
 
     test("self-hosted gitlab: ssh endpoint maps to the glab host; unknown https hosts use the origin host", () => {
-        const ssh = forgeBox("git@gitlab-ssh.corp.example:team/sub/app.git");
-        expect(forgeJson(ssh)).toMatchObject({
+        const fb = forgeBox("git@gitlab-ssh.corp.example:team/sub/app.git");
+        expect(forgeJson(fb)).toMatchObject({
             forge: "gitlab",
             host: "gitlab.corp.example",
             hostSource: "glab config",
             repo: "team/sub/app",
             ready: true,
         });
-        const glabAuth = invocations(ssh.log).find((argv) => argv[0] === "glab");
+        const glabAuth = invocations(fb.log).find((argv) => argv[0] === "glab");
         expect(glabAuth?.slice(1, 5)).toEqual(["auth", "status", "--hostname", "gitlab.corp.example"]);
-        const https = forgeBox("https://gitlab.corp.example/team/app.git");
-        expect(forgeJson(https)).toMatchObject({
+        pointOrigin(fb, "https://gitlab.corp.example/team/app.git");
+        expect(forgeJson(fb)).toMatchObject({
             forge: "gitlab",
             host: "gitlab.corp.example",
             hostSource: "glab config",
         });
-        const other = forgeBox("https://gitlab.other.example/team/app.git");
-        expect(forgeJson(other)).toMatchObject({ forge: "gitlab", host: "gitlab.other.example", hostSource: "origin" });
-        const unnamed = forgeBox("git@code-ssh.example.net:team/app.git");
-        expect(forgeJson(unnamed)).toMatchObject({ forge: "gitlab", host: "code.example.net" });
+        pointOrigin(fb, "https://gitlab.other.example/team/app.git");
+        expect(forgeJson(fb)).toMatchObject({ forge: "gitlab", host: "gitlab.other.example", hostSource: "origin" });
+        pointOrigin(fb, "git@code-ssh.example.net:team/app.git");
+        expect(forgeJson(fb)).toMatchObject({ forge: "gitlab", host: "code.example.net" });
     });
 
     test("bitbucket over ssh and https, never printing secrets", () => {
+        const fb = forgeBox("git@bitbucket.org:ws/app.git");
+        const env = { ...fb.env, BITBUCKET_USERNAME: "bob", BITBUCKET_API_TOKEN: "s3cret-token" };
         for (const url of ["git@bitbucket.org:ws/app.git", "https://someone@bitbucket.org/ws/app.git"]) {
-            const fb = forgeBox(url);
-            const env = { ...fb.env, BITBUCKET_USERNAME: "bob", BITBUCKET_API_TOKEN: "s3cret-token" };
+            pointOrigin(fb, url);
             const output = fb.box.ok(["forge", "app"], { env });
             expect(output).toContain("forge: bitbucket");
             expect(output).toContain("repo: ws/app");
@@ -146,12 +155,13 @@ describe("toli forge detection", () => {
         fb.box.ok(["project", "set", "app", "--forge", "gitlab", "--forge-host", "gitlab.example.org"]);
         expect(forgeJson(fb)).toMatchObject({ forge: "gitlab", host: "gitlab.example.org", hostSource: "forgeHost" });
 
-        const gl = forgeBox("git@gitlab-ssh.corp.example:team/app.git");
-        gl.box.ok(["project", "set", "app", "--forge-host", "other.example"]);
-        expect(forgeJson(gl)).toMatchObject({ forge: "gitlab", host: "other.example", hostSource: "forgeHost" });
-        gl.box.ok(["project", "set", "app", "--forge", "github", "--forge-host", "none"]);
-        expect(forgeJson(gl)).toMatchObject({ forge: "github", host: "gitlab-ssh.corp.example" });
-        expect(gl.box.toli(["project", "set", "app", "--forge", "svn"]).code).toBe(1);
+        fb.box.ok(["project", "set", "app", "--forge", "none", "--forge-host", "none"]);
+        pointOrigin(fb, "git@gitlab-ssh.corp.example:team/app.git");
+        fb.box.ok(["project", "set", "app", "--forge-host", "other.example"]);
+        expect(forgeJson(fb)).toMatchObject({ forge: "gitlab", host: "other.example", hostSource: "forgeHost" });
+        fb.box.ok(["project", "set", "app", "--forge", "github", "--forge-host", "none"]);
+        expect(forgeJson(fb)).toMatchObject({ forge: "github", host: "gitlab-ssh.corp.example" });
+        expect(fb.box.toli(["project", "set", "app", "--forge", "svn"]).code).toBe(1);
     });
 });
 

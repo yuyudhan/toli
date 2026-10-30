@@ -17,7 +17,8 @@ export const paths = {
     projects: () => join(repoRoot(), "data", "projects.json"),
     backlog: () => join(repoRoot(), "data", "backlog.json"),
     projectDir: (name: string) => join(repoRoot(), "projects", name),
-    malik: () => join(repoRoot(), "data", "malik.md"),
+    /** The user's standing preferences and decisions (pinned memory). */
+    preferences: () => join(repoRoot(), "data", "preferences.md"),
     learnings: () => join(repoRoot(), "data", "learnings.md"),
     /** data/projects/: one directory per project (notes, briefs, reports, runs, decisions). */
     projectsDataDir: () => join(repoRoot(), "data", "projects"),

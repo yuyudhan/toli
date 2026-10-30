@@ -37,7 +37,11 @@ function write(box: Sandbox, file: string, text: string): string {
 
 function memoryBox(): Sandbox {
     const box = sandbox();
-    write(box, "data/malik.md", "# Malik\n\n- 2025-01-01: ancient preference, still pinned\n- Prefers short replies\n");
+    write(
+        box,
+        "data/preferences.md",
+        "# Preferences\n\n- 2025-01-01: ancient preference, still pinned\n- Prefers short replies\n",
+    );
     write(box, "data/learnings.md", LEARNINGS);
     write(
         box,
@@ -53,12 +57,12 @@ const stale = (box: Sandbox): Stale[] => JSON.parse(box.ok(["memory", "stale", "
 describe("memory budget", () => {
     test("tokens are ceil(UTF-8 bytes / 3); notes are reported but not counted", () => {
         const box = sandbox();
-        write(box, "data/malik.md", "a".repeat(3000));
+        write(box, "data/preferences.md", "a".repeat(3000));
         write(box, "data/learnings.md", "ééééé");
         write(box, "data/projects/kalki/notes.md", "n".repeat(30));
         const result = report(box);
         expect(result.files.map((file) => [file.file, file.tokens])).toEqual([
-            ["data/malik.md", 1000],
+            ["data/preferences.md", 1000],
             ["data/learnings.md", 4],
         ]);
         expect(result.total).toBe(1004);
@@ -69,7 +73,7 @@ describe("memory budget", () => {
 
     test("over budget against memoryBudgetTokens from config/machine.json", () => {
         const box = sandbox();
-        write(box, "data/malik.md", "a".repeat(3000));
+        write(box, "data/preferences.md", "a".repeat(3000));
         write(box, "data/learnings.md", "b".repeat(12));
         write(
             box,
@@ -161,16 +165,16 @@ describe("memory archive", () => {
 
     test("pinned entries refuse without --force and stay put", () => {
         const box = memoryBox();
-        const before = readFileSync(join(box.root, "data/malik.md"), "utf8");
-        const refused = box.toli(["memory", "archive", "malik", "3", "--reason", "old"], { now: NOW });
+        const before = readFileSync(join(box.root, "data/preferences.md"), "utf8");
+        const refused = box.toli(["memory", "archive", "preferences", "3", "--reason", "old"], { now: NOW });
         expect(refused.code).toBe(1);
         expect(refused.stderr).toContain("pinned");
-        expect(readFileSync(join(box.root, "data/malik.md"), "utf8")).toBe(before);
-        expect(existsSync(join(box.root, "data/archive/malik.md"))).toBe(false);
+        expect(readFileSync(join(box.root, "data/preferences.md"), "utf8")).toBe(before);
+        expect(existsSync(join(box.root, "data/archive/preferences.md"))).toBe(false);
 
-        box.ok(["memory", "archive", "malik", "3", "--reason", "Malik retired it", "--force"], { now: NOW });
-        expect(readFileSync(join(box.root, "data/malik.md"), "utf8")).not.toContain("ancient preference");
-        expect(readFileSync(join(box.root, "data/archive/malik.md"), "utf8")).toContain(
+        box.ok(["memory", "archive", "preferences", "3", "--reason", "the user retired it", "--force"], { now: NOW });
+        expect(readFileSync(join(box.root, "data/preferences.md"), "utf8")).not.toContain("ancient preference");
+        expect(readFileSync(join(box.root, "data/archive/preferences.md"), "utf8")).toContain(
             "(tier pinned, dated 2025-01-01)",
         );
     });
