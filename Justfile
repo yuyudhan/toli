@@ -21,7 +21,7 @@ fmt:
 fmt-check:
     bun run format:check
 
-# Lint: Biome rules, shellcheck, actionlint, and the repo guards
+# Lint: Biome rules, shellcheck, actionlint, the repo guards, and useless-await (TS80007: await on a non-promise)
 lint:
     bun run lint
 
