@@ -51,7 +51,7 @@ function stream(cwd: string, cmd: string[]): void {
     if (result.exitCode !== 0) throw new ReleaseError(`${cmd.join(" ")} failed (exit ${result.exitCode})`);
 }
 
-type Plan = { version: string; tag: string; lastTag: string | null; seeded: boolean };
+type Plan = { current: string; version: string; tag: string; lastTag: string | null; seeded: boolean };
 
 /** Validate the request against package.json, existing tags, and CHANGELOG.md before anything is changed. */
 function plan(root: string, request: string, changelog: string): Plan {
@@ -77,7 +77,7 @@ function plan(root: string, request: string, changelog: string): Plan {
     const last = lastTag === null ? null : parseVersion(lastTag);
     if (last !== null && compareVersions(target, last) <= 0)
         throw new ReleaseError(`${tag} is not newer than the latest tag ${lastTag}`);
-    return { version, tag, lastTag, seeded };
+    return { current, version, tag, lastTag, seeded };
 }
 
 function commitsSince(root: string, lastTag: string | null): Commit[] {
@@ -107,10 +107,12 @@ function cutRelease(root: string, request: string): string {
 
     const changelogFile = join(root, "CHANGELOG.md");
     const changelog = existsSync(changelogFile) ? readFileSync(changelogFile, "utf8") : CHANGELOG_INTRO;
-    const { version, tag, lastTag, seeded } = plan(root, request, changelog);
+    const { current, version, tag, lastTag, seeded } = plan(root, request, changelog);
     say(
         `release: ${lastTag ?? "(no previous tag)"} -> ${tag}${seeded ? " (tagging the seeded CHANGELOG section)" : ""}`,
     );
+    if (!seeded && lastTag === null && changelogHas(changelog, current))
+        say(`release: note: v${current} was never tagged; \`just release v${current}\` tags it as the first release`);
 
     stream(root, ["bun", "run", "verify"]);
 
@@ -130,8 +132,10 @@ function cutRelease(root: string, request: string): string {
         stream(root, ["git", "commit", "--quiet", "-m", `Release ${tag}`, "--", "CHANGELOG.md", "package.json"]);
         updated = readFileSync(changelogFile, "utf8");
     }
-    const notes = changelogBetween(updated, lastTag, tag);
-    stream(root, ["git", "tag", "--annotate", tag, "--message", `toli ${tag}\n\n${notes}`]);
+    // Only this release's section: after the previous version (package.json's before the bump; the last tag when
+    // tagging the seeded section). verbatim keeps the `### Added` headings git would strip as comments.
+    const notes = changelogBetween(updated, seeded ? lastTag : `v${current}`, tag);
+    stream(root, ["git", "tag", "--annotate", "--cleanup=verbatim", tag, "--message", `toli ${tag}\n\n${notes}`]);
     return tag;
 }
 

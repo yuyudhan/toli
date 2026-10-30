@@ -18,8 +18,8 @@ one. See docs/releasing.md.
   chat through the inbox.
 - Multi-machine fleets: `init`, `sync`, `resources`, `fleet status`, `pick`, `remote` dispatch to the least-busy
   machine.
-- Any harness for the lead and jawans: omp, Claude Code, Codex, Cursor, Grok and pi (`spawn --harness`, `harness
-sync|status`, per-turn guidance).
+- Any harness for the lead and jawans: omp, Claude Code, Codex, Cursor, Grok and pi (`spawn --harness`,
+  `harness sync|status`, per-turn guidance).
 - Memory with a token budget, dated entries, staleness checks and archive (`memory`, `prune`), plus `migrate` for
   older layouts.
 - Private per-machine helpers in `local/` (`helper install|run|status`) that are never committed.
