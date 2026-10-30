@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -84,6 +84,45 @@ export function sandbox(): Sandbox {
             if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${proc.stderr.toString()}`);
             return proc.stdout.toString().trim();
         },
+    };
+}
+
+/** A file-backed `crontab` stub: `-l` prints the file (exit 1 when absent), `-` replaces it from stdin. */
+export function withCrontab(box: Sandbox, initial: string | null): string {
+    const file = join(box.root, ".crontab");
+    if (initial !== null) writeFileSync(file, initial);
+    box.stub(
+        "crontab",
+        `case "$1" in
+    -l) [ -f "${file}" ] || { echo "no crontab for test" >&2; exit 1; }; cat "${file}" ;;
+    -) cat > "${file}" ;;
+    *) exit 2 ;;
+esac`,
+    );
+    return file;
+}
+
+/**
+ * A working `systemctl --user` stub: every call is appended to `.systemctl`; `enable` / `disable` flip whether
+ * `is-active` answers "active". Units go to `units/` via TOLI_SYSTEMD_USER_DIR; `env` selects Linux, not dry run.
+ */
+export function withSystemd(box: Sandbox): { env: Record<string, string>; units: string; calls: () => string[] } {
+    const log = join(box.root, ".systemctl");
+    const active = join(box.root, ".active");
+    box.stub(
+        "systemctl",
+        `printf '%s\\n' "$*" >> "${log}"
+case "$2" in
+    is-active) if [ -f "${active}" ]; then echo active; else echo inactive; exit 3; fi ;;
+    enable) touch "${active}" ;;
+    disable) rm -f "${active}" ;;
+esac`,
+    );
+    const units = join(box.root, "units");
+    return {
+        env: { TOLI_PLATFORM: "linux", TOLI_DRY_RUN: "0", TOLI_SYSTEMD_USER_DIR: units },
+        units,
+        calls: () => (existsSync(log) ? readFileSync(log, "utf8").trimEnd().split("\n") : []),
     };
 }
 

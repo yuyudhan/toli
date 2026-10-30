@@ -34,6 +34,9 @@ one. See docs/releasing.md.
 - `migrate` moves `data/briefs/T<n>.md` to its task's project, as it does reports.
 - The installer prints the resolved absolute install path.
 - `tests/bitbucket.test.ts` awaited a non-promise (TS80007).
+- `schedule install` and `helper install` run from toli's root no longer write bun's `bun-node-*` temp dir (gone
+  after a reboot) into the tick's or a helper's bun path and PATH; `schedule status`, doctor and the setup checklist
+  warn when the bun an installed tick runs no longer exists.
 
 ## v0.1.0 - 2026-10-30
 

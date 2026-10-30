@@ -1,6 +1,6 @@
 // `bin/toli schedule`: the per-minute tick (`bin/toli job tick`) in this machine's OS scheduler (os-scheduler.ts).
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, run, shellQuote, ToliError, writeTextAtomic } from "../core/util.ts";
@@ -213,6 +213,8 @@ export type ScheduleStatus = {
     detail: string;
     /** The `bin/toli` an installed tick runs when that is another toli checkout; null when it runs this one. */
     otherBin: string | null;
+    /** The absolute bun this checkout's installed tick runs when that file is gone (a cleared temp dir); else null. */
+    missingBun: string | null;
     /** launchd or systemd runs the tick and the crontab still holds a toli tick line: two ticks a minute. */
     cronLeftover: boolean;
 };
@@ -226,6 +228,25 @@ function otherTickBin(installedText: string, ours: string): string | null {
     return /[^\s<>'"]*\/bin\/toli(?=[\s<'"])/.exec(installedText)?.[0] ?? "another toli checkout";
 }
 
+/**
+ * The bun an installed tick runs `ours` with, when it is an absolute path that no longer exists: the word right
+ * before `ours`, captured by `lastWord` (group 1, else group 2, so quoted and bare forms both work) and decoded.
+ */
+function missingTickBun(
+    installedText: string,
+    ours: string,
+    lastWord: RegExp,
+    decode: (word: string) => string,
+): string | null {
+    const at = installedText.indexOf(ours);
+    if (at < 0) return null;
+    const match = lastWord.exec(installedText.slice(0, at));
+    const word = match?.[1] ?? match?.[2];
+    if (word === undefined) return null;
+    const bun = decode(word);
+    return isAbsolute(bun) && !existsSync(bun) ? bun : null;
+}
+
 export function scheduleStatus(): ScheduleStatus {
     const scheduler = osScheduler();
     const bin = paths.toliBin();
@@ -235,25 +256,59 @@ export function scheduleStatus(): ScheduleStatus {
         const target = plistPath();
         const installed = existsSync(target);
         const loaded = launchctlLoaded(LABEL);
-        const otherBin = installed ? otherTickBin(readFileSync(target, "utf8"), `<string>${bin}</string>`) : null;
-        return { scheduler, installed, loaded, detail: target, otherBin, cronLeftover };
+        const text = installed ? readFileSync(target, "utf8") : "";
+        const ours = `<string>${bin}</string>`;
+        const unxml = (word: string): string =>
+            word
+                .replace(/&lt;/g, "<")
+                .replace(/&gt;/g, ">")
+                .replace(/&quot;/g, '"')
+                .replace(/&amp;/g, "&");
+        return {
+            scheduler,
+            installed,
+            loaded,
+            detail: target,
+            otherBin: installed ? otherTickBin(text, ours) : null,
+            missingBun: missingTickBun(text, ours, /<string>([^<]*)<\/string>\s*$/, unxml),
+            cronLeftover,
+        };
     }
     if (scheduler === "systemd") {
         const files = tickUnitFiles();
         const installed = existsSync(files.service) && existsSync(files.timer);
         const loaded = run(systemctl("is-active", `${TICK_UNIT}.timer`)).stdout.trim() === "active";
-        const otherBin = installed ? otherTickBin(readFileSync(files.service, "utf8"), ` ${systemdWord(bin)} `) : null;
-        return { scheduler, installed, loaded, detail: files.timer, otherBin, cronLeftover };
+        const text = installed ? readFileSync(files.service, "utf8") : "";
+        const ours = ` ${systemdWord(bin)} `;
+        const unsystemd = (word: string): string =>
+            word.replace(/\\(.)/g, "$1").replace(/%%/g, "%").replace(/\$\$/g, "$");
+        return {
+            scheduler,
+            installed,
+            loaded,
+            detail: files.timer,
+            otherBin: installed ? otherTickBin(text, ours) : null,
+            missingBun: missingTickBun(text, ours, /ExecStart=(?:"((?:[^"\\]|\\.)*)"|(\S+))$/, unsystemd),
+            cronLeftover,
+        };
     }
     const installed = cronLines.length > 0;
+    const text = cronLines.join("\n");
+    const ours = ` ${shellQuote(bin)} `;
     return {
         scheduler,
         installed,
         loaded: installed,
         detail: installed ? "crontab line present" : "no crontab line",
-        otherBin: installed ? otherTickBin(cronLines.join("\n"), ` ${shellQuote(bin)} `) : null,
+        otherBin: installed ? otherTickBin(text, ours) : null,
+        missingBun: missingTickBun(text, ours, / (?:'([^']*)'|(\S+))$/, (word) => word),
         cronLeftover,
     };
+}
+
+/** The warning for a tick whose bun is gone; shared by `schedule status`, doctor and the setup checklist. */
+export function missingBunWarning(bun: string): string {
+    return `the tick runs ${bun}, which no longer exists (a cleared temp dir?); bin/toli schedule install rewrites it`;
 }
 
 /** The warning for a leftover crontab tick; shared by `schedule status`, doctor and the setup checklist. */
@@ -282,6 +337,7 @@ export function scheduleCommand(argv: string[]): void {
                     out(
                         `warn: the tick runs ${status.otherBin}, not this checkout (bin/toli schedule install moves it here)`,
                     );
+                if (status.missingBun !== null) out(`warn: ${missingBunWarning(status.missingBun)}`);
                 if (status.cronLeftover) out(`warn: ${CRON_LEFTOVER_WARNING}`);
             }
             break;
