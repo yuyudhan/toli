@@ -54,13 +54,15 @@ Where it shows up:
 - Claude Code: the SessionStart hook (`bin/toli hook claude-session-start`, written by `bin/toli harness sync`).
 
 The digest's Next block is not told-once: while any step is missing it names them every time (`Setup: 3 steps
-remain (...): say "set up toli" ...`), so a fresh install never reads "Nothing pending".
+remain (...): say "set up toli" ...`), so a fresh install never reads "Nothing pending". After `bin/toli setup
+snooze` it shrinks to a quiet `Setup snoozed: 3 steps remain: bin/toli setup status lists them` until a new step
+goes missing.
 
 Commands:
 
     bin/toli setup status [--json]   # full checklist, every time
     bin/toli setup notice [--json]   # the told-once line (empty when nothing new); marks it shown
-    bin/toli setup snooze            # quiet until a new step is missing
+    bin/toli setup snooze            # quiet until a new step is missing (the Next line becomes "Setup snoozed: ...")
     bin/toli setup seed-local        # create local/ without touching existing files
 
 ## What "set up toli" does

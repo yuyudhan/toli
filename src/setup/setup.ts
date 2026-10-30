@@ -43,9 +43,15 @@ export function noticeDue(pending: readonly string[], marker: SetupMarker | null
     return pending.some((id) => !marker.pending.includes(id));
 }
 
+/** Whether the user snoozed setup and nothing new has gone missing since (which would wake the notice again). */
+export function setupSnoozed(items: SetupItem[]): boolean {
+    const marker = readMarker();
+    return marker !== null && marker.snoozed && !noticeDue(pendingIds(items), marker);
+}
+
 /** "Setup: N steps remain": the head of the notice and of the digest's Next setup action. */
-export function setupRemaining(remaining: number): string {
-    return `Setup: ${remaining} step${remaining === 1 ? "" : "s"} remain${remaining === 1 ? "s" : ""}`;
+export function setupRemaining(remaining: number, label = "Setup"): string {
+    return `${label}: ${remaining} step${remaining === 1 ? "" : "s"} remain${remaining === 1 ? "s" : ""}`;
 }
 
 export function noticeText(remaining: number): string {

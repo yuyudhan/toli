@@ -15,7 +15,7 @@ import { brokenLink } from "../projects/link.ts";
 import { loadProjects, type Mode } from "../projects/projects.ts";
 import { projectsNeedingSetup } from "../projects/setup.ts";
 import { type SetupItem, setupChecklist } from "../setup/checklist.ts";
-import { setupRemaining, takeSetupNotice } from "../setup/setup.ts";
+import { setupRemaining, setupSnoozed, takeSetupNotice } from "../setup/setup.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
 import { type Needs, needsQueue, renderNeeds, takeStaleHolds } from "./needs.ts";
@@ -149,6 +149,7 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
             urls,
             setup: projectsNeedingSetup(),
             setupSteps: setupItems.filter((item) => item.status === "missing").map((item) => item.title),
+            setupSnoozed: setupSnoozed(setupItems),
             missingHarnesses,
             unattended: backlog.inFlight.filter(
                 (task) => task.agent === undefined || (task.agent.startsWith("j-") && !live.has(task.agent)),
@@ -166,6 +167,8 @@ export type NextInput = {
     setup: { name: string; missing: string[] }[];
     /** Titles of this machine's missing install-level setup steps (src/setup/checklist.ts). */
     setupSteps: string[];
+    /** The user snoozed setup (`bin/toli setup snooze`): the setup action stays a quiet one-liner. */
+    setupSnoozed: boolean;
     missingHarnesses: Harness[];
     /** Active tasks with no recorded jawan, or whose `bin/toli spawn` run has ended. */
     unattended: Task[];
@@ -229,7 +232,12 @@ export function nextActions(input: NextInput): NextAction[] {
             action: `Install ${SPECS[harness].label}: config/machine.json routes jawans to it`,
             command: `${SPECS[harness].install}; then ${SPECS[harness].login} (docs/harnesses.md), or change harness in config/machine.json`,
         });
-    if (input.setupSteps.length > 0)
+    if (input.setupSteps.length > 0 && input.setupSnoozed)
+        actions.push({
+            action: setupRemaining(input.setupSteps.length, "Setup snoozed"),
+            command: "bin/toli setup status lists them",
+        });
+    else if (input.setupSteps.length > 0)
         actions.push({
             action: `${setupRemaining(input.setupSteps.length)} (${input.setupSteps.slice(0, NEXT_LIST_LIMIT).join(", ")}${input.setupSteps.length > NEXT_LIST_LIMIT ? ", ..." : ""})`,
             command: 'say "set up toli" to close them (the toli-setup skill; bin/toli setup status lists them)',

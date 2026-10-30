@@ -68,6 +68,8 @@ stopped.
 - Never ask the same question twice: answers already recorded (config files, registered projects) show as `done`.
 - `optional` items are offered once in the batched question and never nagged about.
 - If the user wants to stop for now, run `bin/toli setup snooze`: session start stays quiet until a new step is
-  missing; `bin/toli setup status` still shows everything.
+  missing, and the digest's Next block shows only `Setup snoozed: N steps remain` (do not offer setup from it);
+  `bin/toli setup status` still shows everything.
 - The session-start notice (`Setup: N steps remain - say "set up toli"`) comes from `bin/toli setup notice`; it is
-  told once per new missing set, so never repeat it on your own every turn.
+  told once per new missing set, so never repeat it on your own every turn. The digest's Next block names the
+  remaining steps every time as a reminder for you, not a line to repeat to the user.
