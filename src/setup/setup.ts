@@ -46,7 +46,7 @@ export function noticeDue(pending: readonly string[], marker: SetupMarker | null
 /** Whether the user snoozed setup and nothing new has gone missing since (which would wake the notice again). */
 export function setupSnoozed(items: SetupItem[]): boolean {
     const marker = readMarker();
-    return marker !== null && marker.snoozed && !noticeDue(pendingIds(items), marker);
+    return marker?.snoozed === true && !noticeDue(pendingIds(items), marker);
 }
 
 /** "Setup: N steps remain": the head of the notice and of the digest's Next setup action. */

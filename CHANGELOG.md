@@ -4,6 +4,37 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.2.0 - unreleased
+
+### Added
+
+- Linux and WSL2 support: `bin/toli resources` reads load and memory from `/proc`; the minute tick and helpers run
+  under systemd user timers when `systemctl --user` works, crontab otherwise (a leftover v0.1.0 crontab tick is
+  removed and flagged); `just setup` gives apt/dnf hints. Supported: macOS, Debian/Ubuntu, Fedora, WSL2; native
+  Windows is not.
+- CI on `ubuntu-latest` and `macos-latest` running `just verify` (the gate plus smoke checks, with `install.sh`
+  checked under dash and shellcheck) on every push and pull request to `main` and `develop`.
+- A 3-day update check: toli compares its version with the latest release tag in the background (never blocking,
+  silent offline), tells you once per version with its changelog, and upgrades only when you say so
+  (`bin/toli update status|check|snooze <vX.Y.Z>|off|on`).
+- `bin/toli project set <p> --branch <b>` switches a clean clone to the branch, or leaves it and prints the exact
+  `git switch` command.
+- Lint fails on an `await` of a non-promise (TS80007) and on a Mermaid block GitHub cannot parse.
+
+### Changed
+
+- Branch model: toli's own work lands on `develop` (`bin/toli self land`); `main` moves only at a release, when
+  `just release` merges `develop` into it, tags it, and asks before pushing `main`, `develop` and the tag. A
+  CHANGELOG section drafted on `develop` is kept and dated.
+- The digest's Next block names the remaining setup steps on a fresh install (a quiet line once setup is snoozed).
+- The lead's guidance puts the 1-3 line reply rule first.
+
+### Fixed
+
+- `migrate` moves `data/briefs/T<n>.md` to its task's project, as it does reports.
+- The installer prints the resolved absolute install path.
+- `tests/bitbucket.test.ts` awaited a non-promise (TS80007).
+
 ## v0.1.0 - 2026-10-30
 
 ### Added
