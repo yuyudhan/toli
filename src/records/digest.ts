@@ -14,6 +14,7 @@ import { type JobResult, listResults, loadJobState } from "../jobs/jobs.ts";
 import { brokenLink } from "../projects/link.ts";
 import { loadProjects, type Mode } from "../projects/projects.ts";
 import { projectsNeedingSetup } from "../projects/setup.ts";
+import { takeUpdateNotice } from "../release/update-check.ts";
 import { type SetupItem, setupChecklist } from "../setup/checklist.ts";
 import { setupRemaining, setupSnoozed, takeSetupNotice } from "../setup/setup.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
@@ -288,13 +289,13 @@ function taskLine(task: Task): string {
 }
 
 /**
- * `setup`: the told-once setup notice for this machine's own digest; never set for fleet digests.
+ * `notices`: the told-once setup and update notices for this machine's own digest; never set for fleet digests.
  * `resurface`: stale holds to raise once more (src/records/needs.ts takeStaleHolds).
  */
-function render(digest: Digest, setup: string | null = null, resurface: ReadonlySet<string> = new Set()): string {
+function render(digest: Digest, notices: readonly string[] = [], resurface: ReadonlySet<string> = new Set()): string {
     const lines = [`machine ${digest.machine} (${digest.role}) at ${digest.generatedAt}`];
     if (digest.persona) lines.push(digest.persona);
-    if (setup !== null) lines.push(setup);
+    lines.push(...notices);
     lines.push("");
     // Fleet digests from machines on an older toli lack `needs`; their held tasks still form the queue.
     lines.push(
@@ -374,8 +375,11 @@ export async function digestCommand(argv: string[]): Promise<void> {
     }
 }
 
-/** This machine's digest as text: consumes the told-once setup notice and stale-hold re-surfacing. */
+/** This machine's digest as text: consumes the told-once setup and update notices and stale-hold re-surfacing. */
 function ownRender(digest: Digest, setupItems: SetupItem[]): string {
     const resurface = digest.needs === undefined ? new Set<string>() : takeStaleHolds(digest.needs);
-    return render(digest, takeSetupNotice(setupItems), resurface);
+    const notices = [takeSetupNotice(setupItems), takeUpdateNotice()].filter(
+        (notice): notice is string => notice !== null,
+    );
+    return render(digest, notices, resurface);
 }

@@ -119,7 +119,7 @@ Tracked (shared by all machines):
     src/fleet/                   machines: fleet status, resources, pick
     src/helpers/                 helper registry, local helpers, OS units
     src/setup/                   setup checklist and notice, doctor
-    src/release/                 versions and CHANGELOG (release), upgrade, self worktrees (self)
+    src/release/                 versions and CHANGELOG (release), upgrade, update check, self worktrees (self)
     AGENTS.md                    Sardar's role and rules for omp
     .omp/extensions/toli.ts      session tracking, background job hand-off, result delivery into the chat
     .omp/skills/toli-*/          Sardar skills (dispatch, projects, deliver, scout, ...)

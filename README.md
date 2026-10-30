@@ -46,6 +46,9 @@ Then open your agent in the toli folder (`omp`, `claude`, `codex`, `cursor-agent
 It asks you a few questions in one go (this machine's name, your first project, how work should land) and a jawan
 does the rest.
 
+Every 3 days toli checks for a new release and tells you once, with what changed; it updates only when you say so
+([details](docs/install.md#update-check)).
+
 ## Things you can say
 
 - "Add billing-api from git@github.com:acme/billing-api.git, as pull requests."

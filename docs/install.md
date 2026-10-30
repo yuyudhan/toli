@@ -73,3 +73,28 @@ Off a release tag (a development clone on `develop`) it prints `0.2.0 (untagged:
 
 Your `data/`, `state/`, `config/`, `logs/`, `projects/`, and `local/` are gitignored, so the checkout never touches
 them. After an upgrade, restart your agent session so it loads the new contract and skills.
+
+## Update check
+
+Every 3 days toli looks for a newer release on its own, so you hear about it without asking:
+
+    bin/toli update status            # on/off, installed, last and next check, latest, told, snoozed
+    bin/toli update check             # check now (the minute tick does this when due)
+    bin/toli update snooze v0.3.0     # never mention this version; a later one is still shown
+    bin/toli update off               # no network checks and no notices; `on` turns it back on
+
+- The minute tick (`bin/toli job tick`, see [jobs.md](jobs.md)) starts `bin/toli update check --due` as a background
+  process when a check is due, so neither the tick nor the digest waits on the network. The check runs
+  `git ls-remote --tags` against `origin` (or `TOLI_REPO_URL`) with a 20 second timeout and compares the highest
+  stable `vX.Y.Z` with `package.json`'s version; pre-releases, older and equal tags are ignored. For a newer release
+  it fetches that one tag to read its `CHANGELOG.md`.
+- Offline, nothing is recorded but the attempt time; the tick tries again an hour later. A clone that is not a git
+  checkout is never checked.
+- The result is in `state/update-check.json` (`lastChecked`, `latest`, the changelog, and the versions you were
+  told about); the settings are in `config/updates.json` (`check`, `snoozed`). Output of background checks goes to
+  `logs/update-check.log`.
+- The next `bin/toli digest` (run at every session start, in every harness) shows a newer release once: the
+  version, its CHANGELOG sections, and how to update. The same version is never shown twice.
+- Nothing upgrades by itself. When you confirm, the lead sends a jawan to run `bin/toli upgrade`, which also runs
+  `migrate` and `harness sync`, and the jawan reports the result. On a development clone (HEAD on a branch, where
+  `upgrade` refuses) the notice says so, and a jawan updates the clone with git instead.

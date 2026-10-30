@@ -59,7 +59,7 @@ export function versionCommand(argv: string[]): void {
 }
 
 /** The remote to fetch releases from: the clone's `origin`, else the release URL. */
-function releaseRemote(root: string): string {
+export function releaseRemote(root: string): string {
     if (git(root, ["remote", "get-url", "origin"]).code === 0) return "origin";
     return toliRepoUrl();
 }

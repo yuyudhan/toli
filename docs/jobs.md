@@ -60,8 +60,9 @@ acknowledged:
     bin/toli schedule status
     bin/toli schedule uninstall
 
-Besides due jobs, every tick retries the worker outbox, marks stale runs as failed, and once a week posts the
-`bin/toli prune` dry run to the inbox ([memory.md](memory.md#pruning)). Optional `pre-tick` and `post-tick` hooks
+Besides due jobs, every tick retries the worker outbox, marks stale runs as failed, once a week posts the
+`bin/toli prune` dry run to the inbox ([memory.md](memory.md#pruning)), and every 3 days starts the update check in
+the background ([install.md](install.md#update-check)). Optional `pre-tick` and `post-tick` hooks
 in `local/hooks/` run around it ([helpers.md](helpers.md#hooks)). Tick output goes to `logs/tick.log`.
 
 For a machine's own recurring chores (disk cleanup, backups) that do not need an agent, use a

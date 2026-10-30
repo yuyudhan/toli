@@ -14,6 +14,8 @@ export const paths = {
     jobsConfig: () => join(repoRoot(), "config", "jobs.json"),
     /** Optional persona names (user title, lead, worker); see src/core/persona.ts. */
     persona: () => join(repoRoot(), "config", "persona.json"),
+    /** The update check's settings (`bin/toli update off|on|snooze`); see src/release/update-check.ts. */
+    updatesConfig: () => join(repoRoot(), "config", "updates.json"),
     projects: () => join(repoRoot(), "data", "projects.json"),
     backlog: () => join(repoRoot(), "data", "backlog.json"),
     projectDir: (name: string) => join(repoRoot(), "projects", name),
@@ -53,6 +55,9 @@ export const paths = {
     pruneState: () => join(repoRoot(), "state", "prune.json"),
     /** The setup steps the user was last told about (or snoozed), so session start says it once. */
     setupShown: () => join(repoRoot(), "state", "setup-shown.json"),
+    /** The update check's last result and the versions the user was told about (src/release/update-check.ts). */
+    updateCheck: () => join(repoRoot(), "state", "update-check.json"),
+    updateCheckLog: () => join(repoRoot(), "logs", "update-check.log"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
     runsDir: () => join(repoRoot(), "state", "runs"),
     runRecord: (runId: string) => join(repoRoot(), "state", "runs", `${runId}.json`),
