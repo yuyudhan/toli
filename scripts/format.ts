@@ -23,14 +23,34 @@ import { ROOT } from "./guard-lib.ts";
 type Mode = "write" | "check" | "lint";
 type Step = { name: string; command: string[] };
 
+/**
+ * Each system tool's package per manager (null: not packaged there, or too old for the flags used here) and its
+ * release page, the fallback everywhere.
+ */
 const SYSTEM_TOOLS = {
-    shfmt: "brew install shfmt",
-    shellcheck: "brew install shellcheck",
-    actionlint: "brew install actionlint",
-    just: "brew install just",
-    gitleaks: "brew install gitleaks",
+    shfmt: { brew: "shfmt", apt: "shfmt", dnf: "shfmt", releases: "https://github.com/mvdan/sh/releases" },
+    shellcheck: {
+        brew: "shellcheck",
+        apt: "shellcheck",
+        dnf: "ShellCheck",
+        releases: "https://github.com/koalaman/shellcheck/releases",
+    },
+    actionlint: { brew: "actionlint", apt: null, dnf: null, releases: "https://github.com/rhysd/actionlint/releases" },
+    just: { brew: "just", apt: "just", dnf: "just", releases: "https://github.com/casey/just/releases" },
+    gitleaks: { brew: "gitleaks", apt: null, dnf: null, releases: "https://github.com/gitleaks/gitleaks/releases" },
 } as const;
 type SystemTool = keyof typeof SYSTEM_TOOLS;
+
+/** How to install `tool` here: brew on macOS; apt-get, then dnf, then brew on Linux; else its release page. */
+function installHint(tool: SystemTool): string {
+    const pkg = SYSTEM_TOOLS[tool];
+    const has = (command: string) => Bun.which(command) !== null;
+    if ((process.env.TOLI_PLATFORM ?? process.platform) === "darwin") return `brew install ${pkg.brew}`;
+    if (has("apt-get") && pkg.apt !== null) return `sudo apt install ${pkg.apt}`;
+    if (has("dnf") && pkg.dnf !== null) return `sudo dnf install ${pkg.dnf}`;
+    if (has("brew")) return `brew install ${pkg.brew}`;
+    return `download a release binary from ${pkg.releases}`;
+}
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
 
@@ -93,7 +113,7 @@ function requireSystemTools(plan: Step[]): void {
     const needed = plan.map((step) => step.command[0] ?? "").filter((tool): tool is SystemTool => tool in SYSTEM_TOOLS);
     const missing = [...new Set(needed)].filter((tool) => Bun.which(tool) === null);
     if (missing.length === 0) return;
-    for (const tool of missing) out(`format: ${tool} not found on PATH; install it: ${SYSTEM_TOOLS[tool]}`);
+    for (const tool of missing) out(`format: ${tool} not found on PATH; install it: ${installHint(tool)}`);
     fail(`${missing.length} required tool(s) missing`);
 }
 
@@ -156,9 +176,9 @@ function steps(mode: Mode, scoped: boolean, files: FileSets): Step[] {
 function listTools(): never {
     const missing = (Object.keys(SYSTEM_TOOLS) as SystemTool[]).filter((tool) => Bun.which(tool) === null);
     for (const tool of Object.keys(SYSTEM_TOOLS) as SystemTool[]) {
-        out(missing.includes(tool) ? `[missing] ${tool}: ${SYSTEM_TOOLS[tool]}` : `[ok] ${tool}`);
+        out(missing.includes(tool) ? `[missing] ${tool}: ${installHint(tool)}` : `[ok] ${tool}`);
     }
-    if (missing.length > 0) fail(`install the missing tool(s): brew install ${missing.join(" ")}`);
+    if (missing.length > 0) fail(`install the missing tool(s) above: ${missing.join(", ")}`);
     out("format: all system tools present");
     process.exit(0);
 }
