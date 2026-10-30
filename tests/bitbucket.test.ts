@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BitbucketClient, bitbucketCredentials, parseDotenv } from "../src/forge-bitbucket.ts";
+import { BitbucketClient, bitbucketCredentials, parseDotenv } from "../src/forge/bitbucket.ts";
 
 type Recorded = { method: string; path: string; auth: string | null; body: unknown };
 

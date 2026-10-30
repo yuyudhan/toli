@@ -6,7 +6,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { latestTag } from "../src/release.ts";
+import { latestTag } from "../src/release/release.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const TOLI = join(ROOT, "bin", "toli");

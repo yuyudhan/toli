@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { rankMachines } from "../src/pick.ts";
+import { rankMachines } from "../src/fleet/pick.ts";
 import {
     availabilityReasons,
     capacityFor,
@@ -7,7 +7,7 @@ import {
     parseMeminfo,
     parseVmStat,
     type Resources,
-} from "../src/resources.ts";
+} from "../src/fleet/resources.ts";
 
 const VM_STAT_APPLE_SILICON = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free:                                    20537.

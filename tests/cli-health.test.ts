@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CliHealth } from "../src/cli-health.ts";
+import { CliHealth } from "../src/harness/cli-health.ts";
 
 const BROKEN = new Error(
     "bin/toli job due --json: 1 | import { perTask } from './projects.ts';\n" +

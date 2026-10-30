@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { noticeText, readMarker, takeSetupNotice } from "../src/setup.ts";
-import { liveProbe, pendingIds, type SetupItem, type SetupProbe, setupChecklist } from "../src/setup-checklist.ts";
+import { liveProbe, pendingIds, type SetupItem, type SetupProbe, setupChecklist } from "../src/setup/checklist.ts";
+import { noticeText, readMarker, takeSetupNotice } from "../src/setup/setup.ts";
 import { type Sandbox, sandbox } from "./helpers.ts";
 
 const saved = process.env.TOLI_ROOT;

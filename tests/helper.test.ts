@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseCron } from "../src/cron.ts";
-import { type Helper, parseDuration, parseHelpers } from "../src/helper-registry.ts";
-import { cronToCalendar, cronToOnCalendar, everyToCron } from "../src/helper-units.ts";
+import { parseCron } from "../src/core/cron.ts";
+import { type Helper, parseDuration, parseHelpers } from "../src/helpers/registry.ts";
+import { cronToCalendar, cronToOnCalendar, everyToCron } from "../src/helpers/units.ts";
 import { type Sandbox, sandbox } from "./helpers.ts";
 
 type Entry = Record<string, unknown>;

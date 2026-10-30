@@ -1,5 +1,5 @@
 # Per-machine private state: never shared between the toli clones.
-# Anchored to the repo root so tracked files such as src/config.ts stay visible.
+# Anchored to the repo root so tracked files such as src/core/config.ts stay visible.
 /projects/
 /data/
 /state/

@@ -2,7 +2,7 @@
 # Coverage counts only code loaded in the test process. Most tests drive bin/toli as a subprocess
 # (the real CLI surface), so their src/ coverage is invisible here and these numbers understate it.
 # Bun applies coverageThreshold to every reported file, not to the total, so the threshold is the
-# floor the weakest in-process file actually reaches (src/projects.ts, ~10.5% of lines; several files
+# floor the weakest in-process file actually reaches (src/projects/projects.ts, ~10.5% of lines; several files
 # have 0% of functions, so functions is pinned to 0; leaving it out makes Bun reuse the lines value).
 # Raise both as in-process tests are added.
 # Discover tests only in tests/: projects/ holds full clones whose own test files must never run here.

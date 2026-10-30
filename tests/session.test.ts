@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { liveSession } from "../src/session.ts";
+import { liveSession } from "../src/harness/session.ts";
 import { sandbox } from "./helpers.ts";
 
 const savedRoot = process.env.TOLI_ROOT;

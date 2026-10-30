@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { stripAiTrailers } from "../src/commit.ts";
+import { stripAiTrailers } from "../src/projects/commit.ts";
 import { sandbox, withProject } from "./helpers.ts";
 
 describe("toli commit", () => {

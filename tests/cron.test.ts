@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cronFiredBetween, cronMatches, parseCron } from "../src/cron.ts";
+import { cronFiredBetween, cronMatches, parseCron } from "../src/core/cron.ts";
 
 // Local-time constructor: cron matches against the machine's wall clock.
 const at = (y: number, mo: number, d: number, h: number, mi: number): Date => new Date(y, mo - 1, d, h, mi);

@@ -4,4 +4,4 @@
 #   - it also fails once it drops to 400 lines or fewer, so delete its line then;
 #   - files not listed here get the real 400-line limit.
 # Format: <ceiling> <path>
-431 src/jobs.ts
+431 src/jobs/jobs.ts

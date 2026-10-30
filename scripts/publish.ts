@@ -12,7 +12,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Args } from "../src/args.ts";
+import { Args } from "../src/core/args.ts";
+import { now, ToliError } from "../src/core/util.ts";
 import {
     type Commit,
     changelogBetween,
@@ -23,8 +24,7 @@ import {
     nextVersion,
     parseVersion,
     prependChangelog,
-} from "../src/release.ts";
-import { now, ToliError } from "../src/util.ts";
+} from "../src/release/release.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RELEASE_BRANCH = "main";

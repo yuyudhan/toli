@@ -1,6 +1,6 @@
 // No AI co-author trailers, Generated-by trailers, or "generated with <assistant name>" stamps in tracked files.
 // Trailer-shaped lines are matched only at line start (optionally behind a comment or quote
-// marker), so code that detects or strips such trailers, like src/commit.ts, is not flagged.
+// marker), so code that detects or strips such trailers, like src/projects/commit.ts, is not flagged.
 import { eachLine, type Guard, type Violation } from "../guard-lib.ts";
 
 const AI = String.raw`(?:claude|anthropic|chatgpt|openai|gpt-?\d[\w.]*|copilot|gemini|codex|cursor|omp|oh my pi|ai|llm)`;
