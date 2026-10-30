@@ -1,8 +1,11 @@
 import { paths } from "./paths.ts";
 import { readJson, withLock, writeJsonAtomic } from "./util.ts";
 
-/** Per-stream "seen up to" watermarks: file stamps at or below are acknowledged. */
-type Acks = { jobs?: string; inbox?: string };
+/**
+ * Per-stream watermarks: file stamps at or below are covered. `jobs`/`inbox` mark what the user acknowledged;
+ * `jobsDelivered`/`inboxDelivered` mark what was already pushed into the live session (`toli wake`).
+ */
+type Acks = { jobs?: string; inbox?: string; jobsDelivered?: string; inboxDelivered?: string };
 export type AckStream = keyof Acks;
 
 export function ackedThrough(stream: AckStream): string {

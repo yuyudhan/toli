@@ -91,6 +91,30 @@ function failStaleRuns(): string[] {
     return notes;
 }
 
+/**
+ * Claim and run every job due on this machine, each in its own headless omp, and wait for all of them.
+ * Claiming goes through beginJob's lock, so a job another runner already claimed is skipped, never run twice.
+ */
+async function runDueJobs(origin: string): Promise<void> {
+    const runs = dueJobs(now(), loadMachine()).map(async (job) => {
+        let begun: BegunRun;
+        try {
+            begun = beginJob(job.name, "headless");
+        } catch (error) {
+            // Another runner claimed it between our due check and begin.
+            log(`job ${job.name}: not started: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        log(`job ${job.name} ${begun.runId}: started headless (${origin})`);
+        try {
+            log(await runHeadless(job.name, begun));
+        } catch (error) {
+            log(`job ${job.name} ${begun.runId}: run error: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+    await Promise.all(runs);
+}
+
 export async function tick(): Promise<void> {
     const machine = loadMachine();
     try {
@@ -108,24 +132,7 @@ export async function tick(): Promise<void> {
         log(`live session pid ${session.pid}: due jobs left to it`);
         return;
     }
-    const due = dueJobs(now(), machine);
-    const runs = due.map(async (job) => {
-        let begun: BegunRun;
-        try {
-            begun = beginJob(job.name, "headless");
-        } catch (error) {
-            // Another tick claimed it between our due check and begin.
-            log(`job ${job.name}: not started: ${error instanceof Error ? error.message : String(error)}`);
-            return;
-        }
-        log(`job ${job.name} ${begun.runId}: started headless`);
-        try {
-            log(await runHeadless(job.name, begun));
-        } catch (error) {
-            log(`job ${job.name} ${begun.runId}: run error: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    });
-    await Promise.all(runs);
+    await runDueJobs("ticker");
 }
 
 /** `toli job run <name>`: run a job once, now, headless, regardless of its schedule. */
@@ -168,10 +175,16 @@ export async function jobCommand(argv: string[]): Promise<void> {
             return jobSubcommands.ack(rest);
         case "run":
             return runNow(rest);
+        case "run-due":
+            // The live session's extension starts this in the background; the OS ticker defers to it.
+            new Args(rest).maxPositional(0);
+            return runDueJobs("session");
         case "tick":
             new Args(rest).maxPositional(0);
             return tick();
         default:
-            throw new ToliError("usage: toli job add|list|pause|resume|remove|due|begin|finish|run|tick|results|ack");
+            throw new ToliError(
+                "usage: toli job add|list|pause|resume|remove|due|begin|finish|run|run-due|tick|results|ack",
+            );
     }
 }

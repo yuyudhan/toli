@@ -104,6 +104,19 @@ describe("job tick", () => {
         expect(due(box, "2026-03-04T10:05:00")).toEqual(["every"]);
     });
 
+    test("run-due runs due jobs headless even with a live session, claiming each once", () => {
+        const box = tickBox();
+        box.ok(["session", "start", "--pid", String(process.pid)]);
+        box.ok(["job", "run-due"], { now: "2026-03-04T10:05:00" });
+        expect(readFileSync(join(box.root, "omp-args"), "utf8")).toContain("--max-time 45m [toli job every");
+        expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain("started headless (session)");
+        const results = JSON.parse(box.ok(["job", "results", "--json"])) as { status: string }[];
+        expect(results.map((result) => result.status)).toEqual(["ok"]);
+        rmSync(join(box.root, "omp-args"));
+        box.ok(["job", "run-due"], { now: "2026-03-04T10:05:30" });
+        expect(existsSync(join(box.root, "omp-args"))).toBe(false);
+    });
+
     test("runs due jobs headless when the session pid is dead, recording the output", () => {
         const box = tickBox();
         const child = Bun.spawnSync(["true"]);
