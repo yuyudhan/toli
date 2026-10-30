@@ -76,3 +76,31 @@ The `toli-setup` skill (`/setup` command, in every harness after `bin/toli harne
 
 Re-running `bin/toli init` keeps every other setting in `config/machine.json` (capacity, harness, retention), so
 setup can always be resumed safely.
+
+## Persona names
+
+The default names are Malik (you), Sardar (the lead, plural Saradars), and jawan (a worker, plural jawans). Pick your
+own in `config/persona.json`; the lead then uses them everywhere (`bin/toli digest` prints the active names):
+
+```json
+{ "user": "Boss", "lead": "Lead", "leadPlural": "Leads", "worker": "worker", "workerPlural": "workers" }
+```
+
+## By hand
+
+Everything "set up toli" does can be done directly. Requirements: [Bun](https://bun.sh), git, omp (scheduled jobs
+run in headless omp), and optionally `no-mistakes` ([delivery.md](delivery.md#the-no-mistakes-gate)) and the forge
+CLIs for your projects ([delivery.md](delivery.md#forges-push-and-pull-requests)).
+
+    git clone <toli-repo-url> toli && cd toli && bun install    # or the installer: docs/install.md
+
+    bin/toli init --name <machine> --role coordinator            # the machine you talk to
+    bin/toli init --name <machine> --role worker --coordinator-ssh <host> --coordinator-root <path>   # every other one
+
+    bin/toli harness sync        # link skills and commands into each harness (docs/harnesses.md)
+    bin/toli schedule install    # run bin/toli job tick every minute (docs/jobs.md)
+    bin/toli doctor              # bun, omp, git, forge auth, no-mistakes, config, clones, fleet, scheduler
+    bin/toli setup status        # what is still missing
+
+Other machines go in `config/fleet.json` ([fleet.md](fleet.md)); projects are added with `/add-project` or
+`bin/toli project add` ([projects.md](projects.md)).

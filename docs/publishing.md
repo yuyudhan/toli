@@ -39,8 +39,8 @@ owner's private working copy.
         gitleaks detect --source . --log-opts=--all --redact      # history scan of the one commit
 
 4. **Review before push.** Read the file list (`git ls-files`) once: no `data/`, `state/`, `config/`, `logs/`,
-   `projects/`, `local/`, `.env*`. Check README links resolve (LICENSE, docs/*.md) and the clone URL placeholder in
-   README.md and the `toli-sync` skill is replaced with the public URL.
+   `projects/`, `local/`, `.env*`. `just check` must pass (its guards check every Markdown link), and every
+   `<toli-repo-url>` and `<toli-raw-url>` placeholder (`git grep -n '<toli-r'`) is replaced with the public URL.
 
 5. **Push, only on the owner's word.** Create the empty public repository on the chosen forge, then:
 

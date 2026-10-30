@@ -14,12 +14,14 @@ Before anything is cloned, the lead asks one batched, multiple-choice question (
 skill): checkout (`clone` fresh, or `link <path>` to an existing checkout), workspace strategy (`same-branch
 [<branch>]`, `branch`, `worktree`; default from `defaults.workspace` in `config/machine.json`), PR or MR (per-task
 strategies), the no-mistakes gate, the test/smoke command, and an optional standing push/PR grant. Reply like
-`clone, same-branch, no, detect` or `link ~/code/moneytrace, worktree, mr, yes, bun test`.
+`clone, same-branch, no, detect` or `link ~/code/shop, worktree, mr, yes, bun test`.
 
 With the answer, a jawan clones the repo (`bin/toli project add`) or links it (`bin/toli project link`), records the
 choices (`bin/toli project set`), checks the forge and its auth (`bin/toli forge <name>`), and seeds
 `data/projects/<name>/notes.md` from the repo's README, agent docs, and build files. Anything it cannot detect (an
 unknown forge, no test command) comes back to the user as one follow-up question.
+
+What each delivery choice means: [delivery.md](delivery.md).
 
 Without a lead session, the same steps by hand:
 
@@ -52,8 +54,8 @@ Each project records where its jawans work (`workspace` in `bin/toli project lis
 - `bin/toli commit|push|pr create <project> --task T<n>` act in the task's workspace (commands run from inside a
   task worktree find it themselves). Per-task projects refuse a commit without `--task`.
 - Pushing the task branch and opening its PR/MR need the user's word for that change, unless the project carries an
-  explicit standing grant: `bin/toli project set <p> --standing-push yes --standing-pr yes` (only on the user's
-  word; a PR grant needs the push grant). Without one, the verifier commits and holds the task with the question.
+  explicit standing grant ([delivery.md](delivery.md#standing-grants)). Without one, the verifier commits and holds
+  the task with the question.
 - `bin/toli workspace list [--project p]` shows each task worktree with its task status, branch, merged state and
   cleanliness. `bin/toli workspace prune [--project p]` removes worktrees of done/dropped tasks whose branch is
   merged into the base (local or origin, fetched first) and deletes the merged branch. It keeps live, dirty, and
@@ -66,32 +68,15 @@ Each project records where its jawans work (`workspace` in `bin/toli project lis
 
 Examples:
 
-    # kalki: everyone on the one clone, committing on the fixed branch ankur/nightly
-    bin/toli project set kalki --workspace same-branch --mode commit --branch ankur/nightly
+    # blog: everyone on the one clone, committing on the fixed branch nightly
+    bin/toli project set blog --workspace same-branch --mode commit --branch nightly
 
-    # moneytrace: a worktree and branch per task, published as a GitLab merge request; push/MR only on the user's word
-    bin/toli project set moneytrace --workspace worktree-per-task --mode pr --branch main --standing-push no --standing-pr no
+    # shop: a worktree and branch per task, published as a GitLab merge request; push/MR only on the user's word
+    bin/toli project set shop --workspace worktree-per-task --mode pr --branch main --standing-push no --standing-pr no
 
-For moneytrace, `bin/toli spawn --task T42 ...` creates `projects/.worktrees/moneytrace/T42` on
+For shop, `bin/toli spawn --task T42 ...` creates `projects/.worktrees/shop/T42` on
 `toli/T42-<slug>` from `main`; after verification the verifier holds T42 asking to push and open the MR, and on the
-user's word a jawan runs `bin/toli push moneytrace --task T42` and `bin/toli pr create moneytrace --task T42 ...`.
-
-## Delivery modes
-
-| Choice                                  | `bin/toli project set <name> ...`   | What jawans do                                                  |
-| --------------------------------------- | ----------------------------------- | --------------------------------------------------------------- |
-| (a) pull/merge requests                 | `--mode pr --branch none`           | branch per change, commit, then push + PR on the user's word    |
-| (b) commit on the checked-out branch    | `--mode commit --branch none`       | commit on whatever branch the clone is on; never push           |
-| (c) commit on a fixed branch            | `--mode commit --branch <b>`        | commit only on `<b>`; `bin/toli commit` refuses elsewhere       |
-| (a) or (c) through the no-mistakes gate | `--mode no-mistakes [--branch <b>]` | the gate validates, pushes, and opens the PR on the user's word |
-
-- `--mode` or `--branch` records when the choice was made (`deliverySetAt` in `project list --json`). A project
-  without it only has the default (`commit`, no fixed branch), and `project setup` asks for a real answer.
-- The forge comes from the clone's `origin` (GitHub, GitLab including self-hosted hosts known to `glab`, Bitbucket
-  Cloud). Override only when detection fails: `--forge github|gitlab|bitbucket` and `--forge-host <host>`;
-  `none` clears either.
-- The mode chooses the flow. Pushing, opening a PR, merging, and releasing still need the user's word for each change
-  (push and PR/MR only: unless the project has a standing grant, see Workspace strategy).
+user's word a jawan runs `bin/toli push shop --task T42` and `bin/toli pr create shop --task T42 ...`.
 
 ## Setting up an existing project
 

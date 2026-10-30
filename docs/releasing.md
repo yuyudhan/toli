@@ -1,31 +1,11 @@
-# Working on toli and releasing it
+# Releasing toli
 
-This page is for changes to toli itself: the quality gate every change passes, and how a release is cut. Installing
-and upgrading are in docs/install.md.
+How a toli release is cut. Installing and upgrading are in [install.md](install.md); the quality gate every change
+passes (`just check`, `just verify`, hooks, CI) is in [development.md](development.md).
 
-## The gate: `just check`
-
-| Command          | What it runs                                                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------------------------------- |
-| `just fmt`       | Format everything in place (Biome, Prettier, Taplo, shfmt, `just --fmt`).                                     |
-| `just fmt-check` | Report unformatted files.                                                                                     |
-| `just lint`      | Biome lint rules, shellcheck, actionlint, and the repo guards.                                                |
-| `just typecheck` | `tsc --noEmit` over `src/`, `tests/`, `scripts/`, `.omp/extensions/`.                                         |
-| `just test`      | `bun test`.                                                                                                   |
-| `just check`     | fmt-check, lint, typecheck, test: **run before every commit to toli** (agents included).                      |
-| `just verify`    | check, then smoke runs: `bin/toli version`, `doctor`, `harness sync --check`, `setup status`, and an install. |
-| `just release`   | The release flow below (`just publish` is the same recipe).                                                   |
-
-`just setup` once per clone installs dependencies and enables the git hooks, which enforce the same gate:
-
-- **pre-commit** (fast, staged files): secrets scan, format and re-stage, lint, typecheck when TypeScript is staged,
-  guards.
-- **pre-push**: secrets scan of the pushed commits, then `bun run check` (= `just check`).
-- **CI** (`.github/workflows/ci.yml`): the `just check` steps with test coverage, plus a full-history secrets scan.
-
-`just verify`'s install smoke test clones the committed HEAD into a temporary bare repository, tags it with
-package.json's version if needed, and runs `install.sh --yes` against it over `file://`. On a checkout without
-`config/machine.json`, doctor's `fail machine` line is expected and tolerated.
+`just verify`, which every release runs, ends with an install smoke test: it clones the committed HEAD into a
+temporary bare repository, tags it with package.json's version if needed, and runs `install.sh --yes` against it over
+`file://`. On a checkout without `config/machine.json`, doctor's `fail machine` line is expected and tolerated.
 
 ## Versions
 
