@@ -112,8 +112,10 @@ by `spawn`), `NO_MISTAKES_GATE`, a subagent id, a first prompt starting `TOLI_BR
 than toli's root; they are never guarded.
 
 - **Guard** (`src/harness/lead-guard.ts`): the lead may write only under `data/`, `state/`, `config/` (plus temp files and
-  Claude plan files) and may not read, grep, or glob under `projects/`. Shell commands are not blocked, so `bin/toli`
-  bookkeeping always works. omp: the extension's `tool_call` handler. Claude Code: `PreToolUse` hook
+  Claude plan files) and may not read, grep, or glob under `projects/` or the real checkout of any project there (a
+  linked project's target directory). Paths compare by their symlink-resolved real location, so a toli reached
+  through a symlink (macOS `/tmp`) or a linked checkout in temp is never treated as scratch. Shell commands are not
+  blocked, so `bin/toli` bookkeeping always works. omp: the extension's `tool_call` handler. Claude Code: `PreToolUse` hook
   (`bin/toli hook claude-pre-tool`). Hooks fail open: an internal error allows the call. Codex, Cursor and Grok have
   hook systems, but none reliably tells the lead from its subagents, so they rely on `AGENTS.md`.
 - **Guidance** (`bin/toli guidance`): record every request as a task, delegate everything, dispatch in the background

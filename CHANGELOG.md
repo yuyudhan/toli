@@ -37,3 +37,6 @@ one. See docs/releasing.md.
 - Goal contracts: briefs carry a `## Goal` (Objective, Constraints, Validate, Stop when, Record, and a rule against
   weakening checks; a short form for scouts), verifiers check Stop when independently, and `spawn` warns on a ship
   brief without one.
+- Lead guard compares symlink-resolved real paths and treats every project's real checkout (linked ones included) as
+  project code, for reads and writes; `doctor` and `schedule status` warn when the machine's tick runs another toli
+  checkout.

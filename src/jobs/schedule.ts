@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Args } from "../core/args.ts";
@@ -230,21 +230,38 @@ function uninstall(): void {
     out(kept.length !== lines.length ? "removed toli crontab line" : "no toli crontab line installed");
 }
 
-export type ScheduleStatus = { scheduler: "launchd" | "crontab"; installed: boolean; loaded: boolean; detail: string };
+export type ScheduleStatus = {
+    scheduler: "launchd" | "crontab";
+    installed: boolean;
+    loaded: boolean;
+    detail: string;
+    /** The `bin/toli` an installed tick runs when that is another toli checkout; null when it runs this one. */
+    otherBin: string | null;
+};
+
+/** The one per-machine tick is shared by every clone (same label/tag): which `bin/toli` does it run, if not ours? */
+function otherTickBin(installedText: string, darwin: boolean): string | null {
+    const bin = paths.toliBin();
+    if (installedText.includes(darwin ? `<string>${bin}</string>` : ` ${shellQuote(bin)} `)) return null;
+    return /[^\s<>'"]*\/bin\/toli(?=[\s<'"])/.exec(installedText)?.[0] ?? "another toli checkout";
+}
 
 export function scheduleStatus(): ScheduleStatus {
     if (platform() === "darwin") {
         const target = plistPath();
         const installed = existsSync(target);
         const loaded = launchctlLoaded(LABEL);
-        return { scheduler: "launchd", installed, loaded, detail: target };
+        const otherBin = installed ? otherTickBin(readFileSync(target, "utf8"), true) : null;
+        return { scheduler: "launchd", installed, loaded, detail: target, otherBin };
     }
-    const installed = readCrontab().some((entry) => entry.includes(CRON_TAG));
+    const lines = readCrontab().filter((entry) => entry.includes(CRON_TAG));
+    const installed = lines.length > 0;
     return {
         scheduler: "crontab",
         installed,
         loaded: installed,
         detail: installed ? "crontab line present" : "no crontab line",
+        otherBin: installed ? otherTickBin(lines.join("\n"), false) : null,
     };
 }
 
@@ -266,6 +283,10 @@ export function scheduleCommand(argv: string[]): void {
                 out(
                     `${status.scheduler}: ${status.installed ? "installed" : "not installed"}, ${status.loaded ? "loaded" : "not loaded"} (${status.detail})`,
                 );
+                if (status.otherBin !== null)
+                    out(
+                        `warn: the tick runs ${status.otherBin}, not this checkout (bin/toli schedule install moves it here)`,
+                    );
             }
             break;
         }

@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import {
+    lstatSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    readlinkSync,
+    realpathSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { HARNESSES, headlessCommand } from "../src/harness/harness.ts";
@@ -133,6 +142,51 @@ describe("lead guard", () => {
         ).toEqual({ kind: "write", paths: ["projects/a/x.ts", "data/n.md", "data/m.md"] });
         expect(ompAction("grep", { path: "src;projects/a" })).toEqual({ kind: "read", paths: ["src", "projects/a"] });
         expect(ompAction("bash", { command: "cat projects/a/x" })).toEqual({ kind: "other" });
+    });
+
+    // A toli reached through a symlink (macOS /tmp -> /private/tmp) with a project linked to a checkout in temp.
+    function linkedBox() {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), "toli-guard-link-")));
+        const real = join(base, "real-root");
+        const alias = join(base, "alias-root");
+        const checkout = join(base, "checkout");
+        mkdirSync(join(real, "projects"), { recursive: true });
+        mkdirSync(join(real, "data"));
+        mkdirSync(checkout);
+        writeFileSync(join(checkout, "README.md"), "hello\n");
+        symlinkSync(real, alias, "dir");
+        symlinkSync(checkout, join(real, "projects", "dummy"), "dir");
+        return { base, real, alias, checkout };
+    }
+
+    test("D1: a symlinked root and a linked project in temp never open project writes", () => {
+        const { base, real, alias, checkout } = linkedBox();
+        for (const context of [
+            { root: alias, cwd: alias, jawan: false },
+            { root: real, cwd: alias, jawan: false },
+            { root: alias, cwd: real, jawan: false },
+        ]) {
+            for (const path of [
+                "projects/dummy/README.md",
+                join(alias, "projects", "dummy", "README.md"),
+                join(real, "projects", "dummy", "NEW.txt"),
+                join(checkout, "README.md"),
+                join(checkout, "NEW.txt"),
+            ])
+                expect([path, guardDecision(context, { kind: "write", paths: [path] }).allow]).toEqual([path, false]);
+            for (const path of ["projects/dummy/README.md", join(real, "projects", "dummy", "README.md")])
+                expect([path, guardDecision(context, { kind: "read", paths: [path] }).allow]).toEqual([path, false]);
+            for (const path of ["data/x.md", join(alias, "data", "x.md"), join(real, "data", "x.md"), join(base, "s")])
+                expect([path, guardDecision(context, { kind: "write", paths: [path] }).allow]).toEqual([path, true]);
+        }
+    });
+
+    test("D2: the lead may not read a linked project through its real checkout path", () => {
+        const { alias, checkout } = linkedBox();
+        const lead = { root: alias, cwd: alias, jawan: false };
+        for (const path of [checkout, join(checkout, "README.md"), join(checkout, "src", "**")])
+            expect([path, guardDecision(lead, { kind: "read", paths: [path] }).allow]).toEqual([path, false]);
+        expect(guardDecision(lead, { kind: "read", paths: ["AGENTS.md"] }).allow).toBe(true);
     });
 });
 
