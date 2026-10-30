@@ -13,7 +13,7 @@
         "lint": "bun scripts/format.ts lint && bun scripts/guard.ts",
         "typecheck": "tsc --noEmit",
         "tools": "bun scripts/format.ts tools",
-        "test": "bun test",
+        "test": "bun test --timeout 60000",
         "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
         "verify": "bun run check && bun scripts/verify.ts",
         "release": "bun scripts/publish.ts",

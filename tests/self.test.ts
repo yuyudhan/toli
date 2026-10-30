@@ -1,11 +1,9 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Sandbox, sandbox } from "./helpers.ts";
 
 const JUST = Bun.which("just");
-// Each test runs git, bin/toli and `just check` processes; allow for a machine loaded by parallel jawans.
-setDefaultTimeout(60_000);
 
 /** The sandbox root as a toli-like live checkout on main whose `just check` fails while a FAIL file exists. */
 function liveRepo(): { box: Sandbox; env: Record<string, string> } {
