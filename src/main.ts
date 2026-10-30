@@ -4,6 +4,9 @@ import { digestCommand } from "./digest.ts";
 import { doctorCommand } from "./doctor.ts";
 import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge.ts";
+import { guidanceCommand } from "./guidance.ts";
+import { hookCommand } from "./harness-hooks.ts";
+import { harnessCommand } from "./harness-sync.ts";
 import { helperCommand } from "./helpers.ts";
 import { inboxCommand } from "./inbox.ts";
 import { memoryCommand } from "./memory.ts";
@@ -14,6 +17,7 @@ import { pruneCommand } from "./prune.ts";
 import { resourcesCommand } from "./resources.ts";
 import { scheduleCommand } from "./schedule.ts";
 import { sessionCommand } from "./session.ts";
+import { runCommand, runsCommand, spawnCommand } from "./spawn.ts";
 import { jobCommand } from "./tick.ts";
 import { out, ToliError, warn } from "./util.ts";
 import { wakeCommand } from "./wake.ts";
@@ -31,7 +35,7 @@ const USAGE = `usage: bin/toli <command> [args]
   project setup <name> [--json] | setup --all [--json]
   task add <project> "<title>" [--shape ship|scout] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped]
-  task start <id> | done <id> [--report <path>] [--commit <sha>] [--note "..."]
+  task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
   task hold <id> --question "..." | answer <id> "<answer>" | drop <id>
   commit <project> -m "<message>" -- <path>...
   branch <project> <branch>
@@ -57,7 +61,13 @@ const USAGE = `usage: bin/toli <command> [args]
   pick [--project <name>] [--json]
   exec [--from <machine>] [--task <id>] (prompt on stdin)
   remote <machine|auto> "<prompt>" [--project <name>]
-  session start|end --pid <n>`;
+  session start|end --pid <n>
+  spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
+        [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--json]
+  runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
+  harness sync [--check] [--json] | status [--json]
+  hook claude-pre-tool|claude-prompt (hook JSON on stdin)
+  guidance`;
 
 /** Dispatch one CLI invocation; resolves to the process exit code. */
 export async function main(argv: string[]): Promise<number> {
@@ -132,6 +142,24 @@ export async function main(argv: string[]): Promise<number> {
                 return await remoteCommand(rest);
             case "session":
                 sessionCommand(rest);
+                return 0;
+            case "spawn":
+                spawnCommand(rest);
+                return 0;
+            case "runs":
+                runsCommand(rest);
+                return 0;
+            case "run":
+                await runCommand(rest);
+                return 0;
+            case "harness":
+                harnessCommand(rest);
+                return 0;
+            case "hook":
+                hookCommand(rest);
+                return 0;
+            case "guidance":
+                guidanceCommand(rest);
                 return 0;
             case undefined:
             case "help":

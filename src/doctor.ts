@@ -3,6 +3,8 @@ import { hasMachine, loadMachine } from "./config.ts";
 import { forgeReadiness, projectForge } from "./forge.ts";
 import { bitbucketCredentials } from "./forge-bitbucket.ts";
 import { isGitRepo } from "./git.ts";
+import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "./harness.ts";
+import { syncShims } from "./harness-sync.ts";
 import { memoryCheck } from "./memory.ts";
 import { paths } from "./paths.ts";
 import { fleetStatus } from "./pick.ts";
@@ -94,10 +96,52 @@ function forgeChecks(): Check[] {
     return checks;
 }
 
+/**
+ * One check per harness CLI: installed, version, login. omp is required (scheduled jobs run in headless omp);
+ * harnesses config/machine.json routes jawans to warn when missing or logged out; the rest are optional.
+ * Also checks the per-harness shims are in sync with their single source (.omp, AGENTS.md).
+ */
+function harnessChecks(): Check[] {
+    let configured: Harness[];
+    try {
+        configured = configuredHarnesses();
+    } catch (error) {
+        return [{ level: "fail", name: "harness", detail: error instanceof Error ? error.message : String(error) }];
+    }
+    const checks = HARNESSES.map((harness): Check => {
+        const status = harnessStatus(harness);
+        const needed = harness === "omp" || configured.includes(harness);
+        const role = configured.includes(harness) ? " [jawan harness]" : "";
+        if (!status.installed)
+            return {
+                level: harness === "omp" ? "fail" : needed ? "warn" : "ok",
+                name: harness,
+                detail: `${status.detail}${needed ? "" : " - optional"}${role}`,
+            };
+        const login = status.loggedIn === null ? "login not checked" : status.loggedIn ? "logged in" : "NOT logged in";
+        return {
+            level: status.loggedIn === false && needed ? "warn" : "ok",
+            name: harness,
+            detail: `${status.version ?? "installed"}, ${login}: ${status.detail}${role}`,
+        };
+    });
+    const drift = syncShims(paths.root(), true).filter((result) => result.state !== "ok");
+    checks.push(
+        drift.length === 0
+            ? { level: "ok", name: "harness-shims", detail: "CLAUDE.md, .claude, .agents, .cursor, .pi in sync" }
+            : {
+                  level: "warn",
+                  name: "harness-shims",
+                  detail: `out of date: ${drift.map((result) => result.path).join(", ")} (bin/toli harness sync)`,
+              },
+    );
+    return checks;
+}
+
 export async function runChecks(): Promise<Check[]> {
     const checks: Check[] = [
         { level: "ok", name: "bun", detail: `${Bun.version} (${process.execPath})` },
-        toolCheck("omp", ["omp", "--version"], "fail"),
+        ...harnessChecks(),
         toolCheck("git", ["git", "--version"], "fail"),
         ...forgeChecks(),
     ];

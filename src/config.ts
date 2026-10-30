@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import type { HarnessConfig } from "./harness.ts";
 import { paths } from "./paths.ts";
 import { readJson, shellQuote, ToliError } from "./util.ts";
 
@@ -29,6 +30,8 @@ export type Machine = {
     /** Token budget for the always-loaded memory files (data/malik.md + data/learnings.md). */
     memoryBudgetTokens?: number;
     retention?: RetentionConfig;
+    /** Which harness runs jawans (`bin/toli spawn`): default, per-work-type overrides, models. See docs/harnesses.md. */
+    harness?: HarnessConfig;
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

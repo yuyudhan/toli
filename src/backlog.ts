@@ -20,6 +20,8 @@ export type Task = {
     answer?: string;
     report?: string;
     commit?: string;
+    /** The jawan working on it: a harness agent id (`task start --agent`) or a `bin/toli spawn` run id. */
+    agent?: string;
     createdAt: string;
     updatedAt: string;
     startedAt?: string;
@@ -44,7 +46,7 @@ export function updateBacklog<T>(fn: (backlog: BacklogFile) => T): T {
 }
 
 /** Mutate one task by id under the backlog lock and return a copy of the result. */
-function updateTask(id: string, fn: (task: Task) => void): Task {
+export function updateTask(id: string, fn: (task: Task) => void): Task {
     return updateBacklog((backlog) => {
         const task = backlog.tasks.find((entry) => entry.id === id.toUpperCase());
         if (!task) throw new ToliError(`unknown task "${id}"`);
@@ -63,6 +65,7 @@ function parseShape(value: string | undefined, fallback: Shape): Shape {
 function describe(task: Task): string {
     const extras: string[] = [];
     if (task.status === "held" && task.question) extras.push(`question: ${task.question}`);
+    if (task.agent) extras.push(`agent: ${task.agent}`);
     if (task.commit) extras.push(`commit: ${task.commit}`);
     if (task.report) extras.push(`report: ${task.report}`);
     return `${task.id}\t${task.status}\t${task.project}\t${task.shape}\t${task.title}${extras.length ? `\t(${extras.join("; ")})` : ""}`;
@@ -118,13 +121,15 @@ function list(argv: string[]): void {
 }
 
 function start(argv: string[]): void {
-    const args = new Args(argv);
+    const args = new Args(argv, { values: ["agent"] });
     args.maxPositional(1);
+    const agent = args.str("agent");
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status === "done" || entry.status === "dropped")
             throw new ToliError(`${entry.id} is ${entry.status}`);
         entry.status = "active";
         entry.startedAt ??= now().toISOString();
+        if (agent !== undefined) entry.agent = agent;
     });
     out(describe(task));
 }

@@ -11,6 +11,9 @@ gatekeeping Malik's approvals, and relaying results, and staying free to talk to
 
 ## 1. Intake
 
+- Record first: every request that implies work becomes a task in this same turn (step 4's `bin/toli task add`),
+  even small ones and asides given mid-conversation. Nothing Malik asked for may live only in the chat. When you
+  dispatch, record the jawan on the task: `bin/toli task start T<n> --agent <id>` (`bin/toli spawn --task` does it).
 - Keep Malik's exact words. They go verbatim into the brief and, later, into any no-mistakes `--intent`.
 - Decide the shape: **ship** (change code, commit) or **scout** (read-only, report). If Malik asks "why", "find",
   "check", "how does", it is scout; if he asks to fix, add, change, or build, it is ship. Scout mechanics live in
@@ -83,27 +86,45 @@ Landing (the brief's Landing section):
 
 If the stack must be running for the evidence and the notes declare `## Local stack`, tell jawans in the Spec to use
 the declared commands (or start it yourself as a named background service, `skill://toli-stacks`). Then mark the task
-active:
+active with the jawan's id once you have spawned it (step 5): the native subagent id (e.g. omp `agent://<id>`), or
+nothing for `bin/toli spawn --task`, which records its run id itself:
 
-    bin/toli task start T<n>
+    bin/toli task start T<n> --agent <id>
 
 ## 5. Spawn jawans, then end the turn
 
-Pick the agent from the routing table:
+### Where the jawan runs
 
-| Work                                             | agent                        | effort |
-| ------------------------------------------------ | ---------------------------- | ------ |
-| investigations, code maps, audits (scout shape)  | `task` (default; omit agent) | lo/med |
-| mechanical edits, renames, data collection       | `sonic`                      | lo     |
-| normal implementation                            | `task` (default; omit agent) | med    |
-| ambiguous design / hard bugs                     | `task`                       | hi     |
-| verify ship work and land it (step 6)            | `reviewer`                   | med    |
-| verify UI/CLI/API behaviour and land it (step 6) | `qa-tester`                  | med    |
+Two ways to start a background jawan, both non-blocking:
 
-Scout-shape jawans must write their report and close their task, so they need write access: use `task`, not the
-read-only `scout` agent (a jawan may still spawn `scout` helpers itself when its brief allows).
+- **Native async subagents** of the harness you (the lead) run in: omp's `task` tool, Claude Code's Agent/Task tool
+  (background by default), Grok's `spawn_subagent` with `run_in_background`. Default when you run in one of these.
+- **`bin/toli spawn`**: the universal path. Required when your harness's subagents block or do not exist (Codex,
+  Cursor CLI, pi), when the work should run on another harness or model, or when it must outlive this session:
 
-- A toli of jawans for work in different projects goes out in a single `task` call.
+        bin/toli spawn --task T<n> --brief data/projects/<project>/briefs/T<n>.md [--harness omp|claude|codex|cursor|grok|pi] [--model <m>] [--work scout|ship|verify]
+
+    It returns a run id at once; without `--harness` it uses `harness` in `config/machine.json` (default omp, per-work
+    overrides). Its outcome arrives as a `[toli wake]` message like any inbox item. `bin/toli runs` lists runs;
+    `bin/toli run status|log|kill <id>`; never poll them while Malik may talk. A missing CLI fails at once with its
+    install command: tell Malik, or pick another harness. Details: `docs/harnesses.md`.
+
+### Which agent (omp `task` tool)
+
+| Work                                            | agent                        | effort |
+| ----------------------------------------------- | ---------------------------- | ------ |
+| investigations, code maps, audits (scout shape) | `task` (default; omit agent) | lo/med |
+| mechanical edits, renames, data collection      | `sonic`                      | lo     |
+| normal implementation                           | `task` (default; omit agent) | med    |
+| ambiguous design / hard bugs                    | `task`                       | hi     |
+| verify ship work and land it (step 6)           | `task`                       | med    |
+
+Scout-shape jawans must write their report and close their task, and verifiers re-run checks, write a report, and
+commit, so all of them need write and bash access: use `task`, not the read-only `scout` agent or omp's `reviewer`
+(no write/edit tools; its prompt forbids builds and edits). A verifier may spawn `qa-tester` or browser helpers itself
+for UI/CLI/API checks. On Claude Code use the general-purpose agent; on `bin/toli spawn` every jawan is a full session.
+
+- A toli of jawans for work in different projects goes out in a single `task` call (or one `spawn` per task).
 - Several jawans on the same project in parallel are allowed, even in the same files. Give each its own task id.
 - The brief is the whole context; jawans cannot see this conversation.
 
@@ -116,8 +137,9 @@ mind about a running jawan, steer it with `write agent://<id>`; do not re-spawn 
 
 When an implementing jawan's result arrives on a "verified by a second jawan" task, do not read or judge its
 evidence yourself. Fill in `docs/verify-brief-template.md` with the original brief and the implementer's full report
-(or its `agent://<id>`), and spawn a `reviewer` (code) or `qa-tester` (UI/CLI/API) jawan with it. Then end the turn
-again.
+(or its `agent://<id>`), and spawn a fresh `task` jawan (effort med) with it, or `bin/toli spawn --work verify`.
+Not omp's `reviewer`: it has no write or edit tools and its prompt forbids builds, so it cannot re-run the checks,
+write its report, or commit. Then end the turn again.
 
 The verifier re-runs the checks against every acceptance line and either lands the work (`bin/toli commit` +
 `bin/toli task done`) and returns `PASS <sha>`, or returns `GAPS` without committing.
