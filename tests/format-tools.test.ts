@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { tempDir } from "./helpers.ts";
 
 const FORMAT = resolve(import.meta.dir, "..", "scripts", "format.ts");
 
 /** `format.ts tools` with PATH holding only the named package managers (as stubs), so every tool is missing. */
 function tools(platform: string, managers: string[]): string {
-    const bin = mkdtempSync(join(tmpdir(), "toli-tools-"));
+    const bin = tempDir("tools");
     for (const manager of managers) {
         writeFileSync(join(bin, manager), "#!/bin/sh\nexit 0\n");
         chmodSync(join(bin, manager), 0o755);

@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BitbucketClient, bitbucketCredentials, parseDotenv } from "../src/forge/bitbucket.ts";
+import { tempDir } from "./helpers.ts";
 
 type Recorded = { method: string; path: string; auth: string | null; body: unknown };
 
@@ -157,7 +157,7 @@ describe("Bitbucket Cloud client", () => {
     });
 
     test("credentials come from env first, then the repo-root .env", () => {
-        const root = mkdtempSync(join(tmpdir(), "toli-bb-"));
+        const root = tempDir("bb");
         writeFileSync(
             join(root, ".env"),
             '# comment\nexport BITBUCKET_USERNAME="dot"\nBITBUCKET_API_TOKEN=dottok # trailing\n',

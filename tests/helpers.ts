@@ -1,5 +1,14 @@
 import { spyOn } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -14,6 +23,20 @@ export const GIT_ENV: Record<string, string> = {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
 };
+
+const temps: string[] = [];
+
+/** A fresh `toli-<prefix>-*` dir under the OS temp dir, removed after the whole run (tests/setup.ts). */
+export function tempDir(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), `toli-${prefix}-`));
+    temps.push(dir);
+    return dir;
+}
+
+/** Removes every dir made by `tempDir`. */
+export function removeTempDirs(): void {
+    for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
+}
 
 export type ToliRun = { code: number; stdout: string; stderr: string };
 
@@ -33,7 +56,7 @@ export type Sandbox = {
  * empty crontab that refuses writes; a test that wants either stubs its own.
  */
 export function sandbox(): Sandbox {
-    const root = mkdtempSync(join(tmpdir(), "toli-test-"));
+    const root = tempDir("test");
     const stubs = join(root, ".stubs");
     mkdirSync(stubs);
     const stub: Sandbox["stub"] = (name, script) => {

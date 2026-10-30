@@ -1,21 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import {
-    lstatSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    readlinkSync,
-    realpathSync,
-    symlinkSync,
-    writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { GENERIC_NAMES, guidanceRules, leadGuidance } from "../src/harness/guidance.ts";
 import { HARNESSES, headlessCommand } from "../src/harness/harness.ts";
 import { claudeAction, guardDecision, ompAction } from "../src/harness/lead-guard.ts";
 import { shimItems, syncShims } from "../src/harness/sync.ts";
-import { sandbox } from "./helpers.ts";
+import { sandbox, tempDir } from "./helpers.ts";
 
 const INPUT = { brief: "TOLI_BRIEF v1\ndo it", cwd: "/w/projects/alpha", root: "/w", maxMinutes: 30 };
 
@@ -104,7 +94,7 @@ describe("headless commands", () => {
 });
 
 describe("lead guard", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "toli-guard-")));
+    const root = realpathSync(tempDir("guard"));
     const lead = { root, cwd: root, jawan: false };
 
     test("the lead may write toli's records but not project or toli source files", () => {
@@ -147,7 +137,7 @@ describe("lead guard", () => {
 
     // A toli reached through a symlink (macOS /tmp -> /private/tmp) with a project linked to a checkout in temp.
     function linkedBox() {
-        const base = realpathSync(mkdtempSync(join(tmpdir(), "toli-guard-link-")));
+        const base = realpathSync(tempDir("guard-link"));
         const real = join(base, "real-root");
         const alias = join(base, "alias-root");
         const checkout = join(base, "checkout");
@@ -288,7 +278,7 @@ describe("lead guidance", () => {
 
 describe("harness sync", () => {
     test("creates every shim once, then reports everything ok; --check never writes", () => {
-        const root = mkdtempSync(join(tmpdir(), "toli-sync-"));
+        const root = tempDir("sync");
         expect(syncShims(root, true).every((result) => result.state === "missing" && result.action === "none")).toBe(
             true,
         );
@@ -302,13 +292,13 @@ describe("harness sync", () => {
     });
 
     test("repairs drift but never replaces a real directory", () => {
-        const root = mkdtempSync(join(tmpdir(), "toli-sync-"));
+        const root = tempDir("sync");
         syncShims(root, false);
         writeFileSync(join(root, "CLAUDE.md"), "edited\n");
         mkdirSync(join(root, ".pi", "prompts-real"), { recursive: true });
         const results = syncShims(root, false);
         expect(results.find((result) => result.path === "CLAUDE.md")?.action).toBe("updated");
-        const blockedRoot = mkdtempSync(join(tmpdir(), "toli-sync-"));
+        const blockedRoot = tempDir("sync");
         mkdirSync(join(blockedRoot, ".agents", "skills"), { recursive: true });
         const blocked = syncShims(blockedRoot, false).find((result) => result.path === ".agents/skills");
         expect(blocked?.state).toBe("blocked");

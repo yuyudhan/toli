@@ -1,6 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
     describeInstalled,
@@ -9,7 +8,7 @@ import {
     upgradeBlockers,
     versionCommand,
 } from "../src/release/upgrade.ts";
-import { commandIn, type Sandbox, sandbox } from "./helpers.ts";
+import { commandIn, type Sandbox, sandbox, tempDir } from "./helpers.ts";
 
 // Each test builds a release repo with ~20 git processes plus several bin/toli runs (~1.5 s idle); under a loaded
 // machine that can pass Bun's 5 s default, so this file allows 20 s per test.
@@ -152,6 +151,6 @@ describe("version and upgrade checks in process", () => {
             "tracked files have local changes; commit or move them first:\n  M CHANGELOG.md",
             'HEAD is on branch "main"; upgrade moves release installs (detached at a vX.Y.Z tag). On a development clone use git directly.',
         ]);
-        expect(() => installedVersion(mkdtempSync(join(tmpdir(), "toli-not-git-")))).toThrow("is not a git checkout");
+        expect(() => installedVersion(tempDir("not-git"))).toThrow("is not a git checkout");
     });
 });

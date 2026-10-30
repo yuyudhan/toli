@@ -8,5 +8,7 @@
 # Raise both as in-process tests are added.
 # Discover tests only in tests/: projects/ holds full clones whose own test files must never run here.
 root = "tests"
+# Removes the temp dirs tests/helpers.ts `tempDir` made, once the whole run ends.
+preload = ["./tests/setup.ts"]
 coveragePathIgnorePatterns = ["tests/**"]
 coverageThreshold = { lines = 0.1, functions = 0.0 }
