@@ -144,7 +144,12 @@ describe("Bitbucket Cloud client", () => {
 
     test("API errors carry the HTTP status and message", async () => {
         useStub();
-        await expect(new BitbucketClient("ws/app").status({ id: "404" })).rejects.toThrow("HTTP 404 Not found");
+        const failure = await new BitbucketClient("ws/app").status({ id: "404" }).then(
+            () => undefined,
+            (error: unknown) => error,
+        );
+        expect(failure).toBeInstanceOf(Error);
+        expect(String(failure)).toContain("HTTP 404 Not found");
     });
 
     test("missing credentials fail with the setup hint", () => {

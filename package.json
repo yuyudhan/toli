@@ -10,7 +10,7 @@
     "scripts": {
         "format": "bun scripts/format.ts write",
         "format:check": "bun scripts/format.ts check",
-        "lint": "bun scripts/format.ts lint && bun scripts/guard.ts",
+        "lint": "bun scripts/format.ts lint && bun scripts/guard.ts && bun scripts/useless-await.ts",
         "typecheck": "tsc --noEmit",
         "tools": "bun scripts/format.ts tools",
         "test": "bun test --timeout 60000",
