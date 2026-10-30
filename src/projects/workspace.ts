@@ -80,29 +80,37 @@ export function gitWorktrees(clone: string): { path: string; branch: string | nu
     return entries;
 }
 
+/** Live tasks of the project (but `except`) whose recorded workspace is `clone` on a branch other than `branch`. */
+export function cloneHolders(project: string, clone: string, branch: string, except?: string): Task[] {
+    return loadBacklog().tasks.filter(
+        (other) =>
+            other.id !== except &&
+            other.project === project &&
+            LIVE.includes(other.status) &&
+            other.workspace !== undefined &&
+            samePath(other.workspace.path, clone) &&
+            other.workspace.branch !== branch,
+    );
+}
+
+/** `T1 (active) is using it on <branch>, ...` for cloneHolders' result. */
+export function holdersText(holders: Task[]): string {
+    return holders
+        .map((other) => `${other.id} (${other.status}) is using it on ${other.workspace?.branch ?? "its branch"}`)
+        .join(", ");
+}
+
 function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspace {
     const base = task.workspace?.base ?? baseBranch(project, clone);
     const branch = task.workspace?.branch ?? taskBranch(task);
     const workspace: TaskWorkspace = { strategy: "branch-per-task", path: clone, branch, base };
     const head = currentBranch(clone);
     if (head === branch) return workspace;
-    const holders = loadBacklog().tasks.filter(
-        (other) =>
-            other.id !== task.id &&
-            other.project === project.name &&
-            LIVE.includes(other.status) &&
-            other.workspace !== undefined &&
-            samePath(other.workspace.path, clone) &&
-            other.workspace.branch !== branch,
-    );
+    const holders = cloneHolders(project.name, clone, branch, task.id);
     if (holders.length > 0)
         throw new ToliError(
-            `refusing to switch projects/${project.name} to ${branch}: ${holders
-                .map(
-                    (other) =>
-                        `${other.id} (${other.status}) is using it on ${other.workspace?.branch ?? "its branch"}`,
-                )
-                .join(", ")}. Wait for that task to land, or give each task its own checkout: ` +
+            `refusing to switch projects/${project.name} to ${branch}: ${holdersText(holders)}. ` +
+                `Wait for that task to land, or give each task its own checkout: ` +
                 `bin/toli project set ${project.name} --workspace worktree-per-task (on ${persona().user}'s word).`,
         );
     const changes = dirty(clone);
