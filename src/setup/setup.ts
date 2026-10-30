@@ -7,6 +7,7 @@ import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, readJson, ToliError, writeJsonAtomic } from "../core/util.ts";
 import { seedLocal } from "../helpers/local.ts";
+import { setupRemaining } from "../records/next.ts";
 import { pendingIds, type SetupItem, setupChecklist } from "./checklist.ts";
 
 /** state/setup-shown.json: the pending set the user was last told about (or snoozed). */
@@ -47,11 +48,6 @@ export function noticeDue(pending: readonly string[], marker: SetupMarker | null
 export function setupSnoozed(items: SetupItem[]): boolean {
     const marker = readMarker();
     return marker?.snoozed === true && !noticeDue(pendingIds(items), marker);
-}
-
-/** "Setup: N steps remain": the head of the notice and of the digest's Next setup action. */
-export function setupRemaining(remaining: number, label = "Setup"): string {
-    return `${label}: ${remaining} step${remaining === 1 ? "" : "s"} remain${remaining === 1 ? "s" : ""}`;
 }
 
 export function noticeText(remaining: number): string {

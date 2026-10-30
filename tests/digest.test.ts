@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { nextActions } from "../src/records/digest.ts";
+import { nextActions } from "../src/records/next.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Digest = {
