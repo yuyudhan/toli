@@ -60,14 +60,17 @@ export function alwaysLoaded(): MemoryFile[] {
     return [memoryFile(paths.malik(), "pinned"), memoryFile(paths.learnings(), "aging")];
 }
 
-/** Per-project notes: loaded only into briefs for that project, so reported but not counted. */
+/** Per-project notes (`data/projects/<p>/notes.md`): loaded only into briefs for that project, so reported but not counted. */
 export function noteFiles(): MemoryFile[] {
-    const dir = paths.notesDir();
+    const dir = paths.projectsDataDir();
     if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-        .filter((name) => name.endsWith(".md"))
+    return readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
         .sort()
-        .map((name) => memoryFile(join(dir, name), "aging"));
+        .map((project) => paths.projectNotes(project))
+        .filter((path) => existsSync(path))
+        .map((path) => memoryFile(path, "aging"));
 }
 
 function sized(file: MemoryFile): FileSize {
@@ -153,12 +156,16 @@ export function staleEntries(at: Date = now()): StaleEntry[] {
     return stale;
 }
 
-/** Resolve `learnings`, `malik.md`, `notes/<project>`, `data/notes/<project>.md` (or an absolute path) to a memory file. */
+/**
+ * Resolve `learnings`, `malik.md`, `notes/<project>`, `data/projects/<project>/notes.md` (or an absolute path)
+ * to a memory file. `notes/<project>` is shorthand for `projects/<project>/notes`.
+ */
 export function resolveMemoryFile(spec: string): MemoryFile {
     const dataDir = join(paths.root(), "data");
     const absolute = isAbsolute(spec) ? spec : resolve(paths.root(), spec);
     const fromRoot = relative(paths.root(), absolute);
-    const name = (fromRoot.startsWith("data/") ? relative(dataDir, absolute) : spec).replace(/\.md$/, "");
+    const raw = (fromRoot.startsWith("data/") ? relative(dataDir, absolute) : spec).replace(/\.md$/, "");
+    const name = raw.replace(/^notes\/([^/]+)$/, "projects/$1/notes");
     const known = [...alwaysLoaded(), ...noteFiles()];
     const match = known.find((file) => relative(dataDir, file.path).replace(/\.md$/, "") === name);
     if (!match?.exists)
@@ -192,14 +199,20 @@ function archiveBlock(existing: string, entry: Entry, reason: string, at: Date):
 
 export type ArchiveResult = { entry: Entry; archive: string };
 
+/** Archive file for a memory file: project notes keep their per-project name (`<project>.md`), others their basename. */
+function archiveName(file: MemoryFile): string {
+    const project = /^projects\/([^/]+)\/notes\.md$/.exec(relative(join(paths.root(), "data"), file.path))?.[1];
+    return project === undefined ? basename(file.path) : `${project}.md`;
+}
+
 /**
- * Move one entry to data/archive/<basename>.md with provenance. The archive is written before the source, so a crash
+ * Move one entry to data/archive/<name>.md with provenance. The archive is written before the source, so a crash
  * in between leaves the entry in both places, never in neither. Pinned entries need `force` (Malik's explicit word).
  */
 export function archiveEntry(spec: string, selector: string, reason: string, force: boolean): ArchiveResult {
     if (reason.trim() === "") throw new ToliError("memory archive needs --reason <text>");
     const file = resolveMemoryFile(spec);
-    const archivePath = paths.archive(basename(file.path));
+    const archivePath = paths.archive(archiveName(file));
     return withLock(paths.lock("memory"), () => {
         const source = readFileSync(file.path, "utf8");
         const entry = findEntry(parseEntries(file.file, source, file.tier), selector);

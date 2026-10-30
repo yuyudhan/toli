@@ -22,14 +22,14 @@ bodies, code, or project files (write "the user" if you must refer to him).
 
 - Name: <project>
 - Path: <absolute path from `bin/toli project path <project>`>
-- Notes: <absolute path to data/notes/<project>.md> - read it first (stack, commands, URLs, proof, gotchas)
+- Notes: <absolute path to data/projects/<project>/notes.md> - read it first (stack, commands, URLs, proof, gotchas)
 - Branch: <fixed branch from `bin/toli project list --json`, or "current branch"> - stay on it; never switch
 - Shape: <ship | scout>
 
 ## Spec
 
 <What to do, concretely. Include the current behaviour, the wanted behaviour, relevant files or symbols if known,
-links to scout reports (data/reports/<T-id>.md), and any decisions Malik already made.>
+links to scout reports (data/projects/<project>/reports/<T-id>.md), and any decisions Malik already made.>
 
 Other jawans may be working in the same project at the same time, possibly in the same files. Change only what this
 task needs, and never revert or reformat changes you did not make.
@@ -89,8 +89,8 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
   checks your evidence and lands the work.
 - Ship, land yourself (Malik waived review, or the change is docs/config only): after your checks pass, commit via
   `bin/toli commit` as above, then `bin/toli task done <T-id> --commit <sha> --note "<one line>"`.
-- Scout: write your report (format below) to `<toli root>/data/reports/<T-id>.md`, then
-  `bin/toli task done <T-id> --report data/reports/<T-id>.md`.
+- Scout: write your report (format below) to `<toli root>/data/projects/<project>/reports/<T-id>.md`, then
+  `bin/toli task done <T-id> --report data/projects/<project>/reports/<T-id>.md`.
 
 If you are blocked on a decision only Malik can make, record it with
 `bin/toli task hold <T-id> --question "<the question in plain words>"` and report; do not guess.

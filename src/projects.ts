@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Args } from "./args.ts";
 import { git, gitOk, isGitRepo, unpushedBranches } from "./git.ts";
 import { paths } from "./paths.ts";
+import { projectSetupCommand } from "./project-setup.ts";
 import { now, out, printJson, readJson, requireName, run, ToliError, withLock, writeJsonAtomic } from "./util.ts";
 
 export const MODES = ["commit", "pr", "no-mistakes"] as const;
@@ -14,6 +15,7 @@ export type Forge = (typeof FORGES)[number];
 /**
  * A project cloned on this machine; `data/projects.json` lists only this machine's clones.
  * `branch`: the fixed working branch `toli commit` requires. `forge`/`forgeHost`: override origin-based detection.
+ * `deliverySetAt`: when the user's delivery choice (mode/branch) was recorded; absent means mode is a default.
  */
 export type Project = {
     name: string;
@@ -23,6 +25,7 @@ export type Project = {
     branch?: string;
     forge?: Forge;
     forgeHost?: string;
+    deliverySetAt?: string;
 };
 
 type ProjectsFile = { projects: Project[] };
@@ -30,7 +33,7 @@ type ProjectsFile = { projects: Project[] };
 /** Registered projects. Fields from older files (e.g. the removed `owner`) are dropped here, so the next write omits them. */
 export function loadProjects(): Project[] {
     return readJson<ProjectsFile>(paths.projects(), { projects: [] }).projects.map(
-        ({ name, url, mode, addedAt, branch, forge, forgeHost }) => ({
+        ({ name, url, mode, addedAt, branch, forge, forgeHost, deliverySetAt }) => ({
             name,
             url,
             mode,
@@ -38,6 +41,7 @@ export function loadProjects(): Project[] {
             ...(branch ? { branch } : {}),
             ...(forge ? { forge } : {}),
             ...(forgeHost ? { forgeHost } : {}),
+            ...(deliverySetAt ? { deliverySetAt } : {}),
         }),
     );
 }
@@ -226,6 +230,7 @@ function set(argv: string[]): void {
         if (mode !== undefined) project.mode = mode;
         if (branch === null) delete project.branch;
         else if (branch !== undefined) project.branch = branch;
+        if (mode !== undefined || branch !== undefined) project.deliverySetAt = now().toISOString();
         if (forge === null) delete project.forge;
         else if (forge !== undefined) project.forge = forge;
         if (forgeHost === null) delete project.forgeHost;
@@ -236,7 +241,7 @@ function set(argv: string[]): void {
 }
 
 function drop(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["delete-clone"] });
+    const args = new Args(argv, { booleans: ["delete-clone", "delete-data"] });
     args.maxPositional(1);
     const name = args.pos(0, "name");
     findProject(name);
@@ -253,12 +258,23 @@ function drop(argv: string[]): void {
         const index = projects.findIndex((entry) => entry.name === name);
         if (index !== -1) projects.splice(index, 1);
     });
+    const removed: string[] = [];
     if (args.bool("delete-clone") && existsSync(dir)) {
         rmSync(dir, { recursive: true, force: true });
-        out(`dropped ${name} and deleted projects/${name}`);
-    } else {
-        out(`dropped ${name}${existsSync(dir) ? ` (clone kept at projects/${name})` : ""}`);
+        removed.push(`projects/${name}`);
     }
+    const data = paths.projectDataDir(name);
+    if (args.bool("delete-data") && existsSync(data)) {
+        rmSync(data, { recursive: true, force: true });
+        removed.push(`data/projects/${name}`);
+    }
+    const kept = [
+        ...(existsSync(dir) ? [`clone kept at projects/${name}`] : []),
+        ...(existsSync(data) ? [`data kept at data/projects/${name}`] : []),
+    ];
+    out(
+        `dropped ${name}${removed.length > 0 ? ` and deleted ${removed.join(" and ")}` : ""}${kept.length > 0 ? ` (${kept.join("; ")})` : ""}`,
+    );
 }
 
 function importClones(argv: string[]): void {
@@ -294,6 +310,7 @@ const PROJECT_SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
     list,
     path,
     set,
+    setup: projectSetupCommand,
     drop,
     import: importClones,
 };
@@ -301,6 +318,6 @@ const PROJECT_SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
 export function projectCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
     const handler = sub !== undefined && Object.hasOwn(PROJECT_SUBCOMMANDS, sub) ? PROJECT_SUBCOMMANDS[sub] : undefined;
-    if (!handler) throw new ToliError("usage: toli project add|ensure|list|path|set|drop|import");
+    if (!handler) throw new ToliError("usage: toli project add|ensure|list|path|set|setup|drop|import");
     handler(rest);
 }

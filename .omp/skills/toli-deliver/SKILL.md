@@ -16,7 +16,8 @@ turn, and relays the result.
   preference, not standing permission.
 - A brief that pushes, opens a PR, merges, or tags quotes Malik's word for that action verbatim in place of the
   brief's "Never push, merge, or open a PR" rule, and allows exactly that action and nothing more.
-- Branches only when Malik asks.
+- Branches only when Malik asks, or when the project's mode (`pr`, `no-mistakes` without a fixed branch) is his
+  standing choice of a work branch per change.
 - Never discard uncommitted work: no `git reset --hard`, `git checkout -- .`, `git stash`, `git clean`, branch
   deletion, or force push. If git state is in the way, the jawan stops and reports; ask Malik.
 - No AI co-author trailers; `bin/toli commit` strips them. Never put "Malik" in commit messages or PR bodies.
@@ -37,10 +38,12 @@ on and ask how to proceed (the refusal message lists the options).
 
 ## Mode: pr
 
-Only when Malik asked for a branch or PR on this work.
+When the project's mode is `pr` (Malik chose pull/merge requests at `/add-project` or `/setup-project`), or Malik
+asked for a branch or PR on this work. The mode makes a work branch the default; pushing and opening the PR still
+need his word for the change.
 
 1. Branch before the implementer starts, if possible: put `bin/toli branch <project> <branch>` as the first step of
-   the implementer's brief (Malik's request for the branch is the word for it).
+   the implementer's brief (the project's mode, or Malik's request for the branch, is the word for it).
 2. The verifier commits with `bin/toli commit` as above.
 3. Ask Malik for the go-ahead to push and open the PR, unless he already said so for this change.
 4. Dispatch a `sonic` jawan whose brief quotes his word and runs (readiness first with `bin/toli forge <project>`;
@@ -58,9 +61,10 @@ Only when Malik asked for a branch or PR on this work.
 
 ## Mode: no-mistakes
 
-Only when Malik asked for a branch/PR on this work. The gate validates committed history on a non-default branch:
-branch first (step 1 above), let the verifier commit, then dispatch a gate jawan per `skill://toli-nm`. The gate
-itself pushes and opens the PR; Malik's request for the branch/PR is that word.
+When the project's mode is `no-mistakes`, or Malik asked for a branch/PR through the gate on this work. The gate
+validates committed history on a non-default branch: the project's fixed branch when it has one, otherwise branch
+first (step 1 above). Let the verifier commit, then dispatch a gate jawan per `skill://toli-nm`. The gate itself pushes
+and opens the PR, so ask Malik for his word on this change first unless he already gave it.
 
 ## Landing report
 

@@ -1,0 +1,130 @@
+# Projects
+
+A project is a git repository the lead (Sardar) can dispatch jawans into. Each machine clones the projects it works on
+into `projects/<name>/` and records them in `data/projects.json`; everything toli keeps about a project lives in one
+directory, `data/projects/<name>/`.
+
+## Registering a project
+
+In the lead session:
+
+    /add-project <name> <git-url> [machine]
+
+Before anything is cloned, the lead asks one batched, multiple-choice question:
+
+> How should work land in **<name>**?
+>
+> 1. **Delivery**
+>     - (a) Pull/merge requests from a work branch (forge detected from the URL: GitHub, GitLab incl. self-hosted,
+>       or Bitbucket)
+>     - (b) Commit on whatever branch is checked out
+>     - (c) Commit on a fixed branch: which one?
+> 2. **no-mistakes gate** before PRs (only with a or c): yes / no
+> 3. **Test / smoke command**: type it, or "detect" and a jawan reads it from the repo
+>
+> Reply like `a, no, detect` or `c main, yes, bun test`.
+
+With the answer, a jawan clones the repo (`bin/toli project add`), records the delivery choice
+(`bin/toli project set`), checks the forge and its auth (`bin/toli forge <name>`), and seeds
+`data/projects/<name>/notes.md` from the repo's README, agent docs, and build files. Anything it cannot detect (an
+unknown forge, no test command) comes back to the user as one follow-up question.
+
+Without a lead session, the same steps by hand:
+
+    bin/toli project add <name> <git-url>
+    bin/toli project set <name> --mode pr --branch none
+    bin/toli project setup <name>
+
+`bin/toli project ensure <name> <git-url>` is the idempotent form used when work is sent to another machine;
+`bin/toli project import` registers clones copied into `projects/` by hand.
+
+## Delivery modes
+
+| Choice                                  | `bin/toli project set <name> ...`   | What jawans do                                                  |
+| --------------------------------------- | ----------------------------------- | --------------------------------------------------------------- |
+| (a) pull/merge requests                 | `--mode pr --branch none`           | branch per change, commit, then push + PR on the user's word    |
+| (b) commit on the checked-out branch    | `--mode commit --branch none`       | commit on whatever branch the clone is on; never push           |
+| (c) commit on a fixed branch            | `--mode commit --branch <b>`        | commit only on `<b>`; `bin/toli commit` refuses elsewhere       |
+| (a) or (c) through the no-mistakes gate | `--mode no-mistakes [--branch <b>]` | the gate validates, pushes, and opens the PR on the user's word |
+
+- `--mode` or `--branch` records when the choice was made (`deliverySetAt` in `project list --json`). A project
+  without it only has the default (`commit`, no fixed branch), and `project setup` asks for a real answer.
+- The forge comes from the clone's `origin` (GitHub, GitLab including self-hosted hosts known to `glab`, Bitbucket
+  Cloud). Override only when detection fails: `--forge github|gitlab|bitbucket` and `--forge-host <host>`;
+  `none` clears either.
+- The mode chooses the flow. Pushing, opening a PR, merging, and releasing still need the user's word for each change.
+
+## Setting up an existing project
+
+Projects registered before the interview, imported clones, and notes that drifted get the same treatment:
+
+    /setup-project <name>                    (lead session)
+    bin/toli project setup <name> [--json]   the checklist for one project
+    bin/toli project setup --all [--json]    every project with gaps, and what each lacks
+
+Example:
+
+    myapp: needs setup
+      [x] clone        projects/myapp on release/next
+      [x] delivery     commit on the fixed branch release/next
+      [ ] smoke        no smoke command in the notes (jawan)
+      [~] freshness    notes last changed 41 days ago; re-check against the repo (jawan)
+
+| Item          | Checked                                                                        |
+| ------------- | ------------------------------------------------------------------------------ |
+| `clone`       | the clone exists on this machine                                               |
+| `delivery`    | the mode was chosen, not defaulted                                             |
+| `branch`      | a fixed branch exists locally or on origin                                     |
+| `forge`       | the forge is detected (required for `pr` / `no-mistakes`)                      |
+| `forge-auth`  | `gh`/`glab` are authenticated, or Bitbucket credentials exist (single project) |
+| `no-mistakes` | the clone has the `no-mistakes` remote (gate mode)                             |
+| `notes`       | `data/projects/<name>/notes.md` exists                                         |
+| `test`        | a test command in the notes (a `- Test:` line, or any backticked test command) |
+| `smoke`       | a smoke command in the notes                                                   |
+| `local-stack` | a `## Local stack` section (commands, or `- None`)                             |
+| `urls`        | a `## URLs` section (local and staging URLs, or `- None`)                      |
+| `proof`       | a `## Proof` section (required evidence, screenshot widths)                    |
+| `freshness`   | the notes changed within the last 30 days                                      |
+
+`[x]` done, `[ ]` missing, `[~]` stale, `[-]` unknown but not needed in this mode. Each gap names who fills it: the
+user (the lead batches every such question into one message) or a jawan (detected from the repo). `--all` and
+`bin/toli digest` use the fast local checks only (no forge auth probe), so digest can say how many projects need setup.
+
+## Data layout
+
+    data/projects/<name>/
+      notes.md        stack, commands, local stack, URLs, proof, delivery, gotchas; fed into every brief
+      briefs/         each dispatched brief (T<n>.md, T<n>-verify.md, ...)
+      reports/        scout and task reports (T<n>.md)
+      runs/           jawan and remote run outputs (bin/toli remote --project)
+      decisions.md    held questions and the user's answers (appended by bin/toli task answer)
+
+Cross-project files stay at the top of `data/`: the user's preferences (`malik.md`), `learnings.md`, `jobs/`,
+`inbox/`, `archive/`, toli-wide `reports/`, and `remote/` for remote runs without a project. In code, every path
+comes from `src/paths.ts` (`paths.projectNotes(p)`, `projectBriefsDir(p)`, `projectReportsDir(p)`,
+`projectReport(p, id)`, `projectRunsDir(p)`, `projectDecisions(p)`).
+
+`bin/toli project drop <name>` keeps both the clone and `data/projects/<name>/`; `--delete-clone` and `--delete-data`
+remove them (irreversible; the lead confirms first).
+
+## Moving data from the old layout
+
+Installs from before this layout kept everything flat under `data/` (`notes/<name>.md`, `reports/T<n>.md`,
+`remote/`, loose `briefs/`). One command moves it:
+
+    bin/toli migrate --dry-run    print the plan; change nothing
+    bin/toli migrate              apply it
+
+- Notes move to `data/projects/<name>/notes.md`; task reports to the reports directory of the task's project (looked up
+  in the backlog and the task archive); remote runs that name their project to its `runs/`; briefs to the `briefs/`
+  of the project whose scheduled job uses them, else of the project the file name names (`myapp.md`,
+  `myapp-review.md`). A name that fits several projects (`myapp-admin-x.md` with `myapp` and `myapp-admin`) stays.
+- Everything else stays where it is and is listed as kept: toli-wide reports, reports of unknown tasks, project-less
+  remote runs, briefs that name no project.
+- Nothing is overwritten. A different file already at a destination is a conflict: the plan shows it and `migrate`
+  refuses without moving anything. An identical copy is a duplicate, and the old copy is removed.
+- Mentions of moved files in `config/jobs.json` prompts, `data/backlog.json` task notes, `data/malik.md`,
+  `data/learnings.md`, and project notes are rewritten to the new paths.
+- Running it again finds nothing to move.
+
+Back up first: `tar czf ~/toli-data-backup-$(date +%Y%m%d-%H%M).tgz data`.

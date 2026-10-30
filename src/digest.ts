@@ -45,7 +45,7 @@ const RECENT_REPORTS = 5;
 
 function recentReports(): ReportEntry[] {
     const entries: ReportEntry[] = [];
-    for (const dir of [paths.reportsDir(), paths.remoteDir()]) {
+    for (const dir of reportDirs()) {
         if (!existsSync(dir)) continue;
         for (const file of readdirSync(dir).filter((entry) => entry.endsWith(".md"))) {
             const path = join(dir, file);
@@ -53,6 +53,21 @@ function recentReports(): ReportEntry[] {
         }
     }
     return entries.sort((a, b) => b.modified.localeCompare(a.modified)).slice(0, RECENT_REPORTS);
+}
+
+/** Toli-wide and project-less dirs plus every `data/projects/<p>/reports` and `runs`. */
+function reportDirs(): string[] {
+    const base = paths.projectsDataDir();
+    const projects = existsSync(base)
+        ? readdirSync(base, { withFileTypes: true })
+              .filter((entry) => entry.isDirectory())
+              .map((entry) => entry.name)
+        : [];
+    return [
+        paths.reportsDir(),
+        paths.remoteDir(),
+        ...projects.flatMap((project) => [paths.projectReportsDir(project), paths.projectRunsDir(project)]),
+    ];
 }
 
 export function buildDigest(): Digest {

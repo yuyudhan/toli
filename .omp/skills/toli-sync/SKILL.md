@@ -24,7 +24,9 @@ to whichever machine is free:
     bin/toli pick --project <p>     # best machine for one unit of work (exit 2 + reasons when none)
     bin/toli remote auto "<prompt>" --project <p>   # prints `local`, or clones if needed and runs it there
 
-`bin/toli remote <machine> "<prompt>"` targets a named machine. Output is saved in `data/remote/<stamp>-<machine>.md`.
+`bin/toli remote <machine> "<prompt>"` targets a named machine. Output is saved in
+`data/projects/<project>/runs/<stamp>-<machine>.md` with `--project <project>`, else in
+`data/remote/<stamp>-<machine>.md`.
 Remote runs execute through `bin/toli exec` on the target and count as load there while they run. Per-machine
 thresholds live in `config/machine.json` `capacity` (`maxRuns`, default cpus/4; `maxLoadPerCpu` 0.8;
 `minMemAvailableMB` 2048; `minDiskFreeGB` 5). An unreachable machine is reported, never fatal.

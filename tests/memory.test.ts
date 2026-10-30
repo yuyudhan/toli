@@ -41,7 +41,7 @@ function memoryBox(): Sandbox {
     write(box, "data/learnings.md", LEARNINGS);
     write(
         box,
-        "data/notes/kalki.md",
+        "data/projects/kalki/notes.md",
         "# kalki\n\n## Gotchas\n\n- 2026-09-15: old note fact\n- 2026-10-29: new note fact\n",
     );
     return box;
@@ -55,7 +55,7 @@ describe("memory budget", () => {
         const box = sandbox();
         write(box, "data/malik.md", "a".repeat(3000));
         write(box, "data/learnings.md", "ééééé");
-        write(box, "data/notes/kalki.md", "n".repeat(30));
+        write(box, "data/projects/kalki/notes.md", "n".repeat(30));
         const result = report(box);
         expect(result.files.map((file) => [file.file, file.tokens])).toEqual([
             ["data/malik.md", 1000],
@@ -64,7 +64,7 @@ describe("memory budget", () => {
         expect(result.total).toBe(1004);
         expect(result.budget).toBe(7500);
         expect(result.over).toBe(false);
-        expect(result.notes).toEqual([expect.objectContaining({ file: "data/notes/kalki.md", tokens: 10 })]);
+        expect(result.notes).toEqual([expect.objectContaining({ file: "data/projects/kalki/notes.md", tokens: 10 })]);
     });
 
     test("over budget against memoryBudgetTokens from config/machine.json", () => {
@@ -101,7 +101,7 @@ describe("memory stale", () => {
             ["data/learnings.md", "2026-09-01", 59, "aging"],
             ["data/learnings.md", "2026-10-20", 10, "perishable"],
             ["data/learnings.md", null, null, "aging"],
-            ["data/notes/kalki.md", "2026-09-15", 45, "aging"],
+            ["data/projects/kalki/notes.md", "2026-09-15", 45, "aging"],
         ]);
     });
 
@@ -150,7 +150,13 @@ describe("memory archive", () => {
         const box = memoryBox();
         box.ok(["memory", "archive", "notes/kalki", "5", "--reason", "stale"], { now: NOW });
         expect(readFileSync(join(box.root, "data/archive/kalki.md"), "utf8")).toContain("- 2026-09-15: old note fact");
-        expect(readFileSync(join(box.root, "data/notes/kalki.md"), "utf8")).not.toContain("old note fact");
+        expect(readFileSync(join(box.root, "data/projects/kalki/notes.md"), "utf8")).not.toContain("old note fact");
+    });
+
+    test("notes resolve by their full data/projects path too", () => {
+        const box = memoryBox();
+        box.ok(["memory", "archive", "data/projects/kalki/notes.md", "6", "--reason", "done"], { now: NOW });
+        expect(readFileSync(join(box.root, "data/archive/kalki.md"), "utf8")).toContain("- 2026-10-29: new note fact");
     });
 
     test("pinned entries refuse without --force and stay put", () => {

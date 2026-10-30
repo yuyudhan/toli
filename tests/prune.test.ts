@@ -72,7 +72,7 @@ function prunable(): Sandbox {
             ],
         }),
     );
-    put(box, "data/reports/T1.md", "investigation", daysAgo(400));
+    put(box, "data/projects/p/reports/T1.md", "investigation", daysAgo(400));
     put(box, "logs/old.log", "old", daysAgo(30));
     put(box, "logs/tick.log", "fresh", daysAgo(1));
     const seen = fileStamp(daysAgo(40));
@@ -123,7 +123,7 @@ describe("prune", () => {
             ["T1", "done", NOW],
             ["T2", "dropped", NOW],
         ]);
-        expect(readFileSync(join(box.root, "data/reports/T1.md"), "utf8")).toBe("investigation");
+        expect(readFileSync(join(box.root, "data/projects/p/reports/T1.md"), "utf8")).toBe("investigation");
         expect(readdirSync(join(box.root, "logs"))).toEqual(["tick.log"]);
         expect(readdirSync(join(box.root, "data/inbox")).map((name) => name.endsWith("-m2.md"))).toEqual([true]);
         expect(plan(box).items).toEqual([]);
