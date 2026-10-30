@@ -4,9 +4,10 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Args } from "./args.ts";
 import { machineSettings } from "./config.ts";
 import { paths } from "./paths.ts";
+import { persona } from "./persona.ts";
 import { now, out, printJson, ToliError, withLock, writeTextAtomic } from "./util.ts";
 
-/** pinned: never ages (Malik's word only); aging: stale after 30 days; perishable `(until: ...)`: after 7 days. */
+/** pinned: never ages (the user's word only); aging: stale after 30 days; perishable `(until: ...)`: after 7 days. */
 export type Tier = "pinned" | "aging" | "perishable";
 
 export const DEFAULT_MEMORY_BUDGET = 7500;
@@ -218,7 +219,7 @@ export function archiveEntry(spec: string, selector: string, reason: string, for
         const entry = findEntry(parseEntries(file.file, source, file.tier), selector);
         if (entry.tier === "pinned" && !force)
             throw new ToliError(
-                `${file.file} line ${entry.line} is pinned (Malik's preference): archive it only on his explicit word, with --force`,
+                `${file.file} line ${entry.line} is pinned (${persona().user}'s preference): archive it only on their explicit word, with --force`,
             );
         const at = now();
         const existing = existsSync(archivePath) ? readFileSync(archivePath, "utf8") : "";

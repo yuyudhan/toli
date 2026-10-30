@@ -5,6 +5,10 @@
 /state/
 /config/
 /logs/
+# Private per-installation helpers (scripts, hooks, helpers.json): never committed.
+/local/
+# Claude Code per-user settings (.claude/settings.json is generated and tracked).
+/.claude/settings.local.json
 
 # Secrets and credentials
 .env

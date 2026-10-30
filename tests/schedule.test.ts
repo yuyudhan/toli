@@ -32,14 +32,14 @@ describe("schedule install on macOS (dry run)", () => {
         const output = plist(box);
         const strings = [...output.matchAll(/<string>([^<]*)<\/string>/g)].map((match) => match[1] ?? "");
         const [label, bun, toli, job, tick, workdir] = strings;
-        expect(label).toBe("com.yuyudhan.toli.tick");
+        expect(label).toBe("com.toli.tick");
         expect([job, tick]).toEqual(["job", "tick"]);
         expect(toli).toBe(join(box.root, "bin", "toli"));
         expect(workdir).toBe(box.root);
         for (const path of [bun, toli, workdir]) expect(isAbsolute(path ?? "")).toBe(true);
         expect(output).toContain("<key>StartInterval</key>\n    <integer>60</integer>");
         expect(output).toContain(`<string>${join(box.root, "logs", "launchd.err.log")}</string>`);
-        expect(existsSync(join(box.root, "com.yuyudhan.toli.tick.plist"))).toBe(false);
+        expect(existsSync(join(box.root, "com.toli.tick.plist"))).toBe(false);
     });
 
     test("PATH holds the directories of the tools jobs call, plus the system dirs", () => {

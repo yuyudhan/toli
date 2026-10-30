@@ -74,10 +74,9 @@ task needs, and never revert or reformat changes you did not make.
 - Browsers run headless only; never open a visible browser window.
 - Stop and report if a login asks for an OTP, captcha, or any second factor. Never try to get past it.
 - Staging and any other shared environment are read-only: look, never change data, settings, or deployments.
-- Disk is tight. Build output goes only in the project's normal `target/` (never `CARGO_TARGET_DIR` or
-  `target/<name>` side dirs). When you finish, after your last test run, delete the Rust `target/` directories you
-  built (`rm -rf <workspace>/target`) and say so in the report; skip any another build is still using (`lsof` on its
-  `.cargo-lock` files shows a process).
+- Build hygiene: follow the project notes' build and cleanup rules (where build output may go, what to delete
+  after your last test run, disk limits). If the notes say nothing, keep build output in the project's default
+  locations and leave no stray files outside the project path.
 
 ## Landing and bookkeeping
 

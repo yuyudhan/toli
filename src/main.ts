@@ -4,6 +4,7 @@ import { digestCommand } from "./digest.ts";
 import { doctorCommand } from "./doctor.ts";
 import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge.ts";
+import { helperCommand } from "./helpers.ts";
 import { inboxCommand } from "./inbox.ts";
 import { memoryCommand } from "./memory.ts";
 import { migrateCommand } from "./migrate.ts";
@@ -44,6 +45,7 @@ const USAGE = `usage: bin/toli <command> [args]
   job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
   job results [--unseen] [--json] | ack
   schedule install|uninstall|status
+  helper list [--json] | install <name>|--all | uninstall <name>|--all | run <name> | status [<name>] [--json]
   inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack
   wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
@@ -97,6 +99,8 @@ export async function main(argv: string[]): Promise<number> {
             case "schedule":
                 scheduleCommand(rest);
                 return 0;
+            case "helper":
+                return await helperCommand(rest);
             case "inbox":
                 inboxCommand(rest);
                 return 0;

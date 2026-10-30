@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { Args } from "./args.ts";
 import { loadMachine } from "./config.ts";
+import { runHook } from "./helper-local.ts";
 import {
     type BegunRun,
     beginJob,
@@ -181,7 +182,12 @@ export async function jobCommand(argv: string[]): Promise<void> {
             return runDueJobs("session");
         case "tick":
             new Args(rest).maxPositional(0);
-            return tick();
+            runHook("pre-tick");
+            try {
+                return await tick();
+            } finally {
+                runHook("post-tick");
+            }
         default:
             throw new ToliError(
                 "usage: toli job add|list|pause|resume|remove|due|begin|finish|run|run-due|tick|results|ack",

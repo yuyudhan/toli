@@ -11,7 +11,9 @@ import {
     sshArgs,
 } from "./config.ts";
 import { git } from "./git.ts";
+import { runHook, seedLocal } from "./helper-local.ts";
 import { paths } from "./paths.ts";
+import { persona } from "./persona.ts";
 import { noCandidateText, pickMachine } from "./pick.ts";
 import { loadProjects } from "./projects.ts";
 import { registerRun, removeRun } from "./resources.ts";
@@ -54,9 +56,11 @@ export function initCommand(argv: string[]): void {
         mkdirSync(join(paths.root(), dir), { recursive: true });
     writeJsonAtomic(paths.machine(), machine);
     if (!existsSync(paths.fleet())) writeJsonAtomic(paths.fleet(), { machines: [] });
+    seedLocal();
     out(
         `initialized ${name} as ${role}${machine.coordinator ? ` (coordinator ${machine.coordinator.ssh}:${machine.coordinator.root})` : ""}`,
     );
+    runHook("post-init");
 }
 
 function syncLocal(): void {
@@ -96,7 +100,7 @@ const REMOTE_HEADER = "[toli remote from ";
 export function remotePrompt(from: string, target: string, prompt: string, project?: string): string {
     return [
         `${REMOTE_HEADER}${from} to ${target}]`,
-        `This request was dispatched by Sardar on ${from}; nobody is watching this run.`,
+        `This request was dispatched by ${persona().lead} on ${from}; nobody is watching this run.`,
         'Rules: commit on the current branch only (bin/toli commit <project> -m "..." -- <paths>); never push, merge, or open a PR;',
         "never ask questions. Finish by reporting the outcome and the evidence (commands run, results, commit shas).",
         ...(project === undefined ? [] : [`Project: ${project} (clone at projects/${project}).`]),

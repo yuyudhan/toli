@@ -12,6 +12,8 @@ export const paths = {
     machine: () => join(repoRoot(), "config", "machine.json"),
     fleet: () => join(repoRoot(), "config", "fleet.json"),
     jobsConfig: () => join(repoRoot(), "config", "jobs.json"),
+    /** Optional persona names (user title, lead, worker); see src/persona.ts. */
+    persona: () => join(repoRoot(), "config", "persona.json"),
     projects: () => join(repoRoot(), "data", "projects.json"),
     backlog: () => join(repoRoot(), "data", "backlog.json"),
     projectDir: (name: string) => join(repoRoot(), "projects", name),
@@ -54,4 +56,10 @@ export const paths = {
     lock: (name: string) => join(repoRoot(), "state", `${name}.lock`),
     logsDir: () => join(repoRoot(), "logs"),
     tickLog: () => join(repoRoot(), "logs", "tick.log"),
+    /** Private per-installation helpers, never committed: local/{scripts,hooks,helpers.json,README.md}. */
+    localDir: () => join(repoRoot(), "local"),
+    localScriptsDir: () => join(repoRoot(), "local", "scripts"),
+    localHooksDir: () => join(repoRoot(), "local", "hooks"),
+    helpersConfig: () => join(repoRoot(), "local", "helpers.json"),
+    helperLog: (name: string) => join(repoRoot(), "logs", "helpers", `${name}.log`),
 };
