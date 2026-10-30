@@ -8,7 +8,9 @@ describe("fixed working branch", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const dir = withProject(box, "app");
-        expect(box.ok(["project", "set", "app", "--branch", "develop"])).toBe("app: mode=commit branch=develop");
+        expect(box.ok(["project", "set", "app", "--branch", "develop"])).toBe(
+            "app: mode=commit workspace=same-branch branch=develop",
+        );
         writeFileSync(join(dir, "a.txt"), "a\n");
         const head = box.git(dir, ["rev-parse", "HEAD"]);
         const refused = box.toli(["commit", "app", "-m", "add a", "--", "a.txt"]);
@@ -48,13 +50,23 @@ describe("fixed working branch", () => {
         };
         writeFileSync(file, JSON.stringify({ projects: [{ ...legacy, owner: "someone" }] }));
         expect(JSON.parse(box.ok(["project", "list", "--json"]))).toEqual([
-            { ...legacy, branch: null, path: join(box.root, "projects", "old"), cloned: false },
+            {
+                ...legacy,
+                branch: null,
+                workspace: "branch-per-task",
+                standing: { push: false, pr: false },
+                path: join(box.root, "projects", "old"),
+                cloned: false,
+                linkedTo: null,
+                brokenLink: null,
+            },
         ]);
         box.ok(["project", "set", "old", "--branch", "main", "--forge", "gitlab", "--forge-host", "Git.Example.com"]);
         expect(JSON.parse(readFileSync(file, "utf8")).projects).toEqual([
             {
                 ...legacy,
                 branch: "main",
+                workspace: "branch-per-task",
                 forge: "gitlab",
                 forgeHost: "git.example.com",
                 deliverySetAt: expect.any(String),

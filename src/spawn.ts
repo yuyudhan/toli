@@ -24,6 +24,7 @@ import { findProject } from "./projects.ts";
 import { activeRuns, type JawanRun, killRun, listRuns, loadRun, runLine, updateRun } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 import { now, out, printJson, ToliError, writeJsonAtomic } from "./util.ts";
+import { prepareWorkspace, workspaceBrief } from "./workspace.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
 const DEFAULT_MAX_MINUTES = 120;
@@ -94,10 +95,19 @@ function plan(options: SpawnOptions): {
     return { harness, brief, task: taskId, project, work, model, cwd };
 }
 
-/** Start one jawan run detached and return its record (status `starting`, supervisor pid set). */
+/**
+ * Start one jawan run detached and return its record (status `starting`, supervisor pid set). A non-scout task first
+ * gets its workspace per the project's strategy (branch switched or worktree added), the jawan runs there, and the
+ * brief gains a Workspace block naming the path and branch.
+ */
 export function spawnJawan(options: SpawnOptions): JawanRun {
     const resolved = plan(options);
     loadMachine();
+    if (resolved.task !== null && resolved.project !== null && resolved.work !== "scout") {
+        const workspace = prepareWorkspace(resolved.task);
+        resolved.cwd = workspace.path;
+        resolved.brief = `${resolved.brief.trimEnd()}\n${workspaceBrief(resolved.project, resolved.task, workspace)}`;
+    }
     const maxMinutes = options.maxMinutes ?? DEFAULT_MAX_MINUTES;
     const startedAt = now();
     const id = newRunId(startedAt);

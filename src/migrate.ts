@@ -3,7 +3,7 @@ import { dirname, join, relative } from "node:path";
 import { Args } from "./args.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
 import { paths } from "./paths.ts";
-import { loadProjects } from "./projects.ts";
+import { loadProjects, migrateWorkspaces, projectsMissingWorkspace } from "./projects.ts";
 import { isValidName, out, printJson, readJson, ToliError, withLock, writeTextAtomic } from "./util.ts";
 
 /**
@@ -15,6 +15,8 @@ import { isValidName, out, printJson, readJson, ToliError, withLock, writeTextAt
  *                                   the project the file name names; ambiguous names stay)
  *   data/malik.md                -> data/preferences.md                    (the persona-named preferences file)
  *   data/archive/malik.md        -> data/archive/preferences.md            (its archived entries)
+ *   data/projects.json entries without a `workspace` strategy get the one they already followed (R16):
+ *                                   branch-per-task in pr / branchless no-mistakes mode, else same-branch
  * Everything else stays where it is. Nothing is ever overwritten: a different file already at a destination is a
  * conflict and the whole migration refuses; an identical one makes the old copy a duplicate that is removed.
  */
@@ -290,13 +292,24 @@ export function migrateCommand(argv: string[]): void {
     withLock(paths.lock("migrate"), () => {
         const plan = planMigration();
         if (dryRun) {
-            if (args.bool("json")) printJson({ applied: false, ...plan });
-            else out(render(plan, false));
+            const workspaces = projectsMissingWorkspace();
+            if (args.bool("json")) printJson({ applied: false, ...plan, workspaces });
+            else out([render(plan, false), ...workspaceLines(workspaces, false)].join("\n"));
             return;
         }
         const references = applyMigration(plan);
+        const workspaces = migrateWorkspaces();
         const done = { ...plan, references };
-        if (args.bool("json")) printJson({ applied: true, ...done });
-        else out(render(done, true));
+        if (args.bool("json")) printJson({ applied: true, ...done, workspaces });
+        else out([render(done, true), ...workspaceLines(workspaces, true)].join("\n"));
     });
+}
+
+/** One line per project whose workspace strategy was (or would be) written down. */
+function workspaceLines(workspaces: { name: string; workspace: string }[], applied: boolean): string[] {
+    if (workspaces.length === 0) return [];
+    return [
+        `${applied ? "recorded" : "would record"} the workspace strategy of ${workspaces.length} project${workspaces.length === 1 ? "" : "s"} (their current behaviour):`,
+        ...workspaces.map((entry) => `  ${entry.name}: ${entry.workspace}`),
+    ];
 }

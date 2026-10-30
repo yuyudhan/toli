@@ -4,6 +4,8 @@ import { forgeReadiness, projectForge } from "./forge.ts";
 import { currentBranch, git, isGitRepo } from "./git.ts";
 import { STALE_DAYS } from "./memory.ts";
 import { paths } from "./paths.ts";
+import { brokenLink } from "./project-link.ts";
+import { standingText } from "./project-strategy.ts";
 import { findProject, loadProjects, type Project } from "./projects.ts";
 import { now, out, printJson, ToliError } from "./util.ts";
 
@@ -24,6 +26,7 @@ export type SetupCheck = {
 export type SetupKey =
     | "clone"
     | "delivery"
+    | "workspace"
     | "branch"
     | "forge"
     | "forge-auth"
@@ -79,6 +82,16 @@ function deliveryText(project: Project): string {
     return project.branch ? `commit on the fixed branch ${project.branch}` : "commit on the checked-out branch";
 }
 
+const WORKSPACE_TEXT: Record<Project["workspace"], string> = {
+    "same-branch": "every jawan works in the one clone on the project's branch",
+    "branch-per-task": "one clone, a toli/<T-id> branch and PR/MR per task",
+    "worktree-per-task": "a worktree under projects/.worktrees and a branch and PR/MR per task",
+};
+
+function workspaceText(project: Project): string {
+    const standing = project.workspace === "same-branch" ? "" : `; standing grant: ${standingText(project.standing)}`;
+    return `${project.workspace} (${WORKSPACE_TEXT[project.workspace]}${standing})`;
+}
 function branchExists(dir: string, branch: string): boolean {
     return ["refs/heads/", "refs/remotes/origin/"].some(
         (prefix) => git(dir, ["rev-parse", "--verify", "--quiet", `${prefix}${branch}`]).code === 0,
@@ -90,15 +103,22 @@ function repoChecks(project: Project, deep: boolean): SetupCheck[] {
     const cloned = isGitRepo(dir);
     const checks: SetupCheck[] = [];
     const head = cloned ? currentBranch(dir) : null;
+    const broken = brokenLink(project);
     checks.push(
-        cloned
-            ? { key: "clone", status: "ok", detail: `projects/${project.name} on ${head ?? "a detached HEAD"}` }
-            : {
-                  key: "clone",
-                  status: "missing",
-                  detail: "not cloned on this machine (bin/toli project ensure)",
-                  fill: "jawan",
-              },
+        broken !== null
+            ? { key: "clone", status: "missing", detail: broken, fill: "ask" }
+            : cloned
+              ? {
+                    key: "clone",
+                    status: "ok",
+                    detail: `projects/${project.name}${project.linkedTo ? ` -> ${project.linkedTo}` : ""} on ${head ?? "a detached HEAD"}`,
+                }
+              : {
+                    key: "clone",
+                    status: "missing",
+                    detail: "not cloned on this machine (bin/toli project ensure)",
+                    fill: "jawan",
+                },
     );
     checks.push(
         deliveryConfirmed(project)
@@ -107,6 +127,16 @@ function repoChecks(project: Project, deep: boolean): SetupCheck[] {
                   key: "delivery",
                   status: "missing",
                   detail: `never chosen; defaulted to ${deliveryText(project)}`,
+                  fill: "ask",
+              },
+    );
+    checks.push(
+        project.workspaceSetAt !== undefined
+            ? { key: "workspace", status: "ok", detail: workspaceText(project) }
+            : {
+                  key: "workspace",
+                  status: "missing",
+                  detail: `never chosen; defaulted to ${workspaceText(project)}`,
                   fill: "ask",
               },
     );

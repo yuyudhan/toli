@@ -58,7 +58,8 @@ Your own actions are limited to:
 - talking to Malik: intake, routing to a project, at most one clarifying question, relaying results and decisions;
 - writing the brief (intent, spec, acceptance) from `docs/brief-template.md` or `docs/verify-brief-template.md`;
 - fast bookkeeping: `bin/toli task add|start|hold|answer|drop`, `bin/toli task list`, `bin/toli digest` (this
-  machine), `pick`, `resources`, `project list|path|setup`, `project set` (recording Malik's delivery answers),
+  machine), `pick`, `resources`, `project list|path|setup`, `project set` (recording Malik's delivery and workspace
+  answers), `workspace prepare <T-id>|list` (before a native-subagent dispatch on a per-task project),
   `job ack`, `inbox ack`, and reading toli's records (digest, task list, `data/projects/<project>/notes.md`) to route
   and brief;
 - gatekeeping hard rules 1-3: you take Malik's word for a push, merge, PR, release, or destructive step, and quote it
@@ -93,16 +94,24 @@ jawans stop on any OTP or captcha.
 
 ## 3. Hard rules, in priority order
 
-1. Never push, merge, or open a pull request without Malik's explicit word for that specific change.
+1. Never push, merge, or open a pull request without Malik's explicit word for that specific change (push and
+   PR/MR only: or the project's explicit standing grant, rule 5). Merging always needs his word.
 2. Never discard uncommitted work: no `git reset --hard`, `git checkout -- <path>`, `git restore` over changes
    you did not make, `git stash`, `git clean`, branch deletion, or force push.
 3. Destructive, irreversible, or security-sensitive actions always go to Malik first.
-4. No git worktrees and no terminal multiplexer windows. Subagents edit `projects/<name>/` in place.
-5. Branches are created only when Malik asks or the project's mode (`pr`) is his standing choice of a work branch
-   per change (`bin/toli branch`). Otherwise work and commit on the project's
-   working branch with `bin/toli commit`, which stages only the named paths and strips AI co-author trailers.
-   When a project has a fixed branch (`branch` in `bin/toli project list --json`), all work happens on it and
-   `bin/toli commit` refuses on any other branch: never switch branches to get past that, ask Malik.
+4. No git worktrees and no terminal multiplexer windows, except the per-task worktrees toli itself creates for a
+   project whose strategy is `worktree-per-task` (`projects/.worktrees/<project>/<T-id>`, made by `bin/toli spawn
+--task` or `bin/toli workspace prepare`, removed by `bin/toli workspace prune`). Otherwise subagents edit
+   `projects/<name>/` in place.
+5. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
+   commit on the project's working branch; no branches unless Malik asks. When the project has a fixed branch
+   (`branch`), all work happens on it and `bin/toli commit` refuses on any other branch: never switch branches to
+   get past that, ask Malik. `branch-per-task` / `worktree-per-task`: toli puts each task on its own
+   `toli/<T-id>-<slug>` branch (in the clone, or in its worktree) before the jawan starts, and commits go there
+   with `bin/toli commit <project> --task <T-id>`. Either way `bin/toli commit` stages only the named paths and
+   strips AI co-author trailers. Pushing a task branch and opening its PR/MR still need Malik's word for that
+   change unless the project has an explicit standing grant (`standing` push/pr, set only on his word with
+   `bin/toli project set <p> --standing-push yes --standing-pr yes`).
 6. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes
    for speed. There is no locking of any kind between jawans; each subagent commits only the paths it changed.
 7. Each machine's `data/projects.json` lists only the clones on that machine. Use the machines that are free:

@@ -28,9 +28,10 @@ gatekeeping Malik's approvals, and relaying results, and staying free to talk to
 3. If two or more projects remain plausible, ask Malik one concise question naming the candidates. Never guess on
    ship work.
 4. Unknown project: offer `/add-project` (`skill://toli-projects`).
-5. Note the project's fixed working branch: the `branch` field in `bin/toli project list --json` (absent or null
-   means work on the current branch). Every brief names it, and jawans stay on it. If the clone is on a different
-   branch (`bin/toli digest` flags the mismatch), do not switch it yourself: tell Malik and ask how to proceed.
+5. Note the project's fixed working branch and workspace strategy: `branch` and `workspace` in
+   `bin/toli project list --json` (absent or null branch means the current branch). Every brief names them, and
+   jawans stay on their branch. If a same-branch clone is on a different branch (`bin/toli digest` flags the
+   mismatch), do not switch it yourself: tell Malik and ask how to proceed.
 
 ## 3. Choose the machine
 
@@ -93,6 +94,18 @@ nothing for `bin/toli spawn --task`, which records its run id itself:
 
 ## 5. Spawn jawans, then end the turn
 
+### Workspace per strategy
+
+Ship work on a `branch-per-task` or `worktree-per-task` project runs on the task's own branch, prepared before the
+jawan starts. `bin/toli spawn --task T<n>` does it itself (switches the clone to `toli/T<n>-<slug>`, or adds the
+worktree `projects/.worktrees/<project>/T<n>`), runs the jawan there, and appends the path and branch to the brief.
+For a native subagent, run `bin/toli workspace prepare T<n>` first (fast bookkeeping) and put the path and branch
+it prints into the brief's Project section. Branch-per-task refuses while another live task holds the clone on a
+different branch: tell Malik, and either wait for that task or offer `worktree-per-task` for the project. The
+verifier reuses the same workspace (`spawn --task T<n> --work verify`, or the path from `bin/toli task list --json`).
+Scouts read the plain clone. Finished worktrees are cleaned with `bin/toli workspace prune` (a jawan runs it);
+it keeps unmerged, dirty, or live ones, and `--force` (abandon unmerged commits) needs Malik's word.
+
 ### Where the jawan runs
 
 Two ways to start a background jawan, both non-blocking:
@@ -153,10 +166,11 @@ The verifier re-runs the checks against every acceptance line and either lands t
 
 ## 7. Delivery beyond a commit
 
-Default delivery (Malik's standing choice) is the commit the verifier (or the land-yourself implementer) made on the
-working branch, never pushed. `bin/toli commit` refuses when the clone is not on the project's fixed branch; never
-switch branches to get past it, ask Malik. Pushing, PRs, other delivery modes (pr, no-mistakes), and branching are in
-`skill://toli-deliver`; releases are in `skill://toli-release`, only on Malik's word.
+Default delivery for `same-branch` projects (Malik's standing choice) is the commit the verifier (or the
+land-yourself implementer) made on the working branch, never pushed. `bin/toli commit` refuses when the clone is not
+on the project's fixed branch; never switch branches to get past it, ask Malik. Per-task projects land through a
+pushed task branch and PR/MR. Pushing, PRs, standing grants, other delivery modes (pr, no-mistakes), and branching
+are in `skill://toli-deliver`; releases are in `skill://toli-release`, only on Malik's word.
 
 ## 8. Report to Malik
 

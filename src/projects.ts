@@ -1,9 +1,20 @@
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readlinkSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "./args.ts";
 import { git, gitOk, isGitRepo, unpushedBranches } from "./git.ts";
 import { paths } from "./paths.ts";
+import { brokenLink, isLinked, projectLinkCommand } from "./project-link.ts";
+import { projectSetCommand } from "./project-set.ts";
 import { projectSetupCommand } from "./project-setup.ts";
+import {
+    isWorkspace,
+    legacyWorkspace,
+    machineDefaultWorkspace,
+    perTask,
+    type Standing,
+    standingText,
+    type Workspace,
+} from "./project-strategy.ts";
 import { now, out, printJson, readJson, requireName, run, ToliError, withLock, writeJsonAtomic } from "./util.ts";
 
 export const MODES = ["commit", "pr", "no-mistakes"] as const;
@@ -16,6 +27,8 @@ export type Forge = (typeof FORGES)[number];
  * A project cloned on this machine; `data/projects.json` lists only this machine's clones.
  * `branch`: the fixed working branch `toli commit` requires. `forge`/`forgeHost`: override origin-based detection.
  * `deliverySetAt`: when the user's delivery choice (mode/branch) was recorded; absent means mode is a default.
+ * `workspace`: the branching/worktree strategy; `workspaceSetAt` stamps the user's choice (absent: defaulted).
+ * With a per-task strategy, `branch` is the base branch task branches start from and PR/MRs target.
  */
 export type Project = {
     name: string;
@@ -26,14 +39,36 @@ export type Project = {
     forge?: Forge;
     forgeHost?: string;
     deliverySetAt?: string;
+    workspace: Workspace;
+    workspaceSetAt?: string;
+    standing?: Standing;
+    /** Set for `project link`: the user's own checkout that projects/<name> is a symlink to (never deleted by toli). */
+    linkedTo?: string;
 };
 
-type ProjectsFile = { projects: Project[] };
+type StoredProject = Omit<Project, "workspace"> & { workspace?: unknown; owner?: unknown };
 
-/** Registered projects. Fields from older files (e.g. the removed `owner`) are dropped here, so the next write omits them. */
+/**
+ * Registered projects. Fields from older files (e.g. the removed `owner`) are dropped here, so the next write omits
+ * them; a project stored without a valid `workspace` gets the strategy it followed before R16 (`bin/toli migrate`
+ * writes it down).
+ */
 export function loadProjects(): Project[] {
-    return readJson<ProjectsFile>(paths.projects(), { projects: [] }).projects.map(
-        ({ name, url, mode, addedAt, branch, forge, forgeHost, deliverySetAt }) => ({
+    return readJson<{ projects: StoredProject[] }>(paths.projects(), { projects: [] }).projects.map(
+        ({
+            name,
+            url,
+            mode,
+            addedAt,
+            branch,
+            forge,
+            forgeHost,
+            deliverySetAt,
+            workspace,
+            workspaceSetAt,
+            standing,
+            linkedTo,
+        }) => ({
             name,
             url,
             mode,
@@ -42,11 +77,29 @@ export function loadProjects(): Project[] {
             ...(forge ? { forge } : {}),
             ...(forgeHost ? { forgeHost } : {}),
             ...(deliverySetAt ? { deliverySetAt } : {}),
+            workspace: isWorkspace(workspace) ? workspace : legacyWorkspace({ mode, branch }),
+            ...(workspaceSetAt ? { workspaceSetAt } : {}),
+            ...(standing ? { standing: { push: standing.push === true, pr: standing.pr === true } } : {}),
+            ...(linkedTo ? { linkedTo } : {}),
         }),
     );
 }
 
-function updateProjects<T>(fn: (projects: Project[]) => T): T {
+/** Projects whose stored entry lacks a valid `workspace`, with the strategy `loadProjects` infers for them. */
+export function projectsMissingWorkspace(): { name: string; workspace: Workspace }[] {
+    return readJson<{ projects: StoredProject[] }>(paths.projects(), { projects: [] })
+        .projects.filter((entry) => !isWorkspace(entry.workspace))
+        .map((entry) => ({ name: entry.name, workspace: legacyWorkspace(entry) }));
+}
+
+/** Write the inferred `workspace` into every entry that lacks one; returns what was written. */
+export function migrateWorkspaces(): { name: string; workspace: Workspace }[] {
+    if (projectsMissingWorkspace().length === 0) return [];
+    return updateProjects(() => projectsMissingWorkspace());
+}
+
+/** Read-modify-write data/projects.json under the projects lock. */
+export function updateProjects<T>(fn: (projects: Project[]) => T): T {
     return withLock(paths.lock("projects"), () => {
         const projects = loadProjects();
         const result = fn(projects);
@@ -61,37 +114,10 @@ export function findProject(name: string): Project {
     return project;
 }
 
-function parseMode(value: string | undefined): Mode | undefined {
+export function parseMode(value: string | undefined): Mode | undefined {
     if (value === undefined) return undefined;
     if (!(MODES as readonly string[]).includes(value)) throw new ToliError(`--mode must be one of ${MODES.join(", ")}`);
     return value as Mode;
-}
-
-/** `--forge`: one of FORGES, or `none` (null) to clear the override. */
-function parseForge(value: string | undefined): Forge | null | undefined {
-    if (value === undefined) return undefined;
-    if (value === "none") return null;
-    if (!(FORGES as readonly string[]).includes(value))
-        throw new ToliError(`--forge must be one of ${FORGES.join(", ")}, or none`);
-    return value as Forge;
-}
-
-/** `--branch`: a valid branch name, or `none` (null) to clear it. */
-function parseBranch(value: string | undefined): string | null | undefined {
-    if (value === undefined) return undefined;
-    if (value === "none") return null;
-    if (run(["git", "check-ref-format", "--branch", value]).code !== 0)
-        throw new ToliError(`--branch "${value}" is not a valid branch name`);
-    return value;
-}
-
-/** `--forge-host`: a bare host name (no scheme, path or user), or `none` (null) to clear it. */
-function parseForgeHost(value: string | undefined): string | null | undefined {
-    if (value === undefined) return undefined;
-    if (value === "none") return null;
-    if (!/^[A-Za-z0-9.-]+(:\d+)?$/.test(value))
-        throw new ToliError(`--forge-host must be a host name such as gitlab.example.com, got "${value}"`);
-    return value.toLowerCase();
 }
 
 /** The local clone of a registered project. */
@@ -102,7 +128,7 @@ export function projectCloneDir(name: string): string {
     return dir;
 }
 
-function noMistakesReadiness(dir: string): string {
+export function noMistakesReadiness(dir: string): string {
     const result = git(dir, ["remote", "get-url", "no-mistakes"]);
     return result.code === 0
         ? `no-mistakes: ready (${result.stdout.trim()})`
@@ -116,11 +142,32 @@ function cloneInto(name: string, url: string): string {
     return dir;
 }
 
-function register(name: string, url: string, mode: Mode): void {
+/**
+ * Mode and strategy of a new entry: this machine's default strategy, unstamped, so `project setup` asks the user to
+ * confirm it. A per-task default turns the default mode into `pr`; an explicit `--mode commit` keeps same-branch.
+ */
+function newEntryDefaults(mode: Mode | undefined): { mode: Mode; workspace: Workspace } {
+    const workspace = machineDefaultWorkspace();
+    if (!perTask(workspace)) return { mode: mode ?? "commit", workspace };
+    if (mode === "commit") return { mode, workspace: "same-branch" };
+    return { mode: mode ?? "pr", workspace };
+}
+
+/** Register a new entry (no-op when present); returns its delivery labels for the caller's message. */
+export function register(name: string, url: string, requested: Mode | undefined, linkedTo?: string): string {
+    const { mode, workspace } = newEntryDefaults(requested);
     updateProjects((projects) => {
         if (!projects.some((entry) => entry.name === name))
-            projects.push({ name, url, mode, addedAt: now().toISOString() });
+            projects.push({
+                name,
+                url,
+                mode,
+                addedAt: now().toISOString(),
+                workspace,
+                ...(linkedTo === undefined ? {} : { linkedTo }),
+            });
     });
+    return `mode ${mode}, workspace ${workspace}`;
 }
 
 function add(argv: string[]): void {
@@ -128,7 +175,7 @@ function add(argv: string[]): void {
     args.maxPositional(2);
     const name = requireName("project", args.positional[0]);
     const url = args.pos(1, "git-url");
-    const mode = parseMode(args.str("mode")) ?? "commit";
+    const mode = parseMode(args.str("mode"));
     if (loadProjects().some((entry) => entry.name === name)) throw new ToliError(`project "${name}" already exists`);
     const dir = paths.projectDir(name);
     if (existsSync(dir)) {
@@ -137,8 +184,8 @@ function add(argv: string[]): void {
     } else {
         cloneInto(name, url);
     }
-    register(name, url, mode);
-    out(`added ${name} (mode ${mode}) at ${dir}`);
+    const labels = register(name, url, mode);
+    out(`added ${name} (${labels}) at ${dir}`);
     out(noMistakesReadiness(dir));
 }
 
@@ -148,7 +195,7 @@ function ensure(argv: string[]): void {
     args.maxPositional(2);
     const name = requireName("project", args.positional[0]);
     const url = args.pos(1, "git-url");
-    const mode = parseMode(args.str("mode")) ?? "commit";
+    const mode = parseMode(args.str("mode"));
     const registered = loadProjects().some((entry) => entry.name === name);
     const dir = paths.projectDir(name);
     const cloned = isGitRepo(dir);
@@ -158,16 +205,16 @@ function ensure(argv: string[]): void {
         return;
     }
     if (cloned) {
-        register(name, url, mode);
-        out(`${name}: registered the existing clone at ${dir} (mode ${mode})`);
+        const labels = register(name, url, mode);
+        out(`${name}: registered the existing clone at ${dir} (${labels})`);
         return;
     }
     cloneInto(name, url);
-    register(name, url, mode);
+    const labels = register(name, url, mode);
     out(
         registered
             ? `${name}: cloned into ${dir} (already registered)`
-            : `${name}: cloned into ${dir} and registered (mode ${mode})`,
+            : `${name}: cloned into ${dir} and registered (${labels})`,
     );
 }
 
@@ -180,8 +227,11 @@ function list(argv: string[]): void {
             projects.map((entry) => ({
                 ...entry,
                 branch: entry.branch ?? null,
+                standing: entry.standing ?? { push: false, pr: false },
                 path: paths.projectDir(entry.name),
                 cloned: isGitRepo(paths.projectDir(entry.name)),
+                linkedTo: entry.linkedTo ?? null,
+                brokenLink: brokenLink(entry),
             })),
         );
         return;
@@ -191,17 +241,33 @@ function list(argv: string[]): void {
         return;
     }
     for (const entry of projects) {
-        const clone = isGitRepo(paths.projectDir(entry.name)) ? "cloned" : "not cloned";
-        out([entry.name, `mode=${entry.mode}`, ...overrideLabels(entry), clone, entry.url].join("\t"));
+        const clone = brokenLink(entry)
+            ? "broken link"
+            : entry.linkedTo
+              ? `linked -> ${entry.linkedTo}`
+              : isGitRepo(paths.projectDir(entry.name))
+                ? "cloned"
+                : "not cloned";
+        out(
+            [
+                entry.name,
+                `mode=${entry.mode}`,
+                `workspace=${entry.workspace}`,
+                ...overrideLabels(entry),
+                clone,
+                entry.url,
+            ].join("\t"),
+        );
     }
 }
 
-/** `branch=`, `forge=`, `forge-host=` labels for the fields that are set. */
-function overrideLabels(project: Project): string[] {
+/** `branch=`, `forge=`, `forge-host=`, `standing=` labels for the fields that are set. */
+export function overrideLabels(project: Project): string[] {
     return [
         ...(project.branch ? [`branch=${project.branch}`] : []),
         ...(project.forge ? [`forge=${project.forge}`] : []),
         ...(project.forgeHost ? [`forge-host=${project.forgeHost}`] : []),
+        ...(project.standing ? [`standing=${standingText(project.standing)}`] : []),
     ];
 }
 
@@ -212,41 +278,15 @@ function path(argv: string[]): void {
     out(paths.projectDir(project.name));
 }
 
-function set(argv: string[]): void {
-    const args = new Args(argv, { values: ["mode", "branch", "forge", "forge-host"] });
-    args.maxPositional(1);
-    const name = args.pos(0, "name");
-    const mode = parseMode(args.str("mode"));
-    const branch = parseBranch(args.str("branch"));
-    const forge = parseForge(args.str("forge"));
-    const forgeHost = parseForgeHost(args.str("forge-host"));
-    if (mode === undefined && branch === undefined && forge === undefined && forgeHost === undefined)
-        throw new ToliError(
-            "nothing to set: pass --mode <m>, --branch <b>|none, --forge <f>|none or --forge-host <h>|none",
-        );
-    const updated = updateProjects((projects) => {
-        const project = projects.find((entry) => entry.name === name);
-        if (!project) throw new ToliError(`unknown project "${name}"`);
-        if (mode !== undefined) project.mode = mode;
-        if (branch === null) delete project.branch;
-        else if (branch !== undefined) project.branch = branch;
-        if (mode !== undefined || branch !== undefined) project.deliverySetAt = now().toISOString();
-        if (forge === null) delete project.forge;
-        else if (forge !== undefined) project.forge = forge;
-        if (forgeHost === null) delete project.forgeHost;
-        else if (forgeHost !== undefined) project.forgeHost = forgeHost;
-        return { ...project };
-    });
-    out([`${updated.name}: mode=${updated.mode}`, ...overrideLabels(updated)].join(" "));
-}
-
 function drop(argv: string[]): void {
     const args = new Args(argv, { booleans: ["delete-clone", "delete-data"] });
     args.maxPositional(1);
     const name = args.pos(0, "name");
     findProject(name);
     const dir = paths.projectDir(name);
-    if (isGitRepo(dir)) {
+    // A linked checkout is the user's own: dropping it removes only toli's symlink, so its state never blocks a drop.
+    const linked = isLinked(name);
+    if (!linked && isGitRepo(dir)) {
         const dirty = gitOk(dir, ["status", "--porcelain"]);
         if (dirty !== "") throw new ToliError(`refusing: projects/${name} has uncommitted changes:\n${dirty}`);
         const unpushed = unpushedBranches(dir);
@@ -259,7 +299,11 @@ function drop(argv: string[]): void {
         if (index !== -1) projects.splice(index, 1);
     });
     const removed: string[] = [];
-    if (args.bool("delete-clone") && existsSync(dir)) {
+    if (args.bool("delete-clone") && linked) {
+        const target = readlinkSync(dir);
+        unlinkSync(dir);
+        removed.push(`the symlink projects/${name} (its checkout ${target} is untouched)`);
+    } else if (args.bool("delete-clone") && existsSync(dir)) {
         rmSync(dir, { recursive: true, force: true });
         removed.push(`projects/${name}`);
     }
@@ -269,7 +313,8 @@ function drop(argv: string[]): void {
         removed.push(`data/projects/${name}`);
     }
     const kept = [
-        ...(existsSync(dir) ? [`clone kept at projects/${name}`] : []),
+        ...(isLinked(name) ? [`link kept at projects/${name} -> ${readlinkSync(dir)}`] : []),
+        ...(!isLinked(name) && existsSync(dir) ? [`clone kept at projects/${name}`] : []),
         ...(existsSync(data) ? [`data kept at data/projects/${name}`] : []),
     ];
     out(
@@ -284,6 +329,7 @@ function importClones(argv: string[]): void {
     if (!existsSync(base)) throw new ToliError(`${base} does not exist`);
     const known = new Set(loadProjects().map((entry) => entry.name));
     const found: Project[] = [];
+    const defaults = newEntryDefaults(undefined);
     for (const entry of readdirSync(base, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
         if (!entry.isDirectory() || known.has(entry.name)) continue;
         const dir = join(base, entry.name);
@@ -292,8 +338,8 @@ function importClones(argv: string[]): void {
         found.push({
             name: entry.name,
             url: origin.code === 0 ? origin.stdout.trim() : "",
-            mode: "commit",
             addedAt: now().toISOString(),
+            ...defaults,
         });
     }
     updateProjects((projects) => {
@@ -307,9 +353,10 @@ function importClones(argv: string[]): void {
 const PROJECT_SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
     add,
     ensure,
+    link: projectLinkCommand,
     list,
     path,
-    set,
+    set: projectSetCommand,
     setup: projectSetupCommand,
     drop,
     import: importClones,
@@ -318,6 +365,6 @@ const PROJECT_SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
 export function projectCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
     const handler = sub !== undefined && Object.hasOwn(PROJECT_SUBCOMMANDS, sub) ? PROJECT_SUBCOMMANDS[sub] : undefined;
-    if (!handler) throw new ToliError("usage: toli project add|ensure|list|path|set|setup|drop|import");
+    if (!handler) throw new ToliError("usage: toli project add|ensure|link|list|path|set|setup|drop|import");
     handler(rest);
 }

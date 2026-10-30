@@ -8,35 +8,73 @@ directory, `data/projects/<name>/`.
 
 In the lead session:
 
-    /add-project <name> <git-url> [machine]
+    /add-project <name> <git-url | path> [machine]
 
-Before anything is cloned, the lead asks one batched, multiple-choice question:
+Before anything is cloned, the lead asks one batched, multiple-choice question (full text in the `toli-projects`
+skill): checkout (`clone` fresh, or `link <path>` to an existing checkout), workspace strategy (`same-branch
+[<branch>]`, `branch`, `worktree`; default from `defaults.workspace` in `config/machine.json`), PR or MR (per-task
+strategies), the no-mistakes gate, the test/smoke command, and an optional standing push/PR grant. Reply like
+`clone, same-branch, no, detect` or `link ~/code/moneytrace, worktree, mr, yes, bun test`.
 
-> How should work land in **<name>**?
->
-> 1. **Delivery**
->     - (a) Pull/merge requests from a work branch (forge detected from the URL: GitHub, GitLab incl. self-hosted,
->       or Bitbucket)
->     - (b) Commit on whatever branch is checked out
->     - (c) Commit on a fixed branch: which one?
-> 2. **no-mistakes gate** before PRs (only with a or c): yes / no
-> 3. **Test / smoke command**: type it, or "detect" and a jawan reads it from the repo
->
-> Reply like `a, no, detect` or `c main, yes, bun test`.
-
-With the answer, a jawan clones the repo (`bin/toli project add`), records the delivery choice
-(`bin/toli project set`), checks the forge and its auth (`bin/toli forge <name>`), and seeds
+With the answer, a jawan clones the repo (`bin/toli project add`) or links it (`bin/toli project link`), records the
+choices (`bin/toli project set`), checks the forge and its auth (`bin/toli forge <name>`), and seeds
 `data/projects/<name>/notes.md` from the repo's README, agent docs, and build files. Anything it cannot detect (an
 unknown forge, no test command) comes back to the user as one follow-up question.
 
 Without a lead session, the same steps by hand:
 
-    bin/toli project add <name> <git-url>
-    bin/toli project set <name> --mode pr --branch none
+    bin/toli project add <name> <git-url>        or   bin/toli project link <name> <path>
+    bin/toli project set <name> --workspace worktree-per-task --mode pr --branch none
     bin/toli project setup <name>
 
+`bin/toli project link <name> <path>` registers a checkout the user already has: it checks it is a git repo,
+reports its origin, forge and branch, and makes `projects/<name>` a symlink to it; `project drop --delete-clone`
+removes only that symlink, never the checkout, and `project setup`/digest flag a link whose checkout moved.
 `bin/toli project ensure <name> <git-url>` is the idempotent form used when work is sent to another machine;
 `bin/toli project import` registers clones copied into `projects/` by hand.
+
+## Workspace strategy
+
+Each project records where its jawans work (`workspace` in `bin/toli project list`; asked at registration and by
+`/setup-project`; new projects start on the machine default, `defaults.workspace` in `config/machine.json`):
+
+| Strategy            | Where jawans work                                                                  | Landing                    |
+| ------------------- | ---------------------------------------------------------------------------------- | -------------------------- |
+| `same-branch`       | the one clone, on the project's (fixed or checked-out) branch                      | per the delivery mode      |
+| `branch-per-task`   | the one clone, switched to `toli/<T-id>-<slug>` before the jawan starts            | task branch pushed + PR/MR |
+| `worktree-per-task` | `projects/.worktrees/<project>/<T-id>`, a worktree on its own `toli/<T-id>-<slug>` | task branch pushed + PR/MR |
+
+- `bin/toli spawn --task T<n>` prepares the workspace (or `bin/toli workspace prepare T<n>` for native subagents)
+  and records it on the task; the brief carries the strategy, path, and branch, and the verifier reuses it.
+  Task branches start from the base branch: the project's `--branch`, else origin's default branch.
+- `branch-per-task` refuses to switch the clone while another active or held task of the project uses it on a
+  different branch, or while the clone has uncommitted changes; use `worktree-per-task` for parallel tasks.
+- `bin/toli commit|push|pr create <project> --task T<n>` act in the task's workspace (commands run from inside a
+  task worktree find it themselves). Per-task projects refuse a commit without `--task`.
+- Pushing the task branch and opening its PR/MR need the user's word for that change, unless the project carries an
+  explicit standing grant: `bin/toli project set <p> --standing-push yes --standing-pr yes` (only on the user's
+  word; a PR grant needs the push grant). Without one, the verifier commits and holds the task with the question.
+- `bin/toli workspace list [--project p]` shows each task worktree with its task status, branch, merged state and
+  cleanliness. `bin/toli workspace prune [--project p]` removes worktrees of done/dropped tasks whose branch is
+  merged into the base (local or origin, fetched first) and deletes the merged branch. It keeps live, dirty, and
+  unmerged ones; `--force` abandons unmerged commits (it prints the deleted tip sha) and is only run on the user's
+  word. Squash-merged branches show as unmerged.
+- `bin/toli project set --all --workspace <s>` applies one strategy to every project. A per-task strategy moves a
+  `commit`-mode project to `pr`.
+- Pre-strategy projects keep their behaviour: `bin/toli migrate` records `branch-per-task` for `pr` and branchless
+  `no-mistakes` projects, `same-branch` for the rest.
+
+Examples:
+
+    # kalki: everyone on the one clone, committing on the fixed branch ankur/nightly
+    bin/toli project set kalki --workspace same-branch --mode commit --branch ankur/nightly
+
+    # moneytrace: a worktree and branch per task, published as a GitLab merge request; push/MR only on the user's word
+    bin/toli project set moneytrace --workspace worktree-per-task --mode pr --branch main --standing-push no --standing-pr no
+
+For moneytrace, `bin/toli spawn --task T42 ...` creates `projects/.worktrees/moneytrace/T42` on
+`toli/T42-<slug>` from `main`; after verification the verifier holds T42 asking to push and open the MR, and on the
+user's word a jawan runs `bin/toli push moneytrace --task T42` and `bin/toli pr create moneytrace --task T42 ...`.
 
 ## Delivery modes
 
@@ -52,7 +90,8 @@ Without a lead session, the same steps by hand:
 - The forge comes from the clone's `origin` (GitHub, GitLab including self-hosted hosts known to `glab`, Bitbucket
   Cloud). Override only when detection fails: `--forge github|gitlab|bitbucket` and `--forge-host <host>`;
   `none` clears either.
-- The mode chooses the flow. Pushing, opening a PR, merging, and releasing still need the user's word for each change.
+- The mode chooses the flow. Pushing, opening a PR, merging, and releasing still need the user's word for each change
+  (push and PR/MR only: unless the project has a standing grant, see Workspace strategy).
 
 ## Setting up an existing project
 

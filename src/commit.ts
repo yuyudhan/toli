@@ -1,8 +1,10 @@
 import { Args } from "./args.ts";
 import { currentBranch, git, gitOk } from "./git.ts";
 import { persona } from "./persona.ts";
+import { perTask } from "./project-strategy.ts";
 import { findProject, projectCloneDir } from "./projects.ts";
 import { out, ToliError } from "./util.ts";
+import { workDir } from "./workspace.ts";
 
 // Word boundaries keep human sign-offs such as "<dev@gmail.com>" (contains "ai") intact.
 const AI_TRAILER = /^(Co-authored-by|Co-Authored-By|Generated-by|Signed-off-by: .*\b(Claude|GPT|AI|omp|Oh My Pi)\b).*/i;
@@ -27,12 +29,35 @@ function requireWorkingBranch(name: string, dir: string): void {
     );
 }
 
+/**
+ * The checkout to commit in. Per-task strategies commit only on the task's own branch, in its workspace (`--task`,
+ * or run from inside the task's worktree); same-branch projects keep the fixed-branch check on the clone.
+ */
+function commitDir(name: string, taskId: string | undefined): string {
+    const target = workDir(name, taskId);
+    if (target.branch !== null) {
+        const actual = currentBranch(target.dir);
+        if (actual !== target.branch)
+            throw new ToliError(
+                `refusing: ${target.dir} is on ${actual === null ? "a detached HEAD" : `"${actual}"`}, but ${target.task?.id}'s branch is ` +
+                    `"${target.branch}". Prepare it again (bin/toli workspace prepare ${target.task?.id}) or ask ${persona().user}.`,
+            );
+        return target.dir;
+    }
+    const workspace = findProject(name).workspace;
+    if (perTask(workspace))
+        throw new ToliError(
+            `refusing: ${name} uses ${workspace}, so commits go on a task branch: pass --task <T-id> ` +
+                `(its workspace is prepared by bin/toli spawn --task or bin/toli workspace prepare <T-id>)`,
+        );
+    requireWorkingBranch(name, target.dir);
+    return target.dir;
+}
+
 export function commitCommand(argv: string[]): void {
-    const args = new Args(argv, { values: ["message"] });
+    const args = new Args(argv, { values: ["message", "task"] });
     args.maxPositional(1);
-    const name = args.pos(0, "project");
-    const dir = projectCloneDir(name);
-    requireWorkingBranch(name, dir);
+    const dir = commitDir(args.pos(0, "project"), args.str("task"));
     const raw = args.str("message");
     if (raw === undefined) throw new ToliError('commit needs -m "<message>"');
     const message = stripAiTrailers(raw);
