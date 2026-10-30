@@ -58,7 +58,7 @@ function memoryFile(path: string, tier: MemoryFile["tier"]): MemoryFile {
 
 /** Always-loaded memory: counted against the budget. */
 export function alwaysLoaded(): MemoryFile[] {
-    return [memoryFile(paths.malik(), "pinned"), memoryFile(paths.learnings(), "aging")];
+    return [memoryFile(paths.preferences(), "pinned"), memoryFile(paths.learnings(), "aging")];
 }
 
 /** Per-project notes (`data/projects/<p>/notes.md`): loaded only into briefs for that project, so reported but not counted. */
@@ -158,7 +158,7 @@ export function staleEntries(at: Date = now()): StaleEntry[] {
 }
 
 /**
- * Resolve `learnings`, `malik.md`, `notes/<project>`, `data/projects/<project>/notes.md` (or an absolute path)
+ * Resolve `learnings`, `preferences.md`, `notes/<project>`, `data/projects/<project>/notes.md` (or an absolute path)
  * to a memory file. `notes/<project>` is shorthand for `projects/<project>/notes`.
  */
 export function resolveMemoryFile(spec: string): MemoryFile {
@@ -171,7 +171,7 @@ export function resolveMemoryFile(spec: string): MemoryFile {
     const match = known.find((file) => relative(dataDir, file.path).replace(/\.md$/, "") === name);
     if (!match?.exists)
         throw new ToliError(
-            `unknown memory file "${spec}": use malik, learnings, or notes/<project> (an existing data/ file)`,
+            `unknown memory file "${spec}": use preferences, learnings, or notes/<project> (an existing data/ file)`,
         );
     return match;
 }
@@ -208,7 +208,7 @@ function archiveName(file: MemoryFile): string {
 
 /**
  * Move one entry to data/archive/<name>.md with provenance. The archive is written before the source, so a crash
- * in between leaves the entry in both places, never in neither. Pinned entries need `force` (Malik's explicit word).
+ * in between leaves the entry in both places, never in neither. Pinned entries need `force` (the user's explicit word).
  */
 export function archiveEntry(spec: string, selector: string, reason: string, force: boolean): ArchiveResult {
     if (reason.trim() === "") throw new ToliError("memory archive needs --reason <text>");

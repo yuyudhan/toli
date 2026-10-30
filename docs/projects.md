@@ -99,7 +99,7 @@ user (the lead batches every such question into one message) or a jawan (detecte
       runs/           jawan and remote run outputs (bin/toli remote --project)
       decisions.md    held questions and the user's answers (appended by bin/toli task answer)
 
-Cross-project files stay at the top of `data/`: the user's preferences (`malik.md`), `learnings.md`, `jobs/`,
+Cross-project files stay at the top of `data/`: the user's preferences (`preferences.md`), `learnings.md`, `jobs/`,
 `inbox/`, `archive/`, toli-wide `reports/`, and `remote/` for remote runs without a project. In code, every path
 comes from `src/paths.ts` (`paths.projectNotes(p)`, `projectBriefsDir(p)`, `projectReportsDir(p)`,
 `projectReport(p, id)`, `projectRunsDir(p)`, `projectDecisions(p)`).
@@ -110,7 +110,7 @@ remove them (irreversible; the lead confirms first).
 ## Moving data from the old layout
 
 Installs from before this layout kept everything flat under `data/` (`notes/<name>.md`, `reports/T<n>.md`,
-`remote/`, loose `briefs/`). One command moves it:
+`remote/`, loose `briefs/`) and the user's preferences in a file named after the persona. One command moves it:
 
     bin/toli migrate --dry-run    print the plan; change nothing
     bin/toli migrate              apply it
@@ -121,9 +121,11 @@ Installs from before this layout kept everything flat under `data/` (`notes/<nam
   `myapp-review.md`). A name that fits several projects (`myapp-admin-x.md` with `myapp` and `myapp-admin`) stays.
 - Everything else stays where it is and is listed as kept: toli-wide reports, reports of unknown tasks, project-less
   remote runs, briefs that name no project.
+- The old persona-named preferences file (and its archive in `data/archive/`) moves to `data/preferences.md`
+  (`data/archive/preferences.md`).
 - Nothing is overwritten. A different file already at a destination is a conflict: the plan shows it and `migrate`
   refuses without moving anything. An identical copy is a duplicate, and the old copy is removed.
-- Mentions of moved files in `config/jobs.json` prompts, `data/backlog.json` task notes, `data/malik.md`,
+- Mentions of moved files in `config/jobs.json` prompts, `data/backlog.json` task notes, `data/preferences.md`,
   `data/learnings.md`, and project notes are rewritten to the new paths.
 - Running it again finds nothing to move.
 

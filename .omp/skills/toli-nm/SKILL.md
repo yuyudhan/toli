@@ -57,7 +57,7 @@ Spawn it in the background and end the turn (the async rule in `skill://toli-dis
 ## Ask-user policy
 
 An `ask-user` finding is answered without Malik when the answer clearly follows what Malik already agreed: his words
-in the intent, decisions recorded on the task, or standing preferences in `data/malik.md` (Sardar copies the relevant
+in the intent, decisions recorded on the task, or standing preferences in `data/preferences.md` (Sardar copies the relevant
 ones into the brief). The response notes the reason (which words or decision it follows) for the final report.
 
 Escalate to Malik only when the finding is:
