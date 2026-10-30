@@ -64,7 +64,7 @@ tool fail with that hint instead of skipping.
 | ---------------- | ------------------------------------------------------------------------------------------------------------- |
 | `just fmt`       | Format everything in place (Biome, Prettier, Taplo, shfmt, `just --fmt`).                                     |
 | `just fmt-check` | Report unformatted files.                                                                                     |
-| `just lint`      | tsc, Biome lint rules, the other formatters in check mode, shellcheck, actionlint, and the repo guards.       |
+| `just lint`      | Biome lint rules, shellcheck, actionlint, the repo guards, and `scripts/useless-await.ts` (TS80007).          |
 | `just typecheck` | `tsc --noEmit` over `src/`, `tests/`, `scripts/`, `.omp/extensions/`.                                         |
 | `just test`      | `bun test` with 60 s per test (most tests run `bin/toli` and git; parallel jawans load the machine).          |
 | `just check`     | fmt-check, lint, typecheck, test: **passes before every commit to toli** (`self land` runs it).               |
@@ -129,6 +129,7 @@ Tracked (shared by all machines):
     tests/                       bun tests (temp TOLI_ROOT, stubbed ssh/omp/crontab)
     scripts/guard.ts, guard/     hygiene guards; file-size-exceptions.txt ratchets oversized files
     scripts/format.ts            runs every formatter and file-type linter (write, check, lint, tools)
+    scripts/useless-await.ts     fails on TS80007 (`await` on a non-promise), which tsc --noEmit never reports
     docs/*.md                    focused guides
     .githooks/                   pre-commit, commit-msg, pre-push
     .github/workflows/ci.yml     CI: lint, tests with coverage, gitleaks
