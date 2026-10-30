@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { nextActions } from "../src/records/digest.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Digest = {
@@ -125,7 +126,7 @@ describe("digest", () => {
         box.ok(["task", "hold", "T1", "--question", "which db?"]);
         box.ok(["inbox", "add", "--from", "m2", "--title", "news"], { stdin: "x", now: "2026-03-04T09:00:00Z" });
         const next = section(box.ok(["digest"], { now: NOW }), "Next");
-        expect(next[0]).toBe("Next (5):");
+        expect(next[0]).toBe("Next (6):");
         expect(next[1]).toBe(
             '  - Ask the user about T1 (alpha): which db?: bin/toli needs; record each reply verbatim with bin/toli task answer T<n> "<answer>" and dispatch the unblocked task at once (the toli-ahoy skill)',
         );
@@ -137,21 +138,44 @@ describe("digest", () => {
         expect(next[5]).toStartWith(
             "  - Install Codex CLI: config/machine.json routes jawans to it: npm install -g @openai/codex",
         );
+        expect(next[6]).toMatch(/^ {2}- Setup: \d+ steps? remains? \(.*\): say "set up toli"/);
         const json = JSON.parse(box.ok(["digest", "--json"], { now: NOW })) as { next: { action: string }[] };
-        expect(json.next).toHaveLength(5);
+        expect(json.next).toHaveLength(6);
     });
 
-    test("Next says nothing is pending when there is nothing to do; persona line heads the digest", () => {
+    test("Next says nothing is pending when there is nothing to do", () => {
+        const empty = {
+            projects: [],
+            backlog: { inFlight: [], waiting: [], queued: [] },
+            needs: { total: 0, staleDays: 7, groups: [] },
+            unseenResults: 0,
+            urls: new Map<string, string>(),
+            setup: [],
+            setupSteps: [],
+            missingHarnesses: [],
+            unattended: [],
+        };
+        expect(nextActions(empty)).toEqual([
+            { action: "Nothing pending", command: "greet the user and wait for a request" },
+        ]);
+    });
+
+    test("a fresh install's Next names the remaining setup steps every time; the notice stays told-once", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         box.stub("omp", "true");
-        const text = box.ok(["digest"], { now: NOW });
-        expect(text.split("\n")[1]).toStartWith('Names: the user is "Malik"');
-        expect(section(text, "Next")).toEqual([
-            "Next (1):",
-            "  - Nothing pending: greet the user and wait for a request",
-        ]);
-        expect(section(text, "jawan runs")).toEqual(["jawan runs (0):", "  none"]);
+        const first = box.ok(["digest"], { now: NOW });
+        expect(first.split("\n")[1]).toStartWith('Names: the user is "Malik"');
+        expect(first).toMatch(/^Setup: \d+ steps? remains? - say "set up toli"/m);
+        const next = section(first, "Next");
+        expect(next[0]).toBe("Next (1):");
+        expect(next[1]).toMatch(
+            /^ {2}- Setup: \d+ steps? remains? \(.*At least one project registered\): say "set up toli" to close them \(the toli-setup skill; bin\/toli setup status lists them\)$/,
+        );
+        const second = box.ok(["digest"], { now: NOW });
+        expect(second).not.toMatch(/^Setup:/m);
+        expect(section(second, "Next")).toEqual(next);
+        expect(section(first, "jawan runs")).toEqual(["jawan runs (0):", "  none"]);
     });
 
     test("an active task with no recorded jawan is flagged until one is recorded with task start --agent", () => {

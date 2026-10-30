@@ -53,6 +53,9 @@ Where it shows up:
 - omp: the extension takes it at session start, shows it as a notification, and hands it to the lead's first turn.
 - Claude Code: the SessionStart hook (`bin/toli hook claude-session-start`, written by `bin/toli harness sync`).
 
+The digest's Next block is not told-once: while any step is missing it names them every time (`Setup: 3 steps
+remain (...): say "set up toli" ...`), so a fresh install never reads "Nothing pending".
+
 Commands:
 
     bin/toli setup status [--json]   # full checklist, every time

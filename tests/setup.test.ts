@@ -168,7 +168,7 @@ describe("told-once notice", () => {
         box.ok(["setup", "snooze"]);
         expect(readMarker()?.snoozed).toBe(true);
         expect(box.ok(["setup", "notice"])).toBe("");
-        expect(box.ok(["digest"])).not.toContain("Setup:");
+        expect(box.ok(["digest"])).not.toMatch(/^Setup:/m);
         // The snoozed set lacks a step that now goes missing: told again.
         const marker = readMarker();
         if (marker === null) throw new Error("no marker after snooze");
@@ -186,7 +186,7 @@ describe("setup CLI", () => {
         const first = box.ok(["digest"]);
         expect(first).toContain("machine (unnamed) (not initialized)");
         expect(first).toMatch(/^Setup: \d+ steps remain - say "set up toli"/m);
-        expect(box.ok(["digest"])).not.toContain("Setup:");
+        expect(box.ok(["digest"])).not.toMatch(/^Setup:/m);
         const text = box.ok(["setup", "status"]);
         expect(text).toContain("missing  machine - Machine config");
         expect(text).toContain("user: Question: what should this machine be called");
