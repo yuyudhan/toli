@@ -17,6 +17,9 @@ export const paths = {
     projects: () => join(repoRoot(), "data", "projects.json"),
     backlog: () => join(repoRoot(), "data", "backlog.json"),
     projectDir: (name: string) => join(repoRoot(), "projects", name),
+    /** Per-task git worktrees of worktree-per-task projects: projects/.worktrees/<project>/<T-id>. */
+    worktreesDir: (project: string) => join(repoRoot(), "projects", ".worktrees", project),
+    taskWorktree: (project: string, taskId: string) => join(repoRoot(), "projects", ".worktrees", project, taskId),
     /** The user's standing preferences and decisions (pinned memory). */
     preferences: () => join(repoRoot(), "data", "preferences.md"),
     learnings: () => join(repoRoot(), "data", "learnings.md"),

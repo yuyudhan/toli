@@ -10,6 +10,7 @@ import { type JobResult, listResults, loadJobState } from "./jobs.ts";
 import { paths } from "./paths.ts";
 import { personaLine } from "./persona.ts";
 import { fleetStatus } from "./pick.ts";
+import { brokenLink } from "./project-link.ts";
 import { projectsNeedingSetup } from "./project-setup.ts";
 import { loadProjects, type Mode } from "./projects.ts";
 import { type FleetEntry as AvailabilityEntry, availabilityLine } from "./resources.ts";
@@ -90,6 +91,8 @@ export function buildDigest(): Digest {
         const dir = paths.projectDir(project.name);
         const branch = project.branch ?? null;
         const base = { name: project.name, mode: project.mode, path: dir, branch };
+        const broken = brokenLink(project);
+        if (broken !== null) return { ...base, cloned: false, status: null, branchMismatch: false, error: broken };
         if (!isGitRepo(dir)) return { ...base, cloned: false, status: null, branchMismatch: false };
         try {
             const status = repoStatus(dir);
@@ -231,7 +234,9 @@ function fleetDigests(): FleetEntry[] {
 
 function projectLine(project: ProjectDigest): string {
     if (!project.cloned)
-        return `  ${project.name}: registered but not cloned here (bin/toli project ensure ${project.name} <url>)`;
+        return project.error === undefined
+            ? `  ${project.name}: registered but not cloned here (bin/toli project ensure ${project.name} <url>)`
+            : `  ${project.name}: ${project.error}`;
     if (!project.status) return `  ${project.name}: ${project.error ?? "status unavailable"}`;
     const status = project.status;
     const sync =

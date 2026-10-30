@@ -23,6 +23,7 @@ import { jobCommand } from "./tick.ts";
 import { upgradeCommand, versionCommand } from "./upgrade.ts";
 import { out, ToliError, warn } from "./util.ts";
 import { wakeCommand } from "./wake.ts";
+import { workspaceCommand } from "./workspace.ts";
 
 const USAGE = `usage: bin/toli <command> [args]
 
@@ -32,20 +33,24 @@ const USAGE = `usage: bin/toli <command> [args]
   digest [--json] [--fleet]
   project add <name> <git-url> [--mode commit|pr|no-mistakes]
   project ensure <name> <git-url> [--mode commit|pr|no-mistakes]
+  project link <name> <path> [--mode commit|pr|no-mistakes]
   project list [--json] | path <name>
   project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
+              [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no] [--standing-pr yes|no]
+  project set --all --workspace <strategy>
   project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
   project setup <name> [--json] | setup --all [--json]
   task add <project> "<title>" [--shape ship|scout] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped]
   task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
   task hold <id> --question "..." | answer <id> "<answer>" | drop <id>
-  commit <project> -m "<message>" -- <path>...
+  commit <project> [--task T<n>] -m "<message>" -- <path>...
   branch <project> <branch>
+  workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
   forge <project> [--json]
-  push <project>
-  pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft]
-  pr status <project> [<id>] [--json] | list <project> [--json]
+  push <project> [--task T<n>]
+  pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
+  pr status <project> [<id>] [--task T<n>] [--json] | list <project> [--json]
   pr merge <project> <id> [--method merge|squash|rebase]
   job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
   job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
@@ -101,6 +106,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "branch":
                 branchCommand(rest);
+                return 0;
+            case "workspace":
+                workspaceCommand(rest);
                 return 0;
             case "forge":
                 forgeCommand(rest);

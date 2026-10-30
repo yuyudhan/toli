@@ -17,6 +17,10 @@ import { paths } from "./paths.ts";
 import { persona } from "./persona.ts";
 import { type Forge, findProject, type Project, projectCloneDir } from "./projects.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "./util.ts";
+import { workDir } from "./workspace.ts";
+
+/** `--task T<n>`: the project command acts on that task's workspace (its worktree or task branch). */
+const TASK_FLAG = "task";
 
 /** A remote URL split into host and repository path (`owner/repo`, `group/sub/repo`). */
 export type Remote = { host: string; path: string; ssh: boolean };
@@ -199,11 +203,14 @@ function requireBranch(dir: string, action: string): string {
     return branch;
 }
 
-/** `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. */
+/**
+ * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Runs in
+ * the task's workspace with `--task` (or from inside a task worktree), else in the project clone.
+ */
 export async function pushCommand(argv: string[]): Promise<void> {
-    const args = new Args(argv);
+    const args = new Args(argv, { values: [TASK_FLAG] });
     args.maxPositional(1);
-    const dir = projectCloneDir(args.pos(0, "project"));
+    const { dir } = workDir(args.pos(0, "project"), args.str(TASK_FLAG));
     const branch = requireBranch(dir, "push");
     const code = await runInherit([
         "git",
@@ -217,13 +224,13 @@ export async function pushCommand(argv: string[]): Promise<void> {
     if (code !== 0) throw new ToliError(`git push -u origin ${branch} failed (exit ${code})`);
 }
 
-/** Refuse unless origin has `branch` and it contains the local HEAD. */
-function requirePushed(dir: string, project: string, branch: string): void {
+/** Refuse unless origin has `branch` and it contains the local HEAD; `pushHint` names the push command to run. */
+function requirePushed(dir: string, pushHint: string, branch: string): void {
     const remote = git(dir, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
     if (remote.code !== 0)
         throw new ToliError(`git ls-remote origin failed: ${(remote.stderr || remote.stdout).trim()}`);
     const remoteSha = remote.stdout.trim().split(/\s+/)[0] ?? "";
-    const push = `run bin/toli push ${project} first (only with ${persona().user}'s word to push)`;
+    const push = `run ${pushHint} first (only with ${persona().user}'s word to push, or the project's standing push grant)`;
     if (remoteSha === "") throw new ToliError(`refusing: branch ${branch} is not on origin; ${push}`);
     const head = gitOk(dir, ["rev-parse", "HEAD"]);
     if (remoteSha !== head && git(dir, ["merge-base", "--is-ancestor", head, remoteSha]).code !== 0)
@@ -248,10 +255,11 @@ function summaryLine(pr: PrSummary): string {
 }
 
 async function prCreate(argv: string[]): Promise<void> {
-    const args = new Args(argv, { values: ["title", "body", "body-file", "base"], booleans: ["draft"] });
+    const args = new Args(argv, { values: ["title", "body", "body-file", "base", TASK_FLAG], booleans: ["draft"] });
     args.maxPositional(1);
     const project = findProject(args.pos(0, "project"));
-    const dir = projectCloneDir(project.name);
+    const work = workDir(project.name, args.str(TASK_FLAG));
+    const dir = work.dir;
     const title = args.str("title");
     if (!title) throw new ToliError("pr create needs --title <title>");
     const bodyText = args.str("body");
@@ -262,8 +270,8 @@ async function prCreate(argv: string[]): Promise<void> {
     const body = bodyText ?? readFileSync(bodyFile as string, "utf8");
     const branch = requireBranch(dir, "open a pull request");
     const target = projectForge(project);
-    requirePushed(dir, project.name, branch);
-    const base = args.str("base");
+    requirePushed(dir, `bin/toli push ${project.name}${work.task === null ? "" : ` --task ${work.task.id}`}`, branch);
+    const base = args.str("base") ?? work.task?.workspace?.base ?? undefined;
     const url = await clientFor(target, dir).create({
         title,
         body,
@@ -275,10 +283,10 @@ async function prCreate(argv: string[]): Promise<void> {
 }
 
 async function prStatus(argv: string[]): Promise<void> {
-    const args = new Args(argv, { booleans: ["json"] });
+    const args = new Args(argv, { booleans: ["json"], values: [TASK_FLAG] });
     args.maxPositional(2);
     const project = findProject(args.pos(0, "project"));
-    const dir = projectCloneDir(project.name);
+    const { dir } = workDir(project.name, args.str(TASK_FLAG));
     const id = args.positional[1];
     const ref =
         id !== undefined ? { id } : { branch: requireBranch(dir, "find the pull request of the current branch") };

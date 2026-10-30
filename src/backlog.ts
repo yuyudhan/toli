@@ -2,8 +2,12 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Args } from "./args.ts";
 import { paths } from "./paths.ts";
+import type { Workspace } from "./project-strategy.ts";
 import { findProject } from "./projects.ts";
 import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "./util.ts";
+
+/** Where a task's jawans work, recorded when its workspace is prepared (src/workspace.ts). `base`: per-task only. */
+export type TaskWorkspace = { strategy: Workspace; path: string; branch: string | null; base: string | null };
 
 export const STATUSES = ["queued", "active", "held", "done", "dropped"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -22,6 +26,7 @@ export type Task = {
     commit?: string;
     /** The jawan working on it: a harness agent id (`task start --agent`) or a `bin/toli spawn` run id. */
     agent?: string;
+    workspace?: TaskWorkspace;
     createdAt: string;
     updatedAt: string;
     startedAt?: string;

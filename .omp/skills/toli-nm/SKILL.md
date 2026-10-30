@@ -16,10 +16,14 @@ role, persona, and skills entirely and do only the assigned pipeline step.
 
 ## When to use it
 
-- Only when Malik asked for a branch or PR on that specific work. A project mode of `no-mistakes` says which delivery
-  path to use once he asks; it is not permission by itself.
+- Only when Malik asked for a branch or PR on that specific work, or the project has a standing push+pr grant
+  (`standing` in `bin/toli project list --json`, set only on his explicit word) and a per-task strategy. A project
+  mode of `no-mistakes` says which delivery path to use; it is not permission by itself.
 - The gate validates committed history on a non-default branch. So before running:
-    1. `bin/toli branch <project> <branch>` (if not already on a feature branch), as the first step of the
+    1. Per-task strategies (`branch-per-task` / `worktree-per-task`): the task is already on its own
+       `toli/<T-id>-<slug>` branch, prepared by `bin/toli spawn --task` or `bin/toli workspace prepare <T-id>`; the gate
+       jawan runs in that workspace (the clone, or `projects/.worktrees/<project>/<T-id>`). Same-branch projects:
+       `bin/toli branch <project> <branch>` (if not already on a feature branch), as the first step of the
        implementer's brief. A project with a fixed branch (`branch` in `bin/toli project list --json`) stays on it:
        run the gate there, or ask Malik before branching.
     2. jawans do the work; a verifier jawan checks it and commits (`skill://toli-dispatch`, step 6).
@@ -34,10 +38,11 @@ role, persona, and skills entirely and do only the assigned pipeline step.
 
 ## The gate jawan's brief
 
-The brief (`docs/brief-template.md`, Landing "land yourself", with Malik's branch/PR request quoted in place of the
-"Never push" rule) tells the jawan to:
+The brief (`docs/brief-template.md`, Landing "land yourself", with Malik's branch/PR request quoted, or the standing
+grant named, in place of the "Never push" rule) tells the jawan to:
 
-- Run commands in the project directory (`bin/toli project path <project>`).
+- Run commands in the task's workspace: `bin/toli project path <project>` for same-branch projects, else the path
+  recorded on the task (`bin/toli task list --json`, `workspace.path`).
 - Always pass a full `--intent`. omp has no transcript reader for no-mistakes, so the intent is the reviewer's only
   view of what was wanted: Malik's words verbatim, plus decisions and tradeoffs made along the way and anything he
   ruled in or out. Never put "Malik" in it; write "the user". Sardar writes this intent into the brief.

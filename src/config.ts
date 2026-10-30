@@ -32,6 +32,8 @@ export type Machine = {
     retention?: RetentionConfig;
     /** Which harness runs jawans (`bin/toli spawn`): default, per-work-type overrides, models. See docs/harnesses.md. */
     harness?: HarnessConfig;
+    /** Defaults for new projects; `workspace` is the branching/worktree strategy, validated in src/project-strategy.ts. */
+    defaults?: { workspace?: string };
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

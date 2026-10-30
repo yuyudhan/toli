@@ -78,7 +78,9 @@ describe("project set", () => {
         expect(list()[0]?.deliverySetAt).toBeUndefined();
         box.ok(["project", "set", "app", "--forge", "github"]);
         expect(list()[0]?.deliverySetAt).toBeUndefined();
-        expect(box.ok(["project", "set", "app", "--mode", "pr", "--branch", "none"])).toBe("app: mode=pr forge=github");
+        expect(box.ok(["project", "set", "app", "--mode", "pr", "--branch", "none"])).toBe(
+            "app: mode=pr workspace=same-branch forge=github",
+        );
         expect(list()[0]?.deliverySetAt).toEqual(expect.any(String));
 
         const refusals: [string[], string][] = [
@@ -115,7 +117,7 @@ describe("project setup", () => {
 
     test("notes sections, commands and freshness are checked; a complete project is set up", () => {
         const box = registered();
-        box.ok(["project", "set", "app", "--mode", "commit", "--branch", "main"]);
+        box.ok(["project", "set", "app", "--mode", "commit", "--branch", "main", "--workspace", "same-branch"]);
         const file = notes(box, "app", "# app\n\n## Commands\n\n- `bun install`\n");
         expect(status(setup(box, "app"))).toMatchObject({
             delivery: "ok",
@@ -151,13 +153,13 @@ describe("project setup", () => {
     test("--all lists only projects with gaps", () => {
         const box = registered();
         withProject(box, "done");
-        box.ok(["project", "set", "done", "--mode", "commit"]);
+        box.ok(["project", "set", "done", "--mode", "commit", "--workspace", "same-branch"]);
         notes(box, "done", FULL_NOTES);
         const needing = JSON.parse(box.ok(["project", "setup", "--all", "--json"])) as {
             name: string;
             missing: string[];
         }[];
-        expect(needing).toEqual([{ name: "app", missing: ["delivery", "notes"] }]);
+        expect(needing).toEqual([{ name: "app", missing: ["delivery", "workspace", "notes"] }]);
         expect(box.ok(["project", "setup", "--all"])).toContain("1 of 2 projects need setup");
         expect(box.toli(["project", "setup", "app", "--all"]).code).toBe(1);
     });
