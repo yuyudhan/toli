@@ -1,5 +1,7 @@
 // `bin/toli project set`: record the user's delivery, forge, workspace strategy and standing-grant answers.
 import { Args } from "../core/args.ts";
+import { currentBranch, git, isGitRepo } from "../core/git.ts";
+import { paths } from "../core/paths.ts";
 import { now, out, run, ToliError } from "../core/util.ts";
 import {
     FORGES,
@@ -11,6 +13,7 @@ import {
     updateProjects,
 } from "./projects.ts";
 import { parseWorkspace, perTask, type Workspace } from "./strategy.ts";
+import { cloneHolders, dirty, holdersText, refExists } from "./workspace.ts";
 
 /** `--forge`: one of FORGES, or `none` (null) to clear the override. */
 function parseForge(value: string | undefined): Forge | null | undefined {
@@ -57,6 +60,35 @@ function applyWorkspace(project: Project, workspace: Workspace, at: string): str
     project.mode = "pr";
     project.deliverySetAt = at;
     return `${project.name}: mode commit -> pr (${workspace} lands each task through a PR/MR)`;
+}
+
+/**
+ * After `--branch <b>`: switch the clone (or linked checkout) to <b> when it is clean and no live task holds it,
+ * creating a local branch tracking origin/<b> when only origin has it. Otherwise it stays where it is and the note
+ * names the command that switches it; the branch is recorded either way. Never fetches, stashes or creates <b>.
+ */
+function switchClone(name: string, branch: string): string | null {
+    const dir = paths.projectDir(name);
+    if (!isGitRepo(dir)) return null;
+    const from = currentBranch(dir);
+    if (from === branch) return null;
+    const on = from ?? "a detached HEAD";
+    const switchCommand = `git -C ${dir} switch ${branch}`;
+    const stays = (reason: string, how = `switch it when that is settled: ${switchCommand}`) =>
+        `projects/${name} is still on ${on}: ${reason}; ${how}`;
+    const holders = cloneHolders(name, dir, branch);
+    if (holders.length > 0) return stays(holdersText(holders));
+    if (dirty(dir) !== "") return stays("it has uncommitted changes");
+    const local = refExists(dir, `refs/heads/${branch}`);
+    if (!local && !refExists(dir, `refs/remotes/origin/${branch}`))
+        return stays(
+            `branch ${branch} exists neither locally nor on origin`,
+            `fetch and switch to it (git -C ${dir} fetch origin ${branch} && ${switchCommand}), ` +
+                `or create it from ${on}: git -C ${dir} switch -c ${branch}`,
+        );
+    const result = git(dir, local ? ["switch", branch] : ["switch", "-c", branch, "--track", `origin/${branch}`]);
+    if (result.code !== 0) return stays(`git switch failed: ${(result.stderr || result.stdout).trim()}`);
+    return `projects/${name}: switched from ${on} to ${branch}${local ? "" : ` (tracking origin/${branch})`}`;
 }
 
 function setAll(args: Args): void {
@@ -140,4 +172,6 @@ export function projectSetCommand(argv: string[]): void {
             " ",
         ),
     );
+    const switched = typeof branch === "string" ? switchClone(name, branch) : null;
+    if (switched !== null) out(switched);
 }

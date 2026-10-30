@@ -60,7 +60,8 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
 - `add` clones into `projects/<name>`; `link` registers an existing checkout through a symlink; `ensure` is the
   idempotent form used for remote work; `import` registers clones already in `projects/`.
 - `set` records delivery, branch, forge, workspace strategy, and standing grants ([delivery.md](delivery.md),
-  [projects.md](projects.md#workspace-strategy)).
+  [projects.md](projects.md#workspace-strategy)). `--branch <b>` also switches a clean clone to `<b>`, or prints the
+  `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)).
 - `drop` keeps the clone and data unless asked; it refuses a dirty clone or unpushed commits.
 - `setup` is the per-project checklist ([projects.md](projects.md#setting-up-an-existing-project)).
 

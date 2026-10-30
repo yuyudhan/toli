@@ -42,7 +42,9 @@ clone on different branches), each pushed with a PR/MR; **worktree-per-task** - 
 `projects/.worktrees/<project>/<T-id>` with its own branch and PR/MR, so tasks run side by side. New projects start on
 the machine default (`defaults.workspace` in `config/machine.json`, asked during "set up toli"; same-branch when
 unset), unstamped, so `project setup` asks until Malik confirms. For a per-task strategy `--branch` is the base the
-task branches start from and the PR/MR targets (origin's default branch when unset).
+task branches start from and the PR/MR targets (origin's default branch when unset). `--branch <b>` also switches a
+clean, unheld clone to `<b>` (tracking `origin/<b>` when only origin has it); otherwise it keeps `<b>` recorded and
+prints why plus the `git -C <clone> switch <b>` command: relay that to Malik, never run it past a dirty clone.
 
 `project set --mode/--branch` stamps the delivery choice (`deliverySetAt`) and `--workspace` the strategy
 (`workspaceSetAt`); until then both are defaults and `bin/toli project setup` lists them as missing. The forge

@@ -28,6 +28,12 @@ strips AI co-author trailers, and refuses on the wrong branch.
 
 - A fixed branch (`--branch`) also makes `bin/toli digest` flag a clone that is on another branch. The lead switches
   or creates branches only on your word.
+- `project set <p> --branch <b>` also switches the clone (or linked checkout) to `<b>`: `git switch <b>`, or a new
+  local branch tracking `origin/<b>` when only origin has it (from the refs already fetched; it never fetches). It
+  leaves the clone where it is when the clone has uncommitted changes, a live task holds it on its task branch, `<b>`
+  exists neither locally nor on origin, or `git switch` fails. Then it says why and prints the command to run
+  (`git -C <clone> switch <b>`, or the fetch/create commands for a missing branch). Either way `<b>` stays recorded,
+  so `digest` flags the mismatch until the clone is switched.
 - `--mode` or `--branch` records when the choice was made (`deliverySetAt` in `project list --json`). A project
   without it only has the default (`commit`, no fixed branch), and `project setup` asks for a real answer.
 - The mode chooses the path; it is never permission. Pushing, opening a PR, merging, and releasing still need your
