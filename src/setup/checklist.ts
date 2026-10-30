@@ -38,8 +38,8 @@ export type SetupState = "done" | "missing" | "optional";
 
 /**
  * Who closes the item. user: needs the user's answer or action (a login). lead-command: one `bin/toli` bookkeeping
- * command that writes only toli's own records. jawan: changes outside toli's records (installs, launchd/crontab,
- * git config, tracked files), so a jawan does it.
+ * command that writes only toli's own records. jawan: changes outside toli's records (installs,
+ * launchd/systemd/crontab, git config, tracked files), so a jawan does it.
  */
 export type SetupWho = "user" | "jawan" | "lead-command";
 

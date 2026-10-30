@@ -17,7 +17,7 @@ stopped.
 | `persona`      | user (optional) | defaults are fine; custom names go in `config/persona.json`                                 |
 | `harness-sync` | jawan           | `bin/toli harness sync` (writes tracked shim files)                                         |
 | `harness-cli`  | jawan + user    | a jawan installs a harness CLI; the user logs in (browser or API key)                       |
-| `scheduler`    | jawan           | `bin/toli schedule install` (launchd agent or crontab line)                                 |
+| `scheduler`    | jawan           | `bin/toli schedule install` (launchd agent, systemd user timer, or crontab line)            |
 | `local`        | lead            | `bin/toli setup seed-local`                                                                 |
 | `git-hooks`    | jawan           | `git config core.hooksPath .githooks` in toli's root                                        |
 | `fleet`        | user (optional) | other machines in `config/fleet.json`; a worker needs its coordinator (`skill://toli-sync`) |

@@ -30,8 +30,10 @@ Jobs never run inside your chat. Every minute something checks for due jobs and 
 `omp -p` session in the background:
 
 - while a lead session is open on omp, the toli extension does it (`bin/toli job run-due`);
-- otherwise the OS ticker does (`bin/toli job tick`, installed by `bin/toli schedule install`: launchd on macOS,
-  crontab elsewhere). The ticker leaves due jobs to a live session when there is one.
+- otherwise the OS ticker does (`bin/toli job tick`, installed by `bin/toli schedule install`: a launchd agent
+  `com.toli.tick` on macOS; on Linux and WSL2 the systemd user units `toli-tick.service` + `toli-tick.timer` when
+  `systemctl --user` works, else a crontab line tagged `# toli tick`; `TOLI_SCHEDULER` forces one). The ticker
+  leaves due jobs to a live session when there is one.
 
 A machine that was asleep through a scheduled minute runs the job once to catch up, not once per missed window. A
 claimed job is never run twice, and a run still marked running after 3 hours is recorded as failed so the schedule

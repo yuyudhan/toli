@@ -9,24 +9,25 @@ import {
     launchAgentsDir,
     loadLaunchAgent,
     mustRun,
+    osScheduler,
     readCrontab,
+    type Scheduler,
+    systemctl,
+    systemdUserDir,
     unloadLaunchAgent,
     writeCrontab,
-} from "../jobs/schedule.ts";
+} from "../jobs/os-scheduler.ts";
 import { type Helper, loadHelpers, scheduleText } from "./registry.ts";
 import {
     HELPER_CRON_PREFIX,
     HELPER_LABEL_PREFIX,
     HELPER_UNIT_PREFIX,
-    type HelperScheduler,
     helperCronTag,
     helperLabel,
-    helperScheduler,
     helperUnit,
     renderHelperCronLine,
     renderHelperPlist,
     renderHelperSystemd,
-    systemdUserDir,
 } from "./units.ts";
 
 const USAGE =
@@ -41,15 +42,11 @@ function systemdFiles(name: string): { service: string; timer: string } {
     return { service: `${base}.service`, timer: `${base}.timer` };
 }
 
-function systemctl(...args: string[]): string[] {
-    return ["systemctl", "--user", ...args];
-}
-
 function platformOk(helper: Helper): boolean {
     return helper.platforms === undefined || helper.platforms.includes(platform());
 }
 
-function installHelper(helper: Helper, scheduler: HelperScheduler): void {
+function installHelper(helper: Helper, scheduler: Scheduler): void {
     if (!existsSync(helper.exec)) throw new ToliError(`helper "${helper.name}": ${helper.exec} does not exist`);
     if (scheduler === "launchd") {
         const plist = renderHelperPlist(helper);
@@ -105,7 +102,7 @@ function installHelper(helper: Helper, scheduler: HelperScheduler): void {
 }
 
 /** Remove a helper's schedule whether or not it is still registered; returns whether anything was installed. */
-function uninstallHelper(name: string, scheduler: HelperScheduler): boolean {
+function uninstallHelper(name: string, scheduler: Scheduler): boolean {
     if (scheduler === "launchd") {
         if (dryRun()) {
             out(`# dry run: would boot out ${guiDomain()}/${helperLabel(name)} and remove ${helperPlistPath(name)}`);
@@ -147,7 +144,7 @@ export type HelperState = {
     /** Whether the helper's `platforms` include this machine. */
     platformOk: boolean;
     schedule: string;
-    scheduler: HelperScheduler;
+    scheduler: Scheduler;
     installed: boolean;
     /** Known to the scheduler: a loaded launchd agent, an active systemd unit, or a crontab line. */
     loaded: boolean;
@@ -160,7 +157,7 @@ export type HelperState = {
 
 function probe(
     name: string,
-    scheduler: HelperScheduler,
+    scheduler: Scheduler,
 ): Omit<HelperState, "name" | "registered" | "enabled" | "platformOk" | "schedule"> {
     if (scheduler === "launchd") {
         const target = helperPlistPath(name);
@@ -212,7 +209,7 @@ function probe(
 }
 
 /** Names of toli helpers installed in this machine's scheduler, registered or not. */
-function installedNames(scheduler: HelperScheduler): string[] {
+function installedNames(scheduler: Scheduler): string[] {
     const list = (dir: string, prefix: string, suffix: string): string[] =>
         existsSync(dir)
             ? readdirSync(dir)
@@ -228,7 +225,7 @@ function installedNames(scheduler: HelperScheduler): string[] {
 }
 
 export function helperStates(): HelperState[] {
-    const scheduler = helperScheduler();
+    const scheduler = osScheduler();
     const helpers = loadHelpers();
     const registered = new Set(helpers.map((helper) => helper.name));
     const states: HelperState[] = helpers.map((helper) => ({
@@ -272,7 +269,7 @@ function findHelper(name: string): Helper {
 }
 
 function installCommand(args: Args): void {
-    const scheduler = helperScheduler();
+    const scheduler = osScheduler();
     if (args.bool("all")) {
         args.maxPositional(0);
         const helpers = loadHelpers();
@@ -293,7 +290,7 @@ function installCommand(args: Args): void {
 }
 
 function uninstallCommand(args: Args): void {
-    const scheduler = helperScheduler();
+    const scheduler = osScheduler();
     args.maxPositional(args.bool("all") ? 0 : 1);
     const names = args.bool("all") ? installedNames(scheduler) : [args.pos(0, "helper name")];
     if (names.length === 0) out("no toli helpers installed");
@@ -309,7 +306,7 @@ export async function helperCommand(argv: string[]): Promise<number> {
     switch (sub) {
         case "list": {
             args.maxPositional(0);
-            const scheduler = helperScheduler();
+            const scheduler = osScheduler();
             const helpers = loadHelpers();
             const rows = helpers.map((helper) => ({
                 name: helper.name,

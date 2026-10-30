@@ -1,23 +1,8 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { Cron } from "../core/cron.ts";
 import { paths } from "../core/paths.ts";
-import { platform, run, shellQuote, ToliError } from "../core/util.ts";
-import { renderLaunchdPlist, schedulePath } from "../jobs/schedule.ts";
+import { shellQuote, ToliError } from "../core/util.ts";
+import { renderLaunchdPlist, schedulePath, systemdWord } from "../jobs/os-scheduler.ts";
 import type { Helper } from "./registry.ts";
-
-/** How helpers get scheduled here: launchd on macOS, systemd --user on Linux when available, else crontab. */
-export type HelperScheduler = "launchd" | "systemd" | "crontab";
-
-/** `TOLI_HELPER_SCHEDULER` forces one (tests, or a Linux box whose systemd user session is unusable). */
-export function helperScheduler(): HelperScheduler {
-    const forced = process.env.TOLI_HELPER_SCHEDULER;
-    if (forced === "launchd" || forced === "systemd" || forced === "crontab") return forced;
-    if (forced !== undefined && forced !== "")
-        throw new ToliError(`TOLI_HELPER_SCHEDULER must be launchd, systemd or crontab (got "${forced}")`);
-    if (platform() === "darwin") return "launchd";
-    return run(["systemctl", "--user", "show-environment"]).code === 0 ? "systemd" : "crontab";
-}
 
 export function helperLabel(name: string): string {
     return `com.toli.helper.${name}`;
@@ -33,13 +18,6 @@ export function helperCronTag(name: string): string {
 
 export function helperUnit(name: string): string {
     return `${HELPER_UNIT_PREFIX}${name}`;
-}
-
-/** Where systemd user units live; `TOLI_SYSTEMD_USER_DIR` overrides for tests. */
-export function systemdUserDir(): string {
-    const override = process.env.TOLI_SYSTEMD_USER_DIR;
-    if (override) return override;
-    return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "systemd", "user");
 }
 
 /** The environment a scheduled helper runs with: the scheduled PATH unless the helper sets its own. */
@@ -149,13 +127,6 @@ export function renderHelperCronLine(helper: Helper): string {
     const program = [helper.exec, ...helper.args].map(shellQuote);
     const command = [`cd ${shellQuote(paths.root())}`, ["env", ...env, ...nice, ...program].join(" ")].join(" && ");
     return `${when} ${command} >> ${shellQuote(paths.helperLog(helper.name))} 2>&1 ${helperCronTag(helper.name)}`;
-}
-
-/** Quote one word for a systemd unit file (its own syntax: double quotes, and % and $ doubled). */
-function systemdWord(word: string): string {
-    const escaped = word.replace(/%/g, "%%").replace(/\$/g, "$$$$");
-    if (/^[A-Za-z0-9_./:=@+,%$-]+$/.test(escaped)) return escaped;
-    return `"${escaped.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 export type SystemdUnits = { service: string; timer: string | null };

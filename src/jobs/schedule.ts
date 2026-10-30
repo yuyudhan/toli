@@ -1,120 +1,41 @@
+// `bin/toli schedule`: the per-minute tick (`bin/toli job tick`) in this machine's OS scheduler (os-scheduler.ts).
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
-import { out, platform, printJson, run, shellQuote, ToliError, writeTextAtomic } from "../core/util.ts";
+import { out, printJson, run, shellQuote, ToliError, writeTextAtomic } from "../core/util.ts";
+import {
+    bunPath,
+    dryRun,
+    guiDomain,
+    launchAgentsDir,
+    launchctlLoaded,
+    loadLaunchAgent,
+    mustRun,
+    osScheduler,
+    readCrontab,
+    renderLaunchdPlist,
+    type Scheduler,
+    schedulePath,
+    systemctl,
+    systemdUserDir,
+    systemdWord,
+    unloadLaunchAgent,
+    writeCrontab,
+} from "./os-scheduler.ts";
 
 export const LABEL = "com.toli.tick";
 export const CRON_TAG = "# toli tick";
-
-/** `TOLI_DRY_RUN=1`: print what would be written and run, touching nothing. */
-export function dryRun(): boolean {
-    return process.env.TOLI_DRY_RUN === "1";
-}
-
-/** Where launchd user agents live; `TOLI_LAUNCH_AGENTS_DIR` overrides for tests. */
-export function launchAgentsDir(): string {
-    return process.env.TOLI_LAUNCH_AGENTS_DIR ?? join(homedir(), "Library", "LaunchAgents");
-}
+/** The tick's systemd user units: `toli-tick.service` run by `toli-tick.timer`. */
+const TICK_UNIT = "toli-tick";
 
 export function plistPath(): string {
     return join(launchAgentsDir(), `${LABEL}.plist`);
 }
 
-/**
- * The bun on PATH (e.g. Homebrew's /opt/homebrew/bin/bun symlink) survives upgrades, unlike the versioned
- * Cellar path in process.execPath; fall back to the running binary when bun is not on PATH.
- */
-function bunPath(): string {
-    return Bun.which("bun", { PATH: process.env.PATH ?? "" }) ?? process.execPath;
-}
-
-/** PATH for the scheduled tick: the directories of every tool a job may call, resolved now. */
-export function schedulePath(): string {
-    const dirs: string[] = [dirname(bunPath())];
-    for (const tool of ["omp", "git", "gh", "no-mistakes", "ssh"]) {
-        const found = Bun.which(tool, { PATH: process.env.PATH ?? "" });
-        if (found) dirs.push(dirname(found));
-    }
-    dirs.push("/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin");
-    return [...new Set(dirs)].join(":");
-}
-
-function xml(text: string): string {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-/** One launchd user agent. Optional keys are written only when set, in a fixed order. */
-export type PlistSpec = {
-    label: string;
-    program: string[];
-    workingDirectory: string;
-    env: Record<string, string>;
-    /** Run every N seconds. */
-    startInterval?: number;
-    /** StartCalendarInterval entries (keys Minute, Hour, Day, Month, Weekday); absent keys mean "every". */
-    calendar?: Record<string, number>[];
-    runAtLoad?: boolean;
-    /** Restart whenever it exits (a long-running service). */
-    keepAlive?: boolean;
-    processType?: "Background";
-    nice?: number;
-    lowPriorityIO?: boolean;
-    stdoutPath: string;
-    stderrPath: string;
-};
-
-export function renderLaunchdPlist(spec: PlistSpec): string {
-    const lines: string[] = [
-        "    <key>Label</key>",
-        `    <string>${xml(spec.label)}</string>`,
-        "    <key>ProgramArguments</key>",
-        "    <array>",
-        ...spec.program.map((value) => `        <string>${xml(value)}</string>`),
-        "    </array>",
-        "    <key>WorkingDirectory</key>",
-        `    <string>${xml(spec.workingDirectory)}</string>`,
-        "    <key>EnvironmentVariables</key>",
-        "    <dict>",
-        ...Object.entries(spec.env).flatMap(([key, value]) => [
-            `        <key>${xml(key)}</key>`,
-            `        <string>${xml(value)}</string>`,
-        ]),
-        "    </dict>",
-    ];
-    if (spec.startInterval !== undefined)
-        lines.push("    <key>StartInterval</key>", `    <integer>${spec.startInterval}</integer>`);
-    if (spec.calendar !== undefined) {
-        lines.push("    <key>StartCalendarInterval</key>", "    <array>");
-        for (const entry of spec.calendar) {
-            lines.push("        <dict>");
-            for (const [key, value] of Object.entries(entry))
-                lines.push(`            <key>${key}</key>`, `            <integer>${value}</integer>`);
-            lines.push("        </dict>");
-        }
-        lines.push("    </array>");
-    }
-    if (spec.runAtLoad) lines.push("    <key>RunAtLoad</key>", "    <true/>");
-    if (spec.keepAlive) lines.push("    <key>KeepAlive</key>", "    <true/>");
-    if (spec.processType !== undefined)
-        lines.push("    <key>ProcessType</key>", `    <string>${spec.processType}</string>`);
-    if (spec.nice !== undefined) lines.push("    <key>Nice</key>", `    <integer>${spec.nice}</integer>`);
-    if (spec.lowPriorityIO) lines.push("    <key>LowPriorityIO</key>", "    <true/>");
-    lines.push(
-        "    <key>StandardOutPath</key>",
-        `    <string>${xml(spec.stdoutPath)}</string>`,
-        "    <key>StandardErrorPath</key>",
-        `    <string>${xml(spec.stderrPath)}</string>`,
-    );
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-${lines.join("\n")}
-</dict>
-</plist>
-`;
+function tickUnitFiles(): { service: string; timer: string } {
+    const base = join(systemdUserDir(), TICK_UNIT);
+    return { service: `${base}.service`, timer: `${base}.timer` };
 }
 
 export function renderPlist(): string {
@@ -139,51 +60,43 @@ export function cronLine(): string {
     return `* * * * * ${command} ${CRON_TAG}`;
 }
 
-export function guiDomain(): string {
-    return `gui/${process.getuid?.() ?? 0}`;
-}
-
-export function launchctlLoaded(label: string): boolean {
-    return run(["launchctl", "print", `${guiDomain()}/${label}`]).code === 0;
-}
-
-/** Write a launchd agent and (re)load it: an already-loaded copy is booted out first, so reinstalling is safe. */
-export function loadLaunchAgent(label: string, target: string, plist: string): void {
-    writeTextAtomic(target, plist);
-    if (launchctlLoaded(label)) mustRun(["launchctl", "bootout", `${guiDomain()}/${label}`]);
-    mustRun(["launchctl", "bootstrap", guiDomain(), target]);
-}
-
-/** Boot out a launchd agent (when loaded) and remove its plist; returns whether anything was there. */
-export function unloadLaunchAgent(label: string, target: string): boolean {
-    const loaded = launchctlLoaded(label);
-    if (loaded) mustRun(["launchctl", "bootout", `${guiDomain()}/${label}`]);
-    const present = existsSync(target);
-    rmSync(target, { force: true });
-    return loaded || present;
-}
-
-export function readCrontab(): string[] {
-    const result = run(["crontab", "-l"]);
-    // `crontab -l` exits non-zero with "no crontab for <user>" when none exists yet.
-    if (result.code !== 0) return [];
-    return result.stdout.split("\n").filter((line) => line !== "");
-}
-
-export function writeCrontab(lines: string[]): void {
-    const text = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
-    const result = run(["crontab", "-"], { stdin: text });
-    if (result.code !== 0) throw new ToliError(`crontab - failed: ${(result.stderr || result.stdout).trim()}`);
-}
-
-export function mustRun(cmd: string[]): void {
-    const result = run(cmd);
-    if (result.code !== 0) throw new ToliError(`${cmd.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
+/** The tick as systemd user units: a oneshot service and a timer that starts it a second after load, then every 60s. */
+export function renderTickSystemd(): { service: string; timer: string } {
+    const log = join(paths.logsDir(), "systemd.log").replace(/%/g, "%%");
+    const service = [
+        "[Unit]",
+        "Description=toli tick (bin/toli job tick)",
+        "",
+        "[Service]",
+        "Type=oneshot",
+        `WorkingDirectory=${systemdWord(paths.root())}`,
+        `Environment=${systemdWord(`PATH=${schedulePath()}`)}`,
+        `ExecStart=${[bunPath(), paths.toliBin(), "job", "tick"].map(systemdWord).join(" ")}`,
+        `StandardOutput=append:${log}`,
+        `StandardError=append:${log}`,
+        "",
+    ].join("\n");
+    const timer = [
+        "[Unit]",
+        "Description=Run the toli tick every minute",
+        "",
+        "[Timer]",
+        "OnActiveSec=1s",
+        "OnUnitActiveSec=60s",
+        "AccuracySec=1s",
+        `Unit=${TICK_UNIT}.service`,
+        "",
+        "[Install]",
+        "WantedBy=timers.target",
+        "",
+    ].join("\n");
+    return { service, timer };
 }
 
 function install(): void {
     mkdirSync(paths.logsDir(), { recursive: true });
-    if (platform() === "darwin") {
+    const scheduler = osScheduler();
+    if (scheduler === "launchd") {
         const plist = renderPlist();
         const target = plistPath();
         if (dryRun()) {
@@ -195,6 +108,28 @@ function install(): void {
         }
         loadLaunchAgent(LABEL, target, plist);
         out(`installed and loaded ${target}: bin/toli job tick runs every minute`);
+        return;
+    }
+    if (scheduler === "systemd") {
+        const units = renderTickSystemd();
+        const files = tickUnitFiles();
+        const timer = `${TICK_UNIT}.timer`;
+        if (dryRun()) {
+            out(`# dry run: would write ${files.service}`);
+            out(units.service);
+            out(`# dry run: would write ${files.timer}`);
+            out(units.timer);
+            out(
+                `# would run: systemctl --user daemon-reload && systemctl --user enable ${timer} && systemctl --user restart ${timer}`,
+            );
+            return;
+        }
+        writeTextAtomic(files.service, units.service);
+        writeTextAtomic(files.timer, units.timer);
+        mustRun(systemctl("daemon-reload"));
+        mustRun(systemctl("enable", timer));
+        mustRun(systemctl("restart", timer));
+        out(`installed and started ${files.timer}: bin/toli job tick runs every minute`);
         return;
     }
     const line = cronLine();
@@ -209,7 +144,8 @@ function install(): void {
 }
 
 function uninstall(): void {
-    if (platform() === "darwin") {
+    const scheduler = osScheduler();
+    if (scheduler === "launchd") {
         const target = plistPath();
         if (dryRun()) {
             out(`# dry run: would run launchctl bootout ${guiDomain()}/${LABEL} (if loaded) and remove ${target}`);
@@ -217,6 +153,24 @@ function uninstall(): void {
         }
         unloadLaunchAgent(LABEL, target);
         out(`uninstalled ${target}`);
+        return;
+    }
+    if (scheduler === "systemd") {
+        const files = tickUnitFiles();
+        if (dryRun()) {
+            out(`# dry run: would run systemctl --user disable --now ${TICK_UNIT}.timer and remove ${files.timer}`);
+            return;
+        }
+        if (!existsSync(files.timer) && !existsSync(files.service)) {
+            out("no toli tick units installed");
+            return;
+        }
+        // A timer systemd no longer knows is not an error here; the files go either way.
+        run(systemctl("disable", "--now", `${TICK_UNIT}.timer`));
+        rmSync(files.timer, { force: true });
+        rmSync(files.service, { force: true });
+        mustRun(systemctl("daemon-reload"));
+        out(`uninstalled ${files.timer}`);
         return;
     }
     const lines = readCrontab();
@@ -231,7 +185,7 @@ function uninstall(): void {
 }
 
 export type ScheduleStatus = {
-    scheduler: "launchd" | "crontab";
+    scheduler: Scheduler;
     installed: boolean;
     loaded: boolean;
     detail: string;
@@ -239,29 +193,40 @@ export type ScheduleStatus = {
     otherBin: string | null;
 };
 
-/** The one per-machine tick is shared by every clone (same label/tag): which `bin/toli` does it run, if not ours? */
-function otherTickBin(installedText: string, darwin: boolean): string | null {
-    const bin = paths.toliBin();
-    if (installedText.includes(darwin ? `<string>${bin}</string>` : ` ${shellQuote(bin)} `)) return null;
+/**
+ * The one per-machine tick is shared by every clone (same label/tag/unit): which `bin/toli` does it run, if not
+ * ours? `ours` is how this checkout's `bin/toli` appears in the installed plist, crontab line or unit.
+ */
+function otherTickBin(installedText: string, ours: string): string | null {
+    if (installedText.includes(ours)) return null;
     return /[^\s<>'"]*\/bin\/toli(?=[\s<'"])/.exec(installedText)?.[0] ?? "another toli checkout";
 }
 
 export function scheduleStatus(): ScheduleStatus {
-    if (platform() === "darwin") {
+    const scheduler = osScheduler();
+    const bin = paths.toliBin();
+    if (scheduler === "launchd") {
         const target = plistPath();
         const installed = existsSync(target);
         const loaded = launchctlLoaded(LABEL);
-        const otherBin = installed ? otherTickBin(readFileSync(target, "utf8"), true) : null;
-        return { scheduler: "launchd", installed, loaded, detail: target, otherBin };
+        const otherBin = installed ? otherTickBin(readFileSync(target, "utf8"), `<string>${bin}</string>`) : null;
+        return { scheduler, installed, loaded, detail: target, otherBin };
+    }
+    if (scheduler === "systemd") {
+        const files = tickUnitFiles();
+        const installed = existsSync(files.service) && existsSync(files.timer);
+        const loaded = run(systemctl("is-active", `${TICK_UNIT}.timer`)).stdout.trim() === "active";
+        const otherBin = installed ? otherTickBin(readFileSync(files.service, "utf8"), ` ${systemdWord(bin)} `) : null;
+        return { scheduler, installed, loaded, detail: files.timer, otherBin };
     }
     const lines = readCrontab().filter((entry) => entry.includes(CRON_TAG));
     const installed = lines.length > 0;
     return {
-        scheduler: "crontab",
+        scheduler,
         installed,
         loaded: installed,
         detail: installed ? "crontab line present" : "no crontab line",
-        otherBin: installed ? otherTickBin(lines.join("\n"), false) : null,
+        otherBin: installed ? otherTickBin(lines.join("\n"), ` ${shellQuote(bin)} `) : null,
     };
 }
 
