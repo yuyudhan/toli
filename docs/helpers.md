@@ -70,14 +70,17 @@ Unknown keys and malformed values are errors that name the helper, so a typo nev
 
 ## Schedulers
 
+The same scheduler runs the minute tick (`bin/toli schedule install`, [jobs.md](jobs.md)). A Linux box (or WSL2)
+uses systemd when `systemctl --user show-environment` succeeds, else crontab.
+
 | Platform                          | What `install` writes                                                                    |
 | --------------------------------- | ---------------------------------------------------------------------------------------- |
 | macOS                             | `~/Library/LaunchAgents/com.toli.helper.<name>.plist`, loaded with `launchctl bootstrap` |
 | Linux with a systemd user session | `~/.config/systemd/user/toli-helper-<name>.service` (+ `.timer`), `enable` + `restart`   |
 | Linux without systemd             | one crontab line ending in `# toli helper <name>`                                        |
 
-`TOLI_HELPER_SCHEDULER=launchd|systemd|crontab` forces one, e.g. on a server whose systemd user session does not
-survive logout (or run `loginctl enable-linger $USER` so it does).
+`TOLI_SCHEDULER=launchd|systemd|crontab` forces one (for the tick too), e.g. on a server whose systemd user session
+does not survive logout (or run `loginctl enable-linger $USER` so it does).
 
 ## Hooks
 

@@ -129,7 +129,8 @@ Details: [harnesses.md](harnesses.md).
 
 - `job due` lists due jobs; `run-due` runs them (the live session); `tick` is the per-minute OS ticker; `begin` and
   `finish` claim a run and record its result.
-- `schedule` installs the ticker (launchd on macOS, crontab elsewhere).
+- `schedule` installs the ticker (launchd on macOS; a systemd user timer on Linux when `systemctl --user` works,
+  else crontab).
 - `inbox` holds messages from jawans and other machines; `wake` takes everything new once, for the chat.
 
 Details: [jobs.md](jobs.md).

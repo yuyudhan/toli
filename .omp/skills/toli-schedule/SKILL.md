@@ -43,8 +43,9 @@ After adding, check the ticker:
 
     bin/toli schedule status
 
-If it is not installed, offer `bin/toli schedule install` (one launchd agent on macOS, a crontab line on Linux, running
-`bin/toli job tick` every minute). Install only after Malik agrees.
+If it is not installed, offer `bin/toli schedule install` (one launchd agent on macOS; on Linux a systemd user timer
+when `systemctl --user` works, else a crontab line; running `bin/toli job tick` every minute). Install only after
+Malik agrees.
 
 How jobs run, in plain words for Malik:
 

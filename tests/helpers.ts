@@ -26,11 +26,20 @@ export type Sandbox = {
     git(dir: string, args: string[]): string;
 };
 
-/** A temp TOLI_ROOT with its own stub-binaries dir first on PATH. */
+/**
+ * A temp TOLI_ROOT with its own stub-binaries dir first on PATH. `systemctl` starts stubbed as "no user session", so
+ * Linux-mode runs pick crontab on any host; a test that wants systemd stubs its own.
+ */
 export function sandbox(): Sandbox {
     const root = mkdtempSync(join(tmpdir(), "toli-test-"));
     const stubs = join(root, ".stubs");
     mkdirSync(stubs);
+    const stub: Sandbox["stub"] = (name, script) => {
+        const file = join(stubs, name);
+        writeFileSync(file, `#!/bin/sh\n${script}\n`);
+        chmodSync(file, 0o755);
+    };
+    stub("systemctl", 'echo "Failed to connect to bus: No medium found" >&2; exit 1');
     const path = [stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
     const toli: Sandbox["toli"] = (args, options = {}) => {
         const proc = Bun.spawnSync([process.execPath, TOLI_BIN, ...args], {
@@ -60,11 +69,7 @@ export function sandbox(): Sandbox {
                 throw new Error(`toli ${args.join(" ")} exited ${result.code}: ${result.stderr}${result.stdout}`);
             return result.stdout.trim();
         },
-        stub(name, script) {
-            const file = join(stubs, name);
-            writeFileSync(file, `#!/bin/sh\n${script}\n`);
-            chmodSync(file, 0o755);
-        },
+        stub,
         git(dir, args) {
             const proc = Bun.spawnSync(["git", "-C", dir, ...args], {
                 env: { ...process.env, ...GIT_ENV },

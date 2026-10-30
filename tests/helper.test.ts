@@ -108,9 +108,27 @@ describe("helpers.json parsing", () => {
     test("a missing local/helpers.json means no helpers", () => {
         const box = sandbox();
         expect(box.ok(["helper", "list"])).toContain("no helpers");
-        expect(
-            JSON.parse(box.ok(["helper", "status", "--json"], { env: { TOLI_HELPER_SCHEDULER: "crontab" } })),
-        ).toEqual([]);
+        expect(JSON.parse(box.ok(["helper", "status", "--json"], { env: { TOLI_SCHEDULER: "crontab" } }))).toEqual([]);
+    });
+});
+
+describe("scheduler selection", () => {
+    const schedulerOf = (box: Sandbox, env: Record<string, string>): unknown =>
+        (JSON.parse(box.ok(["helper", "status", "--json"], { env })) as { scheduler: string }[])[0]?.scheduler;
+
+    test("macOS uses launchd; Linux uses systemd user units when `systemctl --user` works, else crontab", () => {
+        const box = withHelpers([sweep]);
+        box.stub("launchctl", "exit 113");
+        box.stub("crontab", "exit 1");
+        expect(schedulerOf(box, { TOLI_PLATFORM: "darwin", TOLI_LAUNCH_AGENTS_DIR: join(box.root, "agents") })).toBe(
+            "launchd",
+        );
+        expect(schedulerOf(box, { TOLI_PLATFORM: "linux" })).toBe("crontab");
+        box.stub("systemctl", 'case "$2" in show-environment) echo HOME=/home/test ;; *) exit 3 ;; esac');
+        expect(schedulerOf(box, { TOLI_PLATFORM: "linux", TOLI_SYSTEMD_USER_DIR: join(box.root, "units") })).toBe(
+            "systemd",
+        );
+        expect(schedulerOf(box, { TOLI_PLATFORM: "linux", TOLI_SCHEDULER: "crontab" })).toBe("crontab");
     });
 });
 
@@ -167,7 +185,7 @@ describe("rendering (dry run)", () => {
 
     test("systemd: oneshot service plus timer; always-running is a restarting service with no timer", () => {
         const box = withHelpers([sweep, daemon, nightly]);
-        const env = { TOLI_HELPER_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: join(box.root, "units") };
+        const env = { TOLI_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: join(box.root, "units") };
         const output = box.ok(["helper", "install", "sweep"], { env });
         expect(output).toContain(`would write ${join(box.root, "units", "toli-helper-sweep.service")}`);
         expect(output).toContain("Type=oneshot");
@@ -191,14 +209,14 @@ describe("rendering (dry run)", () => {
             { name: "odd", exec: "local/scripts/odd", args: ["a b", "50%", "$HOME"], schedule: { every: "1h" } },
         ]);
         const output = box.ok(["helper", "install", "odd"], {
-            env: { TOLI_HELPER_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: join(box.root, "units") },
+            env: { TOLI_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: join(box.root, "units") },
         });
         expect(output).toContain(`ExecStart=${join(box.root, "local", "scripts", "odd")} "a b" 50%% $$HOME`);
     });
 
     test("crontab: tagged line with cd, env, nice and log; always-running refused", () => {
         const box = withHelpers([sweep, daemon]);
-        const env = { TOLI_HELPER_SCHEDULER: "crontab" };
+        const env = { TOLI_SCHEDULER: "crontab" };
         box.stub("crontab", 'case "$1" in -l) echo "0 3 * * * /usr/bin/backup" ;; *) exit 2 ;; esac');
         const output = box.ok(["helper", "install", "sweep"], { env });
         const line = output.split("\n").find((entry) => entry.endsWith("# toli helper sweep")) ?? "";
@@ -273,7 +291,7 @@ describe("install and uninstall", () => {
         const calls = join(box.root, ".systemctl");
         box.stub("systemctl", `echo "$*" >> "${calls}"`);
         const units = join(box.root, "units");
-        const env = { TOLI_DRY_RUN: "0", TOLI_HELPER_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: units };
+        const env = { TOLI_DRY_RUN: "0", TOLI_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: units };
         box.ok(["helper", "install", "sweep"], { env });
         box.ok(["helper", "install", "sweep"], { env });
         expect(existsSync(join(units, "toli-helper-sweep.service"))).toBe(true);
@@ -292,7 +310,7 @@ describe("install and uninstall", () => {
         const file = join(box.root, ".crontab");
         writeFileSync(file, "0 3 * * * /usr/bin/backup\n");
         box.stub("crontab", `case "$1" in -l) cat "${file}" ;; -) cat > "${file}" ;; *) exit 2 ;; esac`);
-        const env = { TOLI_DRY_RUN: "0", TOLI_HELPER_SCHEDULER: "crontab" };
+        const env = { TOLI_DRY_RUN: "0", TOLI_SCHEDULER: "crontab" };
         box.ok(["helper", "install", "--all"], { env });
         box.ok(["helper", "install", "sweep"], { env });
         const lines = readFileSync(file, "utf8").trimEnd().split("\n");

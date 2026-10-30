@@ -17,7 +17,8 @@ Everything about helpers is private to the machine:
     logs/helpers/<name>.log  each helper's output
 
 `local/` is gitignored. Never commit anything from it, never copy a helper into tracked toli files, and never put a
-secret in `helpers.json` (read secrets at run time from the Keychain, a 0600 file, or the environment).
+secret in `helpers.json` (read secrets at run time from a 0600 file, the environment, or the OS keyring: the macOS
+Keychain via `security`, or `secret-tool` on a Linux desktop; a headless Linux box or WSL2 usually has no keyring).
 
 ## Registry format
 
@@ -68,7 +69,7 @@ after Malik agrees to what it would remove.
 
 Schedulers: launchd user agents `com.toli.helper.<name>` on macOS; systemd user units `toli-helper-<name>.service`
 (+ `.timer`) on Linux; crontab lines tagged `# toli helper <name>` when systemd's user session is unavailable.
-`TOLI_HELPER_SCHEDULER=launchd|systemd|crontab` forces one.
+`TOLI_SCHEDULER=launchd|systemd|crontab` forces one (it also picks the tick's scheduler).
 
 ## Changing or removing
 

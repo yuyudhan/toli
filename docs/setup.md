@@ -34,7 +34,8 @@ Each item has a stable id, a status, who closes it, and the exact fix command or
 
 - **user**: needs your answer (or your own login, which may open a browser).
 - **lead-command**: one `bin/toli` command that writes only toli's own records; the lead runs it.
-- **jawan**: changes outside toli's records (installs, launchd/crontab, git config, tracked files); a jawan does it.
+- **jawan**: changes outside toli's records (installs, launchd/systemd/crontab, git config, tracked files); a jawan
+  does it.
 
 The harness check stops at the first ready harness, starting with the default jawan harness, so it stays fast.
 
