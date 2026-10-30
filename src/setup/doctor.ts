@@ -208,15 +208,22 @@ export async function runChecks(): Promise<Check[]> {
     }
 
     const schedule = scheduleStatus();
-    checks.push(
-        schedule.installed && schedule.loaded
-            ? { level: "ok", name: "scheduler", detail: `${schedule.scheduler} installed and loaded` }
-            : {
-                  level: "warn",
-                  name: "scheduler",
-                  detail: `${schedule.scheduler} ${schedule.installed ? "installed" : "not installed"}, ${schedule.loaded ? "loaded" : "not loaded"} (bin/toli schedule install)`,
-              },
-    );
+    if (schedule.otherBin !== null)
+        checks.push({
+            level: "warn",
+            name: "scheduler",
+            detail: `${schedule.scheduler} tick runs ${schedule.otherBin}, not this checkout (bin/toli schedule install moves it here)`,
+        });
+    else
+        checks.push(
+            schedule.installed && schedule.loaded
+                ? { level: "ok", name: "scheduler", detail: `${schedule.scheduler} installed and loaded` }
+                : {
+                      level: "warn",
+                      name: "scheduler",
+                      detail: `${schedule.scheduler} ${schedule.installed ? "installed" : "not installed"}, ${schedule.loaded ? "loaded" : "not loaded"} (bin/toli schedule install)`,
+                  },
+        );
     return checks;
 }
 

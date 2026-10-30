@@ -129,3 +129,47 @@ describe("schedule on Linux (crontab)", () => {
         expect(result.stderr).toContain("permission denied");
     });
 });
+
+describe("a tick installed for another toli checkout", () => {
+    const other = "/srv/other-toli/bin/toli";
+
+    function doctorScheduler(box: Sandbox, env: Record<string, string>): string {
+        const checks = JSON.parse(box.toli(["doctor", "--json"], { env }).stdout) as {
+            level: string;
+            name: string;
+            detail: string;
+        }[];
+        const check = checks.find((entry) => entry.name === "scheduler");
+        return `${check?.level} ${check?.detail}`;
+    }
+
+    test("crontab: schedule status and doctor warn with the other checkout's path", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        withCrontab(box, `* * * * * cd /srv/other-toli && bun ${other} job tick ${TAG}\n`);
+        expect(doctorScheduler(box, linux)).toBe(
+            `warn crontab tick runs ${other}, not this checkout (bin/toli schedule install moves it here)`,
+        );
+        const status = box.ok(["schedule", "status"], { env: linux });
+        expect(status).toContain(`warn: the tick runs ${other}, not this checkout`);
+        expect(JSON.parse(box.ok(["schedule", "status", "--json"], { env: linux }))).toMatchObject({ otherBin: other });
+        box.ok(["schedule", "install"], { env: linux });
+        expect(box.ok(["schedule", "status"], { env: linux })).not.toContain("warn");
+        expect(doctorScheduler(box, linux)).toBe("ok crontab installed and loaded");
+    });
+
+    test("launchd: schedule status and doctor warn with the other checkout's path", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        box.stub("launchctl", "exit 0");
+        const darwin = { TOLI_PLATFORM: "darwin", TOLI_DRY_RUN: "0", TOLI_LAUNCH_AGENTS_DIR: box.root };
+        writeFileSync(
+            join(box.root, "com.toli.tick.plist"),
+            `<plist><array><string>${other}</string></array></plist>\n`,
+        );
+        expect(box.ok(["schedule", "status"], { env: darwin })).toContain(`warn: the tick runs ${other}`);
+        expect(doctorScheduler(box, darwin)).toBe(
+            `warn launchd tick runs ${other}, not this checkout (bin/toli schedule install moves it here)`,
+        );
+    });
+});

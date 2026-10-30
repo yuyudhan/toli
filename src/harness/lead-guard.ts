@@ -3,9 +3,9 @@
 // The lead (the session the user starts in toli's root) keeps to bookkeeping: it may write toli's private
 // records (data/, state/, config/) and scratch files, and never reads or edits project code. Jawans are never
 // blocked, whatever harness they run on.
-import { realpathSync } from "node:fs";
+import { readdirSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 export type GuardAction = { kind: "write" | "read"; paths: string[] } | { kind: "other" };
 
@@ -23,18 +23,38 @@ export type GuardDecision = { allow: true } | { allow: false; reason: string };
 const LEAD_WRITABLE = ["data", "state", "config"];
 const ALLOW: GuardDecision = { allow: true };
 
-/** A path and its symlink-resolved form, so /tmp vs /private/tmp style aliases compare equal. */
-function forms(path: string): string[] {
+/**
+ * The symlink-resolved form of an absolute path, so /tmp vs /private/tmp style aliases and linked checkouts compare
+ * by where they really are. A path that does not exist (a new file, a glob) resolves through its deepest existing
+ * ancestor.
+ */
+function realPath(path: string): string {
     try {
-        const real = realpathSync(path);
-        return real === path ? [path] : [path, real];
+        return realpathSync(path);
     } catch {
-        return [path];
+        const parent = dirname(path);
+        return parent === path ? path : join(realPath(parent), basename(path));
     }
 }
 
 function within(path: string, dirs: string[]): boolean {
     return dirs.some((dir) => path === dir || path.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`));
+}
+
+/**
+ * Project territory: the real projects/ dir and the real checkout of every project there (linked ones included).
+ * A linked checkout that contains toli's root itself is left out, so the lead's own records stay writable.
+ */
+function projectDirs(root: string): string[] {
+    const projects = join(root, "projects");
+    let names: string[] = [];
+    try {
+        names = readdirSync(projects);
+    } catch {
+        // no projects/ yet: only the dir itself
+    }
+    const checkouts = names.map((name) => realPath(join(projects, name))).filter((dir) => !within(root, [dir]));
+    return [projects, ...checkouts];
 }
 
 /** Resolve a tool path against the session cwd; `~/` is the home dir. Internal URIs (`agent://`) yield null. */
@@ -57,37 +77,34 @@ export function isBrief(prompt: string): boolean {
 
 export function guardDecision(context: GuardContext, action: GuardAction): GuardDecision {
     if (context.jawan || action.kind === "other") return ALLOW;
-    const roots = forms(resolve(context.root));
-    if (!forms(resolve(context.cwd)).some((cwd) => roots.includes(cwd))) return ALLOW;
-    const projects = roots.map((root) => join(root, "projects"));
-    if (action.kind === "read") {
-        for (const raw of action.paths) {
-            const path = resolveToolPath(raw, context.cwd);
-            if (path !== null && within(path, projects))
-                return {
-                    allow: false,
-                    reason: `toli lead guard: reading project code (${raw}) is jawan work. Dispatch a scout jawan (load the toli-dispatch skill) instead of exploring yourself.`,
-                };
-        }
-        return ALLOW;
-    }
-    const records = roots.flatMap((root) => LEAD_WRITABLE.map((dir) => join(root, dir)));
-    // Scratch dirs (temp, Claude plan files) are fine, but never as a way into toli's root (which may live in temp).
-    const scratch = [...forms(tmpdir()), ...forms("/tmp"), join(homedir(), ".claude", "plans")];
-    for (const raw of action.paths) {
+    const root = realPath(resolve(context.root));
+    if (realPath(resolve(context.cwd)) !== root) return ALLOW;
+    const projects = projectDirs(root);
+    const targets = action.paths.flatMap((raw) => {
         const path = resolveToolPath(raw, context.cwd);
-        if (path === null) continue;
-        const candidates = forms(path);
-        const allowed = candidates.some((candidate) => within(candidate, roots))
-            ? candidates.some((candidate) => within(candidate, records))
-            : candidates.some((candidate) => within(candidate, scratch));
-        if (!allowed)
-            return {
-                allow: false,
-                reason: `toli lead guard: the lead only writes toli's records (data/, state/, config/); editing ${raw} is jawan work. Write a brief and dispatch a jawan (load the toli-dispatch skill).`,
-            };
+        return path === null ? [] : [{ raw, path: realPath(path) }];
+    });
+    if (action.kind === "read") {
+        const read = targets.find(({ path }) => within(path, projects));
+        if (read === undefined) return ALLOW;
+        return {
+            allow: false,
+            reason: `toli lead guard: reading project code (${read.raw}) is jawan work. Dispatch a scout jawan (load the toli-dispatch skill) instead of exploring yourself.`,
+        };
     }
-    return ALLOW;
+    const records = LEAD_WRITABLE.map((dir) => join(root, dir));
+    // Scratch dirs (temp, Claude plan files) are fine, but never as a way into toli's root or a project checkout
+    // (either may live in temp).
+    const scratch = [tmpdir(), "/tmp", join(homedir(), ".claude", "plans")].map(realPath);
+    const write = targets.find(({ path }) => {
+        if (within(path, projects)) return true;
+        return within(path, [root]) ? !within(path, records) : !within(path, scratch);
+    });
+    if (write === undefined) return ALLOW;
+    return {
+        allow: false,
+        reason: `toli lead guard: the lead only writes toli's records (data/, state/, config/); editing ${write.raw} is jawan work. Write a brief and dispatch a jawan (load the toli-dispatch skill).`,
+    };
 }
 
 function stringField(input: Record<string, unknown>, key: string): string[] {

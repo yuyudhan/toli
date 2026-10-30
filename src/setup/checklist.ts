@@ -1,12 +1,11 @@
 // The install-level setup checklist behind `bin/toli setup status`: one item per step, with a stable id, its state,
 // who closes it, and the exact fix. Probes that touch the machine outside TOLI_ROOT are injectable for tests.
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hasMachine, loadFleet, loadMachine, type Machine } from "../core/config.ts";
 import { git } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { DEFAULT_PERSONA, persona } from "../core/persona.ts";
-import { platform, shellQuote } from "../core/util.ts";
 import {
     configuredHarnesses,
     defaultHarness,
@@ -17,7 +16,7 @@ import {
     SPECS,
 } from "../harness/harness.ts";
 import { syncShims } from "../harness/sync.ts";
-import { CRON_TAG, plistPath, readCrontab, scheduleStatus } from "../jobs/schedule.ts";
+import { scheduleStatus } from "../jobs/schedule.ts";
 import { loadProjects } from "../projects/projects.ts";
 
 export const SETUP_ITEM_IDS = [
@@ -111,27 +110,11 @@ export type SchedulerFacts = {
     otherBin: string | null;
 };
 
-/** scheduleStatus plus whether the one per-machine tick runs this checkout (a second clone shares the label). */
-function liveScheduler(): SchedulerFacts {
-    const status = scheduleStatus();
-    if (!status.installed) return { ...status, otherBin: null };
-    const bin = paths.toliBin();
-    const darwin = platform() === "darwin";
-    const text = darwin
-        ? readFileSync(plistPath(), "utf8")
-        : readCrontab()
-              .filter((line) => line.includes(CRON_TAG))
-              .join("\n");
-    if (text.includes(darwin ? `<string>${bin}</string>` : ` ${shellQuote(bin)} `))
-        return { ...status, otherBin: null };
-    return { ...status, otherBin: /[^\s<>'"]*\/bin\/toli(?=[\s<'"])/.exec(text)?.[0] ?? "another toli checkout" };
-}
-
 export function liveProbe(): SetupProbe {
     return {
         which: (tool) => Bun.which(tool, { PATH: process.env.PATH ?? "" }),
         harness: liveHarnessReadiness,
-        scheduler: liveScheduler,
+        scheduler: scheduleStatus,
         hooksPath: () => {
             const result = git(paths.root(), ["config", "--get", "core.hooksPath"]);
             return result.code === 0 ? result.stdout.trim() : null;

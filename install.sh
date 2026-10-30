@@ -137,6 +137,7 @@ if ! clone_log="$(git -c advice.detachedHead=false clone --quiet --branch "$tag"
     printf '%s\n' "$clone_log" >&2
     die "git clone failed"
 fi
+dir="$(cd "$dir" && pwd)" # a typed path like ~/a/../b reads as the real directory from here on
 
 if command -v bun >/dev/null 2>&1; then
     say "Checking the install (bin/toli version, bin/toli doctor)"
