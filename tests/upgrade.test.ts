@@ -1,7 +1,15 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Sandbox, sandbox } from "./helpers.ts";
+import {
+    describeInstalled,
+    installedVersion,
+    releaseRemote,
+    upgradeBlockers,
+    versionCommand,
+} from "../src/release/upgrade.ts";
+import { commandIn, type Sandbox, sandbox } from "./helpers.ts";
 
 // Each test builds a release repo with ~20 git processes plus several bin/toli runs (~1.5 s idle); under a loaded
 // machine that can pass Bun's 5 s default, so this file allows 20 s per test.
@@ -122,5 +130,28 @@ describe("bin/toli upgrade", () => {
         const result = box.toli(["upgrade"]);
         expect(result.code).toBe(1);
         expect(result.stderr).toContain('HEAD is on branch "main"');
+    });
+});
+
+describe("version and upgrade checks in process", () => {
+    test("describe the install, its release remote, and what blocks an upgrade", () => {
+        const box = releaseInstall();
+        const version = commandIn(box.root, versionCommand);
+        expect(version([])).toBe("toli v0.1.0");
+        expect(JSON.parse(version(["--json"]))).toMatchObject({ tag: "v0.1.0", version: "0.1.0", branch: null });
+        expect(releaseRemote(box.root)).toBe("origin");
+        expect(upgradeBlockers(box.root)).toEqual([]);
+
+        writeFileSync(join(box.root, "CHANGELOG.md"), "edited\n");
+        box.git(box.root, ["switch", "--quiet", "--create", "main"]);
+        const installed = installedVersion(box.root);
+        expect(installed).toMatchObject({ tag: "v0.1.0", branch: "main" });
+        expect(describeInstalled({ ...installed, tag: null })).toBe(`0.1.0 (untagged: main @ ${installed.commit})`);
+        expect(describeInstalled({ ...installed, tag: null, branch: null })).toContain("(untagged: detached @");
+        expect(upgradeBlockers(box.root)).toEqual([
+            "tracked files have local changes; commit or move them first:\n  M CHANGELOG.md",
+            'HEAD is on branch "main"; upgrade moves release installs (detached at a vX.Y.Z tag). On a development clone use git directly.',
+        ]);
+        expect(() => installedVersion(mkdtempSync(join(tmpdir(), "toli-not-git-")))).toThrow("is not a git checkout");
     });
 });

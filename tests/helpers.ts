@@ -1,3 +1,4 @@
+import { spyOn } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -140,4 +141,39 @@ export function withProject(box: Sandbox, name: string): string {
     box.git(seed, ["push", origin, "main"]);
     box.ok(["project", "add", name, origin]);
     return join(box.root, "projects", name);
+}
+
+/**
+ * Run `fn` in this test process with `root` as TOLI_ROOT, the GIT_ENV identity and `extra` (e.g. TOLI_NOW) set;
+ * returns what it wrote to stdout. Coverage sees only in-process code, never bin/toli subprocesses, so command
+ * functions called this way count. The environment and stdout are restored even when `fn` throws.
+ */
+export function inProcess(root: string, fn: () => void, extra: Record<string, string> = {}): string {
+    const env: Record<string, string> = { ...GIT_ENV, TOLI_ROOT: root, ...extra };
+    const saved = Object.keys(env).map((key) => [key, process.env[key]] as const);
+    Object.assign(process.env, env);
+    const chunks: string[] = [];
+    const write = spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+        chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+    });
+    try {
+        fn();
+    } finally {
+        write.mockRestore();
+        for (const [key, value] of saved) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+    }
+    return chunks.join("");
+}
+
+/** A runner for one `bin/toli` command function under inProcess: each call returns that command's trimmed stdout. */
+export function commandIn(
+    root: string,
+    command: (argv: string[]) => void,
+    extra: Record<string, string> = {},
+): (argv: string[]) => string {
+    return (argv) => inProcess(root, () => command(argv), extra).trim();
 }
