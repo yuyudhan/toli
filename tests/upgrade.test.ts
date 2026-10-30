@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Sandbox, sandbox } from "./helpers.ts";
+
+// Each test builds a release repo with ~20 git processes plus several bin/toli runs (~1.5 s idle); under a loaded
+// machine that can pass Bun's 5 s default, so this file allows 20 s per test.
+setDefaultTimeout(20_000);
 
 const FAKE_TOLI = '#!/bin/sh\necho "fake toli $*"\n';
 
