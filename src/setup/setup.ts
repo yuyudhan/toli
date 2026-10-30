@@ -43,8 +43,13 @@ export function noticeDue(pending: readonly string[], marker: SetupMarker | null
     return pending.some((id) => !marker.pending.includes(id));
 }
 
+/** "Setup: N steps remain": the head of the notice and of the digest's Next setup action. */
+export function setupRemaining(remaining: number): string {
+    return `Setup: ${remaining} step${remaining === 1 ? "" : "s"} remain${remaining === 1 ? "s" : ""}`;
+}
+
 export function noticeText(remaining: number): string {
-    return `Setup: ${remaining} step${remaining === 1 ? "" : "s"} remain${remaining === 1 ? "s" : ""} - say "set up toli" (bin/toli setup status lists them)`;
+    return `${setupRemaining(remaining)} - say "set up toli" (bin/toli setup status lists them)`;
 }
 
 /**

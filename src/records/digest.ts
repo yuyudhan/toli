@@ -14,7 +14,8 @@ import { type JobResult, listResults, loadJobState } from "../jobs/jobs.ts";
 import { brokenLink } from "../projects/link.ts";
 import { loadProjects, type Mode } from "../projects/projects.ts";
 import { projectsNeedingSetup } from "../projects/setup.ts";
-import { takeSetupNotice } from "../setup/setup.ts";
+import { type SetupItem, setupChecklist } from "../setup/checklist.ts";
+import { setupRemaining, takeSetupNotice } from "../setup/setup.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
 import { type Needs, needsQueue, renderNeeds, takeStaleHolds } from "./needs.ts";
@@ -87,7 +88,8 @@ function recentReports(): ReportEntry[] {
     return entries.sort((a, b) => b.modified.localeCompare(a.modified)).slice(0, RECENT_REPORTS);
 }
 
-export function buildDigest(): Digest {
+/** `setupItems`: this machine's install-level setup checklist; its missing steps head the Next block's setup action. */
+export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest {
     // A fresh clone has no config/machine.json yet; the digest still works and the setup notice says what to do.
     const machine = hasMachine() ? loadMachine() : { name: "(unnamed)", role: "not initialized" };
     const projects = loadProjects().map((project): ProjectDigest => {
@@ -146,6 +148,7 @@ export function buildDigest(): Digest {
             unseenResults: jobResults.length + inbox.length,
             urls,
             setup: projectsNeedingSetup(),
+            setupSteps: setupItems.filter((item) => item.status === "missing").map((item) => item.title),
             missingHarnesses,
             unattended: backlog.inFlight.filter(
                 (task) => task.agent === undefined || (task.agent.startsWith("j-") && !live.has(task.agent)),
@@ -161,6 +164,8 @@ export type NextInput = {
     unseenResults: number;
     urls: Map<string, string>;
     setup: { name: string; missing: string[] }[];
+    /** Titles of this machine's missing install-level setup steps (src/setup/checklist.ts). */
+    setupSteps: string[];
     missingHarnesses: Harness[];
     /** Active tasks with no recorded jawan, or whose `bin/toli spawn` run has ended. */
     unattended: Task[];
@@ -223,6 +228,11 @@ export function nextActions(input: NextInput): NextAction[] {
         actions.push({
             action: `Install ${SPECS[harness].label}: config/machine.json routes jawans to it`,
             command: `${SPECS[harness].install}; then ${SPECS[harness].login} (docs/harnesses.md), or change harness in config/machine.json`,
+        });
+    if (input.setupSteps.length > 0)
+        actions.push({
+            action: `${setupRemaining(input.setupSteps.length)} (${input.setupSteps.slice(0, NEXT_LIST_LIMIT).join(", ")}${input.setupSteps.length > NEXT_LIST_LIMIT ? ", ..." : ""})`,
+            command: 'say "set up toli" to close them (the toli-setup skill; bin/toli setup status lists them)',
         });
     if (actions.length === 0)
         actions.push({ action: "Nothing pending", command: "greet the user and wait for a request" });
@@ -330,12 +340,13 @@ function render(digest: Digest, setup: string | null = null, resurface: Readonly
 export async function digestCommand(argv: string[]): Promise<void> {
     const args = new Args(argv, { booleans: ["json", "fleet"] });
     args.maxPositional(0);
-    const digest = buildDigest();
+    const setupItems = setupChecklist();
+    const digest = buildDigest(setupItems);
     if (args.bool("fleet") && digest.role !== "coordinator")
         throw new ToliError("--fleet runs on the coordinator only");
     if (!args.bool("fleet")) {
         if (args.bool("json")) printJson(digest);
-        else out(ownRender(digest));
+        else out(ownRender(digest, setupItems));
         return;
     }
     const availability: AvailabilityEntry[] = await fleetStatus();
@@ -344,7 +355,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
         printJson({ ...digest, availability, fleet });
         return;
     }
-    out(ownRender(digest));
+    out(ownRender(digest, setupItems));
     out("");
     out(`fleet availability (${availability.length}):`);
     for (const entry of availability) out(`  ${availabilityLine(entry)}`);
@@ -356,7 +367,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
 }
 
 /** This machine's digest as text: consumes the told-once setup notice and stale-hold re-surfacing. */
-function ownRender(digest: Digest): string {
+function ownRender(digest: Digest, setupItems: SetupItem[]): string {
     const resurface = digest.needs === undefined ? new Set<string>() : takeStaleHolds(digest.needs);
-    return render(digest, takeSetupNotice(), resurface);
+    return render(digest, takeSetupNotice(setupItems), resurface);
 }
