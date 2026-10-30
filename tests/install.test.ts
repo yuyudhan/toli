@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { GIT_ENV } from "./helpers.ts";
+import { GIT_ENV, tempDir } from "./helpers.ts";
 
 const INSTALL_SH = join(import.meta.dir, "..", "install.sh");
 
@@ -28,7 +27,7 @@ function releaseRepo(base: string): string {
 
 describe("install.sh", () => {
     test("the Cloning line shows the resolved absolute path of a relative --dir", () => {
-        const base = mkdtempSync(join(tmpdir(), "toli-install-"));
+        const base = tempDir("install");
         const bare = releaseRepo(base);
         mkdirSync(join(base, "work"));
         mkdirSync(join(base, "real"));

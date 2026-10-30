@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_PERSONA, persona, personaLine } from "../src/core/persona.ts";
+import { tempDir } from "./helpers.ts";
 
 const saved = process.env.TOLI_ROOT;
 
 function rootWith(config: unknown): void {
-    const root = mkdtempSync(join(tmpdir(), "toli-persona-"));
+    const root = tempDir("persona");
     process.env.TOLI_ROOT = root;
     if (config === undefined) return;
     mkdirSync(join(root, "config"));
