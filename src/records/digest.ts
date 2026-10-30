@@ -375,11 +375,18 @@ export async function digestCommand(argv: string[]): Promise<void> {
     }
 }
 
+/** The told-once update notice; a failure there becomes one line and never breaks the digest. */
+function updateNotice(): string | null {
+    try {
+        return takeUpdateNotice();
+    } catch (error) {
+        return `Update check: notice failed (${error instanceof Error ? error.message : String(error)}); see bin/toli update status`;
+    }
+}
+
 /** This machine's digest as text: consumes the told-once setup and update notices and stale-hold re-surfacing. */
 function ownRender(digest: Digest, setupItems: SetupItem[]): string {
     const resurface = digest.needs === undefined ? new Set<string>() : takeStaleHolds(digest.needs);
-    const notices = [takeSetupNotice(setupItems), takeUpdateNotice()].filter(
-        (notice): notice is string => notice !== null,
-    );
+    const notices = [takeSetupNotice(setupItems), updateNotice()].filter((notice): notice is string => notice !== null);
     return render(digest, notices, resurface);
 }

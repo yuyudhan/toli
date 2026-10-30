@@ -1,14 +1,16 @@
 // toli checks for its own updates every 3 days (`bin/toli update check|status|snooze|off|on`). The minute tick
-// (src/jobs/tick.ts) starts `bin/toli update check --due` as a detached process when a check is due, so neither the
-// tick nor the digest ever waits on the network. The check runs `git ls-remote --tags` against the clone's origin
-// (or TOLI_REPO_URL) with a short timeout, and for a newer stable vX.Y.Z fetches that one tag to read its
+// (src/jobs/tick.ts) claims a due check (records the attempt time under a lock) and starts `bin/toli update check`
+// as a detached process, so neither the tick nor the digest ever waits on the network and two ticks never start
+// two checks. The check runs `git ls-remote --tags` against the clone's origin (or TOLI_REPO_URL) with a short
+// timeout, and for a newer stable vX.Y.Z fetches that one tag into FETCH_HEAD (never a local ref) to read its
 // CHANGELOG.md; the result goes to state/update-check.json. A network failure records only the attempt time, so
 // the next tick an hour later tries again. The digest reads the state file and tells the user about a newer
 // version once (never the same version twice). config/updates.json holds the user's settings: `check: false` stops
-// every network call, `snoozed` lists versions never to mention. Nothing upgrades on its own: on the user's word
-// the lead dispatches a jawan to run `bin/toli upgrade`.
+// every network call, `snoozed` lists versions never to mention; a corrupt settings file counts as off, a corrupt
+// state file as empty. Nothing upgrades on its own: on the user's word the lead dispatches a jawan to run
+// `bin/toli upgrade`.
 import { spawn as spawnChild } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import { git, isGitRepo } from "../core/git.ts";
@@ -59,8 +61,19 @@ export type UpdateSettings = { check: boolean; snoozed: string[] };
 const strings = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 
+/** The parsed JSON at `path`, `{}` when absent, or null when the file is not valid JSON. */
+function readJsonOrNull(path: string): unknown {
+    try {
+        return readJson<unknown>(path, {});
+    } catch (error) {
+        if (error instanceof ToliError) return null;
+        throw error;
+    }
+}
+
+/** state/update-check.json; a corrupt file reads as empty, and the next write replaces it. */
 export function readUpdateState(): UpdateState {
-    const raw: unknown = readJson<unknown>(paths.updateCheck(), {});
+    const raw = readJsonOrNull(paths.updateCheck());
     if (!isJsonObject(raw)) return {};
     const state: UpdateState = { notified: strings(raw.notified) };
     if (typeof raw.lastChecked === "string") state.lastChecked = raw.lastChecked;
@@ -75,8 +88,10 @@ function updateState(change: (state: UpdateState) => UpdateState): void {
     withLock(paths.lock("update-check"), () => writeJsonAtomic(paths.updateCheck(), change(readUpdateState())));
 }
 
+/** config/updates.json; a corrupt file counts as off, so damaged settings never start network checks. */
 export function readUpdateSettings(): UpdateSettings {
-    const raw: unknown = readJson<unknown>(paths.updatesConfig(), {});
+    const raw = readJsonOrNull(paths.updatesConfig());
+    if (raw === null) return { check: false, snoozed: [] };
     if (!isJsonObject(raw)) return { check: true, snoozed: [] };
     return { check: raw.check !== false, snoozed: strings(raw.snoozed) };
 }
@@ -123,7 +138,10 @@ function failure(result: RunResult): string {
     return detail === "" ? `git exited ${result.code}` : detail;
 }
 
-/** The CHANGELOG.md sections between `installed` and `tag`, fetching that one tag; null when the fetch failed. */
+/**
+ * The CHANGELOG.md sections between `installed` and `tag`, fetching that one tag into FETCH_HEAD only, so a local
+ * tag of the same name (a development clone) is never moved; null when the fetch failed.
+ */
 function tagChangelog(root: string, remote: string, tag: string, installed: string): string | null {
     const shallow = git(root, ["rev-parse", "--is-shallow-repository"]).stdout.trim() === "true";
     const fetched = networkGit(root, [
@@ -132,10 +150,10 @@ function tagChangelog(root: string, remote: string, tag: string, installed: stri
         "--no-tags",
         ...(shallow ? ["--depth", "1"] : []),
         remote,
-        `+refs/tags/${tag}:refs/tags/${tag}`,
+        `refs/tags/${tag}`,
     ]);
     if (fetched.code !== 0) return null;
-    const shown = git(root, ["show", `${tag}:CHANGELOG.md`]);
+    const shown = git(root, ["show", "FETCH_HEAD:CHANGELOG.md"]);
     return shown.code === 0 ? changelogBetween(shown.stdout, `v${installed}`, tag) : "";
 }
 
@@ -144,13 +162,25 @@ export type CheckOutcome =
     | { ok: false; remote: string; error: string; retryAt: string };
 
 /**
- * One check against the release remote. Records the attempt first (so overlapping ticks never start a second
- * one); a network failure records nothing else and never throws.
+ * Claim a check by recording its attempt time, under the state lock; with `requireDue`, only when one is due.
+ * Returns whether it was claimed. The tick claims before it spawns, so the next tick never starts a second check.
+ */
+export function claimCheck(at: Date, requireDue: boolean): boolean {
+    return withLock(paths.lock("update-check"), () => {
+        const state = readUpdateState();
+        if (requireDue && !checkDue(state, at)) return false;
+        writeJsonAtomic(paths.updateCheck(), { ...state, lastAttempt: at.toISOString() });
+        return true;
+    });
+}
+
+/**
+ * One check against the release remote, already claimed (claimCheck). A network failure records nothing and never
+ * throws.
  */
 export function runUpdateCheck(at: Date = now()): CheckOutcome {
     const root = paths.root();
     const attempt = at.toISOString();
-    updateState((state) => ({ ...state, lastAttempt: attempt }));
     const remote = releaseRemote(root);
     const offline = (error: string): CheckOutcome => ({
         ok: false,
@@ -213,17 +243,18 @@ export function takeUpdateNotice(): string | null {
 }
 
 /**
- * Called by the tick: start a due check as a detached `bin/toli update check --due` (output in
- * logs/update-check.log) and return at once. Null when no check is due, the check is off, or the root is not a
+ * Called by the tick: claim a due check (claimCheck), then start it as a detached `bin/toli update check` (output
+ * in logs/update-check.log) and return at once. Null when no check is due, the check is off, or the root is not a
  * git checkout.
  */
 export function startDueUpdateCheck(at: Date = now()): string | null {
     const root = paths.root();
-    if (!isGitRepo(root) || !readUpdateSettings().check || !checkDue(readUpdateState(), at)) return null;
+    if (!isGitRepo(root) || !readUpdateSettings().check || !claimCheck(at, true)) return null;
     mkdirSync(paths.logsDir(), { recursive: true });
     const log = openSync(paths.updateCheckLog(), "a");
     try {
-        const child = spawnChild(process.execPath, [TOLI_SCRIPT, "update", "check", "--due"], {
+        writeSync(log, `${at.toISOString()} update check started by the tick\n`);
+        const child = spawnChild(process.execPath, [TOLI_SCRIPT, "update", "check"], {
             cwd: root,
             detached: true,
             stdio: ["ignore", log, log],
@@ -256,7 +287,7 @@ function checkCommand(argv: string[]): void {
         if (due) return;
         throw new ToliError(`${paths.root()} is not a git checkout; there is nothing to compare`);
     }
-    if (due && !checkDue(readUpdateState(), at)) return;
+    if (!claimCheck(at, due)) return;
     const outcome = runUpdateCheck(at);
     if (args.bool("json")) printJson(outcome);
     else out(due ? `${at.toISOString()} ${outcomeLine(outcome)}` : outcomeLine(outcome));
