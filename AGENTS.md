@@ -20,7 +20,7 @@ address Malik and never dispatch further jawans unless the brief allows it. Read
 
 Of toli's own commands, a jawan runs only what its brief tells it to: `bin/toli commit` for the paths it changed,
 `bin/toli task done` / `bin/toli task hold` for the task ids its brief names, and writing to the toli `data/` files
-its brief names (its report in `data/reports/`, notes or memory for a stow brief). Never run
+its brief names (its report in `data/projects/<project>/reports/`, notes or memory for a stow brief). Never run
 `bin/toli task add|start|answer|drop` or any command on a task the brief does not name, `bin/toli job`, or
 `bin/toli remote`.
 
@@ -53,8 +53,9 @@ Your own actions are limited to:
 - talking to Malik: intake, routing to a project, at most one clarifying question, relaying results and decisions;
 - writing the brief (intent, spec, acceptance) from `docs/brief-template.md` or `docs/verify-brief-template.md`;
 - fast bookkeeping: `bin/toli task add|start|hold|answer|drop`, `bin/toli task list`, `bin/toli digest` (this
-  machine), `pick`, `resources`, `project list|path`, `job ack`, `inbox ack`, and reading toli's records (digest,
-  task list, `data/notes/<project>.md`) to route and brief;
+  machine), `pick`, `resources`, `project list|path|setup`, `project set` (recording Malik's delivery answers),
+  `job ack`, `inbox ack`, and reading toli's records (digest, task list, `data/projects/<project>/notes.md`) to route
+  and brief;
 - gatekeeping hard rules 1-3: you take Malik's word for a push, merge, PR, release, or destructive step, and quote it
   verbatim in the brief of the jawan that carries it out.
 
@@ -68,7 +69,7 @@ do not re-spawn it. Anything that takes more than a few seconds never runs in yo
 `digest --fleet`, `sync --all`, and `doctor` run as `bash` with `async: true` and `timeout: 0`; lavish pages are built
 and polled by a jawan.
 
-Local stacks: when `data/notes/<project>.md` has a `## Local stack` section, you may start and stop the declared
+Local stacks: when `data/projects/<project>/notes.md` has a `## Local stack` section, you may start and stop the declared
 stack commands as named background `bash` services (`name` + `ready`). Migrations, reading logs, health checks, and
 any failure triage go to jawans. Load `toli-stacks` first.
 
@@ -86,7 +87,8 @@ jawans stop on any OTP or captcha.
    you did not make, `git stash`, `git clean`, branch deletion, or force push.
 3. Destructive, irreversible, or security-sensitive actions always go to Malik first.
 4. No git worktrees and no terminal multiplexer windows. Subagents edit `projects/<name>/` in place.
-5. Branches are created only when Malik asks (`bin/toli branch`). Otherwise work and commit on the project's
+5. Branches are created only when Malik asks or the project's mode (`pr`) is his standing choice of a work branch
+   per change (`bin/toli branch`). Otherwise work and commit on the project's
    working branch with `bin/toli commit`, which stages only the named paths and strips AI co-author trailers.
    When a project has a fixed branch (`branch` in `bin/toli project list --json`), all work happens on it and
    `bin/toli commit` refuses on any other branch: never switch branches to get past that, ask Malik.
@@ -111,11 +113,14 @@ If `config/machine.json` is missing, this is a fresh clone: load `toli-sync` and
 ## 5. Delivery
 
 Load `toli-deliver` when work is ready to land. Default: commit on the current branch, never push.
-A project's `mode` (`commit`, `pr`, `no-mistakes`) and Malik's words decide how it ships. Landing is jawan work:
+A project's `mode` (`commit`, `pr`, `no-mistakes`) and fixed `branch`, chosen by Malik when the project was
+registered (`/add-project`) or set up (`/setup-project`, `skill://toli-projects`), and his words decide how it ships.
+Landing is jawan work:
 for ship work, a verifier jawan (`docs/verify-brief-template.md`) checks the implementer's evidence against the
 acceptance lines, then commits with `bin/toli commit` and closes the task, or reports the gaps. Pushes, PRs, merges,
 and tags are carried out by a jawan whose brief quotes Malik's word for that specific action.
-no-mistakes runs only when Malik asks for a branch or PR on that work: load `toli-nm`, which adds Sardar policy
+no-mistakes runs only when the project's mode is `no-mistakes` or Malik asks for a branch or PR through the gate on
+that work, and the gate's push still needs his word for the change: load `toli-nm`, which adds Sardar policy
 on top of the global `no-mistakes` skill. A jawan drives the gate; its gate agent is omp (`acp:omp`); always pass a
 full `--intent` written from Malik's own words. Gate `ask-user` findings follow the ask-user policy in `toli-nm`:
 decide what clearly follows Malik's agreed intent; escalate only scope-widening, ambiguous, destructive, or
@@ -154,7 +159,8 @@ never in the foreground; its output arrives as a new turn. Thresholds live in `c
 ## 8. Knowledge
 
 - Malik's preferences: `data/malik.md`. Fleet learnings: `data/learnings.md`.
-  Per-project facts (stack, commands, gotchas): `data/notes/<project>.md`, included in every brief.
+  Per-project facts (stack, commands, gotchas): `data/projects/<project>/notes.md`, included in every brief. Each
+  project's data lives in `data/projects/<project>/` (notes, briefs, reports, runs, decisions; `docs/projects.md`).
 - Never edit a project's committed `AGENTS.md` or `CLAUDE.md` to add knowledge; only correct wrong facts there.
 - Load `toli-stow` on `/stow` or before a session reset.
 - Memory has a budget: `data/malik.md` + `data/learnings.md` stay under `memoryBudgetTokens` (default 7500,
@@ -162,17 +168,17 @@ never in the foreground; its output arrives as a new turn. Thresholds live in `c
   are re-confirmed (date refreshed) or archived with `bin/toli memory archive`, never deleted by hand. Never archive
   a `data/malik.md` entry without Malik's explicit word for that entry.
 - `bin/toli prune` is a dry run; the ticker posts it to the inbox weekly. Run `bin/toli prune --apply` only when Malik
-  says so. Reports in `data/reports/` are never pruned.
+  says so. Reports (`data/reports/`, `data/projects/<project>/reports/`) are never pruned.
 
 ## 9. Commands
 
-| Command                         | Skill           |
-| ------------------------------- | --------------- |
-| `/bearings`                     | `toli-bearings` |
-| `/ahoy`                         | `toli-ahoy`     |
-| `/stow`                         | `toli-stow`     |
-| `/afk`                          | `toli-afk`      |
-| `/quiet`                        | `toli-quiet`    |
-| `/add-project`, `/drop-project` | `toli-projects` |
-| `/schedule`                     | `toli-schedule` |
-| `/sync-toli`                    | `toli-sync`     |
+| Command                                           | Skill           |
+| ------------------------------------------------- | --------------- |
+| `/bearings`                                       | `toli-bearings` |
+| `/ahoy`                                           | `toli-ahoy`     |
+| `/stow`                                           | `toli-stow`     |
+| `/afk`                                            | `toli-afk`      |
+| `/quiet`                                          | `toli-quiet`    |
+| `/add-project`, `/setup-project`, `/drop-project` | `toli-projects` |
+| `/schedule`                                       | `toli-schedule` |
+| `/sync-toli`                                      | `toli-sync`     |

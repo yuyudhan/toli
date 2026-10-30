@@ -52,7 +52,13 @@ describe("fixed working branch", () => {
         ]);
         box.ok(["project", "set", "old", "--branch", "main", "--forge", "gitlab", "--forge-host", "Git.Example.com"]);
         expect(JSON.parse(readFileSync(file, "utf8")).projects).toEqual([
-            { ...legacy, branch: "main", forge: "gitlab", forgeHost: "git.example.com" },
+            {
+                ...legacy,
+                branch: "main",
+                forge: "gitlab",
+                forgeHost: "git.example.com",
+                deliverySetAt: expect.any(String),
+            },
         ]);
     });
 });

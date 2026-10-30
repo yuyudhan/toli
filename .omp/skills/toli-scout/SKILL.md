@@ -19,7 +19,7 @@ environment.
    evidence: file paths with line numbers, command output, log excerpts, and, when the notes list `## URLs`, what
    the local or staging URL returned (headless browser or HTTP request; staging read-only). In "Report format" ask
    for the structure below. In "Landing" keep the Scout option: the jawan writes its report to
-   `data/reports/T<n>.md` and closes the task itself with `bin/toli task done T<n> --report data/reports/T<n>.md`.
+   `data/projects/<project>/reports/T<n>.md` and closes the task itself with `bin/toli task done T<n> --report data/projects/<project>/reports/T<n>.md`.
    If the investigation needs the stack running and the notes declare `## Local stack`, tell jawans to use the
    declared commands (`skill://toli-stacks`).
 3. Spawn with the routing table: `task` agent (effort lo for lookups, med for investigations, hi only for hard

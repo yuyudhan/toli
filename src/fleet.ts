@@ -200,7 +200,8 @@ export async function remoteCommand(argv: string[]): Promise<number> {
         code = result.code;
     }
     const output = sections.join("\n\n");
-    const path = join(paths.remoteDir(), `${stamp(startedAt)}-${target.name}.md`);
+    const runsDir = projectName === undefined ? paths.remoteDir() : paths.projectRunsDir(projectName);
+    const path = join(runsDir, `${stamp(startedAt)}-${target.name}.md`);
     writeTextAtomic(
         path,
         [

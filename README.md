@@ -47,7 +47,7 @@ What that gives you:
 3. **Helpers do the work, fast.** Sardar gives each job a clear written task and hands it to omp subagents. Several
    helpers (a toli) can work at the same time, even on the same project. Nothing is locked or queued behind each other.
 4. **Two kinds of jobs.** "Ship" jobs change code. "Scout" jobs only investigate and write a report in
-   `data/reports/`, without touching code.
+   `data/projects/<project>/reports/`, without touching code.
 5. **Proof before done.** A helper must actually run the project's tests or a quick check and show the output.
    When your notes for a project list its URLs, the helper also checks the logs and opens the local page in a
    headless browser; UI changes come with before/after screenshots at your chosen widths, and bug fixes show the
@@ -88,6 +88,7 @@ Everyday commands you type inside omp:
 | `/stow`                         | Save what was learned this session and keep memory within its budget                   |
 | `/afk`                          | "I'm away" - keep working through queued tasks and give one summary when you are back  |
 | `/quiet`                        | "I'm here, keep it short" - only results, failures, and decisions                      |
+| `/setup-project <name>`         | Review a project's setup and fill what is missing (delivery, commands, notes)          |
 | `/sync-toli`                    | Pull the latest Sardar rules onto this machine (or all machines)                       |
 
 ## First-time setup (each machine)
@@ -165,15 +166,19 @@ In the omp session: `/add-project <name> <git-url>`, or directly:
     bin/toli project add <name> <git-url> [--mode commit|pr|no-mistakes]
 
 This clones into `projects/<name>`, records it, and reports whether the clone is ready for no-mistakes. In the omp
-session a jawan does the clone and then writes a short notes file (`data/notes/<name>.md`: stack, commands, gotchas)
-that is fed into every jawan brief.
+session Sardar first asks one question: should work land as pull/merge requests, as commits on the current branch,
+or as commits on a fixed branch (plus the optional no-mistakes gate and the test command). A jawan then clones,
+records the answer with `bin/toli project set`, and writes a short notes file (`data/projects/<name>/notes.md`:
+stack, commands, gotchas) that is fed into every jawan brief. `/setup-project <name>` (`bin/toli project setup
+<name>|--all`) reviews an existing project and fills what is missing. Details: [docs/projects.md](docs/projects.md).
 
 To register clones that are already in `projects/` (copied or moved in by hand), run `bin/toli project import`.
 
 Other project commands: `bin/toli project list`, `bin/toli project path <name>`,
 `bin/toli project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none]
 [--forge-host <host>|none]`, `bin/toli project ensure <name> <git-url>` (idempotent: clone and/or register as needed),
-`bin/toli project drop <name> [--delete-clone]` (refuses when the clone is dirty or has unpushed commits).
+`bin/toli project drop <name> [--delete-clone] [--delete-data]` (refuses when the clone is dirty or has unpushed
+commits).
 
 A project can have a fixed working branch (`--branch`): `bin/toli commit` then refuses to commit when the clone is on
 any other branch, and `bin/toli digest` flags the mismatch. Sardar switches or creates branches only on Malik's word.
@@ -202,6 +207,7 @@ then prints the PR/MR URL. Pushing, opening and merging all need Malik's word fo
 | `/ahoy`                                      | Go through every task waiting on a decision                             |
 | `/stow`                                      | Save learnings and preferences; re-check stale memory; tidy the backlog |
 | `/afk [off]`                                 | Keep working the queue while away; one report on return                 |
+| `/setup-project <name>\|--all`               | Review and fill a project's missing setup                               |
 | `/quiet [off]`                               | Only outcomes, failures, and decisions while present                    |
 | `/add-project`, `/drop-project`              | Register or remove a project                                            |
 | `/schedule add\|list\|pause\|resume\|remove` | Recurring jobs                                                          |
@@ -228,13 +234,14 @@ into the chat, so Sardar relays them without being asked. Results stay in `/bear
 
     bin/toli memory [--json]          # always-loaded memory (data/malik.md + data/learnings.md) in estimated tokens vs budget; notes listed separately
     bin/toli memory stale [--json]    # entries past their lifetime: file, line, id, date, age, tier
+    bin/toli migrate [--dry-run]      # one time: move old flat data files into data/projects/<p>/ (never overwrites)
     bin/toli memory archive <file> <line-or-id> --reason "<why>" [--force]   # move one entry to data/archive/<file>.md
     bin/toli prune [--apply] [--json] # dry run by default: old job results, finished tasks, logs, seen inbox items
 
 Tokens are estimated as UTF-8 bytes / 3. The budget is `memoryBudgetTokens` in `config/machine.json` (default 7500);
 `bin/toli doctor` warns when memory is over it. Entries are dated (`- 2026-10-29: ...`); the date is when the entry was
 last confirmed. `data/malik.md` is pinned (never ages; archiving needs `--force` on Malik's word); `data/learnings.md`
-and `data/notes/*.md` entries go stale after 30 days, or 7 days when marked `(until: <condition>)`. Archived entries
+and `data/projects/*/notes.md` entries go stale after 30 days, or 7 days when marked `(until: <condition>)`. Archived entries
 keep their source file, original date, and reason under a dated heading.
 
 | Pruned by `bin/toli prune --apply`                        | Default rule                                  | What happens                       |
@@ -243,7 +250,7 @@ keep their source file, original date, and reason under a dated heading.
 | Done or dropped tasks in `data/backlog.json`              | finished more than 90 days ago                | moved to `data/archive/tasks.json` |
 | Files in `logs/`                                          | not written for 14 days                       | deleted                            |
 | Inbox items `data/inbox/*.md` (delivered worker messages) | acknowledged and older than 14 days           | deleted                            |
-| Investigation reports `data/reports/`                     | never                                         | kept                               |
+| Investigation reports `data/projects/<p>/reports/`        | never                                         | kept                               |
 
 Override any rule in `config/machine.json`, e.g.
 `"retention": { "jobResultsDays": 30, "jobResultsKeep": 5, "tasksDays": 90, "logsDays": 14, "inboxDays": 14 }`.
@@ -337,12 +344,12 @@ Private (gitignored, per machine):
     config/jobs.json             scheduled jobs
     data/projects.json           registry of this machine's clones
     data/backlog.json            tasks
-    data/notes/<project>.md      per-project notes fed into briefs
+    data/projects/<p>/           per-project notes.md, briefs/, reports/, runs/, decisions.md (docs/projects.md)
     data/learnings.md            durable lessons
     data/malik.md                Malik's preferences
-    data/reports/<taskId>.md     investigation reports
+    data/reports/                toli-wide reports
     data/jobs/<name>/<stamp>.md  job results
     data/archive/                archived memory entries (<file>.md) and old tasks (tasks.json); never loaded
-    data/inbox/, data/remote/
+    data/inbox/, data/remote/    worker messages; remote runs without a project
     state/                       session.json, jobs.json, acks.json, prune.json, afk flag, outbox/, runs/
     logs/, .env*, .lavish/

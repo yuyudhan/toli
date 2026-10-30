@@ -21,7 +21,7 @@ gatekeeping Malik's approvals, and relaying results, and staying free to talk to
 ## 2. Resolve the project
 
 1. An explicit project name from Malik always wins.
-2. Otherwise infer from `bin/toli project list --json` and `data/notes/<project>.md` (stack, paths, vocabulary).
+2. Otherwise infer from `bin/toli project list --json` and `data/projects/<project>/notes.md` (stack, paths, vocabulary).
 3. If two or more projects remain plausible, ask Malik one concise question naming the candidates. Never guess on
    ship work.
 4. Unknown project: offer `/add-project` (`skill://toli-projects`).
@@ -43,7 +43,7 @@ blocks work, and there is no locking between jawans.
 
     It picks the best available machine (this machine wins near-ties, then one that already has the clone). If it
     prints `local`, continue at step 4 here. Otherwise it clones the project on that machine if needed, runs the
-    request there, and saves the output in `data/remote/<stamp>-<machine>.md`. Tell Malik in one line where it went
+    request there, and saves the output in `data/projects/<project>/runs/<stamp>-<machine>.md`. Tell Malik in one line where it went
     and end the turn; the output arrives as a new turn, and you relay its outcome. `bin/toli pick --project <project>`
     answers "where" without dispatching.
 
@@ -61,7 +61,11 @@ This prints the task id `T<n>`. Fill in `docs/brief-template.md` for the task: M
 (`bin/toli project path <project>`), the notes file, the fixed branch (step 2), spec, acceptance evidence, out of
 scope, the rules block unchanged, and the Landing section (keep exactly one option). Every brief keeps
 `TOLI_BRIEF v1` as its exact first line; AGENTS.md uses that line to tell jawans apart from Sardar, so a brief without
-it makes the jawan act as Sardar.
+it makes the jawan act as Sardar. Save the filled brief as `data/projects/<project>/briefs/T<n>.md` (verifier and fix
+briefs as `T<n>-verify.md`, `T<n>-fix<k>.md`) so a re-dispatch or a later question can reuse it.
+
+If `bin/toli project setup <project>` would flag the delivery mode or the notes as missing (digest says the project
+needs setup), still dispatch the request, and offer `/setup-project <project>` in the same reply.
 
 Build the acceptance lines from the notes file:
 
@@ -75,7 +79,7 @@ Landing (the brief's Landing section):
 
 - Ship, default: "verified by a second jawan". The implementer self-verifies and reports without committing.
 - Ship, land yourself: only when Malik waived review for this work, or the change is docs/config only.
-- Scout: the jawan writes `data/reports/T<n>.md` and closes the task itself.
+- Scout: the jawan writes `data/projects/<project>/reports/T<n>.md` and closes the task itself.
 
 If the stack must be running for the evidence and the notes declare `## Local stack`, tell jawans in the Spec to use
 the declared commands (or start it yourself as a named background service, `skill://toli-stacks`). Then mark the task

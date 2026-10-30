@@ -5,7 +5,7 @@ description: Start and stop a project's local stack as background services using
 
 # Local stacks
 
-Sardar never does project work itself. The one scoped exception: when `data/notes/<project>.md` has a `## Local stack`
+Sardar never does project work itself. The one scoped exception: when `data/projects/<project>/notes.md` has a `## Local stack`
 section, Sardar may start, stop, and restart the stack with exactly the commands declared there, as named background
 services. Everything else about the stack (migrations, reading logs, health checks, failure triage) is jawan work
 through `skill://toli-dispatch`. A project without that section has no exception at all.

@@ -1,7 +1,9 @@
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { Args } from "./args.ts";
 import { paths } from "./paths.ts";
 import { findProject } from "./projects.ts";
-import { now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "./util.ts";
+import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "./util.ts";
 
 export const STATUSES = ["queued", "active", "held", "done", "dropped"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -169,6 +171,21 @@ function answer(argv: string[]): void {
         entry.status = entry.startedAt === undefined ? "queued" : "active";
     });
     out(describe(task));
+    if (isValidName(task.project)) recordDecision(task, reply);
+}
+
+/** Append the held question and the user's answer to `data/projects/<p>/decisions.md`, the project's decision log. */
+function recordDecision(task: Task, reply: string): void {
+    const file = paths.projectDecisions(task.project);
+    withLock(paths.lock("decisions"), () => {
+        mkdirSync(dirname(file), { recursive: true });
+        const head = existsSync(file) ? "" : `# ${task.project} decisions\n`;
+        const day = now().toISOString().slice(0, 10);
+        appendFileSync(
+            file,
+            `${head}\n## ${day} ${task.id}: ${task.title}\n\n- Q: ${task.question ?? ""}\n- A: ${reply}\n`,
+        );
+    });
 }
 
 function drop(argv: string[]): void {

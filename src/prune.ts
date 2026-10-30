@@ -127,7 +127,7 @@ function inboxItems(at: number, retention: Retention): PruneItem[] {
         }));
 }
 
-/** Everything prune would remove now. data/reports/ is never considered. */
+/** Everything prune would remove now. Reports (data/reports/, data/projects/<p>/reports/) are never considered. */
 export function planPrune(at: Date = now()): PruneItem[] {
     const time = at.getTime();
     const retention = loadRetention();

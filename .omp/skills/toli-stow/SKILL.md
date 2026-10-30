@@ -22,11 +22,11 @@ Everything below describes that jawan's work unless it says Sardar.
 
 ## Where things go
 
-| What                                                                                          | File                      | Tier   |
-| --------------------------------------------------------------------------------------------- | ------------------------- | ------ |
-| Malik's preferences and standing decisions (tone, delivery choices, recurring answers)        | `data/malik.md`           | pinned |
-| Durable lessons about how Sardar should operate (a routing that worked, a pitfall in the CLI) | `data/learnings.md`       | aging  |
-| Facts about one project (commands, stack, gotchas, flaky tests, paths)                        | `data/notes/<project>.md` | aging  |
+| What                                                                                          | File                               | Tier   |
+| --------------------------------------------------------------------------------------------- | ---------------------------------- | ------ |
+| Malik's preferences and standing decisions (tone, delivery choices, recurring answers)        | `data/malik.md`                    | pinned |
+| Durable lessons about how Sardar should operate (a routing that worked, a pitfall in the CLI) | `data/learnings.md`                | aging  |
+| Facts about one project (commands, stack, gotchas, flaky tests, paths)                        | `data/projects/<project>/notes.md` | aging  |
 
 All private and gitignored. Never write learnings into tracked files (skills, AGENTS.md, README) unless Malik asks
 for a change to Sardar itself. **Never edit a project's committed AGENTS.md, CLAUDE.md, or other docs** as part of
@@ -63,7 +63,7 @@ Re-confirming = changing the date to today. Undated aging entries are listed as 
    (`--reason "merged into <id>"`) unless the kept line preserves all of it.
 5. **Still over budget?** In this order, re-measuring after each step:
     1. Archive the oldest stale aging entries first (`--reason "budget oldest-first"`).
-    2. Move conditional, project-specific facts from `data/learnings.md` into `data/notes/<project>.md` (they then
+    2. Move conditional, project-specific facts from `data/learnings.md` into `data/projects/<project>/notes.md` (they then
        load only into that project's briefs). Write the note first, then remove the learnings line.
     3. Still over: tell Malik the shortfall and the largest pinned sections; offer raising `memoryBudgetTokens` or
        trimming named entries. Never trim `data/malik.md` on your own.
@@ -77,7 +77,7 @@ explicitly says to drop that specific entry.
 
 ## Project notes sections Sardar reads
 
-Keep these headings exact in `data/notes/<project>.md`; skills look for them by name:
+Keep these headings exact in `data/projects/<project>/notes.md`; skills look for them by name:
 
 | Heading          | Holds                                                                               | Read by              |
 | ---------------- | ----------------------------------------------------------------------------------- | -------------------- |

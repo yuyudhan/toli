@@ -6,6 +6,7 @@ import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet.ts
 import { forgeCommand, prCommand, pushCommand } from "./forge.ts";
 import { inboxCommand } from "./inbox.ts";
 import { memoryCommand } from "./memory.ts";
+import { migrateCommand } from "./migrate.ts";
 import { fleetCommand, pickCommand } from "./pick.ts";
 import { projectCommand } from "./projects.ts";
 import { pruneCommand } from "./prune.ts";
@@ -25,7 +26,8 @@ const USAGE = `usage: bin/toli <command> [args]
   project ensure <name> <git-url> [--mode commit|pr|no-mistakes]
   project list [--json] | path <name>
   project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
-  project drop <name> [--delete-clone] | import [--dir projects]
+  project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
+  project setup <name> [--json] | setup --all [--json]
   task add <project> "<title>" [--shape ship|scout] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped]
   task start <id> | done <id> [--report <path>] [--commit <sha>] [--note "..."]
@@ -46,6 +48,7 @@ const USAGE = `usage: bin/toli <command> [args]
   wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]
+  migrate [--dry-run] [--json]
   sync [--all]
   resources [--json]
   fleet status [--json]
@@ -102,6 +105,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "memory":
                 memoryCommand(rest);
+                return 0;
+            case "migrate":
+                migrateCommand(rest);
                 return 0;
             case "prune":
                 pruneCommand(rest);
