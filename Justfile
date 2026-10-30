@@ -41,7 +41,7 @@ check:
 verify:
     bun run verify
 
-# Cut a release: verify, bump, CHANGELOG, commit, annotated tag; asks before pushing (--dry-run: temp clone)
+# Cut a release on develop: verify, bump, CHANGELOG, commit, merge into main, tag; asks before pushing (--dry-run: temp clone)
 release *args:
     bun scripts/publish.ts {{ args }}
 

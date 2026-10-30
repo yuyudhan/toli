@@ -5,10 +5,12 @@ import {
     changelogSection,
     classifyCommit,
     compareVersions,
+    dateChangelogSection,
     latestTag,
     nextVersion,
     parseVersion,
     prependChangelog,
+    releaseBranchProblem,
     releaseTags,
     tagsFromLsRemote,
 } from "../src/release/release.ts";
@@ -141,5 +143,37 @@ describe("changelog", () => {
         expect(changelogBetween(text, "v0.1.0", "v0.3.0")).toBe("## v0.3.0 - c\n\n- three\n\n## v0.2.0 - b\n\n- two");
         expect(changelogBetween(text, null, "v0.1.0")).toBe("## v0.1.0 - a\n\n- one");
         expect(changelogBetween(text, "v0.3.0", "v0.3.0")).toBe("");
+    });
+});
+
+describe("drafted sections", () => {
+    test("a section drafted on develop gets the release date and keeps its body", () => {
+        const text = "# Changelog\n\n## v0.2.0 - unreleased\n\n- drafted\n\n## v0.1.0 - 2026-10-30\n\n- one\n";
+        expect(dateChangelogSection(text, "0.2.0", "2026-11-02")).toBe(
+            "# Changelog\n\n## v0.2.0 - 2026-11-02\n\n- drafted\n\n## v0.1.0 - 2026-10-30\n\n- one\n",
+        );
+        expect(changelogHas(text, "0.2.0")).toBe(true);
+    });
+});
+
+describe("release branches", () => {
+    const ready = { current: "develop", mainExists: true, mainContained: true, mainCheckedOutAt: null };
+
+    test("a release is cut on develop and fast-forwards a main that develop contains", () => {
+        expect(releaseBranchProblem(ready)).toBeNull();
+    });
+
+    test("each broken rule names the fix", () => {
+        expect(releaseBranchProblem({ ...ready, current: "main" })).toBe(
+            "releases are cut from develop, not main; git switch develop first",
+        );
+        expect(releaseBranchProblem({ ...ready, current: null })).toContain("not a detached HEAD");
+        expect(releaseBranchProblem({ ...ready, mainExists: false, mainContained: false })).toContain(
+            "git branch main origin/main",
+        );
+        expect(releaseBranchProblem({ ...ready, mainContained: false })).toBe(
+            "main has commits develop does not; merge them first: git merge main",
+        );
+        expect(releaseBranchProblem({ ...ready, mainCheckedOutAt: "/x" })).toContain("main is checked out in /x");
     });
 });

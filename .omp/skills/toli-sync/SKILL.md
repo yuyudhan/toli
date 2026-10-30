@@ -43,6 +43,9 @@ turn; relay its result when it arrives.
 - A non-fast-forward (diverged history) is also a stop: report it, do not merge or rebase on your own.
 - After a sync that changed skills or the extension, tell Malik a session restart picks up the new behaviour.
 - `--all` from a worker: explain that fleet-wide sync runs from the coordinator.
+- Sync pulls the branch each checkout is on. Development checkouts follow `develop` (where toli's own work lands;
+  `main` moves only at a release); a machine still on `main` gets new toli work only at releases. To move a clean
+  machine to `develop`, a jawan runs `git switch develop` there after Malik's word.
 
 ## Bootstrapping a fresh machine
 

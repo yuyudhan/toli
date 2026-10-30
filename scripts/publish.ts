@@ -1,14 +1,18 @@
 // `just release [patch|minor|major|vX.Y.Z] [--dry-run] [--remote <name>]` (alias `just publish`): cut a toli release.
 //
-//   1. On main with a clean tree, compute the version: bump package.json's, or the explicit vX.Y.Z.
+// Feature work lands on develop (`bin/toli self land`); main moves only here.
+//
+//   1. On develop with a clean tree, with main contained in develop and checked out nowhere, compute the version:
+//      bump package.json's, or the explicit vX.Y.Z.
 //   2. `bun run verify` (the full gate plus CLI smoke checks).
 //   3. Bump package.json, prepend a CHANGELOG.md section grouped from the commits since the last tag.
-//   4. Commit "Release vX.Y.Z" and create the annotated tag vX.Y.Z.
-//   5. Ask "Push main and vX.Y.Z to <remote>? [y/N]"; push (atomically) only on y.
+//   4. Commit "Release vX.Y.Z" on develop, merge develop into main (a fast-forward: main never has commits of its
+//      own), and create the annotated tag vX.Y.Z on that commit.
+//   5. Ask "Push main, develop and vX.Y.Z to <remote>? [y/N]"; push (atomically) only on y.
 //
 // The first release tags the version CHANGELOG.md was seeded with: `just release v0.1.0` when package.json is
 // already 0.1.0, the section exists, and no tag does (nothing to bump; the tag goes on HEAD).
-// --dry-run does all of it in a temporary clone of HEAD and never asks or pushes; the clone is removed afterwards.
+// --dry-run does all of it in a temporary clone of develop and never asks or pushes; the clone is removed afterwards.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,14 +24,17 @@ import {
     changelogHas,
     changelogSection,
     compareVersions,
+    DEVELOP_BRANCH,
+    dateChangelogSection,
     latestTag,
     nextVersion,
     parseVersion,
     prependChangelog,
+    RELEASE_BRANCH,
+    releaseBranchProblem,
 } from "../src/release/release.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
-const RELEASE_BRANCH = "main";
 const CHANGELOG_INTRO = "# Changelog\n";
 
 class ReleaseError extends Error {}
@@ -97,11 +104,39 @@ function commitsSince(root: string, lastTag: string | null): Commit[] {
         });
 }
 
+/** The worktree that has `branch` checked out (from `git worktree list --porcelain`), or null. */
+function checkedOutAt(root: string, branch: string): string | null {
+    let path: string | null = null;
+    for (const line of capture(root, ["git", "worktree", "list", "--porcelain"]).split("\n")) {
+        if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
+        else if (line === `branch refs/heads/${branch}`) return path;
+    }
+    return null;
+}
+
+function succeeds(root: string, cmd: string[]): boolean {
+    return Bun.spawnSync(cmd, { cwd: root, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+}
+
+/** Step 1's branch rules: on develop, main exists, is contained in develop, and is checked out nowhere. */
+function checkBranches(root: string): void {
+    const head = Bun.spawnSync(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: root });
+    const current = head.exitCode === 0 ? head.stdout.toString().trim() : null;
+    const main = `refs/heads/${RELEASE_BRANCH}`;
+    const mainExists = succeeds(root, ["git", "show-ref", "--verify", "--quiet", main]);
+    const problem = releaseBranchProblem({
+        current,
+        mainExists,
+        mainContained:
+            mainExists && succeeds(root, ["git", "merge-base", "--is-ancestor", main, `refs/heads/${DEVELOP_BRANCH}`]),
+        mainCheckedOutAt: checkedOutAt(root, RELEASE_BRANCH),
+    });
+    if (problem !== null) throw new ReleaseError(problem);
+}
+
 /** Steps 1-4 in `root`; returns the tag created. */
 function cutRelease(root: string, request: string): string {
-    const branch = Bun.spawnSync(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: root });
-    if (branch.stdout.toString().trim() !== RELEASE_BRANCH)
-        throw new ReleaseError(`releases are cut from ${RELEASE_BRANCH}; check it out first`);
+    checkBranches(root);
     const dirty = capture(root, ["git", "status", "--porcelain"]);
     if (dirty !== "") throw new ReleaseError(`the working tree is not clean:\n${dirty}`);
 
@@ -120,7 +155,11 @@ function cutRelease(root: string, request: string): string {
     if (!seeded) {
         const commits = commitsSince(root, lastTag);
         if (commits.length === 0) throw new ReleaseError(`no commits since ${lastTag}; nothing to release`);
-        updated = prependChangelog(changelog, changelogSection(version, now().toISOString().slice(0, 10), commits));
+        const date = now().toISOString().slice(0, 10);
+        // A section drafted on develop (`## vX.Y.Z - unreleased`) is kept and dated; otherwise one is generated.
+        updated = changelogHas(changelog, version)
+            ? dateChangelogSection(changelog, version, date)
+            : prependChangelog(changelog, changelogSection(version, date, commits));
         writeFileSync(changelogFile, updated);
         const pkgFile = join(root, "package.json");
         const pkgText = readFileSync(pkgFile, "utf8");
@@ -135,6 +174,12 @@ function cutRelease(root: string, request: string): string {
     // Only this release's section: after the previous version (package.json's before the bump; the last tag when
     // tagging the seeded section). verbatim keeps the `### Added` headings git would strip as comments.
     const notes = changelogBetween(updated, seeded ? lastTag : `v${current}`, tag);
+    // Merge develop into main: main is contained in develop (checked above), so this is a fast-forward of the ref,
+    // compare-and-swapped against the main the check saw.
+    const release = capture(root, ["git", "rev-parse", "HEAD"]);
+    const oldMain = capture(root, ["git", "rev-parse", `refs/heads/${RELEASE_BRANCH}`]);
+    stream(root, ["git", "update-ref", "-m", `release ${tag}`, `refs/heads/${RELEASE_BRANCH}`, release, oldMain]);
+    say(`release: ${RELEASE_BRANCH} fast-forwarded to ${DEVELOP_BRANCH} at ${release.slice(0, 12)}`);
     stream(root, ["git", "tag", "--annotate", "--cleanup=verbatim", tag, "--message", `toli ${tag}\n\n${notes}`]);
     return tag;
 }
@@ -142,23 +187,33 @@ function cutRelease(root: string, request: string): string {
 function pushPrompt(root: string, remote: string, tag: string): void {
     const url = Bun.spawnSync(["git", "remote", "get-url", remote], { cwd: root }).stdout.toString().trim();
     const where = url === "" ? remote : `${remote} (${url})`;
-    const answer = prompt(`Push ${RELEASE_BRANCH} and ${tag} to ${where}? [y/N]`);
+    const refs = [RELEASE_BRANCH, DEVELOP_BRANCH, tag];
+    const answer = prompt(`Push ${RELEASE_BRANCH}, ${DEVELOP_BRANCH} and ${tag} to ${where}? [y/N]`);
     if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
-        stream(root, ["git", "push", "--atomic", remote, `refs/heads/${RELEASE_BRANCH}`, `refs/tags/${tag}`]);
-        say(`release: pushed ${RELEASE_BRANCH} and ${tag} to ${remote}`);
+        stream(root, [
+            "git",
+            "push",
+            "--atomic",
+            remote,
+            `refs/heads/${RELEASE_BRANCH}`,
+            `refs/heads/${DEVELOP_BRANCH}`,
+            `refs/tags/${tag}`,
+        ]);
+        say(`release: pushed ${refs.join(", ")} to ${remote}`);
     } else {
-        say(`release: not pushed. When ready: git push --atomic ${remote} ${RELEASE_BRANCH} ${tag}`);
+        say(`release: not pushed. When ready: git push --atomic ${remote} ${refs.join(" ")}`);
     }
 }
 
 function dryRun(request: string, remote: string): void {
     if (capture(ROOT, ["git", "status", "--porcelain"]) !== "")
-        say("release: dry run uses the committed HEAD; uncommitted changes here are not part of it");
+        say(`release: dry run uses the committed ${DEVELOP_BRANCH}; uncommitted changes here are not part of it`);
     const tmp = mkdtempSync(join(tmpdir(), "toli-release-"));
     const clone = join(tmp, "toli");
     try {
         say(`release: dry run in ${clone}`);
-        capture(ROOT, ["git", "clone", "--quiet", "--no-hardlinks", ROOT, clone]);
+        capture(ROOT, ["git", "clone", "--quiet", "--no-hardlinks", "--branch", DEVELOP_BRANCH, ROOT, clone]);
+        capture(clone, ["git", "branch", "--quiet", RELEASE_BRANCH, `origin/${RELEASE_BRANCH}`]);
         capture(clone, ["git", "config", "core.hooksPath", ".githooks"]);
         stream(clone, ["bun", "install", "--frozen-lockfile"]);
         const tag = cutRelease(clone, request);
@@ -168,7 +223,10 @@ function dryRun(request: string, remote: string): void {
             capture(clone, ["git", "tag", "--list", tag, "--format=tag %(refname:short) (%(objecttype)): %(contents)"]),
         );
         say("");
-        say(`release: dry run done. A real run would now ask: Push ${RELEASE_BRANCH} and ${tag} to ${remote}? [y/N]`);
+        say(
+            `release: dry run done. A real run would now ask: Push ${RELEASE_BRANCH}, ${DEVELOP_BRANCH} and ${tag} ` +
+                `to ${remote}? [y/N]`,
+        );
         say("release: nothing was pushed; this repository is unchanged");
     } finally {
         rmSync(tmp, { recursive: true, force: true });

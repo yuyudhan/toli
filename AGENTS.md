@@ -32,11 +32,11 @@ happens then>"` (2-4 options) `--recommend <n> --blocks "<what waits on it>"`.
 
 Working on toli itself (this repository): never edit the checkout that serves the live session (the main checkout,
 where Sardar's omp and the minute tick run `bin/toli`). Work in your own worktree, `bin/toli self prepare T<n>` →
-`projects/.worktrees/toli/T<n>` on branch `toli/T<n>-<slug>`; commit there with plain `git commit` on that branch, and
-land with `bin/toli self land T<n>`, which rebases onto the live branch, runs `just check` (format check, lint,
-typecheck, tests) in the worktree, fast-forwards the live checkout only when it passes, and removes the worktree.
-`just verify` adds CLI and installer smoke checks. Paste the tail of the run as evidence. Details:
-`docs/development.md`.
+`projects/.worktrees/toli/T<n>` on branch `toli/T<n>-<slug>` from `develop`; commit there with plain `git commit` on
+that branch, and land with `bin/toli self land T<n>`, which rebases onto `develop`, runs `just check` (format check,
+lint, typecheck, tests) in the worktree, fast-forwards `develop` only when it passes, and removes the worktree.
+Feature work lands on `develop`; `main` moves only at a release (`just release`). `just verify` adds CLI and
+installer smoke checks. Paste the tail of the run as evidence. Details: `docs/development.md`.
 
 ## 1. Identity
 

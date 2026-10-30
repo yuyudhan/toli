@@ -3,13 +3,15 @@
 // The live checkout (the main worktree of this repository: the one Sardar's omp, the extension's minute tick and the
 // OS ticker run bin/toli from) is never edited by jawans. Each toli task gets its own git worktree:
 //
-//   bin/toli self prepare T<n>   git worktree add projects/.worktrees/toli/T<n> -b toli/T<n>-<slug> <live branch>
+//   bin/toli self prepare T<n>   git worktree add projects/.worktrees/toli/T<n> -b toli/T<n>-<slug> develop
 //                                (projects/ is gitignored, so biome, tsc, bun test, gitleaks and grep never walk it)
-//   bin/toli self land T<n>      rebase the task branch onto the live branch, run `just check` in the worktree,
-//                                fast-forward the live checkout, remove the worktree and its branch; refuses on any
-//                                failure and leaves everything as it was
+//   bin/toli self land T<n>      rebase the task branch onto develop, run `just check` in the worktree, fast-forward
+//                                develop (in the checkout that has it checked out, normally the live one), remove the
+//                                worktree and its branch; refuses on any failure and leaves everything as it was
 //
-// The live checkout changes only by that fast-forward, so it always holds code that passed `just check`.
+// Feature work lands on `develop`; `main` moves only at a release (`just release`). A clone without a local `develop`
+// branch (a fresh contributor clone) lands on the branch the live checkout is on.
+// develop changes only by that fast-forward, so it always holds code that passed `just check`.
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { Args } from "../core/args.ts";
@@ -18,6 +20,7 @@ import { paths } from "../core/paths.ts";
 import { out, printJson, run, runCombined, ToliError } from "../core/util.ts";
 import { dirty, gitWorktrees, refExists, samePath, taskBranch } from "../projects/workspace.ts";
 import { loadBacklog } from "../records/backlog.ts";
+import { DEVELOP_BRANCH } from "./release.ts";
 
 const CHECK = ["just", "check"];
 const CHECK_TAIL_LINES = 30;
@@ -31,6 +34,8 @@ export type Landed = {
     commits: number;
     head: string;
     check: string;
+    /** The worktree whose checkout was fast-forwarded (normally the live one), or null when only the ref moved. */
+    updated: string | null;
 };
 
 function taskId(raw: string): string {
@@ -53,11 +58,16 @@ function selfDir(live: string): string {
     return join(live, "projects", ".worktrees", "toli");
 }
 
-/** The branch the live checkout is on: what self worktrees start from and land onto. */
+/** The branch the live checkout is on. */
 function liveBranch(live: string): string {
     const branch = currentBranch(live);
     if (branch === null) throw new ToliError(`the live checkout ${live} is on a detached HEAD; check out its branch`);
     return branch;
+}
+
+/** What self worktrees start from and land onto: `develop` when it exists, else the live checkout's branch. */
+function landingBranch(live: string): string {
+    return refExists(live, `refs/heads/${DEVELOP_BRANCH}`) ? DEVELOP_BRANCH : liveBranch(live);
 }
 
 function branchFor(id: string): string {
@@ -73,7 +83,7 @@ function registered(live: string, path: string): { path: string; branch: string 
 export function prepareSelf(raw: string): SelfWorktree {
     const id = taskId(raw);
     const live = liveCheckout();
-    const base = liveBranch(live);
+    const base = landingBranch(live);
     const path = join(selfDir(live), id);
     if (existsSync(path)) {
         const entry = registered(live, path);
@@ -101,7 +111,9 @@ export function prepareSelf(raw: string): SelfWorktree {
 /** Every worktree under projects/.worktrees/toli/ of the live checkout. */
 export function listSelf(): SelfWorktree[] {
     const live = liveCheckout();
-    const base = currentBranch(live) ?? "(detached)";
+    const base = refExists(live, `refs/heads/${DEVELOP_BRANCH}`)
+        ? DEVELOP_BRANCH
+        : (currentBranch(live) ?? "(detached)");
     const root = selfDir(live);
     return gitWorktrees(live)
         .filter((entry) => samePath(dirname(entry.path), root))
@@ -119,13 +131,13 @@ function tail(text: string, lines: number): string {
 }
 
 /**
- * Land toli task `id`: rebase its branch onto the live branch, run `just check` in its worktree, fast-forward the live
- * checkout, then remove the worktree and branch. Every refusal leaves the live checkout untouched.
+ * Land toli task `id`: rebase its branch onto the landing branch (develop), run `just check` in its worktree,
+ * fast-forward the landing branch, then remove the worktree and branch. Every refusal leaves the branches untouched.
  */
 export async function landSelf(raw: string): Promise<Landed> {
     const id = taskId(raw);
     const live = liveCheckout();
-    const base = liveBranch(live);
+    const base = landingBranch(live);
     const path = join(selfDir(live), id);
     const entry = registered(live, path);
     if (entry === undefined) throw new ToliError(`no self worktree for ${id} (bin/toli self prepare ${id})`);
@@ -145,6 +157,7 @@ export async function landSelf(raw: string): Promise<Landed> {
     }
     const commits = Number(gitOk(live, ["rev-list", "--count", `refs/heads/${base}..refs/heads/${branch}`]));
     let check = "no commits to land; check skipped";
+    let updated: string | null = null;
     if (commits > 0) {
         const checked = await runCombined(CHECK, { cwd: path });
         if (checked.code !== 0)
@@ -153,22 +166,49 @@ export async function landSelf(raw: string): Promise<Landed> {
                     `${base} is unchanged. Last lines:\n${tail(checked.output, CHECK_TAIL_LINES)}`,
             );
         check = tail(checked.output, 5);
-        const merged = git(live, ["merge", "--ff-only", "--quiet", `refs/heads/${branch}`]);
-        if (merged.code !== 0)
-            throw new ToliError(
-                `refusing to land ${id}: cannot fast-forward ${base} in ${live} to ${branch} (did ${base} move, or ` +
-                    `do uncommitted changes there overlap?). Run land again:\n${(merged.stderr || merged.stdout).trim()}`,
-            );
+        updated = fastForward(live, base, branch, id);
     }
-    const head = gitOk(live, ["rev-parse", "HEAD"]);
+    const head = gitOk(live, ["rev-parse", `refs/heads/${base}`]);
     const removed = git(live, ["worktree", "remove", path]);
     if (removed.code !== 0)
         throw new ToliError(
             `landed ${id} at ${head.slice(0, 12)}, but git worktree remove ${path} failed: ` +
                 (removed.stderr || removed.stdout).trim(),
         );
-    gitOk(live, ["branch", "-d", branch]);
-    return { task: id, branch, base, commits, head, check };
+    // The branch is contained in base (fast-forwarded, or nothing to land), which need not be the checked-out HEAD
+    // that `git branch -d` checks against.
+    gitOk(live, ["merge-base", "--is-ancestor", `refs/heads/${branch}`, `refs/heads/${base}`]);
+    gitOk(live, ["branch", "-D", branch]);
+    return { task: id, branch, base, commits, head, check, updated };
+}
+
+/**
+ * Move `base` to `branch` (already rebased onto it) without ever rewriting it: `git merge --ff-only` in the worktree
+ * that has `base` checked out (normally the live checkout), else a compare-and-swap of the ref alone. Returns that
+ * worktree, or null when only the ref moved.
+ */
+function fastForward(live: string, base: string, branch: string, id: string): string | null {
+    const holder = gitWorktrees(live).find((entry) => entry.branch === base);
+    if (holder !== undefined) {
+        const merged = git(holder.path, ["merge", "--ff-only", "--quiet", `refs/heads/${branch}`]);
+        if (merged.code !== 0)
+            throw new ToliError(
+                `refusing to land ${id}: cannot fast-forward ${base} in ${holder.path} to ${branch} (did ${base} ` +
+                    `move, or do uncommitted changes there overlap?). Run land again:\n` +
+                    (merged.stderr || merged.stdout).trim(),
+            );
+        return holder.path;
+    }
+    const old = gitOk(live, ["rev-parse", `refs/heads/${base}`]);
+    const tip = gitOk(live, ["rev-parse", `refs/heads/${branch}`]);
+    const ancestor = git(live, ["merge-base", "--is-ancestor", old, tip]).code === 0;
+    const moved = ancestor ? git(live, ["update-ref", "-m", `self land ${id}`, `refs/heads/${base}`, tip, old]) : null;
+    if (moved === null || moved.code !== 0)
+        throw new ToliError(
+            `refusing to land ${id}: cannot fast-forward ${base} to ${branch} (did ${base} move?). Run land again` +
+                (moved === null ? "" : `:\n${(moved.stderr || moved.stdout).trim()}`),
+        );
+    return null;
 }
 
 /** `toli self prepare <T-id> [--json]` | `list [--json]` | `land <T-id> [--json]`. */
@@ -210,7 +250,7 @@ export async function selfCommand(argv: string[]): Promise<void> {
                     ? `${landed.task}: nothing to land on ${landed.base}; worktree and ${landed.branch} removed`
                     : `${landed.task}: landed ${landed.commits} commit${landed.commits === 1 ? "" : "s"} of ` +
                           `${landed.branch} on ${landed.base} at ${landed.head.slice(0, 12)}; worktree and branch ` +
-                          `removed\n${landed.check}`,
+                          `removed${landed.updated === null ? `; no checkout is on ${landed.base} (git switch ${landed.base} to run it)` : ""}\n${landed.check}`,
             );
     } else throw new ToliError("usage: toli self prepare <T-id> | list | land <T-id>");
 }
