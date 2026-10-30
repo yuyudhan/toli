@@ -88,10 +88,10 @@ Everyday commands you type inside omp:
 | `/ahoy`                         | Walk through decisions that are waiting for you                                        |
 | `/schedule`                     | Add, list, pause, or remove timed jobs ("every day at 5 pm ...")                       |
 | `/add-project`, `/drop-project` | Add or remove a project                                                                |
+| `/setup-project <name>`         | Review a project's setup and fill what is missing (delivery, commands, notes)          |
 | `/stow`                         | Save what was learned this session and keep memory within its budget                   |
 | `/afk`                          | "I'm away" - keep working through queued tasks and give one summary when you are back  |
 | `/quiet`                        | "I'm here, keep it short" - only results, failures, and decisions                      |
-| `/setup-project <name>`         | Review a project's setup and fill what is missing (delivery, commands, notes)          |
 | `/sync-toli`                    | Pull the latest Sardar rules onto this machine (or all machines)                       |
 
 ## First-time setup (each machine)
@@ -212,9 +212,9 @@ then prints the PR/MR URL. Pushing, opening and merging all need Malik's word fo
 | `/ahoy`                                      | Go through every task waiting on a decision                             |
 | `/stow`                                      | Save learnings and preferences; re-check stale memory; tidy the backlog |
 | `/afk [off]`                                 | Keep working the queue while away; one report on return                 |
-| `/setup-project <name>\|--all`               | Review and fill a project's missing setup                               |
 | `/quiet [off]`                               | Only outcomes, failures, and decisions while present                    |
 | `/add-project`, `/drop-project`              | Register or remove a project                                            |
+| `/setup-project <name>\|--all`               | Review and fill a project's missing setup                               |
 | `/schedule add\|list\|pause\|resume\|remove` | Recurring jobs                                                          |
 | `/sync-toli [--all]`                         | Update the toli repo (fast-forward only)                                |
 
@@ -239,9 +239,9 @@ into the chat, so Sardar relays them without being asked. Results stay in `/bear
 
     bin/toli memory [--json]          # always-loaded memory (data/malik.md + data/learnings.md) in estimated tokens vs budget; notes listed separately
     bin/toli memory stale [--json]    # entries past their lifetime: file, line, id, date, age, tier
-    bin/toli migrate [--dry-run]      # one time: move old flat data files into data/projects/<p>/ (never overwrites)
     bin/toli memory archive <file> <line-or-id> --reason "<why>" [--force]   # move one entry to data/archive/<file>.md
     bin/toli prune [--apply] [--json] # dry run by default: old job results, finished tasks, logs, seen inbox items
+    bin/toli migrate [--dry-run]      # one time: move old flat data files into data/projects/<p>/ (never overwrites)
 
 Tokens are estimated as UTF-8 bytes / 3. The budget is `memoryBudgetTokens` in `config/machine.json` (default 7500);
 `bin/toli doctor` warns when memory is over it. Entries are dated (`- 2026-10-29: ...`); the date is when the entry was
