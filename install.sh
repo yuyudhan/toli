@@ -124,6 +124,18 @@ case "$dir" in
 esac
 dir="${dir%/}"
 
+resolve_path() { # <absolute path>; prints it with its deepest existing folder resolved (cd -P, pwd -P)
+    head="$1"
+    rest=""
+    while [ ! -d "$head" ]; do
+        rest="/$(basename -- "$head")$rest"
+        head="$(dirname -- "$head")"
+    done
+    head="$(CDPATH='' cd -P -- "$head" && pwd -P)" || die "cannot resolve $1"
+    printf '%s%s\n' "${head%/}" "$rest"
+}
+dir="$(resolve_path "$dir")"
+
 if [ -e "$dir" ] && [ ! -d "$dir" ]; then die "$dir exists and is not a directory"; fi
 if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then die "$dir is not empty; choose a new or empty directory"; fi
 
