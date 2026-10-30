@@ -50,9 +50,11 @@ function releaseInstall(installed = "v0.1.0"): Sandbox {
     box.git(box.root, ["checkout", "--quiet", "--detach", installed]);
     const realGit = Bun.which("git");
     if (realGit === null) throw new Error("git not found");
+    // ls-remote is logged, and takes 2 s while a `slow` file exists in the root.
+    const slow = join(box.root, "slow");
     box.stub(
         "git",
-        `case "$*" in *ls-remote*) echo "$*" >> "${join(box.root, "ls-remote.log")}" ;; esac\nexec "${realGit}" "$@"`,
+        `case "$*" in *ls-remote*) echo "$*" >> "${join(box.root, "ls-remote.log")}"; [ -f "${slow}" ] && sleep 2 ;; esac\nexec "${realGit}" "$@"`,
     );
     return box;
 }
@@ -207,5 +209,57 @@ describe("the tick", () => {
         box.ok(["job", "tick"], { now: NOW });
         expect(existsSync(join(box.root, "state", "update-check.json"))).toBe(false);
         expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).not.toContain("update check");
+    });
+});
+
+describe("robustness", () => {
+    test("a corrupt state file never breaks the digest and the next check repairs it", () => {
+        const box = releaseInstall();
+        mkdirSync(join(box.root, "state"), { recursive: true });
+        writeFileSync(join(box.root, "state", "update-check.json"), "{ not json");
+        expect(box.toli(["digest"], { now: NOW }).code).toBe(0);
+        expect(box.toli(["update", "status"], { now: NOW }).code).toBe(0);
+        box.ok(["update", "check", "--due"], { now: NOW });
+        expect(state(box).latest).toBe("v0.2.0");
+        expect(box.ok(["digest"], { now: NOW })).toContain("Update: toli v0.2.0 is out");
+    });
+
+    test("a corrupt settings file counts as off: no network call, digest still works", () => {
+        const box = releaseInstall();
+        box.ok(["update", "check"], { now: NOW });
+        mkdirSync(join(box.root, "config"), { recursive: true });
+        writeFileSync(join(box.root, "config", "updates.json"), "{ not json");
+        const digest = box.toli(["digest"], { now: NOW });
+        expect(digest.code).toBe(0);
+        expect(digest.stdout).not.toContain("Update:");
+        expect(box.toli(["update", "check", "--due"], { now: later(4) }).code).toBe(0);
+        expect(lsRemoteCalls(box)).toBe(1);
+        expect(box.ok(["update", "status"], { now: later(4) })).toContain("update check: off");
+        box.ok(["update", "on"]);
+        box.ok(["update", "check", "--due"], { now: later(4) });
+        expect(lsRemoteCalls(box)).toBe(2);
+    });
+
+    test("reading the changelog never moves a local tag of the same name", () => {
+        const box = releaseInstall();
+        box.git(box.root, ["switch", "--quiet", "--create", "develop"]);
+        box.git(box.root, ["tag", "v0.2.0"]);
+        const before = box.git(box.root, ["rev-parse", "v0.2.0"]);
+        box.ok(["update", "check"], { now: NOW });
+        expect(box.git(box.root, ["rev-parse", "v0.2.0"])).toBe(before);
+        expect(state(box).changelog).toContain("Feature of v0.2.0");
+    });
+
+    test("the tick claims a due check before it returns, so the next tick does not start another", () => {
+        const box = releaseInstall();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        writeFileSync(join(box.root, "slow"), "");
+        box.ok(["job", "tick"], { now: NOW });
+        expect(state(box).lastAttempt).toBe(NOW);
+        box.ok(["job", "tick"], { now: NOW });
+        const deadline = Date.now() + 10_000;
+        while (state(box).lastChecked === undefined && Date.now() < deadline) Bun.sleepSync(100);
+        expect(state(box).latest).toBe("v0.2.0");
+        expect(lsRemoteCalls(box)).toBe(1);
     });
 });

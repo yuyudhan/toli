@@ -83,13 +83,15 @@ Every 3 days toli looks for a newer release on its own, so you hear about it wit
     bin/toli update snooze v0.3.0     # never mention this version; a later one is still shown
     bin/toli update off               # no network checks and no notices; `on` turns it back on
 
-- The minute tick (`bin/toli job tick`, see [jobs.md](jobs.md)) starts `bin/toli update check --due` as a background
-  process when a check is due, so neither the tick nor the digest waits on the network. The check runs
-  `git ls-remote --tags` against `origin` (or `TOLI_REPO_URL`) with a 20 second timeout and compares the highest
-  stable `vX.Y.Z` with `package.json`'s version; pre-releases, older and equal tags are ignored. For a newer release
-  it fetches that one tag to read its `CHANGELOG.md`.
+- The minute tick (`bin/toli job tick`, see [jobs.md](jobs.md)) claims a due check and starts `bin/toli update check`
+  as a background process, so neither the tick nor the digest waits on the network and two ticks never start two
+  checks. The check runs `git ls-remote --tags` against `origin` (or `TOLI_REPO_URL`) with a 20 second timeout and
+  compares the highest stable `vX.Y.Z` with `package.json`'s version; pre-releases, older and equal tags are
+  ignored. For a newer release it fetches that one tag into `FETCH_HEAD` (no local tag is created or moved) to read
+  its `CHANGELOG.md`.
 - Offline, nothing is recorded but the attempt time; the tick tries again an hour later. A clone that is not a git
-  checkout is never checked.
+  checkout is never checked. A corrupt `config/updates.json` counts as off (fix or delete it, or run
+  `bin/toli update on`); a corrupt `state/update-check.json` is replaced by the next check.
 - The result is in `state/update-check.json` (`lastChecked`, `latest`, the changelog, and the versions you were
   told about); the settings are in `config/updates.json` (`check`, `snoozed`). Output of background checks goes to
   `logs/update-check.log`.
