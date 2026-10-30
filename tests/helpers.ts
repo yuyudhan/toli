@@ -1,5 +1,5 @@
 import { spyOn } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -46,6 +46,10 @@ export function sandbox(): Sandbox {
         "crontab",
         'if [ "$1" = "-l" ]; then echo "no crontab for test" >&2; else echo "crontab stub: writes refused" >&2; fi; exit 1',
     );
+    // gitleaks stays reachable (bin/toli commit scans every staged set with it; CI installs it before the tests), but
+    // only it: the rest of its directory (gh, glab, no-mistakes, ...) stays off PATH.
+    const gitleaks = Bun.which("gitleaks");
+    if (gitleaks) symlinkSync(gitleaks, join(stubs, "gitleaks"));
     const path = [stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
     const toli: Sandbox["toli"] = (args, options = {}) => {
         const proc = Bun.spawnSync([process.execPath, TOLI_BIN, ...args], {

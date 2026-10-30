@@ -84,7 +84,7 @@ default 7) once.
 
 ### Landing work
 
-    commit <project> [--task T<n>] -m "<message>" -- <path>...
+    commit <project> [--task T<n>] -m "<message>" [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
     forge <project> [--json]
@@ -93,7 +93,10 @@ default 7) once.
     pr status <project> [<id>] [--task T<n>] [--json] | list <project> [--json]
     pr merge <project> <id> [--method merge|squash|rebase]
 
-- `commit` stages only the named paths, strips AI trailers, and refuses on the wrong branch.
+- `commit` builds a private index from the branch tip and commits only the named paths and `--patch` hunks; it
+  refuses secrets (gitleaks), lock files that do not parse, a revert of one of the last 20 commits, the wrong branch,
+  and a branch that moved twice meanwhile, and strips AI trailers. `toli` as the project commits toli itself on
+  `develop` ([development.md](development.md#working-on-toli-itself-in-place-landed-with-bintoli-commit)).
 - `branch` creates a new branch in the clone and switches to it.
 - `workspace` prepares, lists, and prunes per-task branches and worktrees
   ([projects.md](projects.md#workspace-strategy)).
@@ -167,8 +170,11 @@ Details: [fleet.md](fleet.md).
 
 ### Working on toli itself
 
-    self prepare T<n> [--json] | list [--json] | land T<n> [--json]
+    self sync [--json] | status [--json]
 
-Changes to toli are made in a worktree (`projects/.worktrees/toli/T<n>`, from `develop`), never in the live checkout;
-`land` runs `just check` there and fast-forwards `develop` (or, without a local `develop`, the live checkout's branch)
-only when it passes ([development.md](development.md)).
+- Changes to toli are made in place, in this checkout on `develop`, and land with `bin/toli commit toli` after
+  `just check` ([development.md](development.md)); there are no worktrees.
+- `self sync` installs the checkout's HEAD as the runtime the live session runs (a snapshot under `~/.toli/runtime/`,
+  named by `state/runtime`), only after the snapshot loads; `commit toli`, `sync` and `upgrade` do it themselves when
+  a runtime is installed. `self status` says which code `bin/toli` runs
+  ([development.md](development.md#the-live-session-runs-an-installed-runtime)).

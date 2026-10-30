@@ -12,6 +12,7 @@ import { syncShims } from "../harness/sync.ts";
 import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
+import { describeRuntime, runtimeStatus } from "../release/runtime.ts";
 
 export type CheckLevel = "ok" | "warn" | "fail";
 export type Check = { level: CheckLevel; name: string; detail: string };
@@ -152,6 +153,14 @@ export async function runChecks(): Promise<Check[]> {
             : { level: "warn", name: "no-mistakes", detail: "not found (needed only for branch/PR gating)" },
     );
     checks.push({ name: "memory", ...memoryCheck() });
+    if (isGitRepo(paths.root())) {
+        const runtime = runtimeStatus();
+        checks.push({
+            level: runtime.state === "stale" || runtime.state === "missing" ? "warn" : "ok",
+            name: "runtime",
+            detail: describeRuntime(runtime),
+        });
+    }
 
     if (!hasMachine()) {
         checks.push({ level: "fail", name: "machine", detail: "config/machine.json missing: run bin/toli init" });

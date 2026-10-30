@@ -13,6 +13,7 @@ import {
     tagsFromLsRemote,
     toliRepoUrl,
 } from "./release.ts";
+import { activeRuntime, removeRuntimePointer, syncRuntime } from "./runtime.ts";
 
 export type Installed = {
     /** The release tag HEAD sits exactly on, or null on an untagged commit. */
@@ -146,6 +147,19 @@ export async function upgradeCommand(argv: string[]): Promise<number> {
     ]);
     gitOk(root, ["-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", `${target}^{commit}`]);
     out(`checked out ${target}${downgrade ? " (downgrade)" : ""}`);
+
+    // The live session runs the installed runtime when there is one: move it to the new code before running it.
+    if (activeRuntime(root) !== null) {
+        try {
+            out(`runtime ${syncRuntime(root).commit.slice(0, 12)} installed`);
+        } catch (error) {
+            removeRuntimePointer(root);
+            out(
+                `toli: the runtime was not refreshed (${error instanceof Error ? error.message.split("\n")[0] : String(error)}); ` +
+                    "bin/toli now runs the checkout itself",
+            );
+        }
+    }
 
     // The new code runs in fresh processes: this one still holds the old modules.
     for (const step of [["migrate"], ["harness", "sync"]]) {

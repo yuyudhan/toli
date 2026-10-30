@@ -22,7 +22,7 @@ import { migrateCommand } from "./records/migrate.ts";
 import { needsCommand } from "./records/needs.ts";
 import { pruneCommand } from "./records/prune.ts";
 import { wakeCommand } from "./records/wake.ts";
-import { selfCommand } from "./release/self.ts";
+import { runtimeCommand } from "./release/runtime.ts";
 import { updateCommand } from "./release/update-check.ts";
 import { upgradeCommand, versionCommand } from "./release/upgrade.ts";
 import { doctorCommand } from "./setup/doctor.ts";
@@ -49,10 +49,10 @@ const USAGE = `usage: bin/toli <command> [args]
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."]
   task answer <id> "<answer>" | drop <id>
   needs [--json]
-  commit <project> [--task T<n>] -m "<message>" -- <path>...
+  commit <project> [--task T<n>] -m "<message>" [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
   branch <project> <branch>
   workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
-  self prepare T<n> [--json] | list [--json] | land T<n> [--json]
+  self sync [--json] | status [--json]
   forge <project> [--json]
   push <project> [--task T<n>]
   pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
@@ -121,7 +121,7 @@ export async function main(argv: string[]): Promise<number> {
                 workspaceCommand(rest);
                 return 0;
             case "self":
-                await selfCommand(rest);
+                runtimeCommand(rest);
                 return 0;
             case "forge":
                 forgeCommand(rest);

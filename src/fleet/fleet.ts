@@ -30,6 +30,7 @@ import {
 import { runHook, seedLocal } from "../helpers/local.ts";
 import { headlessOmpArgs } from "../jobs/tick.ts";
 import { loadProjects } from "../projects/projects.ts";
+import { activeRuntime, syncRuntime } from "../release/runtime.ts";
 import { noCandidateText, pickMachine } from "./pick.ts";
 import { registerRun, removeRun } from "./resources.ts";
 
@@ -72,6 +73,16 @@ function syncLocal(): void {
     if (pull.code !== 0)
         throw new ToliError(`git pull --ff-only failed (not a fast-forward?): ${(pull.stderr || pull.stdout).trim()}`);
     out(`${loadMachine().name}: ${pull.stdout.trim() || "up to date"}`);
+    // The live session runs the installed runtime (src/release/runtime.ts): move it to the pulled code.
+    if (activeRuntime(root) !== null) {
+        try {
+            out(`${loadMachine().name}: runtime ${syncRuntime(root).commit.slice(0, 12)}`);
+        } catch (error) {
+            warn(
+                `toli: pulled, but the runtime stays on the previous commit: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+    }
 }
 
 export function syncCommand(argv: string[]): number {

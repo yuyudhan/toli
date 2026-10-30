@@ -1,6 +1,6 @@
 // `just release [patch|minor|major|vX.Y.Z] [--dry-run] [--remote <name>]` (alias `just publish`): cut a toli release.
 //
-// Feature work lands on develop (`bin/toli self land`); main moves only here.
+// Feature work lands on develop (`bin/toli commit toli`); main moves only here.
 //
 //   1. On develop with a clean tree, with main contained in develop and checked out nowhere, compute the version:
 //      bump package.json's, or the explicit vX.Y.Z.
