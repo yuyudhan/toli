@@ -144,6 +144,17 @@ describe("project set --branch switches the clone", () => {
         expect(head(box, dir)).toBe("toli/T1-login-page");
     });
 
+    test("the switch waits for the workspace lock that task preparation holds", () => {
+        const { box, dir } = setUp();
+        box.git(dir, ["branch", "develop"]);
+        mkdirSync(join(box.root, "state"), { recursive: true });
+        writeFileSync(join(box.root, "state", "workspace-app.lock"), "");
+        const blocked = box.toli(["project", "set", "app", "--branch", "develop"]);
+        expect(blocked.code).toBe(1);
+        expect(blocked.stderr).toContain("timed out waiting for lock");
+        expect(head(box, dir)).toBe("main");
+    });
+
     test("a linked checkout counts as the clone", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
