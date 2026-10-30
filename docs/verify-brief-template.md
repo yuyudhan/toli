@@ -79,8 +79,8 @@ the PR/MR?"` and report.
 - Browsers run headless only. Stop and report at any OTP, captcha, or second factor. Staging is read-only.
 - Build hygiene: after your last test run, apply the project notes' build and cleanup rules (build output
   location, what to delete, disk limits), if any.
-- Work on toli itself (the toli repository, not a project): run `just check` yourself before landing; a failing run
-  is a GAP.
+- Work on toli itself: run `just check` in the self worktree (projects/.worktrees/toli/T<n>) before landing; a
+  failing run, or edits made in the live checkout instead of a self worktree, is a GAP.
 
 ## Report format
 

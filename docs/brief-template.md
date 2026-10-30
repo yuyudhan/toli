@@ -82,7 +82,10 @@ task needs, and never revert or reformat changes you did not make.
 - Build hygiene: follow the project notes' build and cleanup rules (where build output may go, what to delete
   after your last test run, disk limits). If the notes say nothing, keep build output in the project's default
   locations and leave no stray files outside the project path.
-- Work on toli itself (the toli repository, not a project): run `just check` before committing and paste its tail.
+- Work on toli itself (the toli repository, not a project): never edit the live checkout. Work in
+  `bin/toli self prepare T<n>` (worktree projects/.worktrees/toli/T<n>), commit there with git, land with
+  `bin/toli self land T<n>` (runs `just check` there, fast-forwards main only on pass) and paste its tail. See
+  docs/development.md.
 
 ## Landing and bookkeeping
 

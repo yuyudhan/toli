@@ -9,7 +9,7 @@ and your private data lives in gitignored directories inside it (`data/`, `state
 - `git`
 - [`bun`](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`, or `brew install oven-sh/bun/bun`). The
   installer clones without it, prints these hints, and skips the sanity check.
-- An agent harness to talk to: omp, Claude Code, Codex, Cursor, Grok, or pi (docs/harnesses.md).
+- An agent harness to talk to: omp, Claude Code, Codex, Cursor, Grok, or pi ([harnesses.md](harnesses.md)).
 
 ## One-line install
 
@@ -29,7 +29,7 @@ The installer:
    the shell that ran it; `exit` returns you to where you were).
 
 Then, in the install directory, open your favourite agent (`omp`, `claude`, `codex`, `cursor-agent`, `grok`, `pi`)
-and say **set up toli**. The agent walks you through the rest (docs/setup.md).
+and say **set up toli**. The agent walks you through the rest ([setup.md](setup.md)).
 
 Answers are read from the terminal (`/dev/tty`), so the piped form above still asks. Without a terminal (CI, a
 script), pass `--yes`.
