@@ -1,8 +1,8 @@
-// src/ prints through the output helpers in src/util.ts; stray console.log calls bypass them
+// src/ prints through the output helpers in src/core/util.ts; stray console.log calls bypass them
 // (and corrupt --json output).
 import { eachLine, type Guard, type Violation } from "../guard-lib.ts";
 
-const OUTPUT_HELPER = "src/util.ts";
+const OUTPUT_HELPER = "src/core/util.ts";
 
 export default {
     name: "console-log",

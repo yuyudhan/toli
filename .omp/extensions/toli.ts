@@ -9,7 +9,7 @@
 //   - every turn (before_agent_start) it appends the lead guidance
 //     (`bin/toli guidance`: delegate everything, reply short, never wait, use
 //     bin/toli and the skills) to the system prompt for that turn only;
-//   - every tool call goes through the lead guard (src/lead-guard.ts): the lead
+//   - every tool call goes through the lead guard (src/harness/lead-guard.ts): the lead
 //     may write only toli's records (data/, state/, config/) and may not read
 //     projects/; bash (bin/toli bookkeeping) is never blocked;
 //   - every 60 s it asks bin/toli which jobs are due for this machine and, if
@@ -20,7 +20,7 @@
 //     weekly prune listing, and local job results), each exactly once, and
 //     pushes them into the chat: a new turn when idle, a follow-up when busy;
 //   - a failing bin/toli (e.g. a broken checkout) is reported once per distinct
-//     error with a pointer to `bin/toli doctor` (src/cli-health.ts); the tick
+//     error with a pointer to `bin/toli doctor` (src/harness/cli-health.ts); the tick
 //     keeps retrying quietly, re-registers the session if that failed, and
 //     recovers silently once the CLI works again;
 //   - session_shutdown unregisters the session so the OS ticker takes over.
@@ -30,8 +30,8 @@
 import { execFile, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CliHealth } from "../../src/cli-health.ts";
-import { guardDecision, isBrief, jawanEnv, ompAction } from "../../src/lead-guard.ts";
+import { CliHealth } from "../../src/harness/cli-health.ts";
+import { guardDecision, isBrief, jawanEnv, ompAction } from "../../src/harness/lead-guard.ts";
 
 // omp ships no installable type package; declare the surface this file uses.
 type Timer = unknown;

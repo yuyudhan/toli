@@ -66,7 +66,7 @@ without a project), and on exit records `done`, `failed` or `killed` and posts t
 extension (and Claude's prompt hook) bring it into the lead's chat as a `[toli wake]` message. On a worker machine the
 outcome is also forwarded to the coordinator's inbox. Run records live in `state/jawans/<id>.json`.
 
-Headless commands (`src/harness.ts`):
+Headless commands (`src/harness/harness.ts`):
 
 | Harness | Command                                                                                                                                                        | Source                                                                                     |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -111,7 +111,7 @@ The lead is the session started in toli's root that is not a jawan. Jawans are r
 by `spawn`), `NO_MISTAKES_GATE`, a subagent id, a first prompt starting `TOLI_BRIEF v1`, or a working directory other
 than toli's root; they are never guarded.
 
-- **Guard** (`src/lead-guard.ts`): the lead may write only under `data/`, `state/`, `config/` (plus temp files and
+- **Guard** (`src/harness/lead-guard.ts`): the lead may write only under `data/`, `state/`, `config/` (plus temp files and
   Claude plan files) and may not read, grep, or glob under `projects/`. Shell commands are not blocked, so `bin/toli`
   bookkeeping always works. omp: the extension's `tool_call` handler. Claude Code: `PreToolUse` hook
   (`bin/toli hook claude-pre-tool`). Hooks fail open: an internal error allows the call. Codex, Cursor and Grok have

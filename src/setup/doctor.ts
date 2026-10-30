@@ -1,0 +1,231 @@
+import { Args } from "../core/args.ts";
+import { hasMachine, loadMachine } from "../core/config.ts";
+import { isGitRepo } from "../core/git.ts";
+import { paths } from "../core/paths.ts";
+import { out, printJson, run } from "../core/util.ts";
+import { fleetStatus } from "../fleet/pick.ts";
+import { availabilityLine } from "../fleet/resources.ts";
+import { bitbucketCredentials } from "../forge/bitbucket.ts";
+import { forgeReadiness, projectForge } from "../forge/forge.ts";
+import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
+import { syncShims } from "../harness/sync.ts";
+import { scheduleStatus } from "../jobs/schedule.ts";
+import { type Forge, loadProjects } from "../projects/projects.ts";
+import { memoryCheck } from "../records/memory.ts";
+
+export type CheckLevel = "ok" | "warn" | "fail";
+export type Check = { level: CheckLevel; name: string; detail: string };
+
+function firstLine(text: string): string {
+    return (
+        text
+            .split("\n")
+            .find((line) => line.trim() !== "")
+            ?.trim() ?? "(no output)"
+    );
+}
+
+function toolCheck(name: string, cmd: string[], missing: CheckLevel): Check {
+    const result = run(cmd, { timeoutMs: 20_000 });
+    if (result.code === 127) return { level: missing, name, detail: "not found on PATH" };
+    if (result.code !== 0)
+        return {
+            level: missing,
+            name,
+            detail: `${cmd.join(" ")} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`,
+        };
+    return { level: "ok", name, detail: firstLine(result.stdout || result.stderr) };
+}
+
+function nameList(names: string[]): string {
+    return names.length <= 5 ? names.join(", ") : `${names.slice(0, 5).join(", ")} +${names.length - 5} more`;
+}
+
+/**
+ * Forge readiness per forge host the registered projects use: `gh auth status` / `glab auth status --hostname`,
+ * Bitbucket credentials present. GitHub (github.com) is always checked; unused gitlab/bitbucket only reported.
+ */
+function forgeChecks(): Check[] {
+    const used = new Map<string, { forge: Forge; host: string; projects: string[] }>();
+    const undetected: string[] = [];
+    for (const project of loadProjects()) {
+        try {
+            const target = projectForge(project);
+            const key = `${target.forge} ${target.host}`;
+            const entry = used.get(key) ?? { forge: target.forge, host: target.host, projects: [] };
+            entry.projects.push(project.name);
+            used.set(key, entry);
+        } catch {
+            undetected.push(project.name);
+        }
+    }
+    if (!used.has("github github.com"))
+        used.set("github github.com", { forge: "github", host: "github.com", projects: [] });
+    const checks: Check[] = [...used.values()].map(({ forge, host, projects }) => {
+        const readiness = forgeReadiness(forge, host);
+        const scope = projects.length === 0 ? "no registered projects" : `projects: ${nameList(projects)}`;
+        return {
+            level: readiness.ready ? "ok" : "warn",
+            name: `forge-${forge}`,
+            detail: `${readiness.detail} (${scope})`,
+        };
+    });
+    const forges = new Set([...used.values()].map((entry) => entry.forge));
+    if (!forges.has("gitlab")) {
+        const glab = Bun.which("glab", { PATH: process.env.PATH ?? "" });
+        checks.push({
+            level: "ok",
+            name: "forge-gitlab",
+            detail: `${glab ? `glab at ${glab}` : "glab not found"} (no registered gitlab projects)`,
+        });
+    }
+    if (!forges.has("bitbucket")) {
+        const credentials = bitbucketCredentials();
+        checks.push({
+            level: "ok",
+            name: "forge-bitbucket",
+            detail: `${credentials ? `credentials from ${credentials.source}` : "no credentials set"} (no registered bitbucket projects)`,
+        });
+    }
+    if (undetected.length > 0)
+        checks.push({
+            level: "warn",
+            name: "forge",
+            detail: `forge not detected for ${nameList(undetected)} (bin/toli forge <project>; set --forge)`,
+        });
+    return checks;
+}
+
+/**
+ * One check per harness CLI: installed, version, login. omp is required (scheduled jobs run in headless omp);
+ * harnesses config/machine.json routes jawans to warn when missing or logged out; the rest are optional.
+ * Also checks the per-harness shims are in sync with their single source (.omp, AGENTS.md).
+ */
+function harnessChecks(): Check[] {
+    let configured: Harness[];
+    try {
+        configured = configuredHarnesses();
+    } catch (error) {
+        return [{ level: "fail", name: "harness", detail: error instanceof Error ? error.message : String(error) }];
+    }
+    const checks = HARNESSES.map((harness): Check => {
+        const status = harnessStatus(harness);
+        const needed = harness === "omp" || configured.includes(harness);
+        const role = configured.includes(harness) ? " [jawan harness]" : "";
+        if (!status.installed)
+            return {
+                level: harness === "omp" ? "fail" : needed ? "warn" : "ok",
+                name: harness,
+                detail: `${status.detail}${needed ? "" : " - optional"}${role}`,
+            };
+        const login = status.loggedIn === null ? "login not checked" : status.loggedIn ? "logged in" : "NOT logged in";
+        return {
+            level: status.loggedIn === false && needed ? "warn" : "ok",
+            name: harness,
+            detail: `${status.version ?? "installed"}, ${login}: ${status.detail}${role}`,
+        };
+    });
+    const drift = syncShims(paths.root(), true).filter((result) => result.state !== "ok");
+    checks.push(
+        drift.length === 0
+            ? { level: "ok", name: "harness-shims", detail: "CLAUDE.md, .claude, .agents, .cursor, .pi in sync" }
+            : {
+                  level: "warn",
+                  name: "harness-shims",
+                  detail: `out of date: ${drift.map((result) => result.path).join(", ")} (bin/toli harness sync)`,
+              },
+    );
+    return checks;
+}
+
+export async function runChecks(): Promise<Check[]> {
+    const checks: Check[] = [
+        { level: "ok", name: "bun", detail: `${Bun.version} (${process.execPath})` },
+        ...harnessChecks(),
+        toolCheck("git", ["git", "--version"], "fail"),
+        ...forgeChecks(),
+    ];
+    const noMistakes = Bun.which("no-mistakes", { PATH: process.env.PATH ?? "" });
+    checks.push(
+        noMistakes
+            ? { level: "ok", name: "no-mistakes", detail: noMistakes }
+            : { level: "warn", name: "no-mistakes", detail: "not found (needed only for branch/PR gating)" },
+    );
+    checks.push({ name: "memory", ...memoryCheck() });
+
+    if (!hasMachine()) {
+        checks.push({ level: "fail", name: "machine", detail: "config/machine.json missing: run bin/toli init" });
+        return checks;
+    }
+    let machineOk = false;
+    try {
+        const machine = loadMachine();
+        if (machine.role === "worker" && !machine.coordinator) {
+            checks.push({
+                level: "fail",
+                name: "machine",
+                detail: `${machine.name} is a worker without a coordinator {ssh, root}`,
+            });
+        } else {
+            const coordinator = machine.coordinator
+                ? ` -> coordinator ${machine.coordinator.ssh}:${machine.coordinator.root}`
+                : "";
+            checks.push({ level: "ok", name: "machine", detail: `${machine.name} (${machine.role})${coordinator}` });
+        }
+        machineOk = true;
+    } catch (error) {
+        checks.push({ level: "fail", name: "machine", detail: error instanceof Error ? error.message : String(error) });
+    }
+
+    const registered = loadProjects();
+    const missing = registered
+        .filter((project) => !isGitRepo(paths.projectDir(project.name)))
+        .map((project) => project.name);
+    checks.push(
+        missing.length === 0
+            ? {
+                  level: "ok",
+                  name: "projects",
+                  detail: `${registered.length} clone${registered.length === 1 ? "" : "s"} present`,
+              }
+            : { level: "warn", name: "projects", detail: `registered but not cloned: ${missing.join(", ")}` },
+    );
+
+    if (machineOk) {
+        try {
+            const fleet = (await fleetStatus()).filter((entry) => !entry.local);
+            if (fleet.length === 0)
+                checks.push({ level: "ok", name: "fleet", detail: "no other machines in config/fleet.json" });
+            for (const entry of fleet)
+                checks.push({ level: entry.reachable ? "ok" : "warn", name: "fleet", detail: availabilityLine(entry) });
+        } catch (error) {
+            checks.push({
+                level: "fail",
+                name: "fleet",
+                detail: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    const schedule = scheduleStatus();
+    checks.push(
+        schedule.installed && schedule.loaded
+            ? { level: "ok", name: "scheduler", detail: `${schedule.scheduler} installed and loaded` }
+            : {
+                  level: "warn",
+                  name: "scheduler",
+                  detail: `${schedule.scheduler} ${schedule.installed ? "installed" : "not installed"}, ${schedule.loaded ? "loaded" : "not loaded"} (bin/toli schedule install)`,
+              },
+    );
+    return checks;
+}
+
+/** Prints `ok|warn|fail <name> <detail>` per check; returns the process exit code (1 only on a fail). */
+export async function doctorCommand(argv: string[]): Promise<number> {
+    const args = new Args(argv, { booleans: ["json"] });
+    args.maxPositional(0);
+    const checks = await runChecks();
+    if (args.bool("json")) printJson(checks);
+    else for (const check of checks) out(`${check.level} ${check.name} ${check.detail}`);
+    return checks.some((check) => check.level === "fail") ? 1 : 0;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseRemote } from "../src/forge.ts";
+import { parseRemote } from "../src/forge/forge.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 const REAL_GIT = Bun.which("git") as string;

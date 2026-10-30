@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { paths } from "../src/paths.ts";
+import { paths } from "../src/core/paths.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Check = { key: string; status: string; detail: string; fill?: string };

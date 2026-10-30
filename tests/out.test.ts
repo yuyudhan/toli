@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
-const UTIL = join(import.meta.dir, "..", "src", "util.ts");
+const UTIL = join(import.meta.dir, "..", "src", "core", "util.ts");
 
 test("a reader closing stdout early (toli ... | head) ends the run quietly", async () => {
     // Far more than a pipe buffer, so writes keep going after the reader is gone.

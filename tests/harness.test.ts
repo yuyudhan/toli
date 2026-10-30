@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { HARNESSES, headlessCommand } from "../src/harness.ts";
-import { shimItems, syncShims } from "../src/harness-sync.ts";
-import { claudeAction, guardDecision, ompAction } from "../src/lead-guard.ts";
+import { HARNESSES, headlessCommand } from "../src/harness/harness.ts";
+import { claudeAction, guardDecision, ompAction } from "../src/harness/lead-guard.ts";
+import { shimItems, syncShims } from "../src/harness/sync.ts";
 import { sandbox } from "./helpers.ts";
 
 const INPUT = { brief: "TOLI_BRIEF v1\ndo it", cwd: "/w/projects/alpha", root: "/w", maxMinutes: 30 };
@@ -104,7 +104,7 @@ describe("lead guard", () => {
         expect(guardDecision(lead, { kind: "write", paths: ["agent://Peer"] }).allow).toBe(true);
         const project = guardDecision(lead, { kind: "write", paths: ["projects/alpha/src/main.ts"] });
         expect(project).toEqual({ allow: false, reason: expect.stringContaining("jawan work") });
-        expect(guardDecision(lead, { kind: "write", paths: ["src/digest.ts"] }).allow).toBe(false);
+        expect(guardDecision(lead, { kind: "write", paths: ["src/records/digest.ts"] }).allow).toBe(false);
         expect(guardDecision(lead, { kind: "write", paths: ["data/x.md", "/opt/elsewhere/y.ts"] }).allow).toBe(false);
     });
 

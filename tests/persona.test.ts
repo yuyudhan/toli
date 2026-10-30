@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_PERSONA, persona, personaLine } from "../src/persona.ts";
+import { DEFAULT_PERSONA, persona, personaLine } from "../src/core/persona.ts";
 
 const saved = process.env.TOLI_ROOT;
 

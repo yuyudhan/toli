@@ -125,7 +125,7 @@ user (the lead batches every such question into one message) or a jawan (detecte
 
 Cross-project files stay at the top of `data/`: the user's preferences (`preferences.md`), `learnings.md`, `jobs/`,
 `inbox/`, `archive/`, toli-wide `reports/`, and `remote/` for remote runs without a project. In code, every path
-comes from `src/paths.ts` (`paths.projectNotes(p)`, `projectBriefsDir(p)`, `projectReportsDir(p)`,
+comes from `src/core/paths.ts` (`paths.projectNotes(p)`, `projectBriefsDir(p)`, `projectReportsDir(p)`,
 `projectReport(p, id)`, `projectRunsDir(p)`, `projectDecisions(p)`).
 
 `bin/toli project drop <name>` keeps both the clone and `data/projects/<name>/`; `--delete-clone` and `--delete-data`

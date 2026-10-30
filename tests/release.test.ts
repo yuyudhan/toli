@@ -11,7 +11,7 @@ import {
     prependChangelog,
     releaseTags,
     tagsFromLsRemote,
-} from "../src/release.ts";
+} from "../src/release/release.ts";
 
 function version(text: string) {
     const parsed = parseVersion(text);

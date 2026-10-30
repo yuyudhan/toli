@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Args, parseArgs } from "../src/args.ts";
-import { ToliError } from "../src/util.ts";
+import { Args, parseArgs } from "../src/core/args.ts";
+import { ToliError } from "../src/core/util.ts";
 
 describe("parseArgs", () => {
     test("value flags take the next word or an inline value; booleans never consume a word", () => {

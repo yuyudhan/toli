@@ -40,7 +40,7 @@ symlink to the repository root would send those recursive walks into the reposit
 
 The extension tolerates a broken CLI anyway (a hand edit, a bad pull): its tick reports the failure once per distinct
 error, pointing to `bin/toli doctor`, keeps retrying quietly every minute, and recovers silently once `bin/toli` works
-again (`src/cli-health.ts`).
+again (`src/harness/cli-health.ts`).
 
 ## Setup
 
@@ -96,7 +96,20 @@ full-history gitleaks scan on every push and PR.
 Tracked (shared by all machines):
 
     bin/toli                     CLI entry point (Bun TypeScript)
-    src/                         CLI implementation
+    src/main.ts                  the command router: maps each `bin/toli` command to its area
+    src/core/                    shared plumbing: args, config, paths, persona, git, cron, util (output, errors,
+                                 JSON files, locks, processes)
+    src/records/                 toli's own records: backlog, needs, digest, memory, inbox, acks, wake, migrate, prune
+    src/jobs/                    scheduled jobs: jobs, schedule (OS ticker), tick
+    src/jawans/                  `bin/toli spawn` on any harness: spawn, supervise, runs
+    src/harness/                 agent harnesses: headless commands, hooks, sync of generated files, lead guard,
+                                 guidance, live session, CLI health for the extension
+    src/projects/                project registry, link, set, setup, workspace strategy and worktrees, commit
+    src/forge/                   forges, push and PR/MR: GitHub/GitLab CLIs, Bitbucket API
+    src/fleet/                   machines: fleet status, resources, pick
+    src/helpers/                 helper registry, local helpers, OS units
+    src/setup/                   setup checklist and notice, doctor
+    src/release/                 versions and CHANGELOG (release), upgrade, self worktrees (self)
     AGENTS.md                    Sardar's role and rules for omp
     .omp/extensions/toli.ts      session tracking, background job hand-off, result delivery into the chat
     .omp/skills/toli-*/          Sardar skills (dispatch, projects, deliver, scout, ...)
