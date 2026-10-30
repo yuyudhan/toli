@@ -186,9 +186,9 @@ export function describeRuntime(status: RuntimeStatus): string {
         case "missing":
             return `state/runtime names ${status.runtime}, which is gone: bin/toli runs the working tree (bin/toli self sync)`;
         case "stale":
-            return `runtime ${status.commit?.slice(0, 12)} is behind HEAD ${head}: bin/toli self sync (${status.runtime})`;
+            return `installed ${status.commit?.slice(0, 12)} is behind HEAD ${head}: bin/toli self sync (${status.runtime})`;
         case "current":
-            return `runtime ${head} (HEAD) at ${status.runtime}`;
+            return `${head} (HEAD) installed at ${status.runtime}`;
     }
 }
 
