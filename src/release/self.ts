@@ -143,6 +143,8 @@ export async function landSelf(raw: string): Promise<Landed> {
     if (entry === undefined) throw new ToliError(`no self worktree for ${id} (bin/toli self prepare ${id})`);
     const branch = entry.branch;
     if (branch === null) throw new ToliError(`${path} is on a detached HEAD; check out its task branch first`);
+    if (branch === base)
+        throw new ToliError(`refusing to land ${id}: ${path} is on ${base} itself; check out its task branch first`);
     const changes = dirty(path);
     if (changes !== "")
         throw new ToliError(`refusing to land ${id}: ${path} has uncommitted changes; commit them first:\n${changes}`);

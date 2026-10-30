@@ -155,4 +155,15 @@ describe("self worktrees", () => {
         expect(landed.updated).toBe(realpathSync(holder));
         expect(readFileSync(join(holder, "other.txt"), "utf8")).toBe("other\n");
     });
+
+    test("land refuses a self worktree that was switched to develop itself, and keeps develop", () => {
+        const { box, env } = liveRepo();
+        box.git(box.root, ["branch", "develop"]);
+        const path = JSON.parse(box.ok(["self", "prepare", "T12", "--json"], { env })).path as string;
+        box.git(path, ["switch", "--quiet", "develop"]);
+        const result = box.toli(["self", "land", "T12"], { env });
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain("is on develop itself");
+        expect(box.git(box.root, ["branch", "--list", "develop"])).toContain("develop");
+    });
 });

@@ -246,12 +246,16 @@ export function changelogHas(text: string, version: string): boolean {
 
 /**
  * Stamp a section drafted ahead of its release (`## vX.Y.Z - unreleased`, written on develop) with the release date:
- * its heading becomes `## vX.Y.Z - YYYY-MM-DD`; the body is kept as written.
+ * its heading becomes `## vX.Y.Z - YYYY-MM-DD`; the body is kept as written. A heading that already has a date stays.
  */
 export function dateChangelogSection(text: string, version: string, date: string): string {
     return text
         .split("\n")
-        .map((line) => (SECTION_HEADING.exec(line)?.[1] === `v${version}` ? `## v${version} - ${date}` : line))
+        .map((line) =>
+            SECTION_HEADING.exec(line)?.[1] === `v${version}` && !/ - \d{4}-\d{2}-\d{2}$/.test(line)
+                ? `## v${version} - ${date}`
+                : line,
+        )
         .join("\n");
 }
 

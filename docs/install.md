@@ -54,7 +54,7 @@ With the pipe, pass options after `sh -s --`:
     bin/toli version          # toli v0.2.0
     bin/toli version --json   # {"tag": "v0.2.0", "version": "0.2.0", "commit": "...", "branch": null}
 
-Off a release tag (a development clone on `main`) it prints `0.2.0 (untagged: main @ abc1234)`.
+Off a release tag (a development clone on `develop`) it prints `0.2.0 (untagged: develop @ abc1234)`.
 
 ## Upgrading
 
