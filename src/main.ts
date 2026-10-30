@@ -14,6 +14,7 @@ import { scheduleCommand } from "./schedule.ts";
 import { sessionCommand } from "./session.ts";
 import { jobCommand } from "./tick.ts";
 import { out, ToliError, warn } from "./util.ts";
+import { wakeCommand } from "./wake.ts";
 
 const USAGE = `usage: bin/toli <command> [args]
 
@@ -37,11 +38,12 @@ const USAGE = `usage: bin/toli <command> [args]
   pr status <project> [<id>] [--json] | list <project> [--json]
   pr merge <project> <id> [--method merge|squash|rebase]
   job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
-  job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | tick
+  job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
   job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
   job results [--unseen] [--json] | ack
   schedule install|uninstall|status
   inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack
+  wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]
   sync [--all]
@@ -94,6 +96,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "inbox":
                 inboxCommand(rest);
+                return 0;
+            case "wake":
+                wakeCommand(rest);
                 return 0;
             case "memory":
                 memoryCommand(rest);
