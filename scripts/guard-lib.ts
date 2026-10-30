@@ -11,7 +11,7 @@ export const ROOT = new URL("..", import.meta.url).pathname;
 
 export type GuardFile = { path: string; text: string };
 export type Violation = { path: string; line?: number; message: string };
-export type Guard = { name: string; run(files: GuardFile[]): Violation[] };
+export type Guard = { name: string; run(files: GuardFile[]): Violation[] | Promise<Violation[]> };
 export type Scope = { description: string; files: GuardFile[]; notes: string[]; allowEmpty: boolean };
 
 function git(args: string[], stdin?: string): Buffer {
