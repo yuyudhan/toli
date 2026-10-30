@@ -22,7 +22,9 @@ Check `state/quiet` before replying. When it exists, a message to Malik contains
 
 - **Outcomes**: finished work, one line each, with commit sha, report path, or full `https://` URL.
 - **Failures**: what failed, in plain words, and what Sardar is doing about it.
-- **Decisions**: a question that needs his answer, in the ask-user format when it comes from a review gate.
+- **Decisions**: new Needs-you questions (`bin/toli needs`), batched into one numbered list with options and your
+  recommendation (`skill://toli-ahoy`); review-gate questions in the ask-user format. A question already asked is
+  not repeated.
 
 Drop everything else: acknowledgements beyond "Ji Malik", restating the request, plans, progress, "dispatched jawans",
 "still running", and summaries of evidence that passed (the outcome line is enough). If nothing qualifies, a turn may

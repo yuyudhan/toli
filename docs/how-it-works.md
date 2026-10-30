@@ -43,9 +43,11 @@ sequenceDiagram
 1. **Record.** Every request that implies work becomes a task in the same turn (`bin/toli task add`), so nothing
    is lost even if it is only an aside. Each task has a shape: **ship** (changes code) or **scout** (investigates
    and writes a report to `data/projects/<project>/reports/`, never touches code).
-2. **Dispatch.** The lead fills in the brief (your words verbatim, spec, acceptance lines, the project's notes) and
-   starts a jawan in the background: the harness's own async subagents, or `bin/toli spawn` on any installed
-   harness. It replies in a line or two and ends its turn; you can keep talking or ask for more work.
+2. **Dispatch.** The lead fills in the brief (your words verbatim, a goal with a Validate command and a
+   machine-checkable Stop when, spec, acceptance lines, the project's notes) and starts a jawan in the background:
+   the harness's own async subagents, or `bin/toli spawn` on any installed harness. The jawan works until the goal
+   holds or it is blocked. The lead replies in a line or two and ends its turn; you can keep talking or ask for more
+   work.
 3. **Work in parallel.** Several jawans (a toli) can run at once, even on the same project and the same files.
    Nothing is locked or queued; each jawan commits only the paths it changed. Where they work depends on the
    project's [workspace strategy](projects.md#workspace-strategy).
@@ -55,8 +57,11 @@ sequenceDiagram
    and the lead sends a fix.
 6. **Report.** The lead tells you the outcome in plain words, with full links to any commit, PR, or report.
 
-Questions a jawan cannot answer put the task on hold (`bin/toli task hold`); `/ahoy` walks you through them and
-`bin/toli task answer` records your reply in the project's `decisions.md`.
+Questions a jawan cannot answer put the task on hold (`bin/toli task hold`) with 2-4 options, a recommendation, and
+what it blocks. Held tasks are the Needs-you queue (`bin/toli needs`, the top of the digest): the lead raises them
+together at session start, after results that add questions, or when you ask (`/ahoy`), never one at a time or every
+turn. `bin/toli task answer` records your reply verbatim in the project's `decisions.md`, and the lead dispatches the
+unblocked task right away.
 
 ## Proof before done
 
@@ -107,7 +112,7 @@ Say what you want in plain words. A few modes and pages help:
   you, what finished (with links), and what is still running. `/bearings` gives the full picture any time.
 - **`/quiet`**: you are here but want only outcomes, failures, and decisions.
 - **`/afk`**: you are away; the lead keeps working the queue and gives one summary when you are back.
-- **Decision pages**: when there are several options, a batch of questions, or a large report, a jawan builds a
+- **Decision pages**: when you prefer pages, there are several options to weigh, or a large report, a jawan builds a
   lavish page (`npx -y lavish-axi`) so you can tick choices in the
   browser instead of typing. Pages live in `.lavish/` and are never shared. Yes/no questions stay in chat.
 - **Local stacks**: if a project's notes have a `## Local stack` section, the lead starts and stops the stack in the
@@ -140,8 +145,8 @@ private to each machine.
     state/                       session, job and ack state, outbox/, runs/, jawan run records
     logs/, .env*, .lavish/
 
-`bin/toli digest` reads all of it at the start of every session: this machine's name and role, each project's branch
-and uncommitted state, work in flight, decisions waiting on you, unseen job results, and inbox messages.
+`bin/toli digest` reads all of it at the start of every session: this machine's name and role, the Needs-you queue
+first, each project's branch and uncommitted state, work in flight, unseen job results, and inbox messages.
 
 ## Where to go next
 

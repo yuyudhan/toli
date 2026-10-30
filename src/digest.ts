@@ -7,6 +7,7 @@ import { isGitRepo, type RepoStatus, repoStatus } from "./git.ts";
 import { configuredHarnesses, type Harness, harnessPath, SPECS } from "./harness.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
 import { type JobResult, listResults, loadJobState } from "./jobs.ts";
+import { type Needs, needsQueue, renderNeeds, takeStaleHolds } from "./needs.ts";
 import { paths } from "./paths.ts";
 import { personaLine } from "./persona.ts";
 import { fleetStatus } from "./pick.ts";
@@ -43,6 +44,8 @@ export type Digest = {
     generatedAt: string;
     projects: ProjectDigest[];
     backlog: { inFlight: Task[]; waiting: Task[]; queued: Task[] };
+    /** The Needs-you queue: every held task, grouped by project, most urgent first (src/needs.ts). */
+    needs?: Needs;
     runningJobs: { name: string; runId: string; via: string; startedAt: string }[];
     jobResults: JobResult[];
     inbox: InboxItem[];
@@ -122,6 +125,7 @@ export function buildDigest(): Digest {
     const missingHarnesses = configuredHarnesses().filter((harness) => harnessPath(harness) === null);
     const runs = activeRuns();
     const live = new Set(runs.map((entry) => entry.id));
+    const needs = needsQueue(tasks);
     return {
         machine: machine.name,
         role: machine.role,
@@ -129,6 +133,7 @@ export function buildDigest(): Digest {
         generatedAt: now().toISOString(),
         projects,
         backlog,
+        needs,
         runningJobs,
         jobResults,
         inbox,
@@ -137,6 +142,7 @@ export function buildDigest(): Digest {
         next: nextActions({
             projects,
             backlog,
+            needs,
             unseenResults: jobResults.length + inbox.length,
             urls,
             setup: projectsNeedingSetup(),
@@ -151,6 +157,7 @@ export function buildDigest(): Digest {
 export type NextInput = {
     projects: ProjectDigest[];
     backlog: Digest["backlog"];
+    needs: Needs;
     unseenResults: number;
     urls: Map<string, string>;
     setup: { name: string; missing: string[] }[];
@@ -164,10 +171,20 @@ const NEXT_LIST_LIMIT = 5;
 /** Concrete recommended actions for the lead, most urgent first, each naming the exact skill or command. */
 export function nextActions(input: NextInput): NextAction[] {
     const actions: NextAction[] = [];
-    for (const task of input.backlog.waiting.slice(0, NEXT_LIST_LIMIT))
+    const items = input.needs.groups.flatMap((group) => group.items);
+    const asked = items.filter((item) => item.question !== null);
+    if (asked.length > 0)
         actions.push({
-            action: `Ask the user about ${task.id} (${task.project})${task.question ? `: ${task.question}` : ""}`,
-            command: `bin/toli task answer ${task.id} "<answer>" (several questions: /ahoy, the toli-ahoy skill)`,
+            action:
+                asked.length === 1
+                    ? `Ask the user about ${asked[0]?.id} (${asked[0]?.project}): ${asked[0]?.question}`
+                    : `Ask the user the ${asked.length} Needs-you questions together as one numbered list (${asked.map((item) => item.id).join(", ")})`,
+            command: `bin/toli needs; record each reply verbatim with bin/toli task answer T<n> "<answer>" and dispatch the unblocked task at once (the toli-ahoy skill)`,
+        });
+    for (const item of items.filter((entry) => entry.question === null).slice(0, NEXT_LIST_LIMIT))
+        actions.push({
+            action: `${item.id} (${item.project}) is held with no question, so the user cannot answer it`,
+            command: `get the question from its jawan or report, then bin/toli task hold ${item.id} --question "..." --option "<choice> => <then>"`,
         });
     if (input.unseenResults > 0)
         actions.push({
@@ -248,22 +265,27 @@ function projectLine(project: ProjectDigest): string {
 }
 
 function taskLine(task: Task): string {
-    const question = task.status === "held" && task.question ? ` (question: ${task.question})` : "";
     const agent = task.status === "active" && task.agent ? ` [jawan ${task.agent}]` : "";
-    return `  ${task.id} ${task.project}: ${task.title}${question}${agent}`;
+    return `  ${task.id} ${task.project}: ${task.title}${agent}`;
 }
 
-/** `setup`: the told-once setup notice for this machine's own digest; never set for fleet digests. */
-function render(digest: Digest, setup: string | null = null): string {
+/**
+ * `setup`: the told-once setup notice for this machine's own digest; never set for fleet digests.
+ * `resurface`: stale holds to raise once more (src/needs.ts takeStaleHolds).
+ */
+function render(digest: Digest, setup: string | null = null, resurface: ReadonlySet<string> = new Set()): string {
     const lines = [`machine ${digest.machine} (${digest.role}) at ${digest.generatedAt}`];
     if (digest.persona) lines.push(digest.persona);
     if (setup !== null) lines.push(setup);
     lines.push("");
-    lines.push(`projects (${digest.projects.length}):`);
+    // Fleet digests from machines on an older toli lack `needs`; their held tasks still form the queue.
+    lines.push(
+        ...renderNeeds(digest.needs ?? needsQueue(digest.backlog.waiting, new Date(digest.generatedAt)), resurface),
+    );
+    lines.push("", `projects (${digest.projects.length}):`);
     lines.push(...(digest.projects.length === 0 ? ["  none"] : digest.projects.map(projectLine)));
     const sections: [string, Task[]][] = [
         ["in flight", digest.backlog.inFlight],
-        ["waiting on answer", digest.backlog.waiting],
         ["queued", digest.backlog.queued],
     ];
     for (const [label, tasks] of sections) {
@@ -313,7 +335,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
         throw new ToliError("--fleet runs on the coordinator only");
     if (!args.bool("fleet")) {
         if (args.bool("json")) printJson(digest);
-        else out(render(digest, takeSetupNotice()));
+        else out(ownRender(digest));
         return;
     }
     const availability: AvailabilityEntry[] = await fleetStatus();
@@ -322,7 +344,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
         printJson({ ...digest, availability, fleet });
         return;
     }
-    out(render(digest, takeSetupNotice()));
+    out(ownRender(digest));
     out("");
     out(`fleet availability (${availability.length}):`);
     for (const entry of availability) out(`  ${availabilityLine(entry)}`);
@@ -331,4 +353,10 @@ export async function digestCommand(argv: string[]): Promise<void> {
         out(`===== ${entry.machine} =====`);
         out(entry.ok && entry.digest ? render(entry.digest) : `unreachable: ${entry.error ?? "unknown error"}`);
     }
+}
+
+/** This machine's digest as text: consumes the told-once setup notice and stale-hold re-surfacing. */
+function ownRender(digest: Digest): string {
+    const resurface = digest.needs === undefined ? new Set<string>() : takeStaleHolds(digest.needs);
+    return render(digest, takeSetupNotice(), resurface);
 }

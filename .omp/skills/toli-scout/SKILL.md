@@ -15,7 +15,10 @@ environment.
         bin/toli task add <project> "<title>" --shape scout --note "<Malik's words>"
         bin/toli task start T<n>
 
-2. Brief from `docs/brief-template.md`. In "Spec" state that the work is read-only: no edits, no commits. In "Acceptance" ask for concrete
+2. Brief from `docs/brief-template.md`. Its `## Goal` uses the short form: Objective (what to find out, in the
+   user's words) and Stop when (the exact questions the report answers, each with evidence); a long or multi-step
+   scout (an audit across many files, a reproduction that needs the stack) gets the full form with a Validate
+   command. In "Spec" state that the work is read-only: no edits, no commits. In "Acceptance" ask for concrete
    evidence: file paths with line numbers, command output, log excerpts, and, when the notes list `## URLs`, what
    the local or staging URL returned (headless browser or HTTP request; staging read-only). In "Report format" ask
    for the structure below. In "Landing" keep the Scout option: the jawan writes its report to
@@ -27,6 +30,9 @@ environment.
    it cannot write the report or close the task. Then end the turn (`skill://toli-dispatch`, the async rule).
 4. When the result arrives, the report is already written and the task closed. Relay the answer; never write or
    rewrite the report yourself. If the jawan could not close the task, dispatch a `sonic` jawan to do it.
+   A finding that needs the user's decision (which fix, whether to proceed) becomes a follow-up task held in the
+   Needs-you format (`bin/toli task add`, then `bin/toli task hold` with the report's options;
+   `skill://toli-ahoy`), raised with the queue rather than asked loose in chat.
 
 ## Report structure
 

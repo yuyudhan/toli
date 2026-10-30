@@ -19,6 +19,13 @@ describe("parseArgs", () => {
         expect(parseArgs(["--note="]).flags.get("note")).toBe("");
     });
 
+    test("a repeated value flag keeps every value in order; the flag map keeps the last", () => {
+        const parsed = parseArgs(["--option", "a => x", "--option=b => y", "--note", "n"]);
+        expect(parsed.lists.get("option")).toEqual(["a => x", "b => y"]);
+        expect(parsed.flags.get("option")).toBe("b => y");
+        expect(parsed.lists.get("note")).toEqual(["n"]);
+    });
+
     test("errors: value flag at the end, boolean given a value, unknown short flag", () => {
         expect(() => parseArgs(["--mode"])).toThrow("--mode needs a value");
         expect(() => parseArgs(["--json=yes"], ["json"])).toThrow("--json takes no value");

@@ -30,3 +30,10 @@ one. See docs/releasing.md.
 - Self-hosting: `bin/toli self prepare|list|land` develop toli in worktrees (`projects/.worktrees/toli/<T-id>`) and
   land them by fast-forward only after `just check` passes there, so the live checkout never holds half-edited code;
   the extension reports a failing CLI once per distinct error and points to `bin/toli doctor`.
+- Needs-you queue: `task hold` takes 2-4 `--option "<choice> => <then>"`, `--recommend` and `--blocks`;
+  `bin/toli needs [--json]` lists held tasks by project, blocking and oldest first, with reply hints; the digest
+  opens with it, flags holds without a question, and re-surfaces stale holds once (`needs.staleDays`, default 7);
+  `task answer` records options and the verbatim reply in `decisions.md` and prints `unblocked: dispatch T<n>`.
+- Goal contracts: briefs carry a `## Goal` (Objective, Constraints, Validate, Stop when, Record, and a rule against
+  weakening checks; a short form for scouts), verifiers check Stop when independently, and `spawn` warns on a ship
+  brief without one.

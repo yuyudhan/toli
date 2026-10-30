@@ -11,6 +11,7 @@ import { helperCommand } from "./helpers.ts";
 import { inboxCommand } from "./inbox.ts";
 import { memoryCommand } from "./memory.ts";
 import { migrateCommand } from "./migrate.ts";
+import { needsCommand } from "./needs.ts";
 import { fleetCommand, pickCommand } from "./pick.ts";
 import { projectCommand } from "./projects.ts";
 import { pruneCommand } from "./prune.ts";
@@ -44,7 +45,9 @@ const USAGE = `usage: bin/toli <command> [args]
   task add <project> "<title>" [--shape ship|scout] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped]
   task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
-  task hold <id> --question "..." | answer <id> "<answer>" | drop <id>
+  task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."]
+  task answer <id> "<answer>" | drop <id>
+  needs [--json]
   commit <project> [--task T<n>] -m "<message>" -- <path>...
   branch <project> <branch>
   workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
@@ -102,6 +105,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "task":
                 taskCommand(rest);
+                return 0;
+            case "needs":
+                needsCommand(rest);
                 return 0;
             case "commit":
                 commitCommand(rest);

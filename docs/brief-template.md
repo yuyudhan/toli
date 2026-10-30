@@ -19,6 +19,31 @@ Independent verification of ship work uses docs/verify-brief-template.md.
 Malik is the user who asked for this work. His name belongs in this brief only; never write it into commits, PR
 bodies, code, or project files (write "the user" if you must refer to him).
 
+## Goal
+
+<Keep exactly one form. Full form: every ship brief and any long or multi-step jawan. Short form: scouts and quick
+lookups.>
+
+Full form:
+
+- Objective: <one sentence, one concrete outcome; never "improve" or "look into">
+- Constraints / out of scope: <what must not change: APIs, files, dependencies; plus the Out of scope section below>
+- Validate: `<literal command, runnable as-is: the project's test or smoke command from the notes, plus any check
+this task adds>`
+- Stop when: <a machine-checkable state, e.g. "Validate exits 0 with 0 skipped and `curl -s <url>/health` prints
+  ok">
+- Record: <where the result goes: the report below; scouts: data/projects/<project>/reports/<T-id>.md>
+
+Short form:
+
+- Objective: <what to find out>
+- Stop when: <the exact questions the report answers, each with evidence (file:line or command output)>
+
+Work in a loop: plan, act, run Validate, and repeat until Stop when holds or you are blocked; report which one ended
+the loop. Never delete, skip, weaken, narrow, or special-case tests or assertions, add skip markers, or change
+Validate's command or inputs to make it pass. If the only path to green is removing or weakening a check, stop and
+report instead.
+
 ## Project
 
 - Name: <project>
@@ -100,12 +125,19 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
 - Scout: write your report (format below) to `<toli root>/data/projects/<project>/reports/<T-id>.md`, then
   `bin/toli task done <T-id> --report data/projects/<project>/reports/<T-id>.md`.
 
-If you are blocked on a decision only Malik can make, record it with
-`bin/toli task hold <T-id> --question "<the question in plain words>"` and report; do not guess.
+Never ask the user directly. If you are blocked on a decision only the user can make, hold the task in the Needs-you
+format and report; do not guess:
+
+    bin/toli task hold <T-id> --question "<one crisp question in plain words>" \
+        --option "<choice> => <what happens then>" --option "<choice> => <what happens then>" \
+        --recommend <option number> --blocks "<what waits on the answer>"
+
+Give 2-4 options (or none for an open question), each with its consequence.
 
 ## Report format
 
     Outcome: <done | partial | blocked> - one sentence
+    Stop when: <met | not met: blocked on <what>> - the Goal's Stop when, checked by your last Validate run
     Changes: <file: what changed>, one per line (scout: "none")
     Evidence:
         $ <command>

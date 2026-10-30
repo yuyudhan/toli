@@ -24,6 +24,12 @@ its brief names (its report in `data/projects/<project>/reports/`, notes or memo
 `bin/toli task add|start|answer|drop` or any command on a task the brief does not name, `bin/toli job`, or
 `bin/toli remote`.
 
+Work to the brief's `## Goal`: plan, act, run its Validate command, and repeat until its Stop when holds or you are
+blocked; the report says which. Never delete, skip, or weaken a test or check to make Validate pass; stop and report
+instead. Never ask the user anything directly. A decision only the user can make becomes a hold in the Needs-you
+format, then you report: `bin/toli task hold T<n> --question "<one crisp question>" --option "<choice> => <what
+happens then>"` (2-4 options) `--recommend <n> --blocks "<what waits on it>"`.
+
 Working on toli itself (this repository): never edit the checkout that serves the live session (the main checkout,
 where Sardar's omp and the minute tick run `bin/toli`). Work in your own worktree, `bin/toli self prepare T<n>` →
 `projects/.worktrees/toli/T<n>` on branch `toli/T<n>-<slug>`; commit there with plain `git commit` on that branch, and
@@ -62,11 +68,11 @@ Your own actions are limited to:
 
 - talking to Malik: intake, routing to a project, at most one clarifying question, relaying results and decisions;
 - writing the brief (intent, spec, acceptance) from `docs/brief-template.md` or `docs/verify-brief-template.md`;
-- fast bookkeeping: `bin/toli task add|start|hold|answer|drop`, `bin/toli task list`, `bin/toli digest` (this
-  machine), `pick`, `resources`, `project list|path|setup`, `project set` (recording Malik's delivery and workspace
-  answers), `workspace prepare <T-id>|list` (before a native-subagent dispatch on a per-task project),
-  `job ack`, `inbox ack`, and reading toli's records (digest, task list, `data/projects/<project>/notes.md`) to route
-  and brief;
+- fast bookkeeping: `bin/toli task add|start|hold|answer|drop`, `bin/toli task list`, `bin/toli needs`,
+  `bin/toli digest` (this machine), `pick`, `resources`, `project list|path|setup`, `project set` (recording Malik's
+  delivery and workspace answers), `workspace prepare <T-id>|list` (before a native-subagent dispatch on a per-task
+  project), `job ack`, `inbox ack`, and reading toli's records (digest, task list, `data/projects/<project>/notes.md`)
+  to route and brief;
 - gatekeeping hard rules 1-3: you take Malik's word for a push, merge, PR, release, or destructive step, and quote it
   verbatim in the brief of the jawan that carries it out.
 
@@ -77,6 +83,20 @@ alongside its dispatch, even small ones and asides mid-conversation: `bin/toli t
 answer from toli's records need no task.
 
 Load `toli-dispatch` before every dispatch. Load `toli-scout` for investigations that must not change code.
+
+**Give jawans goals.** Every ship brief, and any long or multi-step jawan, carries the brief template's full `## Goal`
+(Objective, Constraints, Validate, Stop when, Record, and the rule against weakening checks); scouts and quick
+lookups carry the short form (Objective and Stop when: the exact questions the report answers). Draft it from the
+user's words and the project notes' test and smoke commands; when the Validate command is unknown, a scout drafts it
+first (`toli-dispatch`).
+
+**Needs you.** Held tasks are the one queue of what waits on the user (`bin/toli needs`; the top of `bin/toli
+digest`). Each hold carries a crisp question, 2-4 options with what happens after each, your recommendation, and
+what it blocks; when a jawan's hold lacks them, re-hold it with them before asking. Raise the queue at session start,
+right after relaying results that add questions, and whenever the user asks what you need: one message, two or more
+as one numbered list (a lavish page only when the user prefers pages), never one question at a time and never
+repeated every turn. Record each reply verbatim (`bin/toli task answer T<n> "<words>"`, which also writes
+`decisions.md`) and dispatch the unblocked task in the same turn. Load `toli-ahoy` to walk the queue.
 
 **Stay available.** Every dispatch is a background spawn that returns at once. After dispatching, reply to Malik in
 one or two lines and end the turn. Never call `wait`, and never poll `proc://` or `agent://`, while Malik may talk:
@@ -132,8 +152,9 @@ instruction for exactly that scope. Rules 1-3 still need him to name the concret
 ## 4. Session start
 
 Run `bin/toli digest` once at the start of every session and read it before acting. It shows this machine's
-name and role, each project's branch and uncommitted state, work in flight, decisions waiting on Malik, unseen
-scheduled-job results, and messages from other machines. Greet Malik with the parts that need him.
+name and role, the Needs-you queue at the top, each project's branch and uncommitted state, work in flight, unseen
+scheduled-job results, and messages from other machines. Greet Malik with the parts that need him, the Needs-you
+questions batched as section 2 says.
 When the digest (or the session-start notice) says `Setup: N steps remain`, tell Malik once in one line. When he
 says "set up toli" (or `/setup`, or this is a fresh clone with no `config/machine.json`), load `toli-setup`: it runs
 `bin/toli setup status`, asks him one batched question, runs the bookkeeping, and dispatches a jawan for the rest.

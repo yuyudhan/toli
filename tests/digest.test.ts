@@ -35,19 +35,26 @@ function finishJob(box: Sandbox, name: string, status: "ok" | "failed", now: str
 }
 
 describe("digest", () => {
-    test("held tasks show under 'waiting on answer' with their question, and leave once answered", () => {
+    test("held tasks head the digest under 'Needs you' with their question, and leave once answered", () => {
         const box = coordinator();
         box.ok(["task", "add", "alpha", "build it"]);
         box.ok(["task", "add", "alpha", "ask first"]);
         box.ok(["task", "add", "alpha", "later"]);
         box.ok(["task", "start", "T1"]);
-        box.ok(["task", "hold", "T2", "--question", "which db?"]);
+        box.ok(["task", "hold", "T2", "--question", "which db?"], { now: "2026-03-01T10:00:00Z" });
 
         const text = box.ok(["digest"], { now: NOW });
+        const lines = text.split("\n");
+        expect(lines.findIndex((line) => line.startsWith("Needs you ("))).toBeLessThan(
+            lines.findIndex((line) => line.startsWith("projects (")),
+        );
         expect(section(text, "in flight")).toEqual(["in flight (1):", "  T1 alpha: build it"]);
-        expect(section(text, "waiting on answer")).toEqual([
-            "waiting on answer (1):",
-            "  T2 alpha: ask first (question: which db?)",
+        expect(section(text, "Needs you")).toEqual([
+            "Needs you (1):",
+            "  alpha:",
+            "    T2 ask first: which db? (held 3d)",
+            '      reply "T2: <answer>"',
+            '  record each reply verbatim: bin/toli task answer T<n> "<the user\'s words>", then dispatch it',
         ]);
         expect(section(text, "queued")).toEqual(["queued (1):", "  T3 alpha: later"]);
 
@@ -83,7 +90,8 @@ describe("digest", () => {
     test("empty sections say none", () => {
         const box = coordinator();
         const text = box.ok(["digest"], { now: NOW });
-        for (const label of ["in flight", "waiting on answer", "queued", "unseen job results", "unseen inbox"]) {
+        expect(section(text, "Needs you")).toEqual(["Needs you (0):", "  nothing is waiting on the user"]);
+        for (const label of ["in flight", "queued", "unseen job results", "unseen inbox"]) {
             expect(section(text, label)).toEqual([`${label} (0):`, "  none"]);
         }
     });
@@ -119,7 +127,7 @@ describe("digest", () => {
         const next = section(box.ok(["digest"], { now: NOW }), "Next");
         expect(next[0]).toBe("Next (5):");
         expect(next[1]).toBe(
-            '  - Ask the user about T1 (alpha): which db?: bin/toli task answer T1 "<answer>" (several questions: /ahoy, the toli-ahoy skill)',
+            '  - Ask the user about T1 (alpha): which db?: bin/toli needs; record each reply verbatim with bin/toli task answer T<n> "<answer>" and dispatch the unblocked task at once (the toli-ahoy skill)',
         );
         expect(next[2]).toStartWith("  - Relay 1 new result to the user in plain words: then bin/toli inbox ack");
         expect(next[3]).toStartWith(
