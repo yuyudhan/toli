@@ -33,11 +33,11 @@ flowchart LR
 
 ## Quickstart (60 seconds)
 
-    curl -fsSL <toli-raw-url>/install.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh
 
 The installer asks where to put toli, clones the latest release, and checks it. To install a specific release:
 
-    curl -fsSL <toli-raw-url>/install.sh | sh -s -- --version v0.1.0
+    curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh -s -- --version v0.1.0
 
 Then open your agent in the toli folder (`omp`, `claude`, `codex`, `cursor-agent`, `grok`, or `pi`) and say:
 

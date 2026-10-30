@@ -92,7 +92,7 @@ Everything "set up toli" does can be done directly. Requirements: [Bun](https://
 run in headless omp), and optionally `no-mistakes` ([delivery.md](delivery.md#the-no-mistakes-gate)) and the forge
 CLIs for your projects ([delivery.md](delivery.md#forges-push-and-pull-requests)).
 
-    git clone <toli-repo-url> toli && cd toli && bun install    # or the installer: docs/install.md
+    git clone https://github.com/yuyudhan/toli toli && cd toli && bun install    # or the installer: docs/install.md
 
     bin/toli init --name <machine> --role coordinator            # the machine you talk to
     bin/toli init --name <machine> --role worker --coordinator-ssh <host> --coordinator-root <path>   # every other one

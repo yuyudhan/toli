@@ -77,8 +77,10 @@ Headless commands (`src/harness.ts`):
 | grok    | `grok --cwd <dir> --always-approve --no-auto-update --output-format plain [-m M] -p <brief>`                                                                   | [headless & scripting](https://docs.x.ai/build/cli/headless-scripting)                     |
 | pi      | `pi -p [--model M] <brief>`, cwd = project                                                                                                                     | [pi README](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md) |
 
-`--add-dir <toli>` lets Claude and Codex jawans write their report and run `bin/toli` in toli's root. Codex's
-`workspace-write` sandbox blocks network by default; toli enables it because tests and installs need it.
+`--add-dir <toli>` lets Claude and Codex jawans write their report and run `bin/toli` in toli's root. Codex jawans
+have network access by default: Codex's `workspace-write` sandbox blocks the network on its own, and toli always
+passes `sandbox_workspace_write.network_access=true` because tests, installs, `git fetch`/`push` and forge CLIs need
+it. The sandbox still confines writes to the working directory and the `--add-dir` paths.
 
 **Native subagents or spawn?** Use the lead harness's own background subagents (omp `task`, Claude's Agent tool,
 Grok background subagents) for normal work: they start fast and share the lead's login. Use `spawn` when the lead's

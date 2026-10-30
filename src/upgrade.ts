@@ -58,13 +58,10 @@ export function versionCommand(argv: string[]): void {
     else out(`toli ${describeInstalled(installed)}`);
 }
 
-/** The remote to fetch releases from: the clone's `origin`, else the configured release URL. */
+/** The remote to fetch releases from: the clone's `origin`, else the release URL. */
 function releaseRemote(root: string): string {
     if (git(root, ["remote", "get-url", "origin"]).code === 0) return "origin";
-    const url = toliRepoUrl();
-    if (url === null)
-        throw new ToliError("no `origin` remote and no release URL: set TOLI_REPO_URL (docs/releasing.md)");
-    return url;
+    return toliRepoUrl();
 }
 
 /** Refuse to move a checkout that has local edits to tracked files or works on a branch. */

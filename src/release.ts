@@ -1,16 +1,12 @@
 // Release-version logic shared by `bin/toli upgrade|version` and `just release` (scripts/publish.ts):
 // semver tags `vX.Y.Z`, bumps, and CHANGELOG.md sections. Pure functions; git and file I/O live in the callers.
 
-/**
- * Where toli releases are published. The public repository is not chosen yet: replace this placeholder (and the
- * matching default in install.sh) when it is. `TOLI_REPO_URL` overrides it at runtime; docs/releasing.md.
- */
-export const TOLI_REPO_URL = "<toli-repo-url>";
+/** Where toli releases are published (the same default as install.sh); `TOLI_REPO_URL` overrides it at runtime. */
+export const TOLI_REPO_URL = "https://github.com/yuyudhan/toli";
 
-/** The release repository URL, or null while the placeholder is unset and no override is given. */
-export function toliRepoUrl(): string | null {
-    const url = process.env.TOLI_REPO_URL ?? TOLI_REPO_URL;
-    return url.includes("<") ? null : url;
+/** The release repository URL: the `TOLI_REPO_URL` environment variable, else the public repository. */
+export function toliRepoUrl(): string {
+    return process.env.TOLI_REPO_URL ?? TOLI_REPO_URL;
 }
 
 export type Version = { major: number; minor: number; patch: number; prerelease: string | null };

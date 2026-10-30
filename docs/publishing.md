@@ -39,12 +39,13 @@ owner's private working copy.
         gitleaks detect --source . --log-opts=--all --redact      # history scan of the one commit
 
 4. **Review before push.** Read the file list (`git ls-files`) once: no `data/`, `state/`, `config/`, `logs/`,
-   `projects/`, `local/`, `.env*`. `just check` must pass (its guards check every Markdown link), and every
-   `<toli-repo-url>` and `<toli-raw-url>` placeholder (`git grep -n '<toli-r'`) is replaced with the public URL.
+   `projects/`, `local/`, `.env*`. `just check` must pass (its guards check every Markdown link), and the release
+   URLs (`TOLI_REPO_URL` in install.sh and src/release/release.ts, the install one-liner in README.md and
+   docs/install.md) point at the public repository, https://github.com/yuyudhan/toli.
 
-5. **Push, only on the owner's word.** Create the empty public repository on the chosen forge, then:
+5. **Push, only on the owner's word.** Create the empty public repository `yuyudhan/toli` on GitHub, then:
 
-        git remote add origin <public url>
+        git remote add origin https://github.com/yuyudhan/toli
         git push -u origin main
 
 ## After publishing

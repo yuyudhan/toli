@@ -13,7 +13,7 @@ and your private data lives in gitignored directories inside it (`data/`, `state
 
 ## One-line install
 
-    curl -fsSL <toli-raw-url>/install.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh
 
 The installer:
 
@@ -38,16 +38,16 @@ script), pass `--yes`.
 
     sh install.sh [--dir <path>] [--version vX.Y.Z] [--yes] [--help]
 
-| Option              | Effect                                                                  |
-| ------------------- | ----------------------------------------------------------------------- |
-| `--dir <path>`      | Install here instead of asking (default `./toli`).                      |
-| `--version vX.Y.Z`  | Install this tag instead of the latest.                                 |
-| `--yes`             | Ask nothing: default location unless `--dir`, no shell at the end.      |
-| `TOLI_REPO_URL=...` | Environment: the git URL to install from (default: the public release). |
+| Option              | Effect                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------- |
+| `--dir <path>`      | Install here instead of asking (default `./toli`).                                    |
+| `--version vX.Y.Z`  | Install this tag instead of the latest.                                               |
+| `--yes`             | Ask nothing: default location unless `--dir`, no shell at the end.                    |
+| `TOLI_REPO_URL=...` | Environment: the git URL to install from (default: https://github.com/yuyudhan/toli). |
 
 With the pipe, pass options after `sh -s --`:
 
-    curl -fsSL <toli-raw-url>/install.sh | sh -s -- --version v0.1.0 --dir ~/toli
+    curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh -s -- --version v0.1.0 --dir ~/toli
 
 ## Which version is installed
 

@@ -46,10 +46,11 @@ the bump and the commit and only tags HEAD (after verify) and asks to push.
 
 ## The release URL
 
-The public repository is not chosen yet. Its URL is set in two places, both marked `<toli-repo-url>`:
+The public repository is https://github.com/yuyudhan/toli. Its URL is set in two places:
 
 - `install.sh`: the `TOLI_REPO_URL` default near the top;
-- `src/release.ts`: the `TOLI_REPO_URL` constant (used by `bin/toli upgrade` when the clone has no `origin`).
+- `src/release/release.ts`: the `TOLI_REPO_URL` constant (used by `bin/toli upgrade` when the clone has no `origin`).
 
-Until then, both accept a `TOLI_REPO_URL` environment variable. Also replace the `<toli-raw-url>` in README.md and
-docs/install.md with the raw-file URL that serves `install.sh` from the latest release.
+Both accept a `TOLI_REPO_URL` environment variable instead. README.md and docs/install.md serve the installer from
+`https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh`: it always installs the latest release tag (or the
+`--version` named), so the script on `main` is the one to fetch.

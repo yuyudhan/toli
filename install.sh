@@ -1,14 +1,14 @@
 #!/bin/sh
 # toli installer: clones a tagged toli release into a directory you choose.
 #
-#   curl -fsSL <toli-raw-url>/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh
 #   sh install.sh [--dir <path>] [--version vX.Y.Z] [--yes]
 #
-# The release repository is TOLI_REPO_URL (environment) or the default below; set the default once the public
-# repository exists (docs/releasing.md). Answers are read from /dev/tty, so the piped form still asks.
+# The release repository is TOLI_REPO_URL (environment) or the public repository below. Answers are read from
+# /dev/tty, so the piped form still asks.
 set -eu
 
-TOLI_REPO_URL="${TOLI_REPO_URL:-<toli-repo-url>}"
+TOLI_REPO_URL="${TOLI_REPO_URL:-https://github.com/yuyudhan/toli}"
 
 usage() {
     cat <<'EOF'
@@ -94,10 +94,6 @@ yes_no() { # <prompt> <default y|n>; succeeds on yes
 }
 
 command -v git >/dev/null 2>&1 || die "git is required: install it first (macOS: xcode-select --install; Debian/Ubuntu: sudo apt install git)"
-case "$TOLI_REPO_URL" in
-    *"<"*) die "the release URL is not set yet: export TOLI_REPO_URL=<git url of toli> and rerun" ;;
-    *) ;;
-esac
 
 # Release tags, newest first: vX.Y.Z only (pre-releases install only when named with --version).
 tags="$(git ls-remote --tags --refs "$TOLI_REPO_URL")" || die "cannot list tags at $TOLI_REPO_URL"
