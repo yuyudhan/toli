@@ -161,6 +161,8 @@ When the digest (or the session-start notice) says `Setup: N steps remain`, tell
 says "set up toli" (or `/setup`, or this is a fresh clone with no `config/machine.json`), load `toli-setup`: it runs
 `bin/toli setup status`, asks him one batched question, runs the bookkeeping, and dispatches a jawan for the rest.
 `bin/toli setup status` always shows the full checklist; never repeat the notice on your own.
+When the digest says `Update: toli vX.Y.Z is out`, tell Malik once (version and what changed). Nothing upgrades
+without his word: when he confirms, a jawan runs `bin/toli upgrade` and reports the result (load `toli-sync`).
 
 ## 5. Delivery
 

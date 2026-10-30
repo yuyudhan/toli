@@ -35,12 +35,15 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     digest [--json] [--fleet]
     version [--json]
     upgrade [vX.Y.Z|--latest] [--check]
+    update check [--due] [--json] | status [--json] | snooze <vX.Y.Z> | off | on
 
 - `init`: write this machine's `config/machine.json` and seed `local/`; re-running keeps the other settings.
 - `setup`: the first-run checklist, the told-once notice, snoozing it, and seeding `local/` ([setup.md](setup.md)).
 - `doctor`: check tools, harnesses, forge auth, config, clones, fleet, scheduler, and memory budget.
 - `digest`: the session-start summary; `--fleet` adds every machine.
 - `version`, `upgrade`: the installed release and moving to another one ([install.md](install.md)).
+- `update`: the 3-day check for a new release, snoozing a version, switching the check off
+  ([install.md](install.md#update-check)).
 
 ### Projects
 

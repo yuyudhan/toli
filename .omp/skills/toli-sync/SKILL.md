@@ -1,6 +1,6 @@
 ---
 name: toli-sync
-description: Keep the toli repo current across Malik's machines, bootstrap a fresh machine, and explain coordinator and worker roles and how results flow between them. Use for /sync-toli, when setting up Sardar on a new machine, or when Malik asks about the fleet, other machines, or updating Sardar.
+description: Keep the toli repo current across Malik's machines, bootstrap a fresh machine, and explain coordinator and worker roles and how results flow between them. Use for /sync-toli, when setting up Sardar on a new machine, when the digest says a new toli release is out, or when Malik asks about the fleet, other machines, or updating Sardar.
 ---
 
 # Machines and sync (/sync-toli)
@@ -46,6 +46,22 @@ turn; relay its result when it arrives.
 - Sync pulls the branch each checkout is on. Development checkouts follow `develop` (where toli's own work lands;
   `main` moves only at a release); a machine still on `main` gets new toli work only at releases. To move a clean
   machine to `develop`, a jawan runs `git switch develop` there after Malik's word.
+
+## New toli releases
+
+Every 3 days the tick checks for a newer toli release in the background (`bin/toli update status`); the next
+digest shows it once as `Update: toli vX.Y.Z is out ...` with its CHANGELOG sections.
+
+- Tell Malik once, in plain words: the new version, the few changes that matter to him, and that it updates only on
+  his word. Never raise the same version again; the digest will not either.
+- He confirms: dispatch a jawan (start a task first) whose brief quotes his word and runs `bin/toli upgrade`, which
+  checks out the release and runs `bin/toli migrate` and `bin/toli harness sync`; it reports the output, and any
+  refusal (local edits to tracked files) verbatim. Relay the result and that a session restart loads the new
+  contract and skills.
+- On a development clone (the notice says `development clone on branch <b>`) `upgrade` refuses: the jawan updates
+  it with git instead (fetch the tag, fast-forward or merge into `<b>`), stopping on any conflict.
+- He says "not now" or "skip this one": `bin/toli update snooze vX.Y.Z`. "Stop checking": `bin/toli update off`
+  (no network checks at all; `bin/toli update on` resumes). Never upgrade without his word.
 
 ## Bootstrapping a fresh machine
 

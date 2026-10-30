@@ -7,6 +7,7 @@ import { registerRun, removeRun } from "../fleet/resources.ts";
 import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
+import { startDueUpdateCheck } from "../release/update-check.ts";
 import {
     type BegunRun,
     beginJob,
@@ -123,6 +124,13 @@ export async function tick(): Promise<void> {
         if (report) log(report);
     } catch (error) {
         log(`prune report failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+        // Detached: the tick never waits on the network.
+        const started = startDueUpdateCheck();
+        if (started) log(started);
+    } catch (error) {
+        log(`update check failed to start: ${error instanceof Error ? error.message : String(error)}`);
     }
     const outbox = deliverOutbox(machine);
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
