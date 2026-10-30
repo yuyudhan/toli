@@ -46,6 +46,18 @@ export function systemdWord(word: string): string {
     return `"${escaped.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/** A path setting such as WorkingDirectory= or append:: taken verbatim except for % specifiers, so never quoted. */
+export function systemdPath(path: string): string {
+    return path.replace(/%/g, "%%");
+}
+
+/** One Environment= assignment: % specifiers doubled, quoted when needed; $ is literal there (unlike ExecStart=). */
+export function systemdEnv(key: string, value: string): string {
+    const assignment = `${key}=${value}`.replace(/%/g, "%%");
+    if (!/[\s"'\\]/.test(assignment)) return assignment;
+    return `"${assignment.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
 /**
  * The bun on PATH (e.g. Homebrew's /opt/homebrew/bin/bun symlink) survives upgrades, unlike the versioned
  * Cellar path in process.execPath; fall back to the running binary when bun is not on PATH.

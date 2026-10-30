@@ -185,6 +185,7 @@ describe("schedule on Linux (systemd user units)", () => {
             loaded: true,
             detail: join(systemd.units, "toli-tick.timer"),
             otherBin: null,
+            cronLeftover: false,
         });
         const doctor = JSON.parse(box.toli(["doctor", "--json"], { env: systemd.env }).stdout) as {
             name: string;
@@ -239,6 +240,68 @@ describe("schedule on Linux (systemd user units)", () => {
         const bad = box.toli(["schedule", "status"], { env: { ...linux, TOLI_SCHEDULER: "cron" } });
         expect(bad.code).toBe(1);
         expect(bad.stderr).toContain("TOLI_SCHEDULER must be launchd, systemd or crontab");
+    });
+
+    test("an upgraded machine's crontab tick is flagged, then removed by the systemd install (no double ticks)", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const tick = `* * * * * cd ${box.root} && bun ${join(box.root, "bin", "toli")} job tick ${TAG}`;
+        const crontab = withCrontab(box, `0 3 * * * /usr/bin/backup\n${tick}\n`);
+        const systemd = withSystemd(box);
+        const scheduler = () =>
+            (
+                JSON.parse(box.toli(["doctor", "--json"], { env: systemd.env }).stdout) as {
+                    name: string;
+                    level: string;
+                    detail: string;
+                }[]
+            ).filter((check) => check.name === "scheduler");
+        expect(JSON.parse(box.ok(["schedule", "status", "--json"], { env: systemd.env }))).toMatchObject({
+            scheduler: "systemd",
+            cronLeftover: true,
+        });
+        expect(box.ok(["schedule", "status"], { env: systemd.env })).toContain(
+            "warn: crontab still holds a toli tick line",
+        );
+        expect(scheduler()).toContainEqual(
+            expect.objectContaining({ level: "warn", detail: expect.stringContaining("leftover crontab tick line") }),
+        );
+        box.ok(["schedule", "install"], { env: systemd.env });
+        expect(readFileSync(crontab, "utf8")).toBe("0 3 * * * /usr/bin/backup\n");
+        expect(JSON.parse(box.ok(["schedule", "status", "--json"], { env: systemd.env }))).toMatchObject({
+            cronLeftover: false,
+        });
+        expect(scheduler()).toEqual([{ name: "scheduler", level: "ok", detail: "systemd installed and loaded" }]);
+    });
+
+    test("systemd uninstall also removes a crontab tick line; launchd install does too", () => {
+        const box = sandbox();
+        const tick = `* * * * * bun /srv/toli/bin/toli job tick ${TAG}\n`;
+        const crontab = withCrontab(box, tick);
+        const systemd = withSystemd(box);
+        box.ok(["schedule", "uninstall"], { env: systemd.env });
+        expect(readFileSync(crontab, "utf8")).toBe("");
+        writeFileSync(crontab, tick);
+        box.stub("launchctl", "exit 0");
+        box.ok(["schedule", "install"], {
+            env: { TOLI_PLATFORM: "darwin", TOLI_DRY_RUN: "0", TOLI_LAUNCH_AGENTS_DIR: box.root },
+        });
+        expect(readFileSync(crontab, "utf8")).toBe("");
+    });
+
+    test("unit paths and environment use systemd's own quoting: % doubled, $ left alone outside ExecStart", () => {
+        const box = sandbox();
+        const systemd = withSystemd(box);
+        const root = join(box.root, "my 50% $toli");
+        const output = box.ok(["schedule", "install"], {
+            env: { ...systemd.env, TOLI_ROOT: root, TOLI_DRY_RUN: "1" },
+        });
+        expect(output).toContain(`\nWorkingDirectory=${root.replace("%", "%%")}\n`);
+        expect(output).toContain(`ExecStart=`);
+        const execPath = join(root, "bin", "toli")
+            .replace("%", "%%")
+            .replace("$", () => "$$");
+        expect(output).toContain(`"${execPath}" job tick`);
     });
 });
 

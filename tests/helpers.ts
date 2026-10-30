@@ -27,8 +27,9 @@ export type Sandbox = {
 };
 
 /**
- * A temp TOLI_ROOT with its own stub-binaries dir first on PATH. `systemctl` starts stubbed as "no user session", so
- * Linux-mode runs pick crontab on any host; a test that wants systemd stubs its own.
+ * A temp TOLI_ROOT with its own stub-binaries dir first on PATH. The host's schedulers are never read or written:
+ * `systemctl` starts stubbed as "no user session" (Linux-mode runs pick crontab on any host) and `crontab` as an
+ * empty crontab that refuses writes; a test that wants either stubs its own.
  */
 export function sandbox(): Sandbox {
     const root = mkdtempSync(join(tmpdir(), "toli-test-"));
@@ -40,6 +41,10 @@ export function sandbox(): Sandbox {
         chmodSync(file, 0o755);
     };
     stub("systemctl", 'echo "Failed to connect to bus: No medium found" >&2; exit 1');
+    stub(
+        "crontab",
+        'if [ "$1" = "-l" ]; then echo "no crontab for test" >&2; else echo "crontab stub: writes refused" >&2; fi; exit 1',
+    );
     const path = [stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
     const toli: Sandbox["toli"] = (args, options = {}) => {
         const proc = Bun.spawnSync([process.execPath, TOLI_BIN, ...args], {

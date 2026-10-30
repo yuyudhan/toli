@@ -1,7 +1,7 @@
 import type { Cron } from "../core/cron.ts";
 import { paths } from "../core/paths.ts";
 import { shellQuote, ToliError } from "../core/util.ts";
-import { renderLaunchdPlist, schedulePath, systemdWord } from "../jobs/os-scheduler.ts";
+import { renderLaunchdPlist, schedulePath, systemdEnv, systemdPath, systemdWord } from "../jobs/os-scheduler.ts";
 import type { Helper } from "./registry.ts";
 
 export function helperLabel(name: string): string {
@@ -132,7 +132,7 @@ export function renderHelperCronLine(helper: Helper): string {
 export type SystemdUnits = { service: string; timer: string | null };
 
 export function renderHelperSystemd(helper: Helper): SystemdUnits {
-    const log = paths.helperLog(helper.name).replace(/%/g, "%%");
+    const log = systemdPath(paths.helperLog(helper.name));
     const always = helper.schedule.kind === "always";
     const description = helper.description ? `: ${helper.description}` : "";
     const service = [
@@ -141,8 +141,8 @@ export function renderHelperSystemd(helper: Helper): SystemdUnits {
         "",
         "[Service]",
         `Type=${always ? "simple" : "oneshot"}`,
-        `WorkingDirectory=${systemdWord(paths.root())}`,
-        ...Object.entries(helperEnv(helper)).map(([key, value]) => `Environment=${systemdWord(`${key}=${value}`)}`),
+        `WorkingDirectory=${systemdPath(paths.root())}`,
+        ...Object.entries(helperEnv(helper)).map(([key, value]) => `Environment=${systemdEnv(key, value)}`),
         `ExecStart=${[helper.exec, ...helper.args].map(systemdWord).join(" ")}`,
         ...(helper.nice === undefined ? [] : [`Nice=${helper.nice}`]),
         ...(helper.lowPriorityIO ? ["IOSchedulingClass=idle"] : []),

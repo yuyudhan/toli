@@ -91,8 +91,9 @@ jobs:
                   tar -xzf just.tar.gz -C "$bin" just
                   echo "$bin" >> "$GITHUB_PATH"
 
-            # The gate (fmt-check, lint, typecheck, test) plus the CLI and install.sh smoke checks.
-            - name: just verify (just check, then smoke runs and a file:// install)
+            # The gate (fmt-check; lint: Biome, shellcheck, actionlint, useless-await TS80007, guards; typecheck; test)
+            # plus the CLI and install.sh smoke checks.
+            - name: just verify (fmt-check, lint incl. useless-await TS80007, typecheck, test, smoke runs, install)
               run: just verify
 
             - name: Test coverage threshold (bunfig.toml)
