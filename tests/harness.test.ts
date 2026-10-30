@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { GENERIC_NAMES, guidanceRules, leadGuidance } from "../src/harness/guidance.ts";
 import { HARNESSES, headlessCommand } from "../src/harness/harness.ts";
 import { claudeAction, guardDecision, ompAction } from "../src/harness/lead-guard.ts";
 import { shimItems, syncShims } from "../src/harness/sync.ts";
@@ -255,6 +256,33 @@ describe("claude hooks", () => {
         expect(result.code).toBe(0);
         expect(result.stdout).toBe("");
         expect(result.stderr).toContain("(allowing)");
+    });
+});
+
+describe("lead guidance", () => {
+    const REPLY_RULE = /^- Reply to (Malik|the user) in 1-3 short lines unless asked for detail: /;
+
+    test("the reply-length rule comes first, in the live reminder and the generic rule files alike", () => {
+        const persona = {
+            user: "Malik",
+            lead: "Sardar",
+            leadPlural: "Saradars",
+            worker: "jawan",
+            workerPlural: "jawans",
+        };
+        const lines = leadGuidance(persona).split("\n");
+        expect(lines[0]).toStartWith("[toli] You are the lead (Sardar)");
+        expect(lines[1]).toMatch(REPLY_RULE);
+        expect(guidanceRules(GENERIC_NAMES)[0]).toMatch(REPLY_RULE);
+        expect(guidanceRules(GENERIC_NAMES).join("\n")).not.toContain("one or two lines");
+    });
+
+    test("AGENTS.md states the same rule early in section 1", () => {
+        const agents = readFileSync(join(import.meta.dir, "..", "AGENTS.md"), "utf8");
+        const identity = agents.slice(agents.indexOf("## 1. Identity"), agents.indexOf("## 2. "));
+        const bullets = identity.split("\n").filter((line) => line.startsWith("- "));
+        expect(bullets[1]).toStartWith("- Reply in 1-3 short lines unless Malik asks for detail: ");
+        expect(agents).not.toContain("one or two lines");
     });
 });
 

@@ -14,9 +14,10 @@ export const GENERIC_NAMES: Persona = {
 /** The few rules a long lead chat tends to drift from, one bullet each. */
 export function guidanceRules(names: Persona): string[] {
     return [
+        `- Reply to ${names.user} in 1-3 short lines unless asked for detail: the outcome first, no preamble, recap, or restated plan. Anything longer goes in a report or page you link.`,
         `- Record every request that implies work as a task first, in this same turn, even small ones and mid-conversation asides: \`bin/toli task add <project> "<title>" --note "<${names.user}'s words>"\`. Questions you answer from toli's records need no task.`,
         `- Delegate everything: reading project code, edits, checks, commits, reports, and changes to toli itself go to ${names.workerPlural}. Load the toli-dispatch skill before every dispatch.`,
-        `- Dispatch in the background (your harness's async subagents, or \`bin/toli spawn --harness <h> --task <id> --brief <file>\`) and record the ${names.worker} on the task (\`bin/toli task start <id> --agent <agent-id>\`; spawn records its run itself). Reply to ${names.user} in one or two lines and end the turn.`,
+        `- Dispatch in the background (your harness's async subagents, or \`bin/toli spawn --harness <h> --task <id> --brief <file>\`) and record the ${names.worker} on the task (\`bin/toli task start <id> --agent <agent-id>\`; spawn records its run itself). Then reply and end the turn.`,
         `- Never wait on or poll ${names.workerPlural}; their results arrive as new turns ([toli wake] messages).`,
         `- What waits on ${names.user} lives only in the Needs-you queue (\`bin/toli needs\`): raise it batched at session start, after results that add questions, or when asked, never repeated every turn; record replies verbatim with \`bin/toli task answer\` and dispatch the unblocked task at once.`,
         "- Your own tools: bin/toli bookkeeping (task, digest, inbox/job ack, project list, runs) and toli's skills. `bin/toli digest` ends with a Next block of recommended actions.",

@@ -118,10 +118,10 @@ than toli's root; they are never guarded.
   blocked, so `bin/toli` bookkeeping always works. omp: the extension's `tool_call` handler. Claude Code: `PreToolUse` hook
   (`bin/toli hook claude-pre-tool`). Hooks fail open: an internal error allows the call. Codex, Cursor and Grok have
   hook systems, but none reliably tells the lead from its subagents, so they rely on `AGENTS.md`.
-- **Guidance** (`bin/toli guidance`): record every request as a task, delegate everything, dispatch in the background
-  and reply in one or two lines, never wait or poll, use `bin/toli` and the skills. omp appends it to the lead's system
-  prompt each turn; Claude Code adds it on each prompt (with any new results); Cursor gets it from its always-apply
-  rule; the others read the same rules in `AGENTS.md`.
+- **Guidance** (`bin/toli guidance`): reply in 1-3 short lines unless asked for detail (the first rule), record every
+  request as a task, delegate everything, dispatch in the background, never wait or poll, use `bin/toli` and the
+  skills. omp appends it to the lead's system prompt each turn; Claude Code adds it on each prompt (with any new
+  results); Cursor gets it from its always-apply rule; the others read the same rules in `AGENTS.md`.
 
 ## Install and login
 
