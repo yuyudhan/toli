@@ -49,6 +49,9 @@ does the rest.
 Every 3 days toli checks for a new release and tells you once, with what changed; it updates only when you say so
 ([details](docs/install.md#update-check)).
 
+Runs on macOS, Linux (Debian/Ubuntu and Fedora) and Windows through WSL2; native Windows (PowerShell) is not
+supported. It needs `git` and [`bun`](https://bun.sh); details in [docs/install.md](docs/install.md#supported-platforms).
+
 ## Things you can say
 
 - "Add billing-api from git@github.com:acme/billing-api.git, as pull requests."

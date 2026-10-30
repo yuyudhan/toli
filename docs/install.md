@@ -4,12 +4,31 @@ toli installs as a git clone of a tagged release (`vX.Y.Z`). There is no package
 and your private data lives in gitignored directories inside it (`data/`, `state/`, `config/`, `logs/`, `projects/`,
 `local/`).
 
+## Supported platforms
+
+| Platform                                   | Status                                                                     |
+| ------------------------------------------ | -------------------------------------------------------------------------- |
+| macOS (Apple silicon and Intel)            | supported; the scheduler is a launchd user agent                           |
+| Linux: Debian/Ubuntu and Fedora            | supported; the scheduler is a systemd user timer, or crontab without one   |
+| Windows through WSL2 (an Ubuntu or Debian) | supported through the Linux path; run everything inside the WSL2 distro    |
+| Native Windows (PowerShell, cmd)           | not supported: toli needs a POSIX shell, `git`, `bun` and a user scheduler |
+
+CI runs `just check` and `just verify` on `ubuntu-latest` and `macos-latest`.
+
+On Linux and WSL2, the per-minute tick and the helpers run under `systemctl --user` when the user session answers
+(`systemctl --user show-environment` succeeds), else from your crontab. WSL2 runs neither by default: either turn on
+systemd (`[boot]` `systemd=true` in `/etc/wsl.conf`, then `wsl --shutdown` from Windows) or install and start cron
+(`sudo apt install cron && sudo service cron start`). systemd user units stop when you log out unless lingering is
+on: `loginctl enable-linger $USER`. Memory comes from `/proc/meminfo` (`MemAvailable`), load from `/proc/loadavg`,
+and disk from `df -Pk` ([fleet.md](fleet.md) for the thresholds); macOS uses `vm_stat`.
+
 ## Requirements
 
-- `git`
-- [`bun`](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`, or `brew install oven-sh/bun/bun`). The
-  installer clones without it, prints these hints, and skips the sanity check.
+- `git` (macOS: `xcode-select --install`; Debian/Ubuntu/WSL2: `sudo apt install git`; Fedora: `sudo dnf install git`)
+- [`bun`](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`, which needs `unzip` on Linux; or on macOS
+  `brew install oven-sh/bun/bun`). The installer clones without it, prints these hints, and skips the sanity check.
 - An agent harness to talk to: omp, Claude Code, Codex, Cursor, Grok, or pi ([harnesses.md](harnesses.md)).
+- `install.sh` is POSIX `sh`: it runs under dash (Debian/Ubuntu's `/bin/sh`), bash and zsh.
 
 ## One-line install
 

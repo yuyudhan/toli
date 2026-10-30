@@ -1,6 +1,7 @@
 // `just verify` = `just check` plus these smoke checks of the real CLI and installer (run after check):
 //   bin/toli version, bin/toli doctor, bin/toli harness sync --check, bin/toli setup status (when the command exists),
-//   shellcheck install.sh, and a file:// install of the committed HEAD into a temp directory with install.sh --yes.
+//   install.sh under POSIX sh (`sh -n`, `dash -n` when dash is installed, `shellcheck -s sh`), and a file:// install
+//   of the committed HEAD into a temp directory with install.sh --yes (run by `sh`: dash on Debian/Ubuntu).
 // doctor's "fail" lines are tolerated only on a checkout without config/machine.json (a fresh clone or the release
 // dry-run clone), where they are first-run setup rather than breakage.
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -48,7 +49,9 @@ check("bin/toli doctor", [TOLI, "doctor"], (code, output) => {
 check("bin/toli harness sync --check", [TOLI, "harness", "sync", "--check"], exitZero);
 const usage = exec([TOLI, "help"]).output;
 if (/^\s*setup status/m.test(usage)) check("bin/toli setup status", [TOLI, "setup", "status"], exitZero);
-check("shellcheck install.sh", ["shellcheck", "install.sh"], exitZero);
+check("sh -n install.sh", ["sh", "-n", "install.sh"], exitZero);
+if (Bun.which("dash") !== null) check("dash -n install.sh", ["dash", "-n", "install.sh"], exitZero);
+check("shellcheck -s sh install.sh", ["shellcheck", "-s", "sh", "install.sh"], exitZero);
 
 // Install the committed HEAD from a file:// bare copy, the way `curl .../install.sh | sh` installs a release.
 const tmp = mkdtempSync(join(tmpdir(), "toli-verify-"));
