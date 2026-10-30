@@ -6,6 +6,7 @@ import { type Machine, machineSettings, type RetentionConfig } from "./config.ts
 import { addInboxItem, listInbox } from "./inbox.ts";
 import { queueOutbox } from "./jobs.ts";
 import { paths } from "./paths.ts";
+import { persona } from "./persona.ts";
 import { now, out, printJson, readJson, stamp, ToliError, withLock, writeJsonAtomic } from "./util.ts";
 
 export type Retention = Required<RetentionConfig>;
@@ -18,7 +19,7 @@ export const DEFAULT_RETENTION: Retention = {
     inboxDays: 14,
 };
 
-/** How often the tick posts the dry-run listing to Malik's inbox. */
+/** How often the tick posts the dry-run listing to the user's inbox. */
 export const PRUNE_REPORT_DAYS = 7;
 
 export type PruneKind = "job-result" | "task" | "log" | "inbox";
@@ -173,7 +174,7 @@ export function renderPrune(items: PruneItem[], applied: boolean): string {
     if (items.length === 0) return "prune: nothing to prune";
     const head = applied
         ? `prune: removed ${items.length} item${items.length === 1 ? "" : "s"} (tasks archived, not deleted)`
-        : `prune (dry run): ${items.length} item${items.length === 1 ? "" : "s"} would go; nothing changed. Apply with \`bin/toli prune --apply\` only on Malik's word.`;
+        : `prune (dry run): ${items.length} item${items.length === 1 ? "" : "s"} would go; nothing changed. Apply with \`bin/toli prune --apply\` only on ${persona().user}'s word.`;
     const rows = items.map(
         (item) => `  ${item.action}\t${item.kind}\t${item.target}\t${item.ageDays}d\t${item.detail}`,
     );
@@ -181,7 +182,7 @@ export function renderPrune(items: PruneItem[], applied: boolean): string {
 }
 
 /**
- * Tick hook: once every PRUNE_REPORT_DAYS, post the dry-run listing to Malik's inbox (a worker queues it for the
+ * Tick hook: once every PRUNE_REPORT_DAYS, post the dry-run listing to the user's inbox (a worker queues it for the
  * coordinator's inbox). Never applies anything. Returns a log line, or null when not due.
  */
 export function weeklyPruneReport(machine: Machine, at: Date = now()): string | null {

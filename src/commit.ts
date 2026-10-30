@@ -1,5 +1,6 @@
 import { Args } from "./args.ts";
 import { currentBranch, git, gitOk } from "./git.ts";
+import { persona } from "./persona.ts";
 import { findProject, projectCloneDir } from "./projects.ts";
 import { out, ToliError } from "./util.ts";
 
@@ -22,7 +23,7 @@ function requireWorkingBranch(name: string, dir: string): void {
     throw new ToliError(
         `refusing: projects/${name} is on ${actual === null ? "a detached HEAD" : `"${actual}"`}, but its working branch is "${expected}". ` +
             `If this work belongs on "${expected}", switch first (git -C ${dir} switch ${expected}, only with a clean tree); ` +
-            `otherwise ask Malik, and change the setting only on his word (bin/toli project set ${name} --branch <b>|none).`,
+            `otherwise ask ${persona().user}, and change the setting only on their word (bin/toli project set ${name} --branch <b>|none).`,
     );
 }
 

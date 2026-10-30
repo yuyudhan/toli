@@ -14,6 +14,7 @@ import {
 } from "./forge-cli.ts";
 import { currentBranch, git, gitOk, isGitRepo } from "./git.ts";
 import { paths } from "./paths.ts";
+import { persona } from "./persona.ts";
 import { type Forge, findProject, type Project, projectCloneDir } from "./projects.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "./util.ts";
 
@@ -222,7 +223,7 @@ function requirePushed(dir: string, project: string, branch: string): void {
     if (remote.code !== 0)
         throw new ToliError(`git ls-remote origin failed: ${(remote.stderr || remote.stdout).trim()}`);
     const remoteSha = remote.stdout.trim().split(/\s+/)[0] ?? "";
-    const push = `run bin/toli push ${project} first (only with Malik's word to push)`;
+    const push = `run bin/toli push ${project} first (only with ${persona().user}'s word to push)`;
     if (remoteSha === "") throw new ToliError(`refusing: branch ${branch} is not on origin; ${push}`);
     const head = gitOk(dir, ["rev-parse", "HEAD"]);
     if (remoteSha !== head && git(dir, ["merge-base", "--is-ancestor", head, remoteSha]).code !== 0)

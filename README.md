@@ -12,10 +12,13 @@ the code, the checks, the commits, the reports. Sardar itself never does any wor
 | Toli   |          | a group of jawans sent out together for one request |
 | Paltan |          | all jawans working across all your machines         |
 
-The repo is cloned on three machines. Rules, skills, slash commands, and the CLI are tracked in git; everything
-private (projects, backlog, notes, config, logs) is gitignored and stays on each machine.
+These are the default names; set your own (what the lead calls you, and the lead and worker names) in
+`config/persona.json`, e.g. `{"user": "Boss", "lead": "Lead", "leadPlural": "Leads", "worker": "worker", "workerPlural": "workers"}`.
 
-    cd ~/code/toli && omp
+The repo is cloned on each of your machines (one or more). Rules, skills, slash commands, and the CLI are tracked in
+git; everything private (projects, backlog, notes, config, logs, local helpers) is gitignored and stays on each machine.
+
+    cd toli && omp
 
 ## What Sardar does for you (in simple words)
 
@@ -59,7 +62,7 @@ What that gives you:
 7. **Careful review when you want it.** Ask for a branch or PR and Sardar can run your `no-mistakes` pipeline
    (review, tests, docs, lint) with omp. Sardar settles review questions that clearly follow what you already agreed
    and brings you only the ones that widen scope, are unclear, destructive, or touch security.
-8. **Three machines, one paltan.** The same Sardar runs on all your machines, and all jawans on them form the paltan. Sardar checks which machine is free
+8. **Any number of machines, one paltan.** The same Sardar runs on all your machines, and all jawans on them form the paltan. Sardar checks which machine is free
    (CPU, memory, disk, how busy it is) and sends heavy work there. A machine that is asleep or busy is skipped.
 9. **Timed jobs.** Say "every day at 5 pm, check X" and Sardar runs it on time, always in the background (never
    inside your chat). When the result is ready it shows up in your chat by itself. Results from other machines come
@@ -98,8 +101,8 @@ Requirements: [bun](https://bun.sh), omp, git, `gh` (logged in), and optionally 
 `BITBUCKET_API_TOKEN` (environment or the gitignored `.env` in this repo) or a bitbucket.org login in the git credential
 helper.
 
-    git clone https://github.com/yuyudhan/toli.git ~/code/toli
-    cd ~/code/toli
+    git clone <toli-repo-url> toli
+    cd toli
     bun install
 
     # the coordinator (one machine):
@@ -115,7 +118,7 @@ List every machine in `config/fleet.json` (on each machine that should see or di
 
     {
         "machines": [
-            {"name": "<machine>", "ssh": "<host>", "root": "/Users/<you>/code/toli"}
+            {"name": "<machine>", "ssh": "<host>", "root": "/path/to/toli"}
         ]
     }
 
@@ -124,17 +127,12 @@ Optional per-machine capacity thresholds go in `config/machine.json` (defaults s
 
     "capacity": {"maxRuns": 2, "maxLoadPerCpu": 0.8, "minMemAvailableMB": 2048, "minDiskFreeGB": 5}
 
-Note: `~/.omp/agent` (and other dotfile links) point into the `projects/yuyudhan-dotfiles` clone. If that clone moves,
-re-point the links, or omp loses its global config and skills.
+### Custom machine helpers (private)
 
-### Machine helpers (macOS)
-
-`scripts/machine/` holds per-machine maintenance that runs from launchd as `com.yuyudhan.toli.<helper>` (logs in
-`~/Library/Logs/toli-<helper>.log`). Install the ones a machine needs; re-running is safe:
-
-    scripts/machine/install-launchd cargo-sweep target-reaper    # disk: hourly cargo-sweep, low-disk target/ reaper
-    scripts/machine/install-launchd netbird-watch                # reconnect NetBird (Keychain item fm-netbird-setup-key)
-    TOLI_AUTH_BROKER_BIND=<tailnet-ip>:<port> scripts/machine/install-launchd omp-auth-broker
+Scripts a machine needs for itself (disk cleanup, VPN reconnect, backups) live in the gitignored `local/`
+directory, are registered in `local/helpers.json`, and are scheduled with launchd, systemd or crontab by
+`bin/toli helper install <name>`. Ask Sardar for one and a jawan writes it; nothing in `local/` is ever committed.
+Details: [docs/helpers.md](docs/helpers.md).
 
 ## Coordinator and workers
 
@@ -331,6 +329,7 @@ Tracked (shared by all machines):
     tests/                       bun tests (temp TOLI_ROOT, stubbed ssh/omp/crontab)
     scripts/guard.ts, guard/     hygiene guards; file-size-exceptions.txt ratchets oversized files
     scripts/format.ts            runs every formatter and file-type linter (write, check, lint, tools)
+    docs/*.md                    focused guides: projects, helpers, harnesses, publishing
     .githooks/                   pre-commit, commit-msg, pre-push
     .github/workflows/ci.yml     CI: lint, tests with coverage, gitleaks
     biome.json, .gitleaks.toml   formatter/linter and secrets-scan config
@@ -342,6 +341,8 @@ Private (gitignored, per machine):
     config/machine.json          this machine's name, role, coordinator
     config/fleet.json            all machines
     config/jobs.json             scheduled jobs
+    config/persona.json          optional persona names (user title, lead, worker)
+    local/                       private machine helpers: scripts/, hooks/, helpers.json (docs/helpers.md)
     data/projects.json           registry of this machine's clones
     data/backlog.json            tasks
     data/projects/<p>/           per-project notes.md, briefs/, reports/, runs/, decisions.md (docs/projects.md)
@@ -353,3 +354,10 @@ Private (gitignored, per machine):
     data/inbox/, data/remote/    worker messages; remote runs without a project
     state/                       session.json, jobs.json, acks.json, prune.json, afk flag, outbox/, runs/
     logs/, .env*, .lavish/
+
+## License and credits
+
+MIT, see [LICENSE](LICENSE). toli is inspired by [firstmate](https://github.com/kunchenguid/firstmate) (MIT): the
+idea of one lead agent that never does the work itself and stays available while worker agents do it, and the names
+of several workflow skills (afk, ahoy, bearings, quiet, stow). toli is a separate implementation; no firstmate code is
+included.

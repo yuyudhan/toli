@@ -5,8 +5,8 @@ description: Keep the toli repo current across Malik's machines, bootstrap a fre
 
 # Machines and sync (/sync-toli)
 
-The toli repo is cloned on three machines. Rules, skills, and the CLI are tracked in git; everything private
-(`projects/ data/ state/ config/ logs/ .env* .lavish/`) stays on each machine.
+The toli repo is cloned on each machine in the fleet (one or more). Rules, skills, and the CLI are tracked in git;
+everything private (`projects/ data/ state/ config/ logs/ local/ .env* .lavish/`) stays on each machine.
 
 ## Roles
 
@@ -46,10 +46,10 @@ turn; relay its result when it arrives.
 
 ## Bootstrapping a fresh machine
 
-On the new machine, from Malik's home directory:
+On the new machine, in the directory where the clone should live:
 
-    git clone <toli url> ~/code/toli
-    cd ~/code/toli && bun install
+    git clone <toli url> toli
+    cd toli && bun install
     bin/toli init --name <machine> --role coordinator
     # or, for a worker:
     bin/toli init --name <machine> --role worker --coordinator-ssh <host> --coordinator-root <path>
@@ -62,6 +62,9 @@ On the new machine, from Malik's home directory:
 - On the coordinator, add the new machine to `config/fleet.json` so `--fleet`, `--all`, `fleet status`, and `pick`
   reach it. Every machine that should pick or dispatch needs the full fleet list in its own `config/fleet.json`.
 - Re-add the projects cloned on this machine with `/add-project` (`skill://toli-projects`).
+- Machine helpers are per machine and never synced: `local/` is gitignored. If this machine needs any (disk cleanup,
+  VPN reconnect), follow `skill://toli-helpers`; a copied `local/` from another machine is installed with
+  `bin/toli helper install --all` and checked with `bin/toli helper status`.
 
 ## Results flowing to the coordinator
 

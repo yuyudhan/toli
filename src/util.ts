@@ -59,6 +59,11 @@ export function readJson<T>(path: string, fallback: T): T {
     }
 }
 
+/** The one shared guard for hand-validated JSON config: a plain object (not null, not an array). */
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Write via temp file + rename so readers never observe a half-written file. */
 export function writeJsonAtomic(path: string, value: unknown): void {
     writeTextAtomic(path, `${JSON.stringify(value, null, 4)}\n`);

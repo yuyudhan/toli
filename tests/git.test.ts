@@ -11,7 +11,7 @@ describe("toli commit", () => {
             "",
             "Body line about AI support.",
             "",
-            "Signed-off-by: Ankur <ankur@gmail.com>",
+            "Signed-off-by: Dev Person <dev@gmail.com>",
             "Co-authored-by: Claude <noreply@anthropic.com>",
             "co-authored-by: Someone <a@b.c>",
             "Generated-by: omp",
@@ -19,7 +19,7 @@ describe("toli commit", () => {
             "",
         ].join("\n");
         expect(stripAiTrailers(message)).toBe(
-            "Fix parser\n\nBody line about AI support.\n\nSigned-off-by: Ankur <ankur@gmail.com>",
+            "Fix parser\n\nBody line about AI support.\n\nSigned-off-by: Dev Person <dev@gmail.com>",
         );
     });
 

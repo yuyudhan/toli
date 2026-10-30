@@ -57,6 +57,8 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
 - Of toli's own commands, run only `bin/toli commit` and `bin/toli task done|hold` for task <T-id>. Never run
   `bin/toli task add|start|answer|drop`, `bin/toli job`, or `bin/toli remote`.
 - Browsers run headless only. Stop and report at any OTP, captcha, or second factor. Staging is read-only.
+- Build hygiene: after your last test run, apply the project notes' build and cleanup rules (build output
+  location, what to delete, disk limits), if any.
 
 ## Report format
 
