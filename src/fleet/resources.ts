@@ -75,6 +75,12 @@ export function parseMeminfo(text: string): { totalMB: number; availableMB: numb
     return totalMB === null || availableMB === null ? null : { totalMB, availableMB };
 }
 
+/** Linux: the 1- and 5-minute load averages, the first two fields of /proc/loadavg; null when unparseable. */
+export function parseLoadavg(text: string): { load1: number; load5: number } | null {
+    const match = /^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s/.exec(text);
+    return match ? { load1: Number(match[1]), load5: Number(match[2]) } : null;
+}
+
 /** Free space (GB, one decimal) on the filesystem holding `dir`, from POSIX `df -Pk`; null when unreadable. */
 export function parseDf(text: string): number | null {
     const lines = text.trim().split("\n");
@@ -82,6 +88,11 @@ export function parseDf(text: string): number | null {
     if (lines.length < 2 || columns.length < 4) return null;
     const availableKB = Number(columns[3]);
     return Number.isFinite(availableKB) ? Math.floor((availableKB / (1024 * 1024)) * 10) / 10 : null;
+}
+
+/** Linux's /proc; `TOLI_PROC_DIR` overrides it for tests. */
+function procFile(name: string): string {
+    return join(process.env.TOLI_PROC_DIR ?? "/proc", name);
 }
 
 function measureMemory(): { totalMB: number; availableMB: number } | string {
@@ -92,8 +103,17 @@ function measureMemory(): { totalMB: number; availableMB: number } | string {
         if (availableMB === null) return "vm_stat output not understood";
         return { totalMB: Math.floor(totalmem() / (1024 * 1024)), availableMB };
     }
-    if (!existsSync("/proc/meminfo")) return "/proc/meminfo missing";
-    return parseMeminfo(readFileSync("/proc/meminfo", "utf8")) ?? "/proc/meminfo not understood";
+    const meminfo = procFile("meminfo");
+    if (!existsSync(meminfo)) return `${meminfo} missing`;
+    return parseMeminfo(readFileSync(meminfo, "utf8")) ?? `${meminfo} not understood`;
+}
+
+/** macOS: os.loadavg(). Linux: /proc/loadavg, falling back to os.loadavg() (the same kernel numbers) when unreadable. */
+function measureLoad(): { load1: number; load5: number } {
+    const [load1 = 0, load5 = 0] = loadavg();
+    if (platform() === "darwin") return { load1, load5 };
+    const file = procFile("loadavg");
+    return (existsSync(file) ? parseLoadavg(readFileSync(file, "utf8")) : null) ?? { load1, load5 };
 }
 
 function measureDisk(dir: string): number | string {
@@ -149,7 +169,7 @@ export function localResources(): Resources {
     const machine = loadMachine();
     const cpuCount = Math.max(1, cpus().length);
     const capacity = capacityFor(machine, cpuCount);
-    const [load1 = 0, load5 = 0] = loadavg();
+    const { load1, load5 } = measureLoad();
     const memory = measureMemory();
     const disk = measureDisk(paths.root());
     const measured: Measured = {

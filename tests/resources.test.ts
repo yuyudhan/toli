@@ -1,13 +1,18 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { rankMachines } from "../src/fleet/pick.ts";
 import {
     availabilityReasons,
     capacityFor,
     type FleetEntry,
+    parseDf,
+    parseLoadavg,
     parseMeminfo,
     parseVmStat,
     type Resources,
 } from "../src/fleet/resources.ts";
+import { sandbox } from "./helpers.ts";
 
 const VM_STAT_APPLE_SILICON = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free:                                    20537.
@@ -56,6 +61,49 @@ describe("memory parsing", () => {
 
     test("Linux without MemAvailable is not guessed from MemFree", () => {
         expect(parseMeminfo(MEMINFO.replace(/^MemAvailable:.*$/m, ""))).toBeNull();
+    });
+});
+
+const LOADAVG = "0.52 1.37 2.05 3/1234 98765\n";
+
+/** GNU coreutils `df -Pk` (Debian/Ubuntu/Fedora/WSL2): 342637831 KiB available = 326.7 GB. */
+const DF_GNU = `Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/nvme0n1p2   491134264 123456789 342637831      27% /
+`;
+
+describe("Linux measurement", () => {
+    test("load comes from /proc/loadavg's first two fields", () => {
+        expect(parseLoadavg(LOADAVG)).toEqual({ load1: 0.52, load5: 1.37 });
+        expect(parseLoadavg("garbage")).toBeNull();
+    });
+
+    test("disk free comes from GNU df's Available column", () => {
+        expect(parseDf(DF_GNU)).toBe(326.7);
+    });
+
+    test("`resources --json` reports /proc load and memory and df disk on Linux", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const proc = join(box.root, ".proc");
+        mkdirSync(proc);
+        writeFileSync(join(proc, "meminfo"), MEMINFO);
+        writeFileSync(join(proc, "loadavg"), LOADAVG);
+        box.stub("df", `cat <<'EOF'\n${DF_GNU}EOF`);
+        const env = { TOLI_PLATFORM: "linux", TOLI_PROC_DIR: proc };
+        const snapshot = JSON.parse(box.ok(["resources", "--json"], { env })) as Resources;
+        expect(snapshot).toMatchObject({
+            machine: "m1",
+            platform: "linux",
+            load1: 0.52,
+            load5: 1.37,
+            memTotalMB: 15936,
+            memAvailableMB: 9645,
+            diskFreeGB: 326.7,
+        });
+        rmSync(join(proc, "meminfo"));
+        const blind = JSON.parse(box.ok(["resources", "--json"], { env })) as Resources;
+        expect(blind.available).toBe(false);
+        expect(blind.reasons).toContain(`memory unknown: ${join(proc, "meminfo")} missing`);
     });
 });
 
