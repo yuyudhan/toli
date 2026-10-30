@@ -34,9 +34,11 @@ stopped.
     - the default jawan harness (omp, claude, codex, cursor, grok, pi; default: the one they started this session in),
       only when `config/machine.json` has no `harness.jawan`;
     - the default workspace strategy for jawans, only when `config/machine.json` has no `defaults.workspace`:
-      `same-branch` (default: every jawan works in the one clone on the project's branch), `branch-per-task` (one
-      clone, a branch `toli/<T-id>-<slug>` and a PR/MR per task), or `worktree-per-task` (a git worktree per task
-      under `projects/.worktrees/<project>/<T-id>`, its own branch and PR/MR);
+      `same-branch` (recommended and the default: every jawan works in the one clone on the project's branch, and
+      `bin/toli commit` lands only each jawan's own paths from the branch tip, so many parallel jawans need no
+      worktrees or merges), `branch-per-task` (one clone, a branch `toli/<T-id>-<slug>` and a PR/MR per task), or
+      `worktree-per-task` (opt-in: a git worktree per task under `projects/.worktrees/<project>/<T-id>`, its own
+      branch and PR/MR; a full checkout and build per task, which does not scale to many agents);
     - the first project to add: a name and its git URL, plus how it ships (`skill://toli-projects` delivery question);
     - whether toli runs on other machines (only when the role is coordinator and `fleet` is optional);
     - any harness login the checklist says is missing: they run it themselves (it may open a browser).

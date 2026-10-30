@@ -27,8 +27,8 @@ New here? Read the [README](../README.md) first, then [install](install.md) and 
 
 ## Working on toli itself
 
-| Page                             | What it covers                                                                |
-| -------------------------------- | ----------------------------------------------------------------------------- |
-| [development.md](development.md) | Changing toli safely: self worktrees, the `just` gate, hooks, CI, file layout |
-| [releasing.md](releasing.md)     | Versions and cutting a release                                                |
-| [publishing.md](publishing.md)   | Publishing to a fresh public repository                                       |
+| Page                             | What it covers                                                               |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| [development.md](development.md) | Changing toli safely: `bin/toli commit`, the installed runtime, the gate, CI |
+| [releasing.md](releasing.md)     | Versions and cutting a release                                               |
+| [publishing.md](publishing.md)   | Publishing to a fresh public repository                                      |

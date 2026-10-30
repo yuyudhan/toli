@@ -30,13 +30,14 @@ instead. Never ask the user anything directly. A decision only the user can make
 format, then you report: `bin/toli task hold T<n> --question "<one crisp question>" --option "<choice> => <what
 happens then>"` (2-4 options) `--recommend <n> --blocks "<what waits on it>"`.
 
-Working on toli itself (this repository): never edit the checkout that serves the live session (the main checkout,
-where Sardar's omp and the minute tick run `bin/toli`). Work in your own worktree, `bin/toli self prepare T<n>` →
-`projects/.worktrees/toli/T<n>` on branch `toli/T<n>-<slug>` from `develop`; commit there with plain `git commit` on
-that branch, and land with `bin/toli self land T<n>`, which rebases onto `develop`, runs `just check` (format check,
-lint, typecheck, tests) in the worktree, fast-forwards `develop` only when it passes, and removes the worktree.
-Feature work lands on `develop`; `main` moves only at a release (`just release`). `just verify` adds CLI and
-installer smoke checks. Paste the tail of the run as evidence. Details: `docs/development.md`.
+Working on toli itself (this repository): edit in place, in this checkout, on `develop`, alongside other jawans; no
+worktrees. The live session (Sardar's omp, the minute tick, the OS ticker) runs an installed runtime, a snapshot of
+committed code (`bin/toli self status`), so half-edited files never break it. Run `just check` (format check, lint,
+typecheck, tests), then land with `bin/toli commit toli -m "<message>" -- <paths you changed>`, which commits only
+those paths from a private index on the current `develop` tip and refreshes the runtime; `TOLI_DEV=1 bin/toli ...`
+tries uncommitted code. Feature work lands on `develop`; `main` moves only at a release (`just release`).
+`just verify` adds CLI and installer smoke checks. Paste the tail of the run as evidence. Details:
+`docs/development.md`.
 
 ## 1. Identity
 
@@ -126,20 +127,22 @@ jawans stop on any OTP or captcha.
 2. Never discard uncommitted work: no `git reset --hard`, `git checkout -- <path>`, `git restore` over changes
    you did not make, `git stash`, `git clean`, branch deletion, or force push.
 3. Destructive, irreversible, or security-sensitive actions always go to Malik first.
-4. No git worktrees and no terminal multiplexer windows, except the per-task worktrees toli itself creates for a
-   project whose strategy is `worktree-per-task` (`projects/.worktrees/<project>/<T-id>`, made by `bin/toli spawn
---task` or `bin/toli workspace prepare`, removed by `bin/toli workspace prune`), and toli's own self worktrees
-   (`projects/.worktrees/toli/<T-id>`, made by `bin/toli self prepare`, removed by `bin/toli self land`). Otherwise
-   subagents edit `projects/<name>/` in place.
+4. No git worktrees, including temporary ones (no `git worktree add` to build, test, or commit "cleanly"), no tree
+   copies, and no terminal multiplexer windows. Subagents edit `projects/<name>/` (and toli itself) in place and
+   commit with `bin/toli commit`. The one exception is a project whose strategy Malik set to `worktree-per-task`:
+   toli makes those worktrees itself (`projects/.worktrees/<project>/<T-id>`, by `bin/toli spawn --task` or
+   `bin/toli workspace prepare`, removed by `bin/toli workspace prune`).
 5. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
    commit on the project's working branch; no branches unless Malik asks. When the project has a fixed branch
    (`branch`), all work happens on it and `bin/toli commit` refuses on any other branch: never switch branches to
    get past that, ask Malik. `branch-per-task` / `worktree-per-task`: toli puts each task on its own
    `toli/<T-id>-<slug>` branch (in the clone, or in its worktree) before the jawan starts, and commits go there
-   with `bin/toli commit <project> --task <T-id>`. Either way `bin/toli commit` stages only the named paths and
-   strips AI co-author trailers. Pushing a task branch and opening its PR/MR still need Malik's word for that
-   change unless the project has an explicit standing grant (`standing` push/pr, set only on his word with
-   `bin/toli project set <p> --standing-push yes --standing-pr yes`).
+   with `bin/toli commit <project> --task <T-id>`. Every commit goes through `bin/toli commit`, never plain `git
+commit`: it builds a private index from the branch tip, commits only the named paths (`--patch <file>` for
+   hunks), refuses a secret (gitleaks), a lock file that does not parse, a revert of one of the last 20 commits, or
+   a branch that moved twice meanwhile, and strips AI co-author trailers. Pushing a task branch and opening its
+   PR/MR still need Malik's word for that change unless the project has an explicit standing grant (`standing`
+   push/pr, set only on his word with `bin/toli project set <p> --standing-push yes --standing-pr yes`).
 6. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes
    for speed. There is no locking of any kind between jawans; each subagent commits only the paths it changed.
 7. Each machine's `data/projects.json` lists only the clones on that machine. Use the machines that are free:

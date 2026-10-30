@@ -90,8 +90,11 @@ the PR/MR?" --option "yes => a jawan pushes and opens the PR/MR" --option "no =>
 - Browsers run headless only. Stop and report at any OTP, captcha, or second factor. Staging is read-only.
 - Build hygiene: after your last test run, apply the project notes' build and cleanup rules (build output
   location, what to delete, disk limits), if any.
-- Work on toli itself: run `just check` in the self worktree (projects/.worktrees/toli/T<n>) before landing; a
-  failing run, or edits made in the live checkout instead of a self worktree, is a GAP.
+- Work on toli itself: run `just check` in the toli checkout (in place, on `develop`) before landing with
+  `bin/toli commit toli -m "<message>" -- <paths...>`; a failing run, or a git worktree (even a temporary one), is a
+  GAP.
+- Commit only through `bin/toli commit` (never plain `git commit`, `git add`, or a worktree); if it refuses (moved
+  branch, revert of a recent commit, unparseable lock file, secret), that is a GAP to report, not to work around.
 
 ## Report format
 

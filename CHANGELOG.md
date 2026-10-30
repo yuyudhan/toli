@@ -20,14 +20,28 @@ one. See docs/releasing.md.
 - `bin/toli project set <p> --branch <b>` switches a clean clone to the branch, or leaves it and prints the exact
   `git switch` command.
 - Lint fails on an `await` of a non-promise (TS80007) and on a Mermaid block GitHub cannot parse.
+- `bin/toli commit` is safe with many jawans in one clone (R23): it builds a private index from the branch tip,
+  commits only the named paths and `--patch` hunks, moves the branch only if it has not moved (one retry from the new
+  tip), and refuses a secret (gitleaks), a `Cargo.lock`/`bun.lock` that does not parse, a path that was not named, or
+  an exact revert of one of the last 20 commits (`--allow-revert <sha>`). No worktrees or tree copies.
+- The live session runs an installed runtime: `bin/toli self sync` snapshots HEAD under `~/.toli/runtime/`, proves
+  it loads, and points `bin/toli` at it, so half-edited files in the checkout no longer break Sardar or the minute
+  tick. `commit toli`, `sync` and `upgrade` refresh it; `self status` and `doctor` report it; `TOLI_DEV=1` runs the
+  working tree.
 
 ### Changed
 
-- Branch model: toli's own work lands on `develop` (`bin/toli self land`); `main` moves only at a release, when
-  `just release` merges `develop` into it, tags it, and asks before pushing `main`, `develop` and the tag. A
-  CHANGELOG section drafted on `develop` is kept and dated.
+- Branch model: toli's own work lands on `develop`; `main` moves only at a release, when `just release` merges
+  `develop` into it, tags it, and asks before pushing `main`, `develop` and the tag. A CHANGELOG section drafted on
+  `develop` is kept and dated.
+- Jawans edit toli in place on `develop` and land with `bin/toli commit toli`; no worktrees anywhere in toli's own
+  flow, including temporary ones (AGENTS.md rule 4). `worktree-per-task` stays an opt-in project strategy.
 - The digest's Next block names the remaining setup steps on a fresh install (a quiet line once setup is snoozed).
 - The lead's guidance puts the 1-3 line reply rule first.
+
+### Removed
+
+- `bin/toli self prepare|list|land` and toli's self worktrees (`projects/.worktrees/toli/`).
 
 ### Fixed
 
