@@ -19,18 +19,18 @@ missing  machine - Machine config (config/machine.json): config/machine.json mis
 
 Each item has a stable id, a status, who closes it, and the exact fix command or question:
 
-| id             | what is checked                                                  | status when absent                             | who              |
-| -------------- | ---------------------------------------------------------------- | ---------------------------------------------- | ---------------- |
-| `tools`        | Bun (always, it runs `bin/toli`) and git on PATH                 | missing                                        | jawan            |
-| `machine`      | `config/machine.json` (`bin/toli init`)                          | missing                                        | user             |
-| `persona`      | `config/persona.json`; the default names are fine                | optional                                       | user             |
-| `harness-sync` | harness shims match `bin/toli harness sync`                      | missing                                        | jawan            |
-| `harness-cli`  | at least one harness CLI installed and logged in                 | missing                                        | jawan, then user |
-| `scheduler`    | the per-minute tick (`bin/toli schedule status`)                 | missing                                        | jawan            |
-| `local`        | `local/` seeded (scripts/, hooks/, helpers.json, README.md)      | missing                                        | lead-command     |
-| `git-hooks`    | `core.hooksPath` is `.githooks` (only when the checkout has one) | missing                                        | jawan            |
-| `fleet`        | other machines in `config/fleet.json`; a worker's coordinator    | optional (worker without coordinator: missing) | user             |
-| `project`      | at least one project in `data/projects.json`                     | missing                                        | user             |
+| id             | what is checked                                                     | status when absent                             | who              |
+| -------------- | ------------------------------------------------------------------- | ---------------------------------------------- | ---------------- |
+| `tools`        | Bun (always, it runs `bin/toli`) and git on PATH                    | missing                                        | jawan            |
+| `machine`      | `config/machine.json` (`bin/toli init`)                             | missing                                        | user             |
+| `persona`      | `config/persona.json`; the default names are fine                   | optional                                       | user             |
+| `harness-sync` | harness shims match `bin/toli harness sync`                         | missing                                        | jawan            |
+| `harness-cli`  | at least one harness CLI installed and logged in                    | missing                                        | jawan, then user |
+| `scheduler`    | the per-minute tick (`bin/toli schedule status`) runs this checkout | missing (runs another checkout: user decides)  | jawan            |
+| `local`        | `local/` seeded (scripts/, hooks/, helpers.json, README.md)         | missing                                        | lead-command     |
+| `git-hooks`    | `core.hooksPath` is `.githooks` (only when the checkout has one)    | missing                                        | jawan            |
+| `fleet`        | other machines in `config/fleet.json`; a worker's coordinator       | optional (worker without coordinator: missing) | user             |
+| `project`      | at least one project in `data/projects.json`                        | missing                                        | user             |
 
 - **user**: needs your answer (or your own login, which may open a browser).
 - **lead-command**: one `bin/toli` command that writes only toli's own records; the lead runs it.

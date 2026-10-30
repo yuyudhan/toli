@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { noticeText, readMarker, takeSetupNotice } from "../src/setup.ts";
-import { pendingIds, type SetupItem, type SetupProbe, setupChecklist } from "../src/setup-checklist.ts";
+import { liveProbe, pendingIds, type SetupItem, type SetupProbe, setupChecklist } from "../src/setup-checklist.ts";
 import { type Sandbox, sandbox } from "./helpers.ts";
 
 const saved = process.env.TOLI_ROOT;
@@ -11,7 +11,7 @@ const saved = process.env.TOLI_ROOT;
 const bareProbe: SetupProbe = {
     which: () => null,
     harness: () => ({ ready: null, detail: "none on PATH", loggedOut: [] }),
-    scheduler: () => ({ scheduler: "launchd", installed: false, loaded: false }),
+    scheduler: () => ({ scheduler: "launchd", installed: false, loaded: false, otherBin: null }),
     hooksPath: () => null,
 };
 
@@ -19,7 +19,7 @@ const bareProbe: SetupProbe = {
 const readyProbe: SetupProbe = {
     which: (tool) => `/usr/bin/${tool}`,
     harness: () => ({ ready: "omp", detail: "omp installed", loggedOut: [] }),
-    scheduler: () => ({ scheduler: "launchd", installed: true, loaded: true }),
+    scheduler: () => ({ scheduler: "launchd", installed: true, loaded: true, otherBin: null }),
     hooksPath: () => ".githooks",
 };
 
@@ -106,6 +106,34 @@ describe("setup checklist", () => {
             harness: { jawan: "claude" },
             capacity: { maxRuns: 2 },
         });
+    });
+
+    test("a tick installed for another toli checkout is not this checkout's tick", () => {
+        const savedEnv = { PATH: process.env.PATH, TOLI_PLATFORM: process.env.TOLI_PLATFORM };
+        const crontab = (root: string) =>
+            box.stub("crontab", `echo "* * * * * cd ${root} && bun ${root}/bin/toli job tick # toli tick"`);
+        try {
+            process.env.PATH = `${box.stubs}:${savedEnv.PATH ?? ""}`;
+            process.env.TOLI_PLATFORM = "linux";
+            crontab("/srv/other-toli");
+            const other = setupChecklist({ ...readyProbe, scheduler: liveProbe().scheduler }).find(
+                (item) => item.id === "scheduler",
+            );
+            expect(other?.status).toBe("missing");
+            expect(other?.who).toBe("user");
+            expect(other?.detail).toBe("crontab tick runs /srv/other-toli/bin/toli, not this checkout");
+            crontab(box.root);
+            expect(liveProbe().scheduler()).toMatchObject({
+                scheduler: "crontab",
+                installed: true,
+                loaded: true,
+                otherBin: null,
+            });
+        } finally {
+            process.env.PATH = savedEnv.PATH;
+            if (savedEnv.TOLI_PLATFORM === undefined) delete process.env.TOLI_PLATFORM;
+            else process.env.TOLI_PLATFORM = savedEnv.TOLI_PLATFORM;
+        }
     });
 });
 
