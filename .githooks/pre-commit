@@ -18,7 +18,7 @@ cd "$root"
 
 for tool in gitleaks bun; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "pre-commit: $tool not found on PATH; install it (brew install $tool) before committing" >&2
+        echo "pre-commit: $tool not found on PATH; install it before committing (bun: https://bun.sh; others: just setup lists the command for this OS)" >&2
         exit 1
     fi
 done
