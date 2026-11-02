@@ -88,8 +88,10 @@ the PR/MR?" --option "yes => a jawan pushes and opens the PR/MR" --option "no =>
   `bin/toli push|pr create` for task <T-id>. Never run
   `bin/toli task add|start|answer|drop`, `bin/toli job`, or `bin/toli remote`.
 - Browsers run headless only. Stop and report at any OTP, captcha, or second factor. Staging is read-only.
-- Build hygiene: after your last test run, apply the project notes' build and cleanup rules (build output
-  location, what to delete, disk limits), if any.
+- One code folder, one build folder: verify in the workspace path above, into its normal build folder; never a
+  private `CARGO_TARGET_DIR`, a `/tmp` target, or a `git archive`/temporary copy of the code. Cargo's lock handles
+  concurrent builds: wait for it. Keep `CARGO_BUILD_JOBS` at half the cores in a shared clone. After your last test
+  run, apply the project notes' cleanup rules (what to delete, disk limits), if any.
 - Work on toli itself: run `just check` in the toli checkout (in place, on `develop`) before landing with
   `bin/toli commit toli -m "<message>" -- <paths...>`; a failing run, or a git worktree (even a temporary one), is a
   GAP.

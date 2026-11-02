@@ -60,11 +60,13 @@ Next block) and with `bin/toli wake`.
 
 `spawn` checks the brief starts with `TOLI_BRIEF v1` and the harness CLI is installed (a missing CLI fails at once
 with its install and login commands), then returns a run id. A detached supervisor runs the harness in the project
-clone (`--task` names the project and is marked active with the run id as its agent) with `TOLI_ROLE=jawan`, counts
-it as load (`bin/toli resources`), streams output to `data/projects/<p>/runs/<id>/output.log` (`state/jawans/<id>/`
-without a project), and on exit records `done`, `failed` or `killed` and posts the outcome to the inbox. The omp
-extension (and Claude's prompt hook) bring it into the lead's chat as a `[toli wake]` message. On a worker machine the
-outcome is also forwarded to the coordinator's inbox. Run records live in `state/jawans/<id>.json`.
+clone (`--task` names the project and is marked active with the run id as its agent) with `TOLI_ROLE=jawan`, no
+`CARGO_TARGET_DIR` (it builds in the clone's own build folder) and `CARGO_BUILD_JOBS` at half the cores unless
+already set, counts it as load (`bin/toli resources`), streams output to `data/projects/<p>/runs/<id>/output.log`
+(`state/jawans/<id>/` without a project), and on exit records `done`, `failed` or `killed` and posts the outcome to
+the inbox. The omp extension (and Claude's prompt hook) bring it into the lead's chat as a `[toli wake]` message. On
+a worker machine the outcome is also forwarded to the coordinator's inbox. Run records live in
+`state/jawans/<id>.json`.
 
 Headless commands (`src/harness/harness.ts`):
 

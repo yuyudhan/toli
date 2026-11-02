@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { jawanEnv } from "../src/jawans/supervise.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Run = {
@@ -193,5 +194,21 @@ describe("spawn", () => {
         const withGoal = box.toli(["spawn", "--harness", "omp", "--work", "ship", "--brief", goal, "--cwd", box.root]);
         expect(withGoal.code).toBe(0);
         expect(withGoal.stderr).not.toContain(warning);
+    });
+});
+
+describe("jawan environment", () => {
+    test("builds into the checkout's own build folder, capped at half the cores", () => {
+        const env = jawanEnv(
+            { PATH: "/bin", CARGO_TARGET_DIR: "/tmp/jawan-target", CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli" },
+            "r1",
+            18,
+        );
+        expect(env).toEqual({ PATH: "/bin", TOLI_ROLE: "jawan", TOLI_RUN_ID: "r1", CARGO_BUILD_JOBS: "9" });
+    });
+
+    test("keeps an inherited build-jobs cap and never drops below one job", () => {
+        expect(jawanEnv({ CARGO_BUILD_JOBS: "6" }, "r1", 18).CARGO_BUILD_JOBS).toBe("6");
+        expect(jawanEnv({}, "r1", 1).CARGO_BUILD_JOBS).toBe("1");
     });
 });

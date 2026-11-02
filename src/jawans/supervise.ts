@@ -4,6 +4,7 @@
 // where `bin/toli wake` (omp extension tick, Claude Code UserPromptSubmit hook) brings it into the lead's chat.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { relative } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
@@ -68,6 +69,25 @@ function postOutcome(run: JawanRun): void {
     }
 }
 
+/**
+ * The jawan's environment: the supervisor's, marked as a jawan run. One code folder, one build folder: a jawan
+ * builds into its checkout's own build folder, so an inherited `CARGO_TARGET_DIR` is dropped, and parallel builds in a
+ * shared clone are capped with `CARGO_BUILD_JOBS` at half the cores (an inherited cap is kept).
+ */
+export function jawanEnv(
+    base: Record<string, string | undefined>,
+    runId: string,
+    cores: number,
+): Record<string, string | undefined> {
+    const env: Record<string, string | undefined> = { ...base, TOLI_ROLE: "jawan", TOLI_RUN_ID: runId };
+    // A Claude Code lead exports these; a nested `claude -p` must start as its own top-level session.
+    delete env.CLAUDECODE;
+    delete env.CLAUDE_CODE_ENTRYPOINT;
+    delete env.CARGO_TARGET_DIR;
+    if (!env.CARGO_BUILD_JOBS) env.CARGO_BUILD_JOBS = String(Math.max(1, Math.floor(cores / 2)));
+    return env;
+}
+
 type ChildExit = { code: number | null; signal: string | null; error: string | null };
 
 export async function superviseRun(id: string): Promise<void> {
@@ -88,10 +108,7 @@ export async function superviseRun(id: string): Promise<void> {
         startedAt: initial.startedAt,
         title: `jawan ${initial.harness}${initial.task === null ? "" : ` ${initial.task}`}`,
     });
-    const env: Record<string, string | undefined> = { ...process.env, TOLI_ROLE: "jawan", TOLI_RUN_ID: id };
-    // A Claude Code lead exports these; a nested `claude -p` must start as its own top-level session.
-    delete env.CLAUDECODE;
-    delete env.CLAUDE_CODE_ENTRYPOINT;
+    const env = jawanEnv(process.env, id, availableParallelism());
     const logFd = openSync(initial.logPath, "a");
     let timedOut = false;
     try {
