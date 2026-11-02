@@ -19,6 +19,7 @@ Jawans edit toli in this checkout, on `develop`, many at once; there are no work
 just check                                                   # format check, lint, typecheck, tests
 bin/toli commit toli -m "Fix the digest's footer" -- src/records/digest.ts tests/digest.test.ts
 bin/toli commit toli -m "Fix one hunk" --patch my.diff       # only the hunks in my.diff
+bin/toli commit app -m "Merge feature" --merge feature        # a clean two-parent merge, nothing else named
 ```
 
 `bin/toli commit` (all projects; `toli` means this checkout, on `develop`) never uses the shared index:
@@ -36,7 +37,13 @@ bin/toli commit toli -m "Fix one hunk" --patch my.diff       # only the hunks in
    once from the new tip; a second move is a refusal ("run the same commit again").
 4. It points the shared index's entries for the committed files at the commit (so `git status` shows no phantom
    staged changes) and strips AI co-author trailers from the message. Git hooks do not run (`commit-tree`), which is
-   why `just check` comes first.
+   why `just check` comes first. Repeated `-m` values become separate paragraphs, as with `git commit`.
+5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
+   touches no index or working tree), records `<ref>` as second parent, and runs every check
+   above. It refuses a conflicted merge (resolve it on a branch of your own with `git merge`, then `--merge` that
+   branch), a ref already merged, local changes or untracked files at paths the merge changes, and named paths the
+   merge also changes (commit the merge first). After the branch moves it checks the merged files out into the
+   shared index and working tree (`git restore --source=<commit> --staged --worktree`).
 
 For toli, it then refreshes the installed runtime (below), so the live session runs the new commit from the next
 `bin/toli` call.

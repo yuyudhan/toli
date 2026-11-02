@@ -4,6 +4,21 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.2.2 - unreleased
+
+### Added
+
+- `bin/toli commit <p> --merge <ref> -m "..."` writes a two-parent merge commit from the clean merge of `<ref>` into
+  the branch tip (`git merge-tree`), with the usual checks (secrets, lock files, reverts, branch moved meanwhile). It
+  refuses a conflicted merge, a ref already merged, local changes to the files the merge changes, and named paths
+  the merge also changes; on success the merged files are checked out in the index and working tree.
+
+### Fixed
+
+- `bin/toli pr create` on GitLab passes `--head` to `glab mr create`, so the source project is looked up on the
+  forge host (`forgeHost`, glab config) instead of the git remote's ssh host (`gitlab-ssh.*`).
+- `bin/toli commit -m a -m b` keeps every `-m`, joined as paragraphs like `git commit`, instead of only the last.
+
 ## v0.2.1 - 2026-11-02
 
 ### Added

@@ -6,6 +6,8 @@
 // on `old`, and moves the branch with `update-ref <branch> <new> <old>`, which fails if the branch moved meanwhile.
 // One retry rebuilds everything from the fresh tip; a second move is a refusal. The shared index and other jawans'
 // staged or unstaged changes are never read, so a stale shared index can no longer revert anyone's commits.
+// `--merge <ref>` starts the private index from the clean `git merge-tree` result instead and adds `<ref>` as second
+// parent; the files the merge brought are then checked out into the shared index and working tree.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Args } from "../core/args.ts";
@@ -40,9 +42,62 @@ export type CommitRequest = {
     message: string;
     /** Commits (sha prefixes) this commit may revert on purpose. */
     allowRevert?: string[];
+    /** A ref to merge: the commit gets it as second parent and starts from the clean merge result of the two. */
+    merge?: string;
 };
 
-export type Committed = { sha: string; branch: string; parent: string; files: string[]; attempts: number };
+/** `files`: every path changed against the first parent; `merged`: those the merge brought in (not named). */
+export type Committed = {
+    sha: string;
+    branch: string;
+    parent: string;
+    files: string[];
+    merged: string[];
+    attempts: number;
+};
+
+type Merge = { commit: string; tree: string; files: string[] };
+
+/**
+ * The clean merge of `ref` into `parent` (`git merge-tree --write-tree`, which touches neither index nor working
+ * tree). Refuses a ref already contained in `parent`, a conflicted merge, and local changes to the files it changes.
+ */
+function cleanMerge(dir: string, parent: string, ref: string): Merge {
+    const resolved = git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    if (resolved.code !== 0) throw new ToliError(`--merge ${ref}: no such commit`);
+    const commit = resolved.stdout.trim();
+    if (git(dir, ["merge-base", "--is-ancestor", commit, parent]).code === 0)
+        throw new ToliError(`nothing to commit: ${ref} (${commit.slice(0, 12)}) is already merged`);
+    const merged = git(dir, ["merge-tree", "--write-tree", "--name-only", "--no-messages", parent, commit]);
+    const [tree = "", ...conflicts] = merged.stdout.trim().split("\n");
+    if (merged.code === 1)
+        throw new ToliError(
+            `refusing: merging ${ref} has conflicts in ${[...new Set(conflicts)].join(", ")}; nothing was committed. ` +
+                `Resolve them on a branch of your own (git switch -c <b>, git merge ${ref}, fix, commit) and merge that.`,
+        );
+    if (merged.code !== 0) throw new ToliError(`git merge-tree failed: ${(merged.stderr || merged.stdout).trim()}`);
+    const files = gitOk(dir, ["diff", "--name-only", "--no-renames", parent, tree]).split("\n").filter(Boolean);
+    const dirty =
+        files.length === 0
+            ? ""
+            : gitOk(dir, [
+                  "--no-optional-locks",
+                  "status",
+                  "--porcelain",
+                  "--untracked-files=all",
+                  "--ignored=matching",
+                  "--",
+                  ...files,
+              ]);
+    if (dirty !== "")
+        throw new ToliError(
+            `refusing: local changes to files the merge changes: ${dirty
+                .split("\n")
+                .map((line) => line.slice(3))
+                .join(", ")}; commit or move them first`,
+        );
+    return { commit, tree, files };
+}
 
 /** Test seam: runs after the commit object is written and before the branch moves. */
 export type CommitHooks = { beforeUpdateRef?: (attempt: number) => void };
@@ -53,28 +108,40 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
     if (branch === null) throw new ToliError(`refusing: ${dir} is on a detached HEAD; commit on a branch`);
     const ref = `refs/heads/${branch}`;
     const parent = gitOk(dir, ["rev-parse", "--verify", `${ref}^{commit}`]);
+    const merge = request.merge === undefined ? null : cleanMerge(dir, parent, request.merge);
+    // The named paths and patch apply on top of the merge result; the merge itself needs no naming.
+    const start = merge?.tree ?? parent;
     const attempt = new Attempt(dir);
     try {
-        attempt.gitOk(["read-tree", parent]);
+        attempt.gitOk(["read-tree", start]);
         if (request.paths.length > 0) attempt.gitOk(["add", "--all", "--", ...request.paths]);
         const fromPatch = request.patch === undefined ? [] : patchFiles(attempt, request.patch);
         if (request.patch !== undefined) attempt.gitOk(["apply", "--cached", "-"], request.patch);
         const tree = attempt.gitOk(["write-tree"]);
         const files = gitOk(dir, ["diff", "--name-only", "--no-renames", parent, tree]).split("\n").filter(Boolean);
-        if (files.length === 0)
+        if (files.length === 0 && merge === null)
             throw new ToliError(`nothing to commit: the named paths match ${branch} (${parent.slice(0, 12)})`);
+        const own = gitOk(dir, ["diff", "--name-only", "--no-renames", start, tree]).split("\n").filter(Boolean);
         const named = new Set(
-            gitOk(dir, ["diff", "--name-only", "--no-renames", parent, tree, "--", ...request.paths, ...fromPatch])
-                .split("\n")
-                .filter(Boolean),
+            own.length === 0
+                ? []
+                : gitOk(dir, ["diff", "--name-only", "--no-renames", start, tree, "--", ...request.paths, ...fromPatch])
+                      .split("\n")
+                      .filter(Boolean),
         );
-        const stray = files.filter((file) => !named.has(file));
+        const stray = own.filter((file) => !named.has(file));
         if (stray.length > 0)
             throw new ToliError(`refusing: the staged set changes paths that were not named: ${stray.join(", ")}`);
+        const overlap = merge === null ? [] : own.filter((file) => merge.files.includes(file));
+        if (overlap.length > 0)
+            throw new ToliError(
+                `refusing: ${overlap.join(", ")} changed by both the merge and the named paths; commit the merge first, then your edits`,
+            );
         scanLeaks(attempt);
         checkLockFiles(attempt, files);
         checkReverts(dir, parent, tree, files, request.allowRevert ?? []);
-        const created = git(dir, ["commit-tree", tree, "-p", parent, "-F", "-"], `${request.message}\n`);
+        const parents = ["-p", parent, ...(merge === null ? [] : ["-p", merge.commit])];
+        const created = git(dir, ["commit-tree", tree, ...parents, "-F", "-"], `${request.message}\n`);
         if (created.code !== 0)
             throw new ToliError(`git commit-tree failed: ${(created.stderr || created.stdout).trim()}`);
         const sha = created.stdout.trim();
@@ -88,18 +155,19 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
             parent,
         ]);
         if (moved.code !== 0) return null;
-        return { sha, branch, parent, files, attempts: attemptNo };
+        return { sha, branch, parent, files, merged: merge?.files ?? [], attempts: attemptNo };
     } finally {
         attempt.dispose();
     }
 }
 
 /**
- * Commit the named paths and/or patch hunks onto the branch checked out in `request.dir` (see the file comment).
- * Throws a ToliError on every refusal; the branch, the shared index and the working tree are then untouched.
+ * Commit the named paths and/or patch hunks (and/or a clean merge) onto the branch checked out in `request.dir` (see
+ * the file comment). Throws a ToliError on every refusal; the branch, the shared index and the working tree are then
+ * untouched.
  */
 export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Committed {
-    if (request.paths.length === 0 && request.patch === undefined)
+    if (request.paths.length === 0 && request.patch === undefined && request.merge === undefined)
         throw new ToliError(
             'commit needs paths after -- or --patch <file>: toli commit <project> -m "..." -- <path>...',
         );
@@ -111,10 +179,27 @@ export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Com
         }
         // The shared index still holds the old blobs of the committed files: point those entries at the commit, so
         // git status shows no phantom staged reverts. Other paths' entries are left as they are.
-        const synced = git(request.dir, ["reset", "--quiet", committed.sha, "--", ...committed.files]);
-        if (synced.code !== 0)
+        const own = committed.files.filter((file) => !committed.merged.includes(file));
+        const synced = own.length === 0 ? null : git(request.dir, ["reset", "--quiet", committed.sha, "--", ...own]);
+        if (synced !== null && synced.code !== 0)
             warn(
                 `toli: committed, but the shared index was not refreshed (git reset -q -- <paths>): ${synced.stderr.trim()}`,
+            );
+        // The merged files were clean before the merge: bring the index and the working tree to the merge result.
+        const restored =
+            committed.merged.length === 0
+                ? null
+                : git(request.dir, [
+                      "restore",
+                      `--source=${committed.sha}`,
+                      "--staged",
+                      "--worktree",
+                      "--",
+                      ...committed.merged,
+                  ]);
+        if (restored !== null && restored.code !== 0)
+            warn(
+                `toli: committed, but the merged files were not checked out (git restore --source=${committed.sha.slice(0, 12)} --staged --worktree -- <paths>): ${restored.stderr.trim()}`,
             );
         return committed;
     }
@@ -172,21 +257,26 @@ function commitDir(name: string, taskId: string | undefined): string {
     return target.dir;
 }
 
-/** `toli commit <project> [--task T<n>] -m "<message>" [--patch <file>] [--allow-revert <sha>]... [-- <path>...]` */
+/**
+ * `toli commit <project> [--task T<n>] -m "<message>"... [--merge <ref>] [--patch <file>] [--allow-revert <sha>]...
+ * [-- <path>...]`; repeated `-m` values become separate paragraphs, as with `git commit`.
+ */
 export function commitCommand(argv: string[]): void {
-    const args = new Args(argv, { values: ["message", "task", "patch", "allow-revert"] });
+    const args = new Args(argv, { values: ["message", "task", "patch", "allow-revert", "merge"] });
     args.maxPositional(1);
     const dir = commitDir(args.pos(0, "project"), args.str("task"));
-    const raw = args.str("message");
-    if (raw === undefined) throw new ToliError('commit needs -m "<message>"');
-    const message = stripAiTrailers(raw);
+    const paragraphs = args.all("message");
+    if (paragraphs.length === 0) throw new ToliError('commit needs -m "<message>"');
+    const message = stripAiTrailers(paragraphs.join("\n\n"));
     if (message.trim() === "") throw new ToliError("commit message is empty after removing AI trailers");
     const patchFile = args.str("patch");
     const patch = patchFile === undefined ? undefined : readFileSync(resolve(process.cwd(), patchFile), "utf8");
+    const merge = args.str("merge");
     const committed = safeCommit({
         dir,
         paths: args.rest.filter((file) => file !== ""),
         ...(patch === undefined ? {} : { patch }),
+        ...(merge === undefined ? {} : { merge }),
         message,
         allowRevert: args.all("allow-revert"),
     });
