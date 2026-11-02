@@ -204,6 +204,9 @@ export class GlabClient implements ForgeClient {
             "--description",
             req.body,
             "--yes",
+            // Without --head glab resolves the source project from the git remotes: an ssh-only host for ssh clones.
+            "--head",
+            this.path,
             ...(req.base === undefined ? [] : ["--target-branch", req.base]),
             ...(req.draft ? ["--draft"] : []),
         ]);

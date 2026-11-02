@@ -84,7 +84,7 @@ default 7) once.
 
 ### Landing work
 
-    commit <project> [--task T<n>] -m "<message>" [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
+    commit <project> [--task T<n>] -m "<message>"... [--merge <ref>] [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
     forge <project> [--json]

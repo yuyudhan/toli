@@ -39,6 +39,65 @@ describe("toli commit", () => {
         expect(box.git(dir, ["status", "--porcelain"])).toBe("A  c.txt\n?? b.txt");
         expect(box.git(dir, ["rev-list", "--count", "origin/main..main"])).toBe("1");
     });
+
+    test("repeated -m flags become paragraphs, like git", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const dir = withProject(box, "app");
+        writeFileSync(join(dir, "a.txt"), "a\n");
+        box.ok([
+            "commit",
+            "app",
+            "-m",
+            "Add a",
+            "-m",
+            "Why: b.",
+            "--message",
+            "Co-Authored-By: Claude <x@y>",
+            "--",
+            "a.txt",
+        ]);
+        expect(box.git(dir, ["log", "-1", "--format=%B"])).toBe("Add a\n\nWhy: b.");
+    });
+
+    test("--merge <ref> commits a clean merge with two parents and updates the merged files", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const dir = withProject(box, "app");
+        const base = box.git(dir, ["rev-parse", "HEAD"]);
+        box.git(dir, ["switch", "--quiet", "-c", "feature"]);
+        writeFileSync(join(dir, "f.txt"), "feature\n");
+        box.ok(["commit", "app", "-m", "add f", "--", "f.txt"]);
+        const feature = box.git(dir, ["rev-parse", "HEAD"]);
+        box.git(dir, ["switch", "--quiet", "main"]);
+        writeFileSync(join(dir, "m.txt"), "main\n");
+        box.ok(["commit", "app", "-m", "add m", "--", "m.txt"]);
+        const tip = box.git(dir, ["rev-parse", "HEAD"]);
+
+        const sha = box.ok(["commit", "app", "--merge", "feature", "-m", "Merge feature"]);
+        expect(box.git(dir, ["rev-parse", "HEAD"])).toBe(sha);
+        expect(box.git(dir, ["log", "-1", "--format=%P"])).toBe(`${tip} ${feature}`);
+        expect(box.git(dir, ["show", `${sha}:f.txt`])).toBe("feature");
+        expect(box.git(dir, ["status", "--porcelain"])).toBe("");
+        expect(box.toli(["commit", "app", "--merge", "feature", "-m", "again"]).stderr).toContain("already merged");
+
+        // A conflicting merge and a merge over local edits of merged files are refusals that change nothing.
+        box.git(dir, ["switch", "--quiet", "-c", "clash", base]);
+        writeFileSync(join(dir, "m.txt"), "clash\n");
+        box.ok(["commit", "app", "-m", "clash m", "--", "m.txt"]);
+        box.git(dir, ["switch", "--quiet", "-c", "more", base]);
+        writeFileSync(join(dir, "g.txt"), "more\n");
+        box.ok(["commit", "app", "-m", "add g", "--", "g.txt"]);
+        box.git(dir, ["switch", "--quiet", "main"]);
+        const conflict = box.toli(["commit", "app", "--merge", "clash", "-m", "Merge clash"]);
+        expect(conflict.code).toBe(1);
+        expect(conflict.stderr).toContain("conflicts in m.txt");
+        writeFileSync(join(dir, "g.txt"), "untracked here\n");
+        const dirty = box.toli(["commit", "app", "--merge", "more", "-m", "Merge more"]);
+        expect(dirty.code).toBe(1);
+        expect(dirty.stderr).toContain("local changes to files the merge changes: g.txt");
+        expect(box.git(dir, ["rev-parse", "HEAD"])).toBe(sha);
+    });
 });
 
 describe("toli project drop", () => {
