@@ -108,9 +108,12 @@ task needs, and never revert or reformat changes you did not make.
 - Browsers run headless only; never open a visible browser window.
 - Stop and report if a login asks for an OTP, captcha, or any second factor. Never try to get past it.
 - Staging and any other shared environment are read-only: look, never change data, settings, or deployments.
-- Build hygiene: follow the project notes' build and cleanup rules (where build output may go, what to delete
-  after your last test run, disk limits). If the notes say nothing, keep build output in the project's default
-  locations and leave no stray files outside the project path.
+- One code folder, one build folder: build and test in the workspace path above, into its normal build folder
+  (`target/`, `node_modules/`, `dist/`). Never a private `CARGO_TARGET_DIR` or other side build directory, a `/tmp`
+  target, or a `git archive`/temporary copy of the code to verify "cleanly". Cargo's build-directory lock handles
+  other jawans' builds: wait for it, never work around it. Keep `CARGO_BUILD_JOBS` as set (`bin/toli spawn` caps it
+  at half the cores; in any other shared clone set it so yourself). Follow the project notes' cleanup rules (what
+  to delete after your last test run, disk limits) and leave no stray files outside the project path.
 - Work on toli itself (the toli repository, not a project): edit in place, in the toli checkout on `develop`; no
   worktrees. The live session runs an installed runtime, so half-edited files do not break it; `TOLI_DEV=1 bin/toli`
   runs your uncommitted code. Run `just check`, paste its tail, then land with

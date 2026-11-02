@@ -123,7 +123,7 @@ jawans stop on any OTP or captcha.
 ## 3. Hard rules, in priority order
 
 1. Never push, merge, or open a pull request without Malik's explicit word for that specific change (push and
-   PR/MR only: or the project's explicit standing grant, rule 5). Merging always needs his word.
+   PR/MR only: or the project's explicit standing grant, rule 6). Merging always needs his word.
 2. Never discard uncommitted work: no `git reset --hard`, `git checkout -- <path>`, `git restore` over changes
    you did not make, `git stash`, `git clean`, branch deletion, or force push.
 3. Destructive, irreversible, or security-sensitive actions always go to Malik first.
@@ -132,7 +132,14 @@ jawans stop on any OTP or captcha.
    commit with `bin/toli commit`. The one exception is a project whose strategy Malik set to `worktree-per-task`:
    toli makes those worktrees itself (`projects/.worktrees/<project>/<T-id>`, by `bin/toli spawn --task` or
    `bin/toli workspace prepare`, removed by `bin/toli workspace prune`).
-5. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
+5. One code folder, one build folder. Every jawan builds and tests in the checkout it works in (the clone, or the
+   task worktree toli made), into that checkout's normal build folder (`target/`, `node_modules/`, `dist/`): never
+   a private `CARGO_TARGET_DIR` or other side build directory, a `/tmp` target, a `git archive` or temporary copy
+   of the code to verify "cleanly", or any other duplicate of the code or its build output. Cargo's build-directory
+   lock serializes concurrent builds: wait for it, never work around it. In a shared clone cap parallel builds with
+   `CARGO_BUILD_JOBS` at half the machine's cores (`bin/toli spawn` sets it for the jawans it starts). Never put
+   "own CARGO_TARGET_DIR", "build in a temp dir" or "verify on a scratch copy" in a brief.
+6. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
    commit on the project's working branch; no branches unless Malik asks. When the project has a fixed branch
    (`branch`), all work happens on it and `bin/toli commit` refuses on any other branch: never switch branches to
    get past that, ask Malik. `branch-per-task` / `worktree-per-task`: toli puts each task on its own
@@ -143,13 +150,13 @@ commit`: it builds a private index from the branch tip, commits only the named p
    a branch that moved twice meanwhile, and strips AI co-author trailers. Pushing a task branch and opening its
    PR/MR still need Malik's word for that change unless the project has an explicit standing grant (`standing`
    push/pr, set only on his word with `bin/toli project set <p> --standing-push yes --standing-pr yes`).
-6. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes
+7. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes
    for speed. There is no locking of any kind between jawans; each subagent commits only the paths it changed.
-7. Each machine's `data/projects.json` lists only the clones on that machine. Use the machines that are free:
+8. Each machine's `data/projects.json` lists only the clones on that machine. Use the machines that are free:
    local work runs here when this machine is available; heavy builds/tests or a busy machine go through
    `bin/toli pick --project <p>` / `bin/toli remote auto "<prompt>" --project <p>`. Availability only steers
    where work goes; nothing ever refuses or locks work.
-8. A finding, report, or recommendation is evidence, not permission to change code.
+9. A finding, report, or recommendation is evidence, not permission to change code.
 
 When Malik gives a current, specific instruction that conflicts with a standing rule above, follow his
 instruction for exactly that scope. Rules 1-3 still need him to name the concrete action.

@@ -84,6 +84,9 @@ Staging is only read, never changed, and jawans stop at any OTP or captcha.
 - Destructive, irreversible, or security-sensitive actions always go to you first.
 - No git worktrees or terminal multiplexer windows, except the per-task worktrees toli itself creates for a
   project whose strategy is `worktree-per-task`.
+- One code folder, one build folder: jawans build in the checkout they work in, into its normal build folder,
+  never a private build directory or a temporary copy of the code; concurrent builds wait on the build tool's lock,
+  and `bin/toli spawn` caps `CARGO_BUILD_JOBS` at half the cores.
 - No AI co-author trailers (`bin/toli commit` strips them); your name appears in chat only, never in commits,
   PRs, or code.
 - Scheduled and headless runs never push, merge, open PRs, or ask questions; they write results to files.
