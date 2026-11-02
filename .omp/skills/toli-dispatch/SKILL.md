@@ -126,9 +126,12 @@ parallel, and lands with `bin/toli commit <project> -m "..." -- <its paths>` (`t
 commits are safe. Never put a git worktree in a brief, not even a temporary one for a clean build or commit; the
 brief template already says so. One code folder, one build folder: every jawan builds in its checkout's normal build
 folder, so never write "own `CARGO_TARGET_DIR`", "build in a temp dir", "`git archive` copy" or "verify on a
-scratch copy" into a brief; Cargo's lock handles concurrent builds, and `bin/toli spawn` caps `CARGO_BUILD_JOBS` at
-half the cores (say the same cap in a native subagent's brief for a shared Rust clone). Briefs for toli itself say:
-edit in place on `develop`, `just check`, then `bin/toli commit toli`.
+scratch copy" into a brief; Cargo's lock handles concurrent builds. Build jobs have one cap per machine,
+`capacity.cargoJobs` in config/machine.json: `bin/toli spawn` sets `CARGO_BUILD_JOBS` to it and ~/.cargo/config.toml
+`[build] jobs` mirrors it, so native subagents get it too. A native subagent's brief for a shared Rust clone says the
+same line as the brief template: never `-j` or `CARGO_BUILD_JOBS`, no extra `RUSTFLAGS`/profile/features, the
+project's own commands. Briefs for toli itself say: edit in place on `develop`, `just check`, then
+`bin/toli commit toli`.
 
 Ship work on a `branch-per-task` or `worktree-per-task` project (opt-in strategies Malik chose for that project)
 runs on the task's own branch, prepared before the

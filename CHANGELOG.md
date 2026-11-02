@@ -16,8 +16,11 @@ one. See docs/releasing.md.
 - One code folder, one build folder (AGENTS.md hard rule 5): every jawan builds and tests in the checkout it works
   in, into its normal build folder; no private `CARGO_TARGET_DIR`, `/tmp` target, or scratch copy of the code. The
   brief and verify-brief templates and the dispatch skill say so, and `bin/toli spawn` starts jawans without an
-  inherited `CARGO_TARGET_DIR` and with `CARGO_BUILD_JOBS` capped at half the machine's cores (an inherited cap is
-  kept).
+  inherited `CARGO_TARGET_DIR`.
+- Build jobs have one cap per machine, `capacity.cargoJobs` in `config/machine.json` (default half the cores):
+  `bin/toli spawn` sets every jawan's `CARGO_BUILD_JOBS` to it (replacing any inherited value), `bin/toli doctor`
+  warns when `~/.cargo/config.toml` `[build] jobs` differs, and the brief templates tell jawans never to pass `-j`,
+  extra `RUSTFLAGS`, a profile or features in a shared build folder.
 
 ### Fixed
 

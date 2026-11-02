@@ -198,17 +198,16 @@ describe("spawn", () => {
 });
 
 describe("jawan environment", () => {
-    test("builds into the checkout's own build folder, capped at half the cores", () => {
+    test("builds into the checkout's own build folder, capped at the machine's cargo jobs", () => {
         const env = jawanEnv(
             { PATH: "/bin", CARGO_TARGET_DIR: "/tmp/jawan-target", CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli" },
             "r1",
-            18,
+            12,
         );
-        expect(env).toEqual({ PATH: "/bin", TOLI_ROLE: "jawan", TOLI_RUN_ID: "r1", CARGO_BUILD_JOBS: "9" });
+        expect(env).toEqual({ PATH: "/bin", TOLI_ROLE: "jawan", TOLI_RUN_ID: "r1", CARGO_BUILD_JOBS: "12" });
     });
 
-    test("keeps an inherited build-jobs cap and never drops below one job", () => {
-        expect(jawanEnv({ CARGO_BUILD_JOBS: "6" }, "r1", 18).CARGO_BUILD_JOBS).toBe("6");
-        expect(jawanEnv({}, "r1", 1).CARGO_BUILD_JOBS).toBe("1");
+    test("the machine's cargo jobs replace an inherited build-jobs value", () => {
+        expect(jawanEnv({ CARGO_BUILD_JOBS: "18" }, "r1", 12).CARGO_BUILD_JOBS).toBe("12");
     });
 });

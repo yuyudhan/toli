@@ -11,6 +11,8 @@ export type CapacityConfig = {
     maxLoadPerCpu?: number;
     minMemAvailableMB?: number;
     minDiskFreeGB?: number;
+    /** Parallel compile jobs per cargo run (`CARGO_BUILD_JOBS` for jawans, mirrored in ~/.cargo/config.toml). */
+    cargoJobs?: number;
 };
 
 /** Retention for `bin/toli prune`, in days unless named otherwise; any field left out uses its default. */

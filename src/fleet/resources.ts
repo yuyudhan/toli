@@ -135,11 +135,16 @@ export function capacityFor(machine: Machine, cpuCount: number): Capacity {
         }
         return raw;
     };
+    const cargoJobs = value("cargoJobs", Math.max(1, Math.floor(cpuCount / 2)));
+    if (!Number.isInteger(cargoJobs) || cargoJobs < 1) {
+        throw new ToliError("config/machine.json capacity.cargoJobs must be a positive integer");
+    }
     return {
         maxRuns: Math.max(1, Math.floor(value("maxRuns", Math.max(1, Math.floor(cpuCount / 4))))),
         maxLoadPerCpu: value("maxLoadPerCpu", DEFAULT_CAPACITY.maxLoadPerCpu),
         minMemAvailableMB: value("minMemAvailableMB", DEFAULT_CAPACITY.minMemAvailableMB),
         minDiskFreeGB: value("minDiskFreeGB", DEFAULT_CAPACITY.minDiskFreeGB),
+        cargoJobs,
     };
 }
 

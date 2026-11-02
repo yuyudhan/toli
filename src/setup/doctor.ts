@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { availableParallelism, homedir } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
@@ -6,7 +7,7 @@ import { isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, run } from "../core/util.ts";
 import { fleetStatus } from "../fleet/pick.ts";
-import { availabilityLine } from "../fleet/resources.ts";
+import { availabilityLine, capacityFor } from "../fleet/resources.ts";
 import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
@@ -18,6 +19,31 @@ import { describeRuntime, runtimeStatus } from "../release/runtime.ts";
 
 export type CheckLevel = "ok" | "warn" | "fail";
 export type Check = { level: CheckLevel; name: string; detail: string };
+
+/** Cargo's user config, where `[build] jobs` caps every cargo run on the machine, not only toli-spawned jawans. */
+export function cargoConfigPath(env: Record<string, string | undefined> = process.env): string {
+    return join(env.CARGO_HOME || join(homedir(), ".cargo"), "config.toml");
+}
+
+/**
+ * Whether cargo's user config caps build jobs at the machine's `capacity.cargoJobs`. `bin/toli spawn` sets
+ * `CARGO_BUILD_JOBS` itself; this mirror covers native subagents and any other cargo run on the machine.
+ */
+export function cargoJobsCheck(configText: string | null, cargoJobs: number): Check {
+    const want = `set \`[build] jobs = ${cargoJobs}\` in ${cargoConfigPath()} (capacity.cargoJobs in config/machine.json)`;
+    if (configText === null) return { level: "warn", name: "cargo-jobs", detail: `no cargo config: ${want}` };
+    let jobs: unknown;
+    try {
+        const parsed: unknown = Bun.TOML.parse(configText);
+        const build = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "build") : undefined;
+        jobs = typeof build === "object" && build !== null ? Reflect.get(build, "jobs") : undefined;
+    } catch (error) {
+        return { level: "warn", name: "cargo-jobs", detail: `cargo config unreadable (${String(error)}): ${want}` };
+    }
+    if (jobs === cargoJobs) return { level: "ok", name: "cargo-jobs", detail: `[build] jobs = ${cargoJobs}` };
+    const found = jobs === undefined ? "no [build] jobs" : `[build] jobs = ${String(jobs)}`;
+    return { level: "warn", name: "cargo-jobs", detail: `${found}: ${want}` };
+}
 
 function firstLine(text: string): string {
     return (
@@ -203,6 +229,11 @@ export async function runChecks(): Promise<Check[]> {
                 : "";
             checks.push({ level: "ok", name: "machine", detail: `${machine.name} (${machine.role})${coordinator}` });
             if (machine.coordinator) checks.push(outboxCheck(machine.coordinator.ssh));
+            if (Bun.which("cargo", { PATH: process.env.PATH ?? "" })) {
+                const config = cargoConfigPath();
+                const cargoJobs = capacityFor(machine, availableParallelism()).cargoJobs;
+                checks.push(cargoJobsCheck(existsSync(config) ? readFileSync(config, "utf8") : null, cargoJobs));
+            }
         }
         machineOk = true;
     } catch (error) {

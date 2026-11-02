@@ -9,7 +9,7 @@ import { relative } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, warn } from "../core/util.ts";
-import { registerRun, removeRun } from "../fleet/resources.ts";
+import { capacityFor, registerRun, removeRun } from "../fleet/resources.ts";
 import { headlessCommand } from "../harness/harness.ts";
 import { deliverOutbox, queueOutbox } from "../jobs/jobs.ts";
 import { addInboxItem } from "../records/inbox.ts";
@@ -71,20 +71,21 @@ function postOutcome(run: JawanRun): void {
 
 /**
  * The jawan's environment: the supervisor's, marked as a jawan run. One code folder, one build folder: a jawan
- * builds into its checkout's own build folder, so an inherited `CARGO_TARGET_DIR` is dropped, and parallel builds in a
- * shared clone are capped with `CARGO_BUILD_JOBS` at half the cores (an inherited cap is kept).
+ * builds into its checkout's own build folder, so an inherited `CARGO_TARGET_DIR` is dropped, and every cargo run is
+ * capped with `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs` (config/machine.json, default half the cores),
+ * the one setting for this machine; an inherited value never overrides it.
  */
 export function jawanEnv(
     base: Record<string, string | undefined>,
     runId: string,
-    cores: number,
+    cargoJobs: number,
 ): Record<string, string | undefined> {
     const env: Record<string, string | undefined> = { ...base, TOLI_ROLE: "jawan", TOLI_RUN_ID: runId };
     // A Claude Code lead exports these; a nested `claude -p` must start as its own top-level session.
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
     delete env.CARGO_TARGET_DIR;
-    if (!env.CARGO_BUILD_JOBS) env.CARGO_BUILD_JOBS = String(Math.max(1, Math.floor(cores / 2)));
+    env.CARGO_BUILD_JOBS = String(cargoJobs);
     return env;
 }
 
@@ -108,7 +109,7 @@ export async function superviseRun(id: string): Promise<void> {
         startedAt: initial.startedAt,
         title: `jawan ${initial.harness}${initial.task === null ? "" : ` ${initial.task}`}`,
     });
-    const env = jawanEnv(process.env, id, availableParallelism());
+    const env = jawanEnv(process.env, id, capacityFor(machine, availableParallelism()).cargoJobs);
     const logFd = openSync(initial.logPath, "a");
     let timedOut = false;
     try {
