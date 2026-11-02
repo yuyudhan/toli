@@ -24,6 +24,8 @@ one. See docs/releasing.md.
 - `bin/toli pr create` on GitLab passes `--head` to `glab mr create`, so the source project is looked up on the
   forge host (`forgeHost`, glab config) instead of the git remote's ssh host (`gitlab-ssh.*`).
 - `bin/toli commit -m a -m b` keeps every `-m`, joined as paragraphs like `git commit`, instead of only the last.
+- CI's coverage step passes again (it failed on v0.2.1 while every test passed): the jawan environment builder moved
+  to `src/jawans/env.ts`, so its tests no longer load the outcome delivery code in-process.
 
 ## v0.2.1 - 2026-11-02
 
