@@ -4,6 +4,21 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.2.1 - unreleased
+
+### Changed
+
+- One code folder, one build folder (AGENTS.md hard rule 5): every jawan builds and tests in the checkout it works
+  in, into its normal build folder; no private `CARGO_TARGET_DIR`, `/tmp` target, or scratch copy of the code. The
+  brief and verify-brief templates and the dispatch skill say so, and `bin/toli spawn` starts jawans without an
+  inherited `CARGO_TARGET_DIR` and with `CARGO_BUILD_JOBS` capped at half the machine's cores (an inherited cap is
+  kept).
+
+### Fixed
+
+- The test suite removes the temporary directories its tests create once the run ends, instead of leaving them in
+  the system temp folder.
+
 ## v0.2.0 - 2026-10-30
 
 ### Added
