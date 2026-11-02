@@ -172,6 +172,25 @@ describe("run records", () => {
         expect(readdirSync(runs)).toEqual([]);
     });
 
+    test("exec hands the issuing machine and task to the run, so a push in it is logged as theirs", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        box.stub("omp", `echo "by=$TOLI_ISSUED_BY task=\${TOLI_ISSUED_TASK-unset}"`);
+        const run = (args: string[], env: Record<string, string> = {}): string =>
+            box.ok(["exec", ...args], { env: { ...ENV, ...env }, stdin: "push it\n" });
+        expect(run(["--from", "m2", "--task", "T4"])).toBe("by=m2 task=T4");
+        // No --task: an inherited TOLI_ISSUED_TASK must not leak into the run.
+        expect(run(["--from", "m2"], { TOLI_ISSUED_TASK: "T99" })).toBe("by=m2 task=unset");
+        expect(box.toli(["exec", "--task", "../x"], { env: ENV, stdin: "x\n" }).stderr).toContain(
+            'invalid task name "../x"',
+        );
+    });
+
+    test("remote --task passes the coordinator's task to exec on the target", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        box.ok(["remote", "m2", "push ujjwal/overnight", "--task", "T118"], { env: ENV });
+        expect(sshLog(box)).toContain("exec --from m1 --task T118");
+    });
+
     test("only records whose pid is alive count; dead ones are deleted", () => {
         const box = fleet(remoteSnapshot("m2"));
         const runs = join(box.root, "state", "runs");

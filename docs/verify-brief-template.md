@@ -59,7 +59,8 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
   `bin/toli commit <project> -m "<message following the project's conventions>" -- <paths...>` (per-task
   workspaces: `bin/toli commit <project> --task <T-id> ...`), then:
     - same-branch: `bin/toli task done <T-id> --commit <sha> --note "verified: <one line>"`.
-    - per-task, with Push / PR granted above: `bin/toli push <project> --task <T-id>`, then
+    - per-task, with Push / PR granted above: `bin/toli push <project> --task <T-id> --word "<the Push / PR line
+above>"` (it logs the push in this machine's `data/pushes.jsonl`), then
       `bin/toli pr create <project> --task <T-id> --title "<title>" --body-file <file>` (it targets the task's base
       branch), then `bin/toli task done <T-id> --commit <sha> --note "verified: <full PR/MR URL>"`. A push-only grant
       pushes and then holds for the PR, as below.

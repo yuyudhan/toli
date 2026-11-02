@@ -21,6 +21,7 @@ import { loadBacklog, type Task } from "./backlog.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
 import { type Needs, needsQueue, renderNeeds, takeStaleHolds } from "./needs.ts";
 import { type NextAction, nextActions } from "./next.ts";
+import { type PushRecord, pushLine, recentPushes } from "./push-log.ts";
 
 export type ProjectDigest = {
     name: string;
@@ -50,6 +51,8 @@ export type Digest = {
     runningJobs: { name: string; runId: string; via: string; startedAt: string }[];
     jobResults: JobResult[];
     inbox: InboxItem[];
+    /** This machine's pushes of the last week, newest first, including those run here for another machine. */
+    pushes?: PushRecord[];
     reports: ReportEntry[];
     /** Jawans started with `bin/toli spawn` that are still running. */
     jawanRuns?: JawanRun[];
@@ -140,6 +143,7 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
         jobResults,
         inbox,
         reports: recentReports(),
+        pushes: recentPushes(),
         jawanRuns: runs,
         next: nextActions({
             projects,
@@ -245,6 +249,12 @@ function render(digest: Digest, notices: readonly string[] = [], resurface: Read
             : digest.reports.map((report) => `  ${report.modified} ${report.path}`)),
     );
     // Fleet digests from machines on an older toli lack the fields below.
+    const pushes = digest.pushes ?? [];
+    lines.push(
+        "",
+        `recent pushes (${pushes.length}):`,
+        ...(pushes.length === 0 ? ["  none"] : pushes.map((entry) => `  ${pushLine(entry)}`)),
+    );
     const runs = digest.jawanRuns ?? [];
     lines.push(
         "",

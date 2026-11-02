@@ -65,7 +65,11 @@ bitbucket.org login in the git credential helper. `bin/toli doctor` and `bin/tol
 
     bin/toli forge <project> [--json]                  # forge, host, repo path, CLI/credential readiness
     bin/toli branch <project> <branch>                 # create a new work branch in the clone and switch to it
-    bin/toli push <project> [--task T<n>]              # git push -u origin <current branch>; never forced
+    bin/toli push <project> [--task T<n>] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+                                                       # git push -u origin <current branch>; never forced; logged in
+                                                       # data/pushes.jsonl, shown in bin/toli digest
+    bin/toli push-log add <project> [--by <machine>] [--for T<n>] [--word "..."]   # log a raw git push made here
+    bin/toli push-log list [--json]
     bin/toli pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
     bin/toli pr status <project> [<id>] [--task T<n>] [--json]   # state, mergeable, CI/pipeline, URL
     bin/toli pr list <project> [--json]

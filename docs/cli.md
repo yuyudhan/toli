@@ -88,7 +88,9 @@ default 7) once.
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
     forge <project> [--json]
-    push <project> [--task T<n>]
+    push <project> [--task T<n>] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+    push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
+    push-log list [--json]
     pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
     pr status <project> [<id>] [--task T<n>] [--json] | list <project> [--json]
     pr merge <project> <id> [--method merge|squash|rebase]
@@ -102,6 +104,9 @@ default 7) once.
   ([projects.md](projects.md#workspace-strategy)).
 - `forge`, `push`, `pr`: GitHub, GitLab, and Bitbucket Cloud; never forced, and only on your word or a standing
   grant ([delivery.md](delivery.md#forges-push-and-pull-requests)).
+- `push` logs each push that moved origin's branch in this machine's `data/pushes.jsonl` (old..new sha, the issuing
+  machine and task, the owner's quoted word; inside `exec`, the issuing machine and task by default), and `digest`
+  shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog.
 
 ### Jawans and harnesses
 
@@ -160,7 +165,7 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     fleet status [--json]
     pick [--project <name>] [--json]
     exec [--from <machine>] [--task <id>] (prompt on stdin)
-    remote <machine|auto> "<prompt>" [--project <name>]
+    remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>]
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.

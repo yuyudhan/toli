@@ -5,8 +5,12 @@ Jawan brief template. Sardar fills this in for every task before spawning a jawa
 brief is the jawan's entire context: it cannot see the conversation with Malik. Copy the whole file, replace each
 `<...>`, drop this comment, and keep the Rules section unchanged (the one exception: a brief that carries out a push,
 PR, merge, or tag replaces the "Never push" line with Malik's word for that action, quoted verbatim, or, for a push
-or PR/MR only, the project's standing grant from `bin/toli project list --json`). The first line
-`TOLI_BRIEF v1` must stay the first line of every brief: AGENTS.md uses it to tell jawans apart from Sardar.
+or PR/MR only, the project's standing grant from `bin/toli project list --json`). A push brief also says how to
+record the push where it runs: `bin/toli push <project> [--task <T-id>] --by <this machine> --for <T-id> --word
+"<Malik's word>"`, run in the toli checkout of the machine whose clone pushes (over ssh for another machine), logs it in
+that machine's `data/pushes.jsonl` and its `bin/toli digest`; after a raw `git push` there, the jawan runs
+`bin/toli push-log add <project> --by <this machine> --for <T-id> --word "<Malik's word>"` on that machine. The first
+line `TOLI_BRIEF v1` must stay the first line of every brief: AGENTS.md uses it to tell jawans apart from Sardar.
 Independent verification of ship work uses docs/verify-brief-template.md.
 -->
 

@@ -30,6 +30,7 @@ import {
 import { runHook, seedLocal } from "../helpers/local.ts";
 import { headlessOmpArgs } from "../jobs/tick.ts";
 import { loadProjects } from "../projects/projects.ts";
+import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
 import { noCandidateText, pickMachine } from "./pick.ts";
 import { registerRun, removeRun } from "./resources.ts";
@@ -133,7 +134,10 @@ function runTitle(prompt: string): string {
 const EXEC_MAX_TIME = "60m";
 const EXEC_KILL_MS = 65 * 60 * 1000;
 
-/** `toli exec`: run the stdin prompt in headless omp here, counted as load via a run record for its lifetime. */
+/**
+ * `toli exec`: run the stdin prompt in headless omp here, counted as load via a run record for its lifetime. The run
+ * carries the issuing machine and task in its environment, so a `bin/toli push` in it is logged as theirs.
+ */
 export async function execCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { values: ["from", "task"] });
     args.maxPositional(0);
@@ -141,30 +145,38 @@ export async function execCommand(argv: string[]): Promise<number> {
     if (prompt.trim() === "") throw new ToliError("exec needs the prompt on stdin");
     const machine = loadMachine();
     const from = requireName("machine", args.str("from") ?? machine.name);
+    const task = args.str("task") ?? null;
+    if (task !== null) requireName("task", task);
     const runId = `exec-${stamp()}-${process.pid}`;
     registerRun({
         runId,
         pid: process.pid,
         from,
-        task: args.str("task") ?? null,
+        task,
         startedAt: now().toISOString(),
         title: runTitle(prompt),
     });
     try {
-        return await runInherit(headlessOmpArgs(prompt, EXEC_MAX_TIME), { cwd: paths.root(), timeoutMs: EXEC_KILL_MS });
+        return await runInherit(headlessOmpArgs(prompt, EXEC_MAX_TIME), {
+            cwd: paths.root(),
+            timeoutMs: EXEC_KILL_MS,
+            env: { [ISSUED_BY_ENV]: from, [ISSUED_TASK_ENV]: task ?? undefined },
+        });
     } finally {
         removeRun(runId);
     }
 }
 
-/** `toli remote <machine|auto> "<prompt>" [--project <name>]`. */
+/** `toli remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>]`. */
 export async function remoteCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv, { values: ["project"] });
+    const args = new Args(argv, { values: ["project", "task"] });
     args.maxPositional(2);
     const requested = args.pos(0, "machine");
     const prompt = args.pos(1, "prompt");
     const projectName = args.str("project");
     if (projectName !== undefined) requireName("project", projectName);
+    const taskId = args.str("task");
+    if (taskId !== undefined) requireName("task", taskId);
     let targetName = requested;
     if (requested === "auto") {
         const pick = await pickMachine(projectName);
@@ -200,7 +212,13 @@ export async function remoteCommand(argv: string[]): Promise<number> {
     }
     if (code === 0) {
         const result = run(
-            [...sshArgs(target.ssh, 15), remoteToliCommand(target.root, `exec --from ${shellQuote(from)}`)],
+            [
+                ...sshArgs(target.ssh, 15),
+                remoteToliCommand(
+                    target.root,
+                    `exec --from ${shellQuote(from)}${taskId === undefined ? "" : ` --task ${shellQuote(taskId)}`}`,
+                ),
+            ],
             {
                 stdin: remotePrompt(from, target.name, prompt, projectName),
                 timeoutMs: EXEC_KILL_MS + 60_000,

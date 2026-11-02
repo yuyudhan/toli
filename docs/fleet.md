@@ -59,7 +59,7 @@ only steers where work goes. When no machine is available, the lead queues the t
 ## Running work on another machine
 
     bin/toli remote auto "<prompt>" --project <p>
-    bin/toli remote <machine> "<prompt>" [--project <p>]
+    bin/toli remote <machine> "<prompt>" [--project <p>] [--task T<n>]
 
 `remote auto` prints `local` when this machine wins `pick` (the lead then dispatches jawans here). Otherwise it runs
 `bin/toli project ensure` on the target when the project's URL is known here (clone and register if needed), then
