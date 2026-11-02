@@ -21,6 +21,7 @@ import { memoryCommand } from "./records/memory.ts";
 import { migrateCommand } from "./records/migrate.ts";
 import { needsCommand } from "./records/needs.ts";
 import { pruneCommand } from "./records/prune.ts";
+import { pushLogCommand } from "./records/push-log.ts";
 import { wakeCommand } from "./records/wake.ts";
 import { runtimeCommand } from "./release/runtime.ts";
 import { updateCommand } from "./release/update-check.ts";
@@ -54,7 +55,9 @@ const USAGE = `usage: bin/toli <command> [args]
   workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
   self sync [--json] | status [--json]
   forge <project> [--json]
-  push <project> [--task T<n>]
+  push <project> [--task T<n>] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+  push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
+  push-log list [--json]
   pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
   pr status <project> [<id>] [--task T<n>] [--json] | list <project> [--json]
   pr merge <project> <id> [--method merge|squash|rebase]
@@ -74,7 +77,7 @@ const USAGE = `usage: bin/toli <command> [args]
   fleet status [--json]
   pick [--project <name>] [--json]
   exec [--from <machine>] [--task <id>] (prompt on stdin)
-  remote <machine|auto> "<prompt>" [--project <name>]
+  remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>]
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
         [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--json]
@@ -128,6 +131,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "push":
                 await pushCommand(rest);
+                return 0;
+            case "push-log":
+                pushLogCommand(rest);
                 return 0;
             case "pr":
                 await prCommand(rest);

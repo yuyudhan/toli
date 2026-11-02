@@ -82,6 +82,8 @@ export const paths = {
     /** Remote run outputs with no project; project runs go to projectRunsDir. */
     remoteDir: () => join(repoRoot(), "data", "remote"),
     session: () => join(repoRoot(), "state", "session.json"),
+    /** One JSON line per push this machine's clones made, including pushes run here for another machine. */
+    pushLog: () => join(repoRoot(), "data", "pushes.jsonl"),
     jobsState: () => join(repoRoot(), "state", "jobs.json"),
     acks: () => join(repoRoot(), "state", "acks.json"),
     pruneState: () => join(repoRoot(), "state", "prune.json"),

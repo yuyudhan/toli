@@ -12,6 +12,12 @@ one. See docs/releasing.md.
   the branch tip (`git merge-tree`), with the usual checks (secrets, lock files, reverts, branch moved meanwhile). It
   refuses a conflicted merge, a ref already merged, local changes to the files the merge changes, and named paths
   the merge also changes; on success the merged files are checked out in the index and working tree.
+- A push log: `bin/toli push` records every push that moves origin's branch in the pushing machine's
+  `data/pushes.jsonl` (time, project, branch, old..new sha, issuing machine, task, the owner's quoted word via
+  `--by`/`--for`/`--word`), and `bin/toli digest` lists the last week's under "recent pushes". A push run on one
+  machine for another (over ssh, or through `bin/toli remote ... --task <id>`, whose `exec` hands the issuing machine
+  and task to the run) no longer looks unexplained there. `bin/toli push-log add` records a raw `git push`;
+  `bin/toli push-log list` shows the log. The toli-deliver skill and brief templates say how to use it.
 
 ### Fixed
 

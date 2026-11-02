@@ -26,6 +26,25 @@ turn, and relays the result.
 - Never discard uncommitted work: no `git reset --hard`, `git checkout -- .`, `git stash`, `git clean`, branch
   deletion, or force push. If git state is in the way, the jawan stops and reports; ask Malik.
 - No AI co-author trailers; `bin/toli commit` strips them. Never put "Malik" in commit messages or PR bodies.
+- Every push leaves a note on the machine whose clone pushed: `bin/toli push` logs it in that machine's
+  `data/pushes.jsonl` (time, project, branch, old..new sha, issuing machine, task, Malik's quoted word) and its
+  `bin/toli digest` lists the last week's under "recent pushes". So a jawan there never mistakes it for an
+  unexplained push.
+
+## Pushing on another machine
+
+When the clone that pushes is on another fleet machine (the push runs over ssh, or via `bin/toli remote <machine>
+... --task <id>`), the brief has the jawan record the push in that machine's toli checkout, quoting Malik's word:
+
+    ssh <host> 'cd <toli root> && bin/toli push <project> --by <this machine> --for <id> --word "<Malik'\''s word>"'
+
+A raw `git push` there (e.g. `--no-verify` on Malik's word) is followed at once by
+
+    ssh <host> 'cd <toli root> && bin/toli push-log add <project> --by <this machine> --for <id> --word "<...>"'
+
+which takes the branch from the clone and old..new from `origin/<branch>`'s reflog (`--branch`/`--old`/`--new`
+override). Inside a `bin/toli exec` run (what `bin/toli remote` starts) `--by`/`--for` default to the issuing
+machine and task.
 
 ## Mode: commit (default)
 
@@ -50,7 +69,7 @@ The verifier brief (`docs/verify-brief-template.md`) fills its Workspace section
 - standing grant `push+pr`, or Malik's word for this change quoted: the verifier commits, then runs
 
         bin/toli commit <project> --task <id> -m "<message>" -- <paths...>
-        bin/toli push <project> --task <id>
+        bin/toli push <project> --task <id> --word "<Malik's word, or the standing grant>"
         bin/toli pr create <project> --task <id> --title "<title>" --body-file <file> [--draft]
         bin/toli task done <id> --commit <sha> --note "<full PR/MR URL>"
 
@@ -79,7 +98,7 @@ need his word for the change.
 4. Dispatch a `sonic` jawan whose brief quotes his word and runs (readiness first with `bin/toli forge <project>`;
    works for GitHub, GitLab incl. self-hosted, and Bitbucket Cloud):
 
-        bin/toli push <project>
+        bin/toli push <project> --word "<Malik's word>"
         bin/toli pr create <project> --title "<title>" --body-file <file> [--base <branch>] [--draft]
         bin/toli task done <id> --commit <sha> --note "<full PR URL>"
 
