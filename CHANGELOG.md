@@ -6,6 +6,11 @@ one. See docs/releasing.md.
 
 ## v0.2.1 - unreleased
 
+### Added
+
+- `bin/toli doctor` on a worker reports results waiting in `state/outbox/` for the coordinator (count and age of the
+  oldest), so a worker whose results stopped reaching the coordinator shows a warning instead of staying silent.
+
 ### Changed
 
 - One code folder, one build folder (AGENTS.md hard rule 5): every jawan builds and tests in the checkout it works

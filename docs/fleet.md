@@ -10,7 +10,10 @@ all of them together form the paltan. The lead uses whichever machine is free.
   in its inbox.
 - **Worker**: has some projects cloned and runs their work and scheduled jobs. Every job result and remote-run
   outcome is also sent to the coordinator's inbox; when the coordinator is unreachable, results wait in
-  `state/outbox/` and the per-minute ticker retries them.
+  `state/outbox/` and the per-minute ticker retries them. On a worker, `bin/toli doctor` warns while results wait
+  there; a backlog that does not drain means `ssh <coordinator ssh> true` fails from the worker. When the
+  coordinator's ssh name changes (a VPN peer re-registered under a new name), re-run `bin/toli init` on every worker
+  with the new `--coordinator-ssh` and update the coordinator's entry in each `config/fleet.json`.
 
 Set the role once per machine (the "set up toli" flow asks for it, [setup.md](setup.md)):
 

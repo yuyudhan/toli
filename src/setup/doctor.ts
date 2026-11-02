@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { isGitRepo } from "../core/git.ts";
@@ -98,6 +100,26 @@ function forgeChecks(): Check[] {
 }
 
 /**
+ * A worker's results wait in `state/outbox/` while its coordinator is unreachable; the minute tick retries them. A
+ * backlog means results are not reaching the coordinator (wrong `coordinator.ssh`, ssh key, host key, network).
+ */
+function outboxCheck(coordinatorSsh: string): Check {
+    const dir = paths.outboxDir();
+    // Queued items, plus ones a tick has claimed for sending (`<id>.json.sending-<pid>`).
+    const queued = existsSync(dir) ? readdirSync(dir).filter((file) => /\.json(\.sending-\d+)?$/.test(file)) : [];
+    const count = queued.length;
+    if (count === 0) return { level: "ok", name: "outbox", detail: "no results waiting for the coordinator" };
+    const oldestMs = Math.min(...queued.map((file) => statSync(join(dir, file)).mtimeMs));
+    const minutes = Math.max(0, Math.round((Date.now() - oldestMs) / 60_000));
+    const age = minutes < 120 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
+    return {
+        level: "warn",
+        name: "outbox",
+        detail: `${count} result${count === 1 ? "" : "s"} waiting in state/outbox/ (oldest ${age}): check \`ssh ${coordinatorSsh} true\` works; the minute tick retries`,
+    };
+}
+
+/**
  * One check per harness CLI: installed, version, login. omp is required (scheduled jobs run in headless omp);
  * harnesses config/machine.json routes jawans to warn when missing or logged out; the rest are optional.
  * Also checks the per-harness shims are in sync with their single source (.omp, AGENTS.md).
@@ -180,6 +202,7 @@ export async function runChecks(): Promise<Check[]> {
                 ? ` -> coordinator ${machine.coordinator.ssh}:${machine.coordinator.root}`
                 : "";
             checks.push({ level: "ok", name: "machine", detail: `${machine.name} (${machine.role})${coordinator}` });
+            if (machine.coordinator) checks.push(outboxCheck(machine.coordinator.ssh));
         }
         machineOk = true;
     } catch (error) {

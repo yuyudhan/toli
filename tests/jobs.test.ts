@@ -170,6 +170,16 @@ describe("worker outbox", () => {
         expect(readdirSync(join(box.root, "state", "outbox")).length).toBe(1);
         expect(existsSync(log)).toBe(false);
 
+        type DoctorCheck = { level: string; name: string; detail: string };
+        const outboxCheck = (): DoctorCheck | undefined =>
+            (JSON.parse(box.toli(["doctor", "--json"]).stdout) as DoctorCheck[]).find(
+                (check) => check.name === "outbox",
+            );
+        const pending = outboxCheck();
+        expect(pending?.level).toBe("warn");
+        expect(pending?.detail).toContain("1 result waiting in state/outbox/");
+        expect(pending?.detail).toContain("ssh coord true");
+
         rmSync(flag);
         box.ok(["job", "tick"]);
         box.ok(["job", "tick"]);
@@ -178,5 +188,10 @@ describe("worker outbox", () => {
         expect(delivered).toContain("bin/toli inbox add --from w1 --title 'job nightly'");
         expect(delivered).toContain("report body");
         expect(readdirSync(join(box.root, "state", "outbox")).length).toBe(0);
+        expect(outboxCheck()).toEqual({
+            level: "ok",
+            name: "outbox",
+            detail: "no results waiting for the coordinator",
+        });
     });
 });
