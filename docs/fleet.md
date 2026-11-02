@@ -45,6 +45,12 @@ to `max(1, floor(cpus / 4))`):
 { "capacity": { "maxRuns": 2, "maxLoadPerCpu": 0.8, "minMemAvailableMB": 2048, "minDiskFreeGB": 5 } }
 ```
 
+`capacity.cargoJobs` (default `max(1, floor(cpus / 2))`) is the machine's one cap on parallel compile jobs per cargo
+run: `bin/toli spawn` sets every jawan's `CARGO_BUILD_JOBS` to it, and `[build] jobs` in `~/.cargo/config.toml`
+holds the same number so native subagents and hand-run cargo get it too (`bin/toli doctor` warns when the two
+differ). One shared build folder runs one cargo build at a time (Cargo's lock), so the cap is per build, not split
+across jawans; leave cores for the desktop.
+
 `pick` scores each available machine by min(cpu headroom, memory headroom) minus its share of busy run slots. Within
 0.1 of the best it prefers this machine, then one that already has the clone, then name order. A machine that is
 asleep, unreachable, or busy is skipped. Nothing is ever locked or refused because a machine is busy: availability

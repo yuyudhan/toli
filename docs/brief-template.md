@@ -111,9 +111,13 @@ task needs, and never revert or reformat changes you did not make.
 - One code folder, one build folder: build and test in the workspace path above, into its normal build folder
   (`target/`, `node_modules/`, `dist/`). Never a private `CARGO_TARGET_DIR` or other side build directory, a `/tmp`
   target, or a `git archive`/temporary copy of the code to verify "cleanly". Cargo's build-directory lock handles
-  other jawans' builds: wait for it, never work around it. Keep `CARGO_BUILD_JOBS` as set (`bin/toli spawn` caps it
-  at half the cores; in any other shared clone set it so yourself). Follow the project notes' cleanup rules (what
-  to delete after your last test run, disk limits) and leave no stray files outside the project path.
+  other jawans' builds: wait for it, never work around it. Build jobs have one cap per machine, `capacity.cargoJobs`
+  in config/machine.json (`bin/toli spawn` sets `CARGO_BUILD_JOBS` to it; ~/.cargo/config.toml `[build] jobs`
+  mirrors it for every other cargo run): never pass `-j` or set `CARGO_BUILD_JOBS` yourself. Use the project's own
+  check/test commands (project notes) unchanged, with no extra `RUSTFLAGS`, `--release`/`--profile`, or `--features`:
+  a different build setting in a shared build folder makes every other jawan rebuild. Follow the project notes'
+  cleanup rules (what to delete after your last test run, disk limits) and leave no stray files outside the project
+  path.
 - Work on toli itself (the toli repository, not a project): edit in place, in the toli checkout on `develop`; no
   worktrees. The live session runs an installed runtime, so half-edited files do not break it; `TOLI_DEV=1 bin/toli`
   runs your uncommitted code. Run `just check`, paste its tail, then land with
