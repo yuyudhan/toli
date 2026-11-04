@@ -13,6 +13,8 @@ export type CapacityConfig = {
     minDiskFreeGB?: number;
     /** Parallel compile jobs per cargo run (`CARGO_BUILD_JOBS` for jawans, mirrored in ~/.cargo/config.toml). */
     cargoJobs?: number;
+    /** Automatic continuations per task chain when a jawan run hits its time limit without a report (default 3). */
+    autoResume?: number;
 };
 
 /** Retention for `bin/toli prune`, in days unless named otherwise; any field left out uses its default. */

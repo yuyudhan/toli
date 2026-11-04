@@ -1,20 +1,19 @@
 // `bin/toli spawn`: run one jawan on any harness as a detached background process, so the lead never waits.
 //
 // spawn validates the brief, writes the run record (state/jawans/<runId>.json, src/jawans/runs.ts) and the run dir (the
-// project's data/projects/<p>/runs/<runId>/, or state/jawans/<runId>/ without a project), starts a detached
-// supervisor (`bin/toli run supervise <runId>`, src/jawans/supervise.ts) and returns at once.
-import { spawn as spawnChild } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+// project's data/projects/<p>/runs/<runId>/, or state/jawans/<runId>/ without a project), and either starts a detached
+// supervisor (`bin/toli run supervise <runId>`, src/jawans/supervise.ts) or, with every jawan slot busy
+// (capacity.maxRuns), leaves the run queued to start when one frees (src/jawans/launch.ts). It returns at once.
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, printJson, ToliError, warn, writeJsonAtomic } from "../core/util.ts";
+import { out, printJson, ToliError, warn } from "../core/util.ts";
 import {
     defaultHarness,
     type Harness,
     harnessConfig,
-    headlessCommand,
     parseHarness,
     requireInstalled,
     WORK_TYPES,
@@ -22,19 +21,13 @@ import {
 } from "../harness/harness.ts";
 import { findProject } from "../projects/projects.ts";
 import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
-import { loadBacklog, updateTask } from "../records/backlog.ts";
-import { activeRuns, type JawanRun, killRun, listRuns, loadRun, runLine, updateRun } from "./runs.ts";
+import { loadBacklog } from "../records/backlog.ts";
+import { jawanSlots, startOrQueue } from "./launch.ts";
+import { activeRuns, type JawanRun, killRun, listRuns, loadRun, runLine } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
 const DEFAULT_MAX_MINUTES = 120;
-/** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
-const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
-
-function newRunId(at: Date): string {
-    const compact = at.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-    return `j-${compact}-${crypto.randomUUID().slice(0, 4)}`;
-}
 
 export type SpawnOptions = {
     harness?: Harness | undefined;
@@ -45,6 +38,8 @@ export type SpawnOptions = {
     work?: WorkType | undefined;
     cwd?: string | undefined;
     maxMinutes?: number | undefined;
+    /** Start even when every jawan slot is busy (the lead's explicit `--now`). */
+    now?: boolean | undefined;
 };
 
 function readBrief(path: string): string {
@@ -96,9 +91,10 @@ function plan(options: SpawnOptions): {
 }
 
 /**
- * Start one jawan run detached and return its record (status `starting`, supervisor pid set). A non-scout task first
- * gets its workspace per the project's strategy (branch switched or worktree added), the jawan runs there, and the
- * brief gains a Workspace block naming the path and branch.
+ * Record one jawan run and return it: started detached (status `starting`, supervisor pid set) when a jawan slot is
+ * free or `now` is set, otherwise `queued` until one frees. A non-scout task first gets its workspace per the
+ * project's strategy (branch switched or worktree added), the jawan runs there, and the brief gains a Workspace block
+ * naming the path and branch.
  */
 export function spawnJawan(options: SpawnOptions): JawanRun {
     const resolved = plan(options);
@@ -113,75 +109,20 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
         resolved.cwd = workspace.path;
         resolved.brief = `${resolved.brief.trimEnd()}\n${workspaceBrief(resolved.project, resolved.task, workspace)}`;
     }
-    const maxMinutes = options.maxMinutes ?? DEFAULT_MAX_MINUTES;
-    const startedAt = now();
-    const id = newRunId(startedAt);
-    const runDir =
-        resolved.project === null ? join(paths.jawansDir(), id) : join(paths.projectRunsDir(resolved.project), id);
-    mkdirSync(runDir, { recursive: true });
-    const briefPath = join(runDir, "brief.md");
-    writeFileSync(briefPath, resolved.brief);
-    const command = headlessCommand(resolved.harness, {
-        brief: resolved.brief,
-        cwd: resolved.cwd,
-        root: paths.root(),
-        model: resolved.model ?? undefined,
-        maxMinutes,
-    });
-    const run: JawanRun = {
-        id,
-        harness: resolved.harness,
-        task: resolved.task,
-        project: resolved.project,
-        work: resolved.work,
-        model: resolved.model,
-        cwd: resolved.cwd,
-        runDir,
-        briefPath,
-        logPath: join(runDir, "output.log"),
-        command: [
-            ...command.argv.map((word) => (word === resolved.brief ? "<brief>" : word)),
-            ...(command.stdin === null ? [] : ["< brief"]),
-        ].join(" "),
-        maxMinutes,
-        status: "starting",
-        supervisorPid: null,
-        pid: null,
-        exitCode: null,
-        signal: null,
-        startedAt: startedAt.toISOString(),
-        endedAt: null,
-        inbox: null,
-        error: null,
-    };
-    mkdirSync(paths.jawansDir(), { recursive: true });
-    writeJsonAtomic(paths.jawanRecord(id), run);
-    const supervisorLog = openSync(join(runDir, "supervisor.log"), "a");
-    try {
-        const supervisor = spawnChild(process.execPath, [TOLI_SCRIPT, "run", "supervise", id], {
-            cwd: paths.root(),
-            detached: true,
-            stdio: ["ignore", supervisorLog, supervisorLog],
-        });
-        supervisor.unref();
-        if (supervisor.pid === undefined) throw new ToliError(`could not start the supervisor for ${id}`);
-        const pid = supervisor.pid;
-        const task = resolved.task;
-        // The task names its jawan, so the digest can flag active tasks nobody is working on.
-        if (task !== null)
-            updateTask(task, (entry) => {
-                if (entry.status === "queued" || entry.status === "active") {
-                    entry.status = "active";
-                    entry.startedAt ??= startedAt.toISOString();
-                    entry.agent = id;
-                }
-            });
-        return updateRun(id, (record) => {
-            record.supervisorPid = pid;
-        });
-    } finally {
-        closeSync(supervisorLog);
-    }
+    return startOrQueue(
+        {
+            harness: resolved.harness,
+            task: resolved.task,
+            project: resolved.project,
+            work: resolved.work,
+            model: resolved.model,
+            cwd: resolved.cwd,
+            maxMinutes: options.maxMinutes ?? DEFAULT_MAX_MINUTES,
+            baseBrief: resolved.brief,
+            extra: "",
+        },
+        { now: options.now === true },
+    );
 }
 
 function parseWork(value: string | undefined): WorkType | undefined {
@@ -191,10 +132,10 @@ function parseWork(value: string | undefined): WorkType | undefined {
     return value as WorkType;
 }
 
-/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--work w] [--cwd d] [--max-time min]`. */
+/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--work w] [--cwd d] [--max-time min] [--now]`. */
 export function spawnCommand(argv: string[]): void {
     const args = new Args(argv, {
-        booleans: ["json"],
+        booleans: ["json", "now"],
         values: ["harness", "brief", "task", "project", "model", "work", "cwd", "max-time"],
     });
     args.maxPositional(0);
@@ -210,14 +151,20 @@ export function spawnCommand(argv: string[]): void {
         work: parseWork(args.str("work")),
         cwd: args.str("cwd"),
         maxMinutes: parseMinutes(args.str("max-time")),
+        now: args.bool("now"),
     });
     if (args.bool("json")) {
         printJson(run);
         return;
     }
-    out(
-        `spawned ${run.id}: ${run.harness} in ${run.cwd} (supervisor pid ${run.supervisorPid}); log ${relative(paths.root(), run.logPath)}`,
-    );
+    if (run.status === "queued")
+        out(
+            `queued ${run.id}: all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees (\`bin/toli runs\`). Log ${relative(paths.root(), run.logPath)}`,
+        );
+    else
+        out(
+            `spawned ${run.id}: ${run.harness} in ${run.cwd} (supervisor pid ${run.supervisorPid}); log ${relative(paths.root(), run.logPath)}`,
+        );
     out("The outcome arrives in the inbox (and the chat) when it finishes; `bin/toli run status <id>` meanwhile.");
 }
 
@@ -276,7 +223,9 @@ export async function runCommand(argv: string[]): Promise<void> {
             const args = new Args(rest);
             args.maxPositional(1);
             const run = killRun(args.pos(0, "run id"));
-            out(`killing ${run.id} (${run.harness}); its outcome is posted to the inbox when it stops`);
+            if (run.pid === null && run.supervisorPid === null)
+                out(`killed ${run.id} (${run.harness}) before it started`);
+            else out(`killing ${run.id} (${run.harness}); its outcome is posted to the inbox when it stops`);
             return;
         }
         case "supervise": {

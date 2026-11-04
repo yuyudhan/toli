@@ -54,7 +54,7 @@ Next block) and with `bin/toli wake`.
 ## Jawans on any harness: `bin/toli spawn`
 
     bin/toli spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>]
-                   [--model <m>] [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--json]
+                   [--model <m>] [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--json]
     bin/toli runs [--json] [--active]
     bin/toli run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
 
@@ -68,6 +68,23 @@ clone (`--task` names the project and is marked active with the run id as its ag
 `failed` or `killed` and posts the outcome to the inbox. The omp extension (and Claude's prompt hook) bring it into
 the lead's chat as a `[toli wake]` message. On a worker machine the outcome is also forwarded to the coordinator's
 inbox. Run records live in `state/jawans/<id>.json`.
+
+**Jawan slots.** A machine runs at most `capacity.maxRuns` spawned jawans at once (config/machine.json, default a
+quarter of the cores). `spawn` with every slot busy records the run as `queued` (shown by `bin/toli runs`) and
+returns; queued runs start oldest first as slots free, from the supervisor of each run that ends and from the minute
+tick (`bin/toli job tick`). `--now` starts the run regardless, for the lead's explicit use. `run kill` on a queued
+run cancels it.
+
+**Deadline and auto-resume.** When a run starts, its brief gains a `## Deadline (auto)` section: the wall-clock time
+its `--max-time` (default 120 minutes) ends it, and a request to write the report 10 minutes before (halfway for
+limits under 20 minutes). A run that used its limit (killed by the supervisor 10 minutes past it, or lasting at least
+95% of it, as omp's own `--max-time` exits 0 at the limit) and whose output holds nothing beyond harness warnings
+(`Warning: ...`, omp's `Working...`) is recorded `time-limit`, and a continuation starts on its own, or queues: the
+same task, project, cwd, harness, model and limit, and the original brief plus a `## RESUME (auto, N)` section naming
+the previous run, its log, and its uncommitted edits. The task names the continuation as its agent; the outcome of
+each run reaches the inbox as usual, the stopped one's with `continued by: <id>`. A chain gets at most
+`capacity.autoResume` continuations (default 3, 0 turns it off); after that an inbox item says the chain stopped.
+A run that ended with a report is never resumed.
 
 Headless commands (`src/harness/harness.ts`):
 

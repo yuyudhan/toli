@@ -99,6 +99,11 @@ export function requireInstalled(harness: Harness): string {
     return found;
 }
 
+/** The argv for one headless omp run of `prompt` in toli's `root` (scheduled jobs, `bin/toli exec`). */
+export function headlessOmpArgs(prompt: string, root: string, maxTime: string): string[] {
+    return ["omp", "-p", "--cwd", root, "--no-title", "--approval-mode", "yolo", "--max-time", maxTime, prompt];
+}
+
 export type HeadlessInput = {
     /** Full brief text; its first line is `TOLI_BRIEF v1`. */
     brief: string;

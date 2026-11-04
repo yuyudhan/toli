@@ -11,7 +11,12 @@ export default {
     name: "cli-docs",
     run(files) {
         if (!files.some(({ path }) => path === DOC || path.startsWith("src/"))) return [];
-        const help = spawnSync(join(ROOT, "bin/toli"), ["--help"], { cwd: ROOT, encoding: "utf8" });
+        // TOLI_DEV=1: the working tree's help, not the installed runtime's (a snapshot of the last commit).
+        const help = spawnSync(join(ROOT, "bin/toli"), ["--help"], {
+            cwd: ROOT,
+            encoding: "utf8",
+            env: { ...process.env, TOLI_DEV: "1" },
+        });
         if (help.status !== 0) throw new Error(`bin/toli --help exited ${help.status}: ${help.stderr}`);
         const documented = new Set(
             (files.find(({ path }) => path === DOC)?.text ?? readFileSync(join(ROOT, DOC), "utf8"))
