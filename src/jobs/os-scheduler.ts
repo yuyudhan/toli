@@ -77,11 +77,14 @@ export function bunPath(): string {
     return Bun.which("bun", { PATH: stablePath() }) ?? process.execPath;
 }
 
-/** PATH for the scheduled tick: the directories of every tool a job may call, resolved now. */
+/**
+ * PATH for the scheduled tick: the directories of every tool a job may call, resolved now. Jawans that the tick
+ * starts from the queue inherit it, so it covers their build tools too (cargo/rustc, just, node).
+ */
 export function schedulePath(): string {
     const path = stablePath();
     const dirs: string[] = [dirname(bunPath())];
-    for (const tool of ["omp", "git", "gh", "no-mistakes", "ssh"]) {
+    for (const tool of ["omp", "git", "gh", "no-mistakes", "ssh", "cargo", "just", "node"]) {
         const found = Bun.which(tool, { PATH: path });
         if (found) dirs.push(dirname(found));
     }
