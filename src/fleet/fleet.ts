@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { Args } from "../core/args.ts";
+import { Args, parseMinutes } from "../core/args.ts";
 import {
     fleetMachine,
     loadMachine,
@@ -131,12 +131,24 @@ function runTitle(prompt: string): string {
     return line.length > 80 ? `${line.slice(0, 77)}...` : line;
 }
 
-const EXEC_MAX_TIME = "60m";
-const EXEC_KILL_MS = 65 * 60 * 1000;
+/** Default `remote`/`exec` budget in minutes; omp gets `--max-time` and the run is killed `KILL_MARGIN_MINUTES` later. */
+const DEFAULT_EXEC_MAX_MINUTES = 180;
+const KILL_MARGIN_MINUTES = 5;
+/**
+ * `remote` hands its `--max-time` to `exec` through this variable rather than a flag, so dispatching to a machine on
+ * an older toli still works: its `exec` ignores the variable and keeps its own limit.
+ */
+const EXEC_MAX_MINUTES_ENV = "TOLI_EXEC_MAX_MINUTES";
+
+/** Milliseconds after which a run with an omp budget of `maxMinutes` is killed. */
+export function execKillMs(maxMinutes: number): number {
+    return (maxMinutes + KILL_MARGIN_MINUTES) * 60 * 1000;
+}
 
 /**
  * `toli exec`: run the stdin prompt in headless omp here, counted as load via a run record for its lifetime. The run
- * carries the issuing machine and task in its environment, so a `bin/toli push` in it is logged as theirs.
+ * carries the issuing machine and task in its environment, so a `bin/toli push` in it is logged as theirs. omp gets
+ * `TOLI_EXEC_MAX_MINUTES` minutes (default 180, set by `bin/toli remote --max-time`) and is killed 5 minutes later.
  */
 export async function execCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { values: ["from", "task"] });
@@ -144,6 +156,7 @@ export async function execCommand(argv: string[]): Promise<number> {
     const prompt = readStdin();
     if (prompt.trim() === "") throw new ToliError("exec needs the prompt on stdin");
     const machine = loadMachine();
+    const maxMinutes = parseMinutes(process.env[EXEC_MAX_MINUTES_ENV]) ?? DEFAULT_EXEC_MAX_MINUTES;
     const from = requireName("machine", args.str("from") ?? machine.name);
     const task = args.str("task") ?? null;
     if (task !== null) requireName("task", task);
@@ -157,9 +170,9 @@ export async function execCommand(argv: string[]): Promise<number> {
         title: runTitle(prompt),
     });
     try {
-        return await runInherit(headlessOmpArgs(prompt, EXEC_MAX_TIME), {
+        return await runInherit(headlessOmpArgs(prompt, `${maxMinutes}m`), {
             cwd: paths.root(),
-            timeoutMs: EXEC_KILL_MS,
+            timeoutMs: execKillMs(maxMinutes),
             env: { [ISSUED_BY_ENV]: from, [ISSUED_TASK_ENV]: task ?? undefined },
         });
     } finally {
@@ -167,9 +180,9 @@ export async function execCommand(argv: string[]): Promise<number> {
     }
 }
 
-/** `toli remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>]`. */
+/** `toli remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>]`. */
 export async function remoteCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv, { values: ["project", "task"] });
+    const args = new Args(argv, { values: ["project", "task", "max-time"] });
     args.maxPositional(2);
     const requested = args.pos(0, "machine");
     const prompt = args.pos(1, "prompt");
@@ -177,6 +190,7 @@ export async function remoteCommand(argv: string[]): Promise<number> {
     if (projectName !== undefined) requireName("project", projectName);
     const taskId = args.str("task");
     if (taskId !== undefined) requireName("task", taskId);
+    const maxMinutes = parseMinutes(args.str("max-time")) ?? DEFAULT_EXEC_MAX_MINUTES;
     let targetName = requested;
     if (requested === "auto") {
         const pick = await pickMachine(projectName);
@@ -217,11 +231,13 @@ export async function remoteCommand(argv: string[]): Promise<number> {
                 remoteToliCommand(
                     target.root,
                     `exec --from ${shellQuote(from)}${taskId === undefined ? "" : ` --task ${shellQuote(taskId)}`}`,
+                    { [EXEC_MAX_MINUTES_ENV]: String(maxMinutes) },
                 ),
             ],
             {
                 stdin: remotePrompt(from, target.name, prompt, projectName),
-                timeoutMs: EXEC_KILL_MS + 60_000,
+                // A minute past the target's own kill, so its exit (and output) still arrives.
+                timeoutMs: execKillMs(maxMinutes) + 60_000,
             },
         );
         sections.push(

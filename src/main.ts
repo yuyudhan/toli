@@ -77,7 +77,7 @@ const USAGE = `usage: bin/toli <command> [args]
   fleet status [--json]
   pick [--project <name>] [--json]
   exec [--from <machine>] [--task <id>] (prompt on stdin)
-  remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>]
+  remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>]
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
         [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--json]

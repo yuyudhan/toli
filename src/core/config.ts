@@ -89,7 +89,11 @@ export function sshArgs(host: string, connectTimeoutSeconds = 15): string[] {
 // install directories are often missing from PATH there and `bin/toli` (a `#!/usr/bin/env bun` script) fails.
 const REMOTE_PATH = 'PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"';
 
-/** Remote shell command that runs `bin/toli <command>` from `root`; `command` must already be shell-quoted. */
-export function remoteToliCommand(root: string, command: string): string {
-    return `export ${REMOTE_PATH} && cd ${shellQuote(root)} && bin/toli ${command}`;
+/**
+ * Remote shell command that runs `bin/toli <command>` from `root`, with `env` set for it; `command` must already be
+ * shell-quoted.
+ */
+export function remoteToliCommand(root: string, command: string, env: Record<string, string> = {}): string {
+    const assignments = Object.entries(env).map(([name, value]) => `${name}=${shellQuote(value)} `);
+    return `export ${REMOTE_PATH} && cd ${shellQuote(root)} && ${assignments.join("")}bin/toli ${command}`;
 }

@@ -58,15 +58,17 @@ only steers where work goes. When no machine is available, the lead queues the t
 
 ## Running work on another machine
 
-    bin/toli remote auto "<prompt>" --project <p>
-    bin/toli remote <machine> "<prompt>" [--project <p>] [--task T<n>]
+    bin/toli remote auto "<prompt>" --project <p> [--max-time <minutes>]
+    bin/toli remote <machine> "<prompt>" [--project <p>] [--task T<n>] [--max-time <minutes>]
 
 `remote auto` prints `local` when this machine wins `pick` (the lead then dispatches jawans here). Otherwise it runs
 `bin/toli project ensure` on the target when the project's URL is known here (clone and register if needed), then
-pipes the prompt to `bin/toli exec` there. `exec` runs the prompt in headless omp for up to an hour, under the
-remote-run rules: commit on the current branch only, never push, merge, open a PR, or ask questions; finish with the
-outcome and evidence. The output is saved in `data/projects/<p>/runs/` (or `data/remote/` without a project) and the
-outcome reaches the coordinator's inbox.
+pipes the prompt to `bin/toli exec` there. `exec` runs the prompt in headless omp for up to `--max-time` minutes
+(default 180) and kills it 5 minutes after that, under the remote-run rules: commit on the current branch only, never
+push, merge, open a PR, or ask questions; finish with the outcome and evidence. The output is saved in
+`data/projects/<p>/runs/` (or `data/remote/` without a project) and the outcome reaches the coordinator's inbox.
+`remote` hands the limit to `exec` in `TOLI_EXEC_MAX_MINUTES`, not a flag, so a target on an older toli still runs
+the prompt, under that toli's own limit (60 minutes) until it upgrades.
 
 `exec` and headless job runs leave a record in `state/runs/` while they run; that is what `activeRuns` counts.
 Remote runs can take a long time, so the lead always starts them in the background and their result arrives in the
