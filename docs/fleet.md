@@ -51,10 +51,16 @@ holds the same number so native subagents and hand-run cargo get it too (`bin/to
 differ). One shared build folder runs one cargo build at a time (Cargo's lock), so the cap is per build, not split
 across jawans; leave cores for the desktop.
 
+`capacity.maxRuns` is also a hard cap on `bin/toli spawn` jawans here: with that many running, a new spawn (or an
+automatic continuation) is queued and starts when one ends (`--now` overrides). `capacity.autoResume` (default 3)
+is how many automatic continuations a chain of runs stopped by their time limit without a report gets
+([harnesses.md](harnesses.md#jawans-on-any-harness-bintoli-spawn)).
+
 `pick` scores each available machine by min(cpu headroom, memory headroom) minus its share of busy run slots. Within
 0.1 of the best it prefers this machine, then one that already has the clone, then name order. A machine that is
-asleep, unreachable, or busy is skipped. Nothing is ever locked or refused because a machine is busy: availability
-only steers where work goes. When no machine is available, the lead queues the task and tells you.
+asleep, unreachable, or busy is skipped. Apart from the spawn queue above, nothing is locked or refused because a
+machine is busy: availability steers where work goes. When no machine is available, the lead queues the task and
+tells you.
 
 ## Running work on another machine
 

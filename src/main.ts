@@ -80,7 +80,7 @@ const USAGE = `usage: bin/toli <command> [args]
   remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>]
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
-        [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--json]
+        [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--json]
   runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   harness sync [--check] [--json] | status [--json]
   hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)

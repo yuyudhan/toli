@@ -4,8 +4,10 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, runCombined, ToliError } from "../core/util.ts";
 import { registerRun, removeRun } from "../fleet/resources.ts";
+import { headlessOmpArgs } from "../harness/harness.ts";
 import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
+import { drainQueue } from "../jawans/supervise.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
 import {
@@ -29,11 +31,6 @@ function log(line: string): void {
     appendFileSync(paths.tickLog(), `${now().toISOString()} ${line}\n`);
 }
 
-/** The argv for one headless omp run of `prompt` in this repo. */
-export function headlessOmpArgs(prompt: string, maxTime: string = HEADLESS_MAX_TIME): string[] {
-    return ["omp", "-p", "--cwd", paths.root(), "--no-title", "--approval-mode", "yolo", "--max-time", maxTime, prompt];
-}
-
 /**
  * Run a claimed job in headless omp, counted as load (a run record) while it runs; if the agent never called
  * `job finish`, record its captured output.
@@ -49,7 +46,7 @@ async function runHeadless(name: string, begun: BegunRun): Promise<string> {
     });
     let result: { code: number; output: string };
     try {
-        result = await runCombined(headlessOmpArgs(begun.prompt), {
+        result = await runCombined(headlessOmpArgs(begun.prompt, paths.root(), HEADLESS_MAX_TIME), {
             cwd: paths.root(),
             timeoutMs: HEADLESS_KILL_MS,
         });
@@ -136,6 +133,12 @@ export async function tick(): Promise<void> {
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
     for (const error of outbox.errors) log(`outbox: pending ${error}`);
     for (const note of failStaleRuns()) log(note);
+    // Queued jawan runs start as slots free; the finishing run's supervisor does this too, this catches the rest.
+    try {
+        for (const note of drainQueue()) log(note);
+    } catch (error) {
+        log(`queued jawan runs not started: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const session = liveSession();
     if (session) {
         log(`live session pid ${session.pid}: due jobs left to it`);

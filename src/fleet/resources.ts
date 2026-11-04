@@ -8,7 +8,19 @@ import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writeJsonAtomic } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 
-export type Capacity = Required<CapacityConfig>;
+/** The machine's load thresholds; `autoResume` is not one (see autoResumeLimit). */
+export type Capacity = Required<Omit<CapacityConfig, "autoResume">>;
+
+const DEFAULT_AUTO_RESUME = 3;
+
+/** `capacity.autoResume`: continuations per chain of time-limited runs (0 turns auto-resume off). */
+export function autoResumeLimit(machine: Machine): number {
+    const raw = machine.capacity?.autoResume;
+    if (raw === undefined) return DEFAULT_AUTO_RESUME;
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0)
+        throw new ToliError("config/machine.json capacity.autoResume must be a non-negative whole number");
+    return raw;
+}
 
 /** One machine's self-reported snapshot (`bin/toli resources --json`). */
 export type Resources = {

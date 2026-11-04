@@ -5,7 +5,11 @@ import { paths } from "../core/paths.ts";
 import { now, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import type { Harness, WorkType } from "../harness/harness.ts";
 
-export type RunStatus = "starting" | "running" | "done" | "failed" | "killed";
+/**
+ * `queued`: waiting for a free jawan slot (config/machine.json capacity.maxRuns). `time-limit`: stopped by its time
+ * limit without a report (src/jawans/limits.ts), which starts an automatic continuation.
+ */
+export type RunStatus = "queued" | "starting" | "running" | "done" | "failed" | "killed" | "time-limit";
 
 export type JawanRun = {
     id: string;
@@ -31,9 +35,25 @@ export type JawanRun = {
     /** Inbox item holding the outcome, once posted. */
     inbox: string | null;
     error: string | null;
+    /** When the run was queued for a free slot; absent when it started at once. */
+    queuedAt?: string;
+    /** Auto-resume chain: the run this one continues, and its place in the chain (1 for the first continuation). */
+    resumeOf?: string;
+    resumeCount?: number;
+    /** The continuation started (or queued) because this run hit its time limit without a report. */
+    resumedBy?: string;
 };
 
-export const ACTIVE: readonly RunStatus[] = ["starting", "running"];
+/** Waiting or in progress; queued runs have no supervisor yet. */
+export const ACTIVE: readonly RunStatus[] = ["queued", "starting", "running"];
+/** Holding one of the machine's jawan slots. */
+export const RUNNING: readonly RunStatus[] = ["starting", "running"];
+
+/** Milliseconds per minute of a run's time limit; `TOLI_RUN_MINUTE_MS` shortens it for tests. */
+export function runMinuteMs(): number {
+    const override = Number(process.env.TOLI_RUN_MINUTE_MS);
+    return Number.isInteger(override) && override > 0 ? override : 60_000;
+}
 
 export function loadRun(id: string): JawanRun {
     if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new ToliError(`invalid run id "${id}"`);
@@ -90,16 +110,26 @@ export function killGroup(pid: number, signal: NodeJS.Signals): void {
     }
 }
 
-/** Stop a running jawan; its supervisor still records the outcome (status killed) and posts it. */
+/**
+ * Stop a jawan. A running one is signalled and its supervisor still records the outcome (status killed) and posts it;
+ * a queued one is only marked killed, so it never starts.
+ */
 export function killRun(id: string): JawanRun {
     const before = loadRun(id);
     if (!ACTIVE.includes(before.status) && before.status !== "killed")
         throw new ToliError(`${id} is not running (status ${before.status})`);
     // A second kill of a run that ignored SIGTERM escalates.
     const signal: NodeJS.Signals = before.status === "killed" ? "SIGKILL" : "SIGTERM";
+    let wasQueued = false;
     const run = updateRun(id, (record) => {
+        if (record.status === "queued") {
+            wasQueued = true;
+            record.endedAt = now().toISOString();
+            record.error = "killed while queued; it never started";
+        }
         record.status = "killed";
     });
+    if (wasQueued) return run;
     if (run.pid !== null) killGroup(run.pid, signal);
     else if (run.supervisorPid !== null) killGroup(run.supervisorPid, signal);
     return run;

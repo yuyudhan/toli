@@ -27,8 +27,8 @@ import {
     writeJsonAtomic,
     writeTextAtomic,
 } from "../core/util.ts";
+import { headlessOmpArgs } from "../harness/harness.ts";
 import { runHook, seedLocal } from "../helpers/local.ts";
-import { headlessOmpArgs } from "../jobs/tick.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
@@ -170,7 +170,7 @@ export async function execCommand(argv: string[]): Promise<number> {
         title: runTitle(prompt),
     });
     try {
-        return await runInherit(headlessOmpArgs(prompt, `${maxMinutes}m`), {
+        return await runInherit(headlessOmpArgs(prompt, paths.root(), `${maxMinutes}m`), {
             cwd: paths.root(),
             timeoutMs: execKillMs(maxMinutes),
             env: { [ISSUED_BY_ENV]: from, [ISSUED_TASK_ENV]: task ?? undefined },

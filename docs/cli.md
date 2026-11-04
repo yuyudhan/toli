@@ -111,14 +111,16 @@ default 7) once.
 ### Jawans and harnesses
 
     spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
-          [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--json]
+          [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--json]
     runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
     harness sync [--check] [--json] | status [--json]
     hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
     guidance
     session start|end --pid <n>
 
-- `spawn` starts a jawan in the background on any harness and returns a run id; `runs` and `run` follow it.
+- `spawn` starts a jawan in the background on any harness and returns a run id; `runs` and `run` follow it. With
+  every jawan slot busy (`capacity.maxRuns`) the run is queued and starts when one frees; `--now` starts it anyway.
+  A run stopped by its time limit without a report is continued automatically (`capacity.autoResume`, default 3).
 - `harness sync` links skills and commands into every harness; `harness status` shows installed CLIs and logins.
 - `hook`, `guidance`, `session`: called by the harness integrations (Claude Code hooks, the omp extension), not by
   hand. `guidance` prints the lead reminder they inject; `session` registers the live lead session.
@@ -165,7 +167,7 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     fleet status [--json]
     pick [--project <name>] [--json]
     exec [--from <machine>] [--task <id>] (prompt on stdin)
-    remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>]
+    remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>]
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.
