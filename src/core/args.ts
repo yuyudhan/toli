@@ -115,3 +115,11 @@ export class Args {
         }
     }
 }
+
+/** A `--max-time <minutes>` value: a whole number of minutes, at least 1; undefined when the flag is absent. */
+export function parseMinutes(value: string | undefined): number | undefined {
+    if (value === undefined) return undefined;
+    const minutes = Number(value);
+    if (!Number.isInteger(minutes) || minutes < 1) throw new ToliError("--max-time must be a whole number of minutes");
+    return minutes;
+}

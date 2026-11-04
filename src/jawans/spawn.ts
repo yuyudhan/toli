@@ -6,7 +6,7 @@
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { Args } from "../core/args.ts";
+import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, ToliError, warn, writeJsonAtomic } from "../core/util.ts";
@@ -189,13 +189,6 @@ function parseWork(value: string | undefined): WorkType | undefined {
     if (!(WORK_TYPES as readonly string[]).includes(value))
         throw new ToliError(`--work must be one of ${WORK_TYPES.join(", ")}`);
     return value as WorkType;
-}
-
-function parseMinutes(value: string | undefined): number | undefined {
-    if (value === undefined) return undefined;
-    const minutes = Number(value);
-    if (!Number.isInteger(minutes) || minutes < 1) throw new ToliError("--max-time must be a whole number of minutes");
-    return minutes;
 }
 
 /** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--work w] [--cwd d] [--max-time min]`. */

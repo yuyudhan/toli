@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { execKillMs } from "../src/fleet/fleet.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Snapshot = { machine: string; available: boolean; reasons: string[]; activeRuns: number };
@@ -146,7 +147,7 @@ describe("remote auto", () => {
         const box = fleet(remoteSnapshot("m2", { memAvailableMB: 16000, load1: 0 }), { ...ROOMY, minDiskFreeGB: 1e12 });
         const output = box.ok(["remote", "auto", 'it\'s "quoted"; $(rm -rf /)'], { env: ENV });
         expect(output).toContain("ran on m2");
-        expect(sshLog(box)).toContain("cd /srv/toli && bin/toli exec --from m1");
+        expect(sshLog(box)).toContain("cd /srv/toli && TOLI_EXEC_MAX_MINUTES=180 bin/toli exec --from m1");
         expect(sshLog(box)).not.toContain("rm -rf");
     });
 
@@ -189,6 +190,36 @@ describe("run records", () => {
         const box = fleet(remoteSnapshot("m2"));
         box.ok(["remote", "m2", "push ujjwal/overnight", "--task", "T118"], { env: ENV });
         expect(sshLog(box)).toContain("exec --from m1 --task T118");
+    });
+
+    test("remote --max-time reaches exec through the environment, defaulting to 180 minutes", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        box.ok(["remote", "m2", "ship it"], { env: ENV });
+        box.ok(["remote", "m2", "ship it", "--max-time", "5"], { env: ENV });
+        const execs = sshLog(box)
+            .split("\n")
+            .filter((line) => line.includes("bin/toli exec"));
+        // Set as a variable, not an exec flag, so a target on an older toli still runs the prompt.
+        expect(execs.map((line) => line.match(/TOLI_EXEC_MAX_MINUTES=\S+ bin\/toli exec --from m1/)?.[0])).toEqual([
+            "TOLI_EXEC_MAX_MINUTES=180 bin/toli exec --from m1",
+            "TOLI_EXEC_MAX_MINUTES=5 bin/toli exec --from m1",
+        ]);
+        for (const bad of ["0", "1.5", "soon"]) {
+            expect(box.toli(["remote", "m2", "x", "--max-time", bad], { env: ENV }).stderr).toContain(
+                "--max-time must be a whole number of minutes",
+            );
+        }
+    });
+
+    test("exec gives omp the requested budget, 180 minutes by default, and kills it 5 minutes later", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        box.stub("omp", 'echo "$*"');
+        const run = (env: Record<string, string> = {}): string =>
+            box.ok(["exec", "--from", "m2"], { env: { ...ENV, ...env }, stdin: "work\n" });
+        expect(run()).toContain("--max-time 180m work");
+        expect(run({ TOLI_EXEC_MAX_MINUTES: "5" })).toContain("--max-time 5m work");
+        expect(execKillMs(5)).toBe(10 * 60 * 1000);
+        expect(execKillMs(180)).toBe(185 * 60 * 1000);
     });
 
     test("only records whose pid is alive count; dead ones are deleted", () => {
