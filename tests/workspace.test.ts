@@ -243,6 +243,35 @@ describe("worktree-per-task", () => {
         expect(box.ok(["workspace", "prune", "--force"])).toContain("kept\tapp/T3\tuncommitted changes");
     });
 
+    test("on macOS keeps new worktrees out of Spotlight and Time Machine, and a failed exclusion only warns", () => {
+        const box = coordinator();
+        project(box, "worktree-per-task", "Build API", "Draft docs");
+        const holder = join(box.root, "projects", ".worktrees", "app");
+        const log = join(box.root, "xattr.log");
+        box.stub("xattr", `echo "$@" >> ${log}`);
+        box.ok(["workspace", "prepare", "T1"], { env: { TOLI_PLATFORM: "darwin" } });
+        expect(existsSync(join(holder, ".metadata_never_index"))).toBe(true);
+        expect(readFileSync(log, "utf8")).toMatch(
+            new RegExp(
+                `^-wx com\\.apple\\.metadata:com_apple_backup_excludeItem 62706c697374[0-9a-f]+ ${holder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n$`,
+            ),
+        );
+        expect(existsSync(join(holder, "T1", ".metadata_never_index"))).toBe(false);
+
+        box.stub("xattr", 'echo "xattr: [Errno 1] Operation not permitted" >&2; exit 1');
+        const failed = box.toli(["workspace", "prepare", "T2"], { env: { TOLI_PLATFORM: "darwin" } });
+        expect(failed.code).toBe(0);
+        expect(failed.stderr).toContain(`could not exclude ${holder} from Time Machine: xattr: [Errno 1]`);
+        expect(existsSync(join(holder, "T2", "README"))).toBe(true);
+    });
+
+    test("elsewhere leaves no Spotlight marker", () => {
+        const box = coordinator();
+        project(box, "worktree-per-task", "Build API");
+        box.ok(["workspace", "prepare", "T1"], { env: { TOLI_PLATFORM: "linux" } });
+        expect(existsSync(join(box.root, "projects", ".worktrees", "app", ".metadata_never_index"))).toBe(false);
+    });
+
     test("--force abandons an unmerged finished worktree; live tasks are never pruned", () => {
         const box = coordinator();
         const clone = project(box, "worktree-per-task", "Try idea", "Ongoing");

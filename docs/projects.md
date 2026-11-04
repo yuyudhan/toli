@@ -60,6 +60,9 @@ toli itself never uses worktrees.
   Task branches start from the base branch: the project's `--branch`, else origin's default branch.
 - `branch-per-task` refuses to switch the clone while another active or held task of the project uses it on a
   different branch, or while the clone has uncommitted changes; use `same-branch` for parallel tasks.
+- On macOS, preparing a worktree excludes `projects/.worktrees/<project>/` from Spotlight (a `.metadata_never_index`
+  file) and Time Machine (the sticky exclusion attribute `tmutil addexclusion` sets), so each worktree's `target/`,
+  `node_modules/` and `dist/` are never indexed or backed up. A failed exclusion only warns.
 - `bin/toli commit|push|pr create <project> --task T<n>` act in the task's workspace (commands run from inside a
   task worktree find it themselves). Per-task projects refuse a commit without `--task`.
 - Pushing the task branch and opening its PR/MR need the user's word for that change, unless the project carries an
