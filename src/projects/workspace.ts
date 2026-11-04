@@ -15,6 +15,7 @@ import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, printJson, run, ToliError, withLock } from "../core/util.ts";
 import { loadBacklog, type Task, type TaskWorkspace, updateTask } from "../records/backlog.ts";
+import { excludeFromIndexing } from "./indexing.ts";
 import { findProject, loadProjects, type Project, projectCloneDir } from "./projects.ts";
 import { perTask } from "./strategy.ts";
 
@@ -145,6 +146,8 @@ function prepareWorktree(project: Project, task: Task, clone: string): TaskWorks
         return workspace;
     }
     mkdirSync(dirname(path), { recursive: true });
+    // The folder holding the project's worktrees sits outside every checkout, so marking it keeps git status clean.
+    excludeFromIndexing(dirname(path));
     const result = refExists(clone, `refs/heads/${branch}`)
         ? git(clone, ["worktree", "add", path, branch])
         : git(clone, ["worktree", "add", "-b", branch, path, baseRef(clone, base)]);
