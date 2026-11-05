@@ -8,8 +8,8 @@ type Snapshot = { machine: string; available: boolean; reasons: string[]; active
 type Entry = { machine: string; local: boolean; reachable: boolean; available: boolean; reasons: string[] };
 type Pick = { machine: string | null; local: boolean; candidates: { machine: string }[] };
 
-/** Thresholds loose enough that this test host is always available, whatever its real load and disk. */
-const ROOMY = { maxRuns: 50, maxLoadPerCpu: 1000, minMemAvailableMB: 0, minDiskFreeGB: 0 };
+/** Thresholds loose enough that this test host is always available, whatever its real load and memory. */
+const ROOMY = { maxRuns: 50, maxLoadPerCpu: 1000, minMemAvailableMB: 0 };
 
 /** 1 GiB "available" memory from a stubbed vm_stat, so memory never depends on the test host. */
 const VM_STAT = `Mach Virtual Memory Statistics: (page size of 4096 bytes)
@@ -120,15 +120,21 @@ describe("pick", () => {
         expect(pick.machine).not.toBeNull();
     });
 
+    test("a disk under diskKeepGB never makes a machine unavailable", () => {
+        const box = fleet(remoteSnapshot("m2"), { ...ROOMY, diskKeepGB: 1e12 });
+        const pick = JSON.parse(box.ok(["pick", "--json"], { env: ENV })) as Pick;
+        expect(pick.candidates.map((candidate) => candidate.machine)).toContain("m1");
+    });
+
     test("nothing available exits 2 and says why for each machine", () => {
         const box = fleet(remoteSnapshot("m2", { available: false, reasons: ["load 9/8 cpus over 0.8"] }), {
             ...ROOMY,
-            minDiskFreeGB: 1e12,
+            minMemAvailableMB: 1e12,
         });
         const result = box.toli(["pick"], { env: ENV });
         expect(result.code).toBe(2);
         expect(result.stdout).toContain("no machine available:");
-        expect(result.stdout).toContain("m1: disk ");
+        expect(result.stdout).toContain("m1: memory ");
         expect(result.stdout).toContain("m2: load 9/8 cpus over 0.8");
         expect(result.stdout).toContain("m3: unreachable: ");
     });
@@ -144,7 +150,10 @@ describe("remote auto", () => {
     });
 
     test("sends the prompt on stdin to the picked machine's exec", () => {
-        const box = fleet(remoteSnapshot("m2", { memAvailableMB: 16000, load1: 0 }), { ...ROOMY, minDiskFreeGB: 1e12 });
+        const box = fleet(remoteSnapshot("m2", { memAvailableMB: 16000, load1: 0 }), {
+            ...ROOMY,
+            minMemAvailableMB: 1e12,
+        });
         const output = box.ok(["remote", "auto", 'it\'s "quoted"; $(rm -rf /)'], { env: ENV });
         expect(output).toContain("ran on m2");
         expect(sshLog(box)).toContain("cd /srv/toli && TOLI_EXEC_MAX_MINUTES=180 bin/toli exec --from m1");
@@ -154,7 +163,7 @@ describe("remote auto", () => {
     test("nothing available exits 2 without dispatching", () => {
         const box = fleet(remoteSnapshot("m2", { available: false, reasons: ["busy"] }), {
             ...ROOMY,
-            minDiskFreeGB: 1e12,
+            minMemAvailableMB: 1e12,
         });
         const result = box.toli(["remote", "auto", "x"], { env: ENV });
         expect(result.code).toBe(2);

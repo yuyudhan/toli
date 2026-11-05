@@ -1,6 +1,7 @@
 // Starting spawned jawan runs within the machine's jawan slots (config/machine.json capacity.maxRuns). A new run is
 // recorded, then started at once when a slot is free (or with `spawn --now`), otherwise left `queued`; queued runs
-// start oldest first as slots free, from the supervisor of each finishing run and from the minute tick.
+// start oldest first as slots free, from the supervisor of each finishing run and from the minute tick. Before any
+// start, the disk keeper frees build output when the disk is low (src/fleet/disk.ts): low disk never holds a run.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
@@ -8,6 +9,7 @@ import { join, resolve } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { capacityFor } from "../fleet/resources.ts";
 import { type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
@@ -165,6 +167,7 @@ function launch(id: string): JawanRun {
  * it stays `queued`.
  */
 export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun {
+    keepDiskBeforeWork();
     return withLock(paths.lock(SLOTS_LOCK), () => {
         const run = recordRun(input);
         const task = run.task;
@@ -188,6 +191,7 @@ export type DrainResult = { started: JawanRun[]; failed: { run: JawanRun; error:
 
 /** Start queued runs, oldest first, while jawan slots are free. A run that cannot start is recorded failed. */
 export function startQueued(): DrainResult {
+    keepDiskBeforeWork();
     return withLock(paths.lock(SLOTS_LOCK), () => {
         const result: DrainResult = { started: [], failed: [] };
         const queued = listRuns()

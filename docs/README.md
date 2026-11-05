@@ -13,6 +13,7 @@ New here? Read the [README](../README.md) first, then [install](install.md) and 
 | [delivery.md](delivery.md)         | How work lands: delivery modes, standing grants, forges and PRs, no-mistakes    |
 | [jobs.md](jobs.md)                 | Scheduled jobs, the per-minute ticker, results arriving in chat                 |
 | [fleet.md](fleet.md)               | Several machines: coordinator and workers, capacity, remote work, sync          |
+| [disk.md](disk.md)                 | The disk keeper: low disk never stops work; what it deletes, in what order      |
 | [memory.md](memory.md)             | Preferences, learnings, notes; the memory budget; pruning                       |
 | [helpers.md](helpers.md)           | Private per-machine scripts on launchd, systemd, or crontab                     |
 | [harnesses.md](harnesses.md)       | omp, Claude Code, Codex, Cursor, Grok, pi; `bin/toli spawn`; the lead guard     |

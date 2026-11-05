@@ -3,6 +3,7 @@ import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, runCombined, ToliError } from "../core/util.ts";
+import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { registerRun, removeRun } from "../fleet/resources.ts";
 import { headlessOmpArgs } from "../harness/harness.ts";
 import { liveSession } from "../harness/session.ts";
@@ -133,6 +134,9 @@ export async function tick(): Promise<void> {
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
     for (const error of outbox.errors) log(`outbox: pending ${error}`);
     for (const note of failStaleRuns()) log(note);
+    // Low disk never stops work: free build output first (src/fleet/disk.ts), every minute, before anything starts.
+    const disk = keepDiskBeforeWork();
+    if (disk) log(disk);
     // Queued jawan runs start as slots free; the finishing run's supervisor does this too, this catches the rest.
     try {
         for (const note of drainQueue()) log(note);

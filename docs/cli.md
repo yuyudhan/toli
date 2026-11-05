@@ -164,6 +164,7 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 
     sync [--all]
     resources [--json]
+    disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]
     fleet status [--json]
     pick [--project <name>] [--json]
     exec [--from <machine>] [--task <id>] (prompt on stdin)
@@ -171,6 +172,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.
+- `disk keep`: free rebuildable build output when the disk is under `capacity.diskKeepGB`. It also runs before every
+  jawan start and every tick, so low disk never stops work ([disk.md](disk.md)).
 - `remote` runs a prompt on another machine; `exec` is what it runs there (headless omp, up to an hour).
 
 Details: [fleet.md](fleet.md).

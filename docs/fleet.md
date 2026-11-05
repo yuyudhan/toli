@@ -39,10 +39,11 @@ on several.
     bin/toli pick [--project <p>] [--json]    # best machine for one unit of work; exit 2 with reasons when none
 
 A machine is available when it is under every threshold in `config/machine.json` (defaults shown; `maxRuns` defaults
-to `max(1, floor(cpus / 4))`):
+to `max(1, floor(cpus / 4))`). Free disk is never a threshold. Under `diskKeepGB`, the disk keeper frees build output
+before work starts instead ([disk.md](disk.md)):
 
 ```json
-{ "capacity": { "maxRuns": 2, "maxLoadPerCpu": 0.8, "minMemAvailableMB": 2048, "minDiskFreeGB": 5 } }
+{ "capacity": { "maxRuns": 2, "maxLoadPerCpu": 0.8, "minMemAvailableMB": 2048, "diskKeepGB": 60 } }
 ```
 
 `capacity.cargoJobs` (default `max(1, floor(cpus / 2))`) is the machine's one cap on parallel compile jobs per cargo

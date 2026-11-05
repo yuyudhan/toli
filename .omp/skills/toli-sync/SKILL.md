@@ -29,7 +29,8 @@ to whichever machine is free:
 `data/remote/<stamp>-<machine>.md`.
 Remote runs execute through `bin/toli exec` on the target and count as load there while they run. Per-machine
 thresholds live in `config/machine.json` `capacity` (`maxRuns`, default cpus/4; `maxLoadPerCpu` 0.8;
-`minMemAvailableMB` 2048; `minDiskFreeGB` 5). An unreachable machine is reported, never fatal.
+`minMemAvailableMB` 2048). Free disk is never a threshold: below `capacity.diskKeepGB` (60) the disk keeper frees
+build output before work starts (`bin/toli disk keep`, docs/disk.md). An unreachable machine is reported, never fatal.
 
 ## Syncing the repo
 

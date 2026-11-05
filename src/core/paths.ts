@@ -101,6 +101,8 @@ export const paths = {
     lock: (name: string) => join(repoRoot(), "state", `${name}.lock`),
     logsDir: () => join(repoRoot(), "logs"),
     tickLog: () => join(repoRoot(), "logs", "tick.log"),
+    /** The disk keeper's actions (src/fleet/disk.ts). */
+    diskLog: () => join(repoRoot(), "logs", "disk.log"),
     /** Private per-installation helpers, never committed: local/{scripts,hooks,helpers.json,README.md}. */
     localDir: () => join(repoRoot(), "local"),
     localScriptsDir: () => join(repoRoot(), "local", "scripts"),
