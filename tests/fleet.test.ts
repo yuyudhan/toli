@@ -182,6 +182,41 @@ describe("run records", () => {
         expect(readdirSync(runs)).toEqual([]);
     });
 
+    test("exec is a jawan run here: listed as running while omp runs, then done or failed with its log", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        const jawans = join(box.root, "state", "jawans");
+        box.stub("omp", `grep -h '"status"' "${jawans}"/*.json; echo "said ok"`);
+        const result = box.toli(["exec", "--from", "m1", "--task", "T4"], {
+            env: { ...ENV, TOLI_EXEC_PROJECT: "kalki" },
+            stdin: "[toli remote from m1 to m2]\nheader\n\nreply ok\n",
+        });
+        expect(result.code).toBe(0);
+        expect(result.stdout).toContain('"status": "running"');
+        expect(result.stderr).toMatch(/exec: recorded as run j-\S+ on /);
+        const runs = JSON.parse(box.ok(["runs", "--json"])) as {
+            status: string;
+            task: string;
+            project: string;
+            harness: string;
+            logPath: string;
+            exitCode: number;
+            endedAt: string | null;
+        }[];
+        expect(runs).toHaveLength(1);
+        const [done] = runs;
+        expect(done).toMatchObject({ status: "done", task: "T4", project: "kalki", harness: "omp", exitCode: 0 });
+        expect(done?.endedAt).not.toBeNull();
+        expect(done?.logPath).toContain(join("data", "projects", "kalki", "runs"));
+        expect(readFileSync(done?.logPath ?? "", "utf8")).toContain("said ok");
+        expect(box.ok(["runs", "--active"])).toBe("no active jawan runs");
+
+        box.stub("omp", "exit 4");
+        expect(box.toli(["exec", "--from", "m1"], { env: ENV, stdin: "fail\n" }).code).toBe(4);
+        const failed = JSON.parse(box.ok(["runs", "--json"])) as { status: string; project: string | null }[];
+        expect(failed.map((entry) => entry.status).sort()).toEqual(["done", "failed"]);
+        expect(failed.find((entry) => entry.status === "failed")?.project).toBeNull();
+    });
+
     test("exec hands the issuing machine and task to the run, so a push in it is logged as theirs", () => {
         const box = fleet(remoteSnapshot("m2"));
         box.stub("omp", `echo "by=$TOLI_ISSUED_BY task=\${TOLI_ISSUED_TASK-unset}"`);
@@ -199,6 +234,12 @@ describe("run records", () => {
         const box = fleet(remoteSnapshot("m2"));
         box.ok(["remote", "m2", "push ujjwal/overnight", "--task", "T118"], { env: ENV });
         expect(sshLog(box)).toContain("exec --from m1 --task T118");
+    });
+
+    test("remote --project reaches exec through the environment, so the target's run record carries it", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        box.ok(["remote", "m2", "build it", "--project", "kalki"], { env: ENV });
+        expect(sshLog(box)).toContain("TOLI_EXEC_PROJECT=kalki TOLI_EXEC_MAX_MINUTES=180 bin/toli exec --from m1");
     });
 
     test("remote --max-time reaches exec through the environment, defaulting to 180 minutes", () => {

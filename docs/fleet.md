@@ -74,10 +74,18 @@ pipes the prompt to `bin/toli exec` there. `exec` runs the prompt in headless om
 (default 180) and kills it 5 minutes after that, under the remote-run rules: commit on the current branch only, never
 push, merge, open a PR, or ask questions; finish with the outcome and evidence. The output is saved in
 `data/projects/<p>/runs/` (or `data/remote/` without a project) and the outcome reaches the coordinator's inbox.
-`remote` hands the limit to `exec` in `TOLI_EXEC_MAX_MINUTES`, not a flag, so a target on an older toli still runs
-the prompt, under that toli's own limit (60 minutes) until it upgrades.
+`remote` hands the limit and the project to `exec` in `TOLI_EXEC_MAX_MINUTES` and `TOLI_EXEC_PROJECT`, not flags,
+so a target on an older toli still runs the prompt, under that toli's own limit (60 minutes) until it upgrades.
 
-`exec` and headless job runs leave a record in `state/runs/` while they run; that is what `activeRuns` counts.
+On the target, `exec` records the prompt as a jawan run like `bin/toli spawn` does (harness omp, the `--task` and
+`--project`, its log in the run dir's `output.log`), so the target's `bin/toli runs --active`, `digest`, jawan slots
+and `activeRuns` include it; the run ends `done` or `failed` with omp's exit, and `bin/toli run kill <id>` there
+stops it. `exec` prints the run id on stderr, which lands in the issuing machine's saved output. The issuing machine
+keeps its own record (the saved output file above); the outcome is not posted to the target's inbox. A target on a
+toli from before this records nothing in `state/jawans/`. Commands a jawan on another machine runs on a worker over
+plain ssh (builds, tests) are not runs there: that worker's `runs` never shows them, only its load and `ps` do.
+
+`exec` and headless job runs also leave a record in `state/runs/` while they run; that is what `activeRuns` counts.
 Remote runs can take a long time, so the lead always starts them in the background and their result arrives in the
 chat by itself.
 
