@@ -64,8 +64,14 @@ export function baseBriefOf(run: JawanRun): string {
     }
 }
 
-/** Write the run dir, its briefs and its record (status `queued`, nothing started). */
-function recordRun(input: NewRun): JawanRun {
+/** A run started by its own caller rather than a supervisor: the process recording it and the argv it runs. */
+export type AttachedStart = { argv: string[]; ownerPid: number };
+
+/**
+ * Write the run dir, its briefs and its record: status `queued`, nothing started; or, with `attached`, status
+ * `running` under the calling process (`bin/toli exec`), which records the outcome itself (src/fleet/fleet.ts).
+ */
+export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
     const createdAt = now();
     const id = newRunId(createdAt);
     const runDir = input.project === null ? join(paths.jawansDir(), id) : join(paths.projectRunsDir(input.project), id);
@@ -74,13 +80,16 @@ function recordRun(input: NewRun): JawanRun {
     const brief = `${input.baseBrief.trimEnd()}\n${input.extra}`;
     const briefPath = join(runDir, "brief.md");
     writeFileSync(briefPath, brief);
-    const command = headlessCommand(input.harness, {
-        brief,
-        cwd: input.cwd,
-        root: paths.root(),
-        model: input.model ?? undefined,
-        maxMinutes: input.maxMinutes,
-    });
+    const command =
+        attached === undefined
+            ? headlessCommand(input.harness, {
+                  brief,
+                  cwd: input.cwd,
+                  root: paths.root(),
+                  model: input.model ?? undefined,
+                  maxMinutes: input.maxMinutes,
+              })
+            : { argv: attached.argv, stdin: null };
     const run: JawanRun = {
         id,
         harness: input.harness,
@@ -97,8 +106,8 @@ function recordRun(input: NewRun): JawanRun {
             ...(command.stdin === null ? [] : ["< brief"]),
         ].join(" "),
         maxMinutes: input.maxMinutes,
-        status: "queued",
-        supervisorPid: null,
+        status: attached === undefined ? "queued" : "running",
+        supervisorPid: attached?.ownerPid ?? null,
         pid: null,
         exitCode: null,
         signal: null,

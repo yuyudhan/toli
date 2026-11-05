@@ -8,6 +8,7 @@ import {
     rmSync,
     statSync,
     writeFileSync,
+    writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
@@ -234,6 +235,65 @@ export async function runInherit(cmd: string[], options: RunOptions = {}): Promi
         ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
     });
     return await proc.exited;
+}
+
+export type TeeResult = { code: number; timedOut: boolean };
+
+/**
+ * Run a program streaming its stdout/stderr live to this process's (like runInherit) and appending both to `logPath`.
+ * `onStart` gets the child's pid once it is running; past `timeoutMs` the child is sent SIGTERM.
+ */
+export async function runTee(
+    cmd: string[],
+    logPath: string,
+    options: RunOptions & { onStart?: (pid: number) => void } = {},
+): Promise<TeeResult> {
+    const program = cmd[0];
+    if (program === undefined) throw new Error("runTee: empty command");
+    const logFd = openSync(logPath, "a");
+    try {
+        const resolved = program.includes("/") ? program : Bun.which(program, { PATH: process.env.PATH ?? "" });
+        if (!resolved) {
+            const message = `${program}: command not found\n`;
+            writeSync(logFd, message);
+            process.stderr.write(`toli: ${message}`);
+            return { code: 127, timedOut: false };
+        }
+        const proc = Bun.spawn([resolved, ...cmd.slice(1)], {
+            cwd: options.cwd ?? process.cwd(),
+            env: { ...process.env, ...options.env },
+            stdin: options.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        options.onStart?.(proc.pid);
+        let timedOut = false;
+        const timer =
+            options.timeoutMs === undefined
+                ? undefined
+                : setTimeout(() => {
+                      timedOut = true;
+                      proc.kill("SIGTERM");
+                  }, options.timeoutMs);
+        const pump = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream): Promise<void> => {
+            for await (const chunk of stream) {
+                writeSync(logFd, chunk);
+                sink.write(chunk);
+            }
+        };
+        try {
+            const [, , code] = await Promise.all([
+                pump(proc.stdout, process.stdout),
+                pump(proc.stderr, process.stderr),
+                proc.exited,
+            ]);
+            return { code, timedOut };
+        } finally {
+            clearTimeout(timer);
+        }
+    } finally {
+        closeSync(logFd);
+    }
 }
 
 /** Whether a process with this pid exists (EPERM: it exists but belongs to someone else). */

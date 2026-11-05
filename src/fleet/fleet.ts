@@ -19,7 +19,7 @@ import {
     readStdin,
     requireName,
     run,
-    runInherit,
+    runTee,
     shellQuote,
     stamp,
     ToliError,
@@ -29,6 +29,8 @@ import {
 } from "../core/util.ts";
 import { headlessOmpArgs } from "../harness/harness.ts";
 import { runHook, seedLocal } from "../helpers/local.ts";
+import { recordRun } from "../jawans/launch.ts";
+import { updateRun } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
@@ -148,10 +150,11 @@ function runTitle(prompt: string): string {
 const DEFAULT_EXEC_MAX_MINUTES = 180;
 const KILL_MARGIN_MINUTES = 5;
 /**
- * `remote` hands its `--max-time` to `exec` through this variable rather than a flag, so dispatching to a machine on
- * an older toli still works: its `exec` ignores the variable and keeps its own limit.
+ * `remote` hands its `--max-time` and `--project` to `exec` through these variables rather than flags, so dispatching
+ * to a machine on an older toli still works: its `exec` ignores them and keeps its own limit.
  */
 const EXEC_MAX_MINUTES_ENV = "TOLI_EXEC_MAX_MINUTES";
+const EXEC_PROJECT_ENV = "TOLI_EXEC_PROJECT";
 
 /** Milliseconds after which a run with an omp budget of `maxMinutes` is killed. */
 export function execKillMs(maxMinutes: number): number {
@@ -159,8 +162,10 @@ export function execKillMs(maxMinutes: number): number {
 }
 
 /**
- * `toli exec`: run the stdin prompt in headless omp here, counted as load via a run record for its lifetime. The run
- * carries the issuing machine and task in its environment, so a `bin/toli push` in it is logged as theirs. omp gets
+ * `toli exec`: run the stdin prompt in headless omp here. It is recorded as a jawan run (state/jawans/, so `runs`,
+ * `digest` and the jawan slots see it) and counted as load (state/runs/) for its lifetime; its output streams back
+ * to the caller and into the run's output.log, and the run ends done or failed with omp's exit. The run carries the
+ * issuing machine and task in its environment, so a `bin/toli push` in it is logged as theirs. omp gets
  * `TOLI_EXEC_MAX_MINUTES` minutes (default 180, set by `bin/toli remote --max-time`) and is killed 5 minutes later.
  */
 export async function execCommand(argv: string[]): Promise<number> {
@@ -173,7 +178,25 @@ export async function execCommand(argv: string[]): Promise<number> {
     const from = requireName("machine", args.str("from") ?? machine.name);
     const task = args.str("task") ?? null;
     if (task !== null) requireName("task", task);
+    const projectEnv = process.env[EXEC_PROJECT_ENV];
+    const project = projectEnv === undefined || projectEnv === "" ? null : requireName("project", projectEnv);
     keepDiskBeforeWork();
+    const maxTime = `${maxMinutes}m`;
+    const jawan = recordRun(
+        {
+            harness: "omp",
+            task,
+            project,
+            work: null,
+            model: null,
+            cwd: paths.root(),
+            maxMinutes,
+            baseBrief: prompt,
+            extra: "",
+        },
+        { argv: headlessOmpArgs("<brief>", paths.root(), maxTime), ownerPid: process.pid },
+    );
+    warn(`exec: recorded as run ${jawan.id} on ${machine.name} (from ${from})`);
     const runId = `exec-${stamp()}-${process.pid}`;
     registerRun({
         runId,
@@ -183,14 +206,34 @@ export async function execCommand(argv: string[]): Promise<number> {
         startedAt: now().toISOString(),
         title: runTitle(prompt),
     });
+    let code = 1;
+    let timedOut = false;
+    let error: string | null = null;
     try {
-        return await runInherit(headlessOmpArgs(prompt, paths.root(), `${maxMinutes}m`), {
+        ({ code, timedOut } = await runTee(headlessOmpArgs(prompt, paths.root(), maxTime), jawan.logPath, {
             cwd: paths.root(),
             timeoutMs: execKillMs(maxMinutes),
             env: { [ISSUED_BY_ENV]: from, [ISSUED_TASK_ENV]: task ?? undefined },
-        });
+            onStart: (pid) => {
+                updateRun(jawan.id, (record) => {
+                    record.pid = pid;
+                });
+            },
+        }));
+        return code;
+    } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught);
+        throw caught;
     } finally {
         removeRun(runId);
+        updateRun(jawan.id, (record) => {
+            record.exitCode = code;
+            record.endedAt = now().toISOString();
+            if (record.status === "killed") return;
+            record.status = code === 0 && !timedOut && error === null ? "done" : "failed";
+            if (error !== null) record.error = error;
+            else if (timedOut) record.error = `timed out after ${maxMinutes + KILL_MARGIN_MINUTES} minutes`;
+        });
     }
 }
 
@@ -245,7 +288,10 @@ export async function remoteCommand(argv: string[]): Promise<number> {
                 remoteToliCommand(
                     target.root,
                     `exec --from ${shellQuote(from)}${taskId === undefined ? "" : ` --task ${shellQuote(taskId)}`}`,
-                    { [EXEC_MAX_MINUTES_ENV]: String(maxMinutes) },
+                    {
+                        ...(projectName === undefined ? {} : { [EXEC_PROJECT_ENV]: projectName }),
+                        [EXEC_MAX_MINUTES_ENV]: String(maxMinutes),
+                    },
                 ),
             ],
             {
