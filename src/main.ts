@@ -164,7 +164,7 @@ export async function main(argv: string[]): Promise<number> {
                 pruneCommand(rest);
                 return 0;
             case "sync":
-                return syncCommand(rest);
+                return await syncCommand(rest);
             case "resources":
                 resourcesCommand(rest);
                 return 0;

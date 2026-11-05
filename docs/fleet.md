@@ -85,8 +85,17 @@ chat by itself.
 
 Tracked files (contract, skills, CLI, docs) travel through git; private files never leave their machine.
 
-    bin/toli sync          # git pull --ff-only in this clone; refuses when tracked files have local changes
+Workers run release tags; the coordinator, where toli itself is developed, runs `develop`. A worker's checkout is a
+release install: detached at a `vX.Y.Z` tag, moved only by `bin/toli upgrade` (which `bin/toli sync` runs there).
+The coordinator's checkout is a development clone on `develop`, where `bin/toli commit toli` lands work and
+`just release` cuts the tags ([releasing.md](releasing.md)). To put a worker on releases once (clean tree, no active
+runs): `git -C <root> fetch --tags origin && git -C <root> checkout --detach vX.Y.Z && bin/toli self sync`.
+
+    bin/toli sync          # development clone: git pull --ff-only; release install: bin/toli upgrade (latest tag)
     bin/toli sync --all    # this clone, then every other machine in config/fleet.json over ssh
 
-In chat: `/sync-toli` (this machine) or `/sync-toli --all`. Release installs upgrade with `bin/toli upgrade`
-instead ([install.md](install.md#upgrading)).
+Both refuse when tracked files have local changes. In chat: `/sync-toli` (this machine) or `/sync-toli --all`. So
+after a release, `sync --all` on the coordinator pulls `develop` there and upgrades every worker to the new tag
+(checkout, `migrate`, `harness sync`, runtime); each worker's running jawans finish on the runtime they started with
+([install.md](install.md#upgrading)). A new tag alone changes nothing: the update notice tells the owner, and workers
+move on his word.

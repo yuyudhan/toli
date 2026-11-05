@@ -4,6 +4,33 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.2.3 - unreleased
+
+### Added
+
+- Time-limited jawan runs resume by themselves: a run stopped by its time limit without a report is recorded
+  `time-limit` and continued with the same task, cwd, harness, model and limit, the brief plus a `RESUME (auto, N)`
+  section, up to `capacity.autoResume` (default 3) times per chain; then an inbox item says the chain stopped. Every
+  brief gains a Deadline section asking for the report 10 minutes before the limit.
+- `bin/toli spawn` queues runs while `capacity.maxRuns` jawans run; queued runs start oldest first as runs finish and
+  from the minute tick (`--now` bypasses the queue).
+- The disk keeper: below `capacity.diskKeepGB` (default 60) `bin/toli disk keep`, run before every jawan start and
+  tick, frees build output (idle checkouts' ignored `target/`, then `node_modules`/`dist`, docker prune, sccache over
+  its cap, busy targets between build steps) until 20 GB above the floor. Low disk never stops work any more
+  (`minDiskFreeGB` is gone). See docs/disk.md.
+- `bin/toli remote ... --max-time <minutes>` (default 180, was a fixed hour).
+
+### Changed
+
+- Workers follow release tags: on a release install (detached at a `vX.Y.Z` tag) `bin/toli sync` runs
+  `bin/toli upgrade` to the latest tag instead of `git pull`, so `bin/toli sync --all` after a release moves every
+  worker to it. The coordinator, where toli is developed, stays on `develop` (docs/fleet.md).
+- On macOS, task worktrees are excluded from Spotlight and Time Machine.
+
+### Fixed
+
+- The scheduled tick's PATH includes cargo, just and node, so jawans it starts from the queue can build.
+
 ## v0.2.2 - 2026-11-02
 
 ### Added

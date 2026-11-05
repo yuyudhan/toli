@@ -10,7 +10,7 @@ import {
     remoteToliCommand,
     sshArgs,
 } from "../core/config.ts";
-import { git } from "../core/git.ts";
+import { currentBranch, git } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import {
@@ -32,6 +32,7 @@ import { runHook, seedLocal } from "../helpers/local.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
+import { upgradeCommand } from "../release/upgrade.ts";
 import { keepDiskBeforeWork } from "./disk.ts";
 import { noCandidateText, pickMachine } from "./pick.ts";
 import { registerRun, removeRun } from "./resources.ts";
@@ -65,8 +66,17 @@ export function initCommand(argv: string[]): void {
     runHook("post-init");
 }
 
-function syncLocal(): void {
+/**
+ * Bring this checkout up to date. A development clone (on a branch) pulls fast-forward; a release install (detached
+ * HEAD, at a vX.Y.Z tag) follows release tags, so it upgrades to the latest one instead (`bin/toli upgrade`).
+ */
+async function syncLocal(): Promise<number> {
     const root = paths.root();
+    const name = loadMachine().name;
+    if (currentBranch(root) === null) {
+        out(`${name}: release install (detached HEAD): bin/toli upgrade`);
+        return await upgradeCommand([]);
+    }
     const dirty = git(root, ["status", "--porcelain", "--untracked-files=no"]);
     if (dirty.code !== 0) throw new ToliError(`git status failed in ${root}: ${dirty.stderr.trim()}`);
     if (dirty.stdout.trim() !== "")
@@ -74,28 +84,30 @@ function syncLocal(): void {
     const pull = git(root, ["pull", "--ff-only"]);
     if (pull.code !== 0)
         throw new ToliError(`git pull --ff-only failed (not a fast-forward?): ${(pull.stderr || pull.stdout).trim()}`);
-    out(`${loadMachine().name}: ${pull.stdout.trim() || "up to date"}`);
+    out(`${name}: ${pull.stdout.trim() || "up to date"}`);
     // The live session runs the installed runtime (src/release/runtime.ts): move it to the pulled code.
     if (activeRuntime(root) !== null) {
         try {
-            out(`${loadMachine().name}: runtime ${syncRuntime(root).commit.slice(0, 12)}`);
+            out(`${name}: runtime ${syncRuntime(root).commit.slice(0, 12)}`);
         } catch (error) {
             warn(
                 `toli: pulled, but the runtime stays on the previous commit: ${error instanceof Error ? error.message : String(error)}`,
             );
         }
     }
+    return 0;
 }
 
-export function syncCommand(argv: string[]): number {
+export async function syncCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { booleans: ["all"] });
     args.maxPositional(0);
-    syncLocal();
-    if (!args.bool("all")) return 0;
+    const local = await syncLocal();
+    if (local !== 0 || !args.bool("all")) return local;
     let failures = 0;
     for (const machine of otherFleetMachines()) {
+        // A release install's sync is an upgrade (fetch, migrate, harness sync, runtime snapshot): allow it time.
         const result = run([...sshArgs(machine.ssh, 15), remoteToliCommand(machine.root, "sync")], {
-            timeoutMs: 120_000,
+            timeoutMs: 300_000,
         });
         if (result.code === 0) {
             out(result.stdout.trimEnd() || `${machine.name}: synced`);
