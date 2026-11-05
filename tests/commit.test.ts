@@ -128,6 +128,31 @@ describe("bin/toli commit (R23 safe commits)", () => {
         expect(safeCommit({ dir, paths: ["a.txt"], message: "Third" }).files).toEqual(["a.txt"]);
     });
 
+    test("--merge: what the merged ref brings is never a revert; edits on top still are", () => {
+        const stale = "fn main() {\n    run();\n}\n";
+        const dir = repo({ "main.rs": stale });
+        const added = otherJawan(dir, "query.json", '{ "query": "select id from tickets" }\n');
+        const recent = otherJawan(dir, "main.rs", "fn main() {\n    setup_logging_first();\n    run();\n}\n");
+        // Upstream already has the query file and deletes it; the branch has not seen that yet.
+        git(dir, ["switch", "--quiet", "-c", "upstream", added]);
+        git(dir, ["rm", "--quiet", "query.json"]);
+        git(dir, ["commit", "--quiet", "-m", "upstream: drop query.json"]);
+        git(dir, ["switch", "--quiet", "main"]);
+
+        // A hand-made revert of a recent commit on top of the merge is still refused.
+        writeFileSync(join(dir, "main.rs"), `${stale}// mine\n`);
+        const before = head(dir);
+        expect(() =>
+            safeCommit({ dir, paths: ["main.rs"], merge: "upstream", message: "Merge upstream and mine" }),
+        ).toThrow(`would revert main.rs lines from ${recent.slice(0, 7)}`);
+        expect(head(dir)).toBe(before);
+        git(dir, ["checkout", "--quiet", "--", "main.rs"]);
+
+        const merged = safeCommit({ dir, paths: [], merge: "upstream", message: "Merge upstream" });
+        expect(merged.merged).toEqual(["query.json"]);
+        expect(git(dir, ["ls-tree", "--name-only", merged.sha])).toBe("main.rs");
+    });
+
     test("refuses lock files that do not parse", () => {
         const dir = repo();
         writeFileSync(

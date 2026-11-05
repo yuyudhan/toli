@@ -4,6 +4,14 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.2.5 - unreleased
+
+### Fixed
+
+- `bin/toli commit --merge <ref>` no longer refuses a clean merge because the ref itself undoes a recent branch
+  commit (such as upstream deleting a file the branch added); only changes made on top of the merge result count as
+  reverts, so `--allow-revert` is needed only for those.
+
 ## v0.2.4 - 2026-11-05
 
 ### Changed

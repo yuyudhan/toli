@@ -139,7 +139,8 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
             );
         scanLeaks(attempt);
         checkLockFiles(attempt, files);
-        checkReverts(dir, parent, tree, files, request.allowRevert ?? []);
+        // Only the committer's own changes on top of the merge result can revert; what the merged ref brings cannot.
+        checkReverts(dir, parent, tree, own, request.allowRevert ?? []);
         const parents = ["-p", parent, ...(merge === null ? [] : ["-p", merge.commit])];
         const created = git(dir, ["commit-tree", tree, ...parents, "-F", "-"], `${request.message}\n`);
         if (created.code !== 0)
