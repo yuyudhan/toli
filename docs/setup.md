@@ -94,9 +94,11 @@ own in `config/persona.json`; the lead then uses them everywhere (`bin/toli dige
 
 ## By hand
 
-Everything "set up toli" does can be done directly. Requirements: [Bun](https://bun.sh), git, omp (scheduled jobs
-run in headless omp), and optionally `no-mistakes` ([delivery.md](delivery.md#the-no-mistakes-gate)) and the forge
-CLIs for your projects ([delivery.md](delivery.md#forges-push-and-pull-requests)).
+Everything "set up toli" does can be done directly. Requirements: [Bun](https://bun.sh), git 2.38 or newer
+(`bin/toli commit --merge` uses `git merge-tree --write-tree`; Ubuntu 22.04 ships 2.34, so add
+`ppa:git-core/ppa` there), omp (scheduled jobs run in headless omp), and optionally `no-mistakes`
+([delivery.md](delivery.md#the-no-mistakes-gate)) and the forge CLIs for your projects
+([delivery.md](delivery.md#forges-push-and-pull-requests)).
 
     git clone https://github.com/yuyudhan/toli toli && cd toli && bun install    # or the installer: docs/install.md
 
