@@ -1,5 +1,8 @@
-#!/usr/bin/env bun
-// The toli CLI launcher. When this checkout has an installed runtime (state/runtime, written by `bin/toli self sync`),
+#!/bin/sh
+':' //; for b in "$(command -v bun)" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do [ -x "$b" ] && PATH="${b%/*}:$PATH" exec "$b" "$0" "$@"; done; echo "toli: bun not found on PATH, in ~/.bun/bin, /opt/homebrew/bin or /usr/local/bin" >&2; exit 127
+// The toli CLI launcher. Line 2 is shell (a no-op string plus a comment to Bun): it finds bun on PATH or at its usual
+// install paths, so `ssh host bin/toli ...` works from a non-login shell without bun on PATH, and re-runs this file
+// under it. When this checkout has an installed runtime (state/runtime, written by `bin/toli self sync`),
 // it runs that pinned snapshot of committed code, so the live session (Sardar, the extension's tick, the OS ticker)
 // survives half-edited files in the working tree. TOLI_DEV=1, or TOLI_ROOT (set by the tests), runs the working tree.
 // Keep this file free of src/ imports: it must work while src/ is mid-edit. See src/release/runtime.ts.

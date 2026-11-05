@@ -89,7 +89,8 @@ export function sshArgs(host: string, connectTimeoutSeconds = 15): string[] {
 }
 
 // ssh runs the remote command in a non-interactive shell that skips the login profile, so Homebrew and Bun's
-// install directories are often missing from PATH there and `bin/toli` (a `#!/usr/bin/env bun` script) fails.
+// install directories are often missing from PATH there. bin/toli finds bun at those paths itself; the commands it
+// runs (git, gh, omp) need them on PATH too.
 const REMOTE_PATH = 'PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"';
 
 /**

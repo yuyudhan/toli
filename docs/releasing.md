@@ -37,6 +37,7 @@ the owner's word for that release, and pushing needs a second, explicit yes at t
    its own), and creates the annotated tag `vX.Y.Z` on that commit, whose message is the section.
 6. Asks `Push main, develop and vX.Y.Z to origin (<url>)? [y/N]` and pushes all three atomically only on `y`.
    Otherwise it prints the push command to run later.
+7. Refreshes this machine's installed runtime (`bin/toli self sync`), so the live session runs the release commit.
 
 `--dry-run` clones `develop` into a temporary directory (with `main` from this repository), runs `bun install`, and
 does steps 1-5 there (the verify run included), prints the release commit and tag, and removes the clone. It never
