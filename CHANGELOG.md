@@ -4,6 +4,14 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.2.4 - unreleased
+
+### Changed
+
+- A `bin/toli remote` run now shows up on the machine it runs on: there it is recorded as a jawan run (task, project,
+  log), so that machine's `bin/toli runs`, digest and jawan slots count it, it ends `done` or `failed` with the run,
+  and `bin/toli run kill <id>` there stops it. The run id is printed in the saved output on the machine that sent it.
+
 ## v0.2.3 - 2026-11-05
 
 ### Added
