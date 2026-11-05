@@ -32,6 +32,7 @@ import { runHook, seedLocal } from "../helpers/local.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
+import { keepDiskBeforeWork } from "./disk.ts";
 import { noCandidateText, pickMachine } from "./pick.ts";
 import { registerRun, removeRun } from "./resources.ts";
 
@@ -160,6 +161,7 @@ export async function execCommand(argv: string[]): Promise<number> {
     const from = requireName("machine", args.str("from") ?? machine.name);
     const task = args.str("task") ?? null;
     if (task !== null) requireName("task", task);
+    keepDiskBeforeWork();
     const runId = `exec-${stamp()}-${process.pid}`;
     registerRun({
         runId,

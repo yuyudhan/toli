@@ -1,4 +1,5 @@
 import { out, ToliError, warn } from "./core/util.ts";
+import { diskCommand } from "./fleet/disk.ts";
 import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet/fleet.ts";
 import { fleetCommand, pickCommand } from "./fleet/pick.ts";
 import { resourcesCommand } from "./fleet/resources.ts";
@@ -74,6 +75,7 @@ const USAGE = `usage: bin/toli <command> [args]
   migrate [--dry-run] [--json]
   sync [--all]
   resources [--json]
+  disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]
   fleet status [--json]
   pick [--project <name>] [--json]
   exec [--from <machine>] [--task <id>] (prompt on stdin)
@@ -165,6 +167,9 @@ export async function main(argv: string[]): Promise<number> {
                 return syncCommand(rest);
             case "resources":
                 resourcesCommand(rest);
+                return 0;
+            case "disk":
+                diskCommand(rest);
                 return 0;
             case "fleet":
                 await fleetCommand(rest);

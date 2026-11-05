@@ -128,13 +128,14 @@ function measureLoad(): { load1: number; load5: number } {
     return (existsSync(file) ? parseLoadavg(readFileSync(file, "utf8")) : null) ?? { load1, load5 };
 }
 
-function measureDisk(dir: string): number | string {
+/** Free GB on the filesystem holding `dir`, or why it could not be read. */
+export function measureDisk(dir: string): number | string {
     const result = run(["df", "-Pk", dir], { timeoutMs: 10_000 });
     if (result.code !== 0) return `df exited ${result.code}`;
     return parseDf(result.stdout) ?? "df output not understood";
 }
 
-const DEFAULT_CAPACITY = { maxLoadPerCpu: 0.8, minMemAvailableMB: 2048, minDiskFreeGB: 5 } as const;
+const DEFAULT_CAPACITY = { maxLoadPerCpu: 0.8, minMemAvailableMB: 2048, diskKeepGB: 60 } as const;
 
 /** Thresholds from `config/machine.json` `capacity`, defaults for anything unset. */
 export function capacityFor(machine: Machine, cpuCount: number): Capacity {
@@ -155,14 +156,17 @@ export function capacityFor(machine: Machine, cpuCount: number): Capacity {
         maxRuns: Math.max(1, Math.floor(value("maxRuns", Math.max(1, Math.floor(cpuCount / 4))))),
         maxLoadPerCpu: value("maxLoadPerCpu", DEFAULT_CAPACITY.maxLoadPerCpu),
         minMemAvailableMB: value("minMemAvailableMB", DEFAULT_CAPACITY.minMemAvailableMB),
-        minDiskFreeGB: value("minDiskFreeGB", DEFAULT_CAPACITY.minDiskFreeGB),
+        diskKeepGB: value("diskKeepGB", DEFAULT_CAPACITY.diskKeepGB),
         cargoJobs,
     };
 }
 
 export type Measured = Pick<Resources, "cpus" | "load1" | "memAvailableMB" | "diskFreeGB" | "activeRuns">;
 
-/** One reason per breached threshold; a value exactly at its threshold is not a breach (runs: the limit is full). */
+/**
+ * One reason per breached threshold; a value exactly at its threshold is not a breach (runs: the limit is full). Free
+ * disk is never a reason: the disk keeper (src/fleet/disk.ts) frees build output before work starts instead.
+ */
 export function availabilityReasons(measured: Measured, capacity: Capacity): string[] {
     const reasons: string[] = [];
     if (measured.load1 > measured.cpus * capacity.maxLoadPerCpu) {
@@ -171,9 +175,6 @@ export function availabilityReasons(measured: Measured, capacity: Capacity): str
     if (measured.memAvailableMB < capacity.minMemAvailableMB) {
         reasons.push(`memory ${measured.memAvailableMB} MB available, under ${capacity.minMemAvailableMB} MB`);
     }
-    if (measured.diskFreeGB < capacity.minDiskFreeGB) {
-        reasons.push(`disk ${measured.diskFreeGB} GB free, under ${capacity.minDiskFreeGB} GB`);
-    }
     if (measured.activeRuns >= capacity.maxRuns)
         reasons.push(`${measured.activeRuns} of ${capacity.maxRuns} runs active`);
     return reasons;
@@ -181,7 +182,7 @@ export function availabilityReasons(measured: Measured, capacity: Capacity): str
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
-/** This machine's snapshot. Measurement failures make it unavailable with the failure as the reason. */
+/** This machine's snapshot. Memory measurement failures make it unavailable with the failure as the reason. */
 export function localResources(): Resources {
     const machine = loadMachine();
     const cpuCount = Math.max(1, cpus().length);
@@ -198,7 +199,6 @@ export function localResources(): Resources {
     };
     const reasons = [
         ...(typeof memory === "string" ? [`memory unknown: ${memory}`] : []),
-        ...(typeof disk === "string" ? [`disk unknown: ${disk}`] : []),
         ...availabilityReasons(measured, capacity),
     ];
     return {

@@ -219,7 +219,10 @@ wins near-ties, then a machine that already has the clone). `bin/toli remote aut
 prints `local` when this machine should do it, otherwise clones the project there if needed (`project ensure`)
 and runs the prompt there, which can take up to an hour: run it only as `bash` with `async: true` and `timeout: 0`,
 never in the foreground; its output arrives as a new turn. Thresholds live in `config/machine.json` `capacity` (`maxRuns`,
-`maxLoadPerCpu`, `minMemAvailableMB`, `minDiskFreeGB`). When no machine is available, queue the task and tell Malik.
+`maxLoadPerCpu`, `minMemAvailableMB`). When no machine is available, queue the task and tell Malik. Low disk is never a
+reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
+every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). Never write a disk floor into a
+brief.
 
 ## 7b. Custom machine helpers
 

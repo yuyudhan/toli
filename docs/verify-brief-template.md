@@ -94,7 +94,8 @@ the PR/MR?" --option "yes => a jawan pushes and opens the PR/MR" --option "no =>
   concurrent builds: wait for it. Leave build jobs at the machine's one cap (`capacity.cargoJobs` in
   config/machine.json, mirrored in ~/.cargo/config.toml): never pass `-j` or set `CARGO_BUILD_JOBS`, and run the
   project's own check/test commands with no extra `RUSTFLAGS`, profile or features. After your last test run, apply
-  the project notes' cleanup rules (what to delete, disk limits), if any.
+  the project notes' cleanup rules (what to delete), if any. Low disk never stops verification: run
+  `bin/toli disk keep` and carry on (docs/disk.md).
 - Work on toli itself: run `just check` in the toli checkout (in place, on `develop`) before landing with
   `bin/toli commit toli -m "<message>" -- <paths...>`; a failing run, or a git worktree (even a temporary one), is a
   GAP.

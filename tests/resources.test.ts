@@ -108,7 +108,7 @@ describe("Linux measurement", () => {
 });
 
 describe("availability thresholds", () => {
-    const capacity = { maxRuns: 2, maxLoadPerCpu: 0.8, minMemAvailableMB: 2048, minDiskFreeGB: 5, cargoJobs: 9 };
+    const capacity = { maxRuns: 2, maxLoadPerCpu: 0.8, minMemAvailableMB: 2048, diskKeepGB: 60, cargoJobs: 9 };
     const atLimits = { cpus: 10, load1: 8, memAvailableMB: 2048, diskFreeGB: 5, activeRuns: 1 };
 
     test("every value exactly at its threshold is still available", () => {
@@ -120,10 +120,11 @@ describe("availability thresholds", () => {
         expect(availabilityReasons({ ...atLimits, memAvailableMB: 2047 }, capacity)).toEqual([
             "memory 2047 MB available, under 2048 MB",
         ]);
-        expect(availabilityReasons({ ...atLimits, diskFreeGB: 4.9 }, capacity)).toEqual([
-            "disk 4.9 GB free, under 5 GB",
-        ]);
         expect(availabilityReasons({ ...atLimits, activeRuns: 2 }, capacity)).toEqual(["2 of 2 runs active"]);
+    });
+
+    test("low free disk is never a reason: the disk keeper frees build output instead", () => {
+        expect(availabilityReasons({ ...atLimits, diskFreeGB: 0 }, capacity)).toEqual([]);
     });
 
     test("all breaches are reported together", () => {
@@ -131,7 +132,11 @@ describe("availability thresholds", () => {
             { cpus: 10, load1: 9, memAvailableMB: 100, diskFreeGB: 1, activeRuns: 3 },
             capacity,
         );
-        expect(reasons).toHaveLength(4);
+        expect(reasons).toEqual([
+            "load 9/10 cpus over 0.8",
+            "memory 100 MB available, under 2048 MB",
+            "3 of 2 runs active",
+        ]);
     });
 
     test("default maxRuns is a quarter of the cpus, never below one; configured values win", () => {
@@ -140,15 +145,15 @@ describe("availability thresholds", () => {
             maxRuns: 2,
             maxLoadPerCpu: 0.8,
             minMemAvailableMB: 2048,
-            minDiskFreeGB: 5,
+            diskKeepGB: 60,
             cargoJobs: 4,
         });
         expect(capacityFor(machine, 3).maxRuns).toBe(1);
-        expect(capacityFor({ ...machine, capacity: { maxRuns: 5, minDiskFreeGB: 20, cargoJobs: 12 } }, 8)).toEqual({
+        expect(capacityFor({ ...machine, capacity: { maxRuns: 5, diskKeepGB: 20, cargoJobs: 12 } }, 8)).toEqual({
             maxRuns: 5,
             maxLoadPerCpu: 0.8,
             minMemAvailableMB: 2048,
-            minDiskFreeGB: 20,
+            diskKeepGB: 20,
             cargoJobs: 12,
         });
     });
