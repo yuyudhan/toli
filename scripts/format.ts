@@ -12,7 +12,8 @@
 //   .ts .json .jsonc                     Biome (biome.json)
 //   .md .yml .yaml                       Prettier (.prettierrc.json, .prettierignore)
 //   .toml                                Taplo (.taplo.toml)
-//   *.sh *.bash, sh/bash shebang files   shfmt (options from .editorconfig) + shellcheck
+//   *.sh *.bash, sh/bash shebang files   shfmt (options from .editorconfig) + shellcheck; not bin/toli, a sh/Bun
+//                                        polyglot (shebang sh, then a `':' //;` trampoline line, then JavaScript)
 //   Justfile                             just --fmt
 //   .github/workflows/*.yml|yaml         actionlint
 // A system tool a step needs that is not on PATH fails the run with an install hint; nothing is skipped silently.
@@ -77,13 +78,15 @@ function isRegularFile(path: string): boolean {
 }
 
 const SHELL_SHEBANG = /^#!\s*(?:\/usr)?\/bin\/(?:env\s+)?(?:ba)?sh(?:\s|$)/;
+/** Second line of a sh/Bun polyglot (bin/toli): a shell trampoline that Bun reads as a string and a comment. */
+const BUN_TRAMPOLINE = /^':' \/\/;/;
 
 function isShell(path: string): boolean {
     const extension = extname(path);
     if (extension === ".sh" || extension === ".bash") return true;
     if (extension !== "") return false;
-    const firstLine = readFileSync(`${ROOT}${path}`, "utf8").split("\n", 1)[0] ?? "";
-    return SHELL_SHEBANG.test(firstLine);
+    const [firstLine = "", secondLine = ""] = readFileSync(`${ROOT}${path}`, "utf8").split("\n", 2);
+    return SHELL_SHEBANG.test(firstLine) && !BUN_TRAMPOLINE.test(secondLine);
 }
 
 type FileSets = Record<"biome" | "prettier" | "taplo" | "shell" | "justfiles" | "workflows", string[]>;

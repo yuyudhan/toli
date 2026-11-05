@@ -9,6 +9,7 @@
 //   4. Commit "Release vX.Y.Z" on develop, merge develop into main (a fast-forward: main never has commits of its
 //      own), and create the annotated tag vX.Y.Z on that commit.
 //   5. Ask "Push main, develop and vX.Y.Z to <remote>? [y/N]"; push (atomically) only on y.
+//   6. Refresh this machine's installed runtime (`bin/toli self sync`) so the live session runs the release commit.
 //
 // The first release tags the version CHANGELOG.md was seeded with: `just release v0.1.0` when package.json is
 // already 0.1.0, the section exists, and no tag does (nothing to bump; the tag goes on HEAD).
@@ -251,6 +252,7 @@ try {
     } else {
         const tag = cutRelease(ROOT, request);
         pushPrompt(ROOT, remote, tag);
+        stream(ROOT, [process.execPath, join(ROOT, "bin", "toli"), "self", "sync"]);
     }
 } catch (error) {
     if (!(error instanceof ReleaseError || error instanceof ToliError)) throw error;
