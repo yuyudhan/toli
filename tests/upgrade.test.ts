@@ -132,6 +132,19 @@ describe("bin/toli upgrade", () => {
     });
 });
 
+describe("bin/toli sync on a release install", () => {
+    test("follows release tags: upgrades the detached checkout to the latest tag instead of pulling", () => {
+        const box = releaseInstall();
+        mkdirSync(join(box.root, "config"));
+        writeFileSync(join(box.root, "config", "machine.json"), '{ "name": "w1", "role": "coordinator" }\n');
+        const output = box.ok(["sync"]);
+        expect(output).toContain("w1: release install (detached HEAD): bin/toli upgrade");
+        expect(output).toContain("toli upgraded: v0.1.0 -> v0.2.0");
+        expect(headTag(box)).toBe("v0.2.0");
+        expect(box.ok(["sync"])).toContain("toli is already at v0.2.0");
+    });
+});
+
 describe("version and upgrade checks in process", () => {
     test("describe the install, its release remote, and what blocks an upgrade", () => {
         const box = releaseInstall();

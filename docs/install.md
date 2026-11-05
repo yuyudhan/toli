@@ -91,7 +91,9 @@ Off a release tag (a development clone on `develop`) it prints `0.2.0 (untagged:
 - prints the CHANGELOG.md sections between your old version and the new one.
 
 Your `data/`, `state/`, `config/`, `logs/`, `projects/`, and `local/` are gitignored, so the checkout never touches
-them. After an upgrade, restart your agent session so it loads the new contract and skills.
+them. After an upgrade, restart your agent session so it loads the new contract and skills. On a release install
+`bin/toli sync` runs `upgrade` too, so `bin/toli sync --all` on the coordinator moves every worker to the latest tag
+([fleet.md](fleet.md#keeping-machines-in-sync)).
 
 ## Update check
 
