@@ -158,8 +158,12 @@ export function checkLockFiles(attempt: Attempt, files: string[]): void {
     }
 }
 
-/** Refuse when the staged change exactly undoes a hunk of one of the last REVERT_WINDOW commits. */
+/**
+ * Refuse when the change to `files` exactly undoes a hunk of one of the last REVERT_WINDOW commits. `files` are the
+ * committer's own changes: a merge's files (unchanged on top of the merge result) are never passed in.
+ */
 export function checkReverts(dir: string, parent: string, tree: string, files: string[], allowed: string[]): void {
+    if (files.length === 0) return;
     const ours = parseHunks(
         gitOk(dir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", parent, tree, "--", ...files]),
     );
