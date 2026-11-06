@@ -24,6 +24,9 @@ one. See docs/releasing.md.
 
 - The disk keeper logs why it did not run (paused, another keeper busy) once when that starts, instead of a line
   every minute in `logs/disk.log`.
+- `just release` refreshes this machine's installed runtime (`bin/toli self sync`) after the release, so the live
+  session runs the release commit.
+- Setup docs require git 2.38 or newer (`bin/toli commit --merge` uses `git merge-tree --write-tree`).
 
 ### Fixed
 
@@ -34,6 +37,8 @@ one. See docs/releasing.md.
   background work they started is still running: omp gets `--wait-async`, so a turn that ends while a `task`
   subagent, background build or poll is live waits for it and continues with its result, bounded by `--max-time`.
   Before, print mode ended at the first yield, cancelled that work and left edits uncommitted.
+- `bin/toli` finds bun on its own (PATH, `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin`), so
+  `ssh host bin/toli ...` works from a non-login shell without bun on PATH.
 
 ## v0.2.4 - 2026-11-05
 
