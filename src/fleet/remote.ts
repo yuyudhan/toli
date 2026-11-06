@@ -80,6 +80,8 @@ const EXEC_MAX_MINUTES_ENV = "TOLI_EXEC_MAX_MINUTES";
 const EXEC_PROJECT_ENV = "TOLI_EXEC_PROJECT";
 const EXEC_TIER_ENV = "TOLI_EXEC_TIER";
 const EXEC_WORK_ENV = "TOLI_EXEC_WORK";
+/** The task's tier, which ranks below the prompt's Tier: line (unlike `--tier`). */
+const EXEC_TASK_TIER_ENV = "TOLI_EXEC_TASK_TIER";
 /** A limit retry needs at least this much of the exec's budget left. */
 const MIN_RETRY_MINUTES = 5;
 
@@ -89,11 +91,13 @@ export function execKillMs(maxMinutes: number): number {
 }
 
 /** The exec's tier and work type from `remote`'s variables; empty or absent is none. */
-function execRequest(): { tier: Tier | null; work: WorkType | null } {
+function execRequest(): { tier: Tier | null; taskTier: Tier | null; work: WorkType | null } {
     const tier = process.env[EXEC_TIER_ENV] ?? "";
+    const taskTier = process.env[EXEC_TASK_TIER_ENV] ?? "";
     const work = process.env[EXEC_WORK_ENV] ?? "";
     return {
         tier: parseOptionalTier(tier === "" ? undefined : tier, EXEC_TIER_ENV) ?? null,
+        taskTier: parseOptionalTier(taskTier === "" ? undefined : taskTier, EXEC_TASK_TIER_ENV) ?? null,
         work: work === "" ? null : parseWork(work, EXEC_WORK_ENV),
     };
 }
@@ -124,7 +128,7 @@ export async function execCommand(argv: string[]): Promise<number> {
     const config = harnessConfig();
     const choice = resolveModel(
         "omp",
-        { tier: request.tier, briefTier: briefTier(prompt), work: request.work },
+        { tier: request.tier, briefTier: briefTier(prompt), taskTier: request.taskTier, work: request.work },
         config,
     );
     const refusal = localStartRefusal();
@@ -251,7 +255,8 @@ export async function remoteCommand(argv: string[]): Promise<number> {
     const tierName = args.str("tier");
     const workName = args.str("work");
     const task = taskId === undefined ? undefined : loadBacklog().tasks.find((entry) => entry.id === taskId);
-    const tier = parseOptionalTier(tierName) ?? task?.tier ?? null;
+    const tier = parseOptionalTier(tierName) ?? null;
+    const taskTier = task?.tier ?? null;
     const work = workName === undefined ? (task?.shape ?? null) : parseWork(workName);
     let targetName = requested;
     if (requested === "auto") {
@@ -297,6 +302,7 @@ export async function remoteCommand(argv: string[]): Promise<number> {
                         ...(projectName === undefined ? {} : { [EXEC_PROJECT_ENV]: projectName }),
                         [EXEC_MAX_MINUTES_ENV]: String(maxMinutes),
                         ...(tier === null ? {} : { [EXEC_TIER_ENV]: tier }),
+                        ...(taskTier === null ? {} : { [EXEC_TASK_TIER_ENV]: taskTier }),
                         ...(work === null ? {} : { [EXEC_WORK_ENV]: work }),
                     },
                 ),
