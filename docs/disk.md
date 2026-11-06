@@ -51,11 +51,13 @@ It stops as soon as free space reaches the floor plus 20 GB.
    then each process's executable, mapped files and working directory: `lsof -d cwd,txt` on macOS, `/proc/<pid>/exe`
    and `/proc/<pid>/cwd` on Linux), any process runs an executable or maps a file under it, works inside its
    workspace (the folder holding `target/`), or is `cargo`, `rustc`, `rustdoc`, `clippy-driver`, `just` or a kalki
-   queue working in, above, or naming that workspace; or when any process holds a file under it open. A process
-   table it cannot read counts as in use. Each skip is logged with its reason. Only then does it rename the folder
-   aside under the locks, release them, and delete the renamed tree. A cargo that starts meanwhile waits on the lock,
-   then builds into an empty target. The inline keeper tries once; the background keeper retries for up to 30 minutes
-   per target.
+   queue working in, above, or naming that workspace; when a cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`,
+   ...) runs in the folder holding the target (`cargo test` drops its locks before it runs the test binaries one after
+   another); or when any process holds a file under it open. A process table it cannot read counts as in use. Each
+   skip is logged with its reason. Only then does it rename the folder aside under the locks, release them, and delete
+   the renamed tree. A cargo that starts meanwhile waits on the lock, then builds into an empty target. The inline
+   keeper tries once; the background keeper retries for up to 30 minutes per target and checks `state/disk-keep.pause`
+   again before every try, so a job that writes the pause while the keeper waits is not cut off.
 
 ## What it never deletes
 
