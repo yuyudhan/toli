@@ -1,12 +1,13 @@
 // Delete a cargo target folder between build steps: take cargo's own file locks (flock on `.cargo-lock` and friends,
-// the locks every cargo invocation holds for its whole build and test run), make sure no process holds a file in it
-// open (a server or test binary running from it), rename it aside under the locks, release them, then delete the
-// renamed tree. A cargo that starts meanwhile waits on the lock, then builds into a fresh, empty target.
+// held while cargo compiles), make sure no process uses the folder (cargo releases its locks before it runs the test
+// binaries, so a test binary, a process working in the workspace, or a build tool there counts as using it; so does any
+// open file under it), rename it aside under the locks, release them, then delete the renamed tree. A cargo that
+// starts meanwhile waits on the lock, then builds into a fresh, empty target.
 import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, type Dirent, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { platform } from "../core/util.ts";
-import { openBelow } from "./disk-scan.ts";
+import { openBelow, targetUse } from "./disk-scan.ts";
 
 const CARGO_LOCKS: Record<string, true> = {
     ".cargo-lock": true,
@@ -92,8 +93,8 @@ function release(fds: number[], lock: Flock): void {
 export type WipeOutcome = { wiped: true } | { wiped: false; reason: string };
 
 /**
- * Wipe `target` once no build holds its locks and no process holds a file in it open, retrying for up to `waitMs`.
- * Nothing is deleted when that moment never comes.
+ * Wipe `target` once no build holds its locks and no process uses it, retrying for up to `waitMs`. Nothing is
+ * deleted when that moment never comes; the returned reason says why.
  */
 export function wipeTargetBetweenBuilds(target: string, waitMs: number): WipeOutcome {
     const lock = flock();
@@ -105,8 +106,10 @@ export function wipeTargetBetweenBuilds(target: string, waitMs: number): WipeOut
         if (typeof held === "string") reason = `a build holds ${held}`;
         else {
             try {
-                const open = openBelow(target);
-                if (open.length > 0) reason = `open files, e.g. ${open.join(", ")}`;
+                const user = targetUse(target);
+                const open = user === null ? openBelow(target) : [];
+                if (user !== null) reason = user;
+                else if (open.length > 0) reason = `open files, e.g. ${open.join(", ")}`;
                 else {
                     const aside = `${target}.toli-wipe-${Date.now()}`;
                     renameSync(target, aside);
