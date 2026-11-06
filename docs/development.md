@@ -20,6 +20,7 @@ just check                                                   # format check, lin
 bin/toli commit toli -m "Fix the digest's footer" -- src/records/digest.ts tests/digest.test.ts
 bin/toli commit toli -m "Fix one hunk" --patch my.diff       # only the hunks in my.diff
 bin/toli commit app -m "Merge feature" --merge feature        # a clean two-parent merge, nothing else named
+bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   # conflicts resolved in the tree
 ```
 
 `bin/toli commit` (all projects; `toli` means this checkout, on `develop`) never uses the shared index:
@@ -32,7 +33,8 @@ bin/toli commit app -m "Merge feature" --merge feature        # a clean two-pare
    error, a `[[package]]` the parser dropped; for a whole-file `Cargo.lock` also `cargo metadata --locked`); or
    exactly undoes a hunk of one of the last 20 commits that touched those files, which is what a stale copy of a file
    looks like (`--allow-revert <sha>` when undoing that commit is the point). With `--merge` only the changes made on
-   top of the merge result are checked: what the merged ref itself brings is never a revert.
+   top of the merge result are checked: what the merged ref itself brings is never a revert, including the ref's own
+   hunks a `--resolved` conflict keeps as they are.
 3. It writes the commit with `git commit-tree` on the tip it read and moves the branch with
    `git update-ref <branch> <new> <old>`, which fails if another commit landed meanwhile. It then rebuilds everything
    once from the new tip; a second move is a refusal ("run the same commit again").
@@ -41,10 +43,13 @@ bin/toli commit app -m "Merge feature" --merge feature        # a clean two-pare
    why `just check` comes first. Repeated `-m` values become separate paragraphs, as with `git commit`.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
-   above. It refuses a conflicted merge (resolve it on a branch of your own with `git merge`, then `--merge` that
-   branch), a ref already merged, local changes or untracked files at paths the merge changes, and named paths the
-   merge also changes (commit the merge first). After the branch moves it checks the merged files out into the
-   shared index and working tree (`git restore --source=<commit> --staged --worktree`).
+   above. It refuses a ref already merged, local changes or untracked files at paths the merge changes, and named
+   paths the merge also changes (commit the merge first). A conflicted merge is refused, naming the conflicted paths
+   and the merge-tree tree (`git show <tree>:<path>` shows each with conflict markers). Write the resolved files in
+   the working tree, then run the same commit with `--resolved -- <conflicted paths>`: the named files replace the
+   conflicted ones, every conflicted path must be named and free of conflict markers, and every check above runs on
+   the result (`--resolved` on a clean merge is refused). After the branch moves it checks the merged files out into
+   the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
 
 For toli, it then refreshes the installed runtime (below), so the live session runs the new commit from the next
 `bin/toli` call.

@@ -153,6 +153,69 @@ describe("bin/toli commit (R23 safe commits)", () => {
         expect(git(dir, ["ls-tree", "--name-only", merged.sha])).toBe("main.rs");
     });
 
+    test("--merge --resolved commits a conflict resolved in the working tree, with every check still on", () => {
+        const gap = "keep 1\nkeep 2\nkeep 3\nkeep 4\nkeep 5\nkeep 6\n";
+        const file = (first: string, second: string) => `${first}\n${gap}${second}\n`;
+        const dir = repo({ "app.txt": file("first original line", "second original line") });
+        const recent = otherJawan(dir, "app.txt", file("first changed line", "second original line"));
+        // Upstream has that commit, undoes it, and changes the second line; the branch changes the second line too.
+        git(dir, ["switch", "--quiet", "-c", "upstream", recent]);
+        writeFileSync(join(dir, "app.txt"), file("first original line", "second upstream line"));
+        writeFileSync(join(dir, "new.txt"), "from upstream\n");
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "upstream: undo first, change second"]);
+        git(dir, ["switch", "--quiet", "main"]);
+        const mine = otherJawan(dir, "app.txt", file("first changed line", "second main line"));
+        const before = head(dir);
+
+        expect(() => safeCommit({ dir, paths: [], merge: "upstream", message: "Merge" })).toThrow(
+            "merging upstream has conflicts in app.txt",
+        );
+        expect(() => safeCommit({ dir, paths: [], merge: "upstream", message: "Merge" })).toThrow(
+            "--resolved -- app.txt",
+        );
+        expect(() => safeCommit({ dir, paths: [], merge: "upstream", resolved: true, message: "Merge" })).toThrow(
+            "conflicted app.txt not named",
+        );
+        writeFileSync(
+            join(dir, "app.txt"),
+            `first original line\n${gap}<<<<<<< main\nsecond main line\n=======\nsecond upstream line\n>>>>>>> upstream\n`,
+        );
+        const resolve = () =>
+            safeCommit({ dir, paths: ["app.txt"], merge: "upstream", resolved: true, message: "Merge upstream" });
+        expect(resolve).toThrow("app.txt still has a merge conflict marker <<<<<<<");
+        // A resolution that hand-undoes the branch's own recent commit is still a revert.
+        writeFileSync(join(dir, "app.txt"), file("first original line", "second original line"));
+        expect(resolve).toThrow(`would revert app.txt lines from ${mine.slice(0, 7)}`);
+        expect(head(dir)).toBe(before);
+        expect(() => safeCommit({ dir, paths: ["app.txt"], resolved: true, message: "x" })).toThrow(
+            "--resolved goes with --merge",
+        );
+
+        // Upstream's undo of `recent`, kept as it is, is what the merge brings, not a revert.
+        const resolved = file("first original line", "second resolved line");
+        writeFileSync(join(dir, "app.txt"), resolved);
+        const merged = resolve();
+        expect(git(dir, ["rev-list", "--parents", "-n", "1", merged.sha]).split(" ")).toEqual([
+            merged.sha,
+            before,
+            git(dir, ["rev-parse", "upstream"]),
+        ]);
+        expect(git(dir, ["show", `${merged.sha}:app.txt`])).toBe(resolved.trimEnd());
+        expect(git(dir, ["show", `${merged.sha}:new.txt`])).toBe("from upstream");
+        expect(git(dir, ["status", "--porcelain"])).toBe("");
+
+        git(dir, ["switch", "--quiet", "-c", "clean"]);
+        writeFileSync(join(dir, "other.txt"), "no conflict\n");
+        git(dir, ["add", "other.txt"]);
+        git(dir, ["commit", "--quiet", "-m", "clean: other.txt"]);
+        git(dir, ["switch", "--quiet", "main"]);
+        otherJawan(dir, "main-only.txt", "main\n");
+        expect(() => safeCommit({ dir, paths: [], merge: "clean", resolved: true, message: "Merge clean" })).toThrow(
+            "merging clean has no conflicts; drop --resolved",
+        );
+    });
+
     test("refuses lock files that do not parse", () => {
         const dir = repo();
         writeFileSync(

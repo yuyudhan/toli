@@ -12,7 +12,7 @@ const REVERT_MIN_CHARS = 8;
 const LOCK_CHECK_TIMEOUT_MS = 300_000;
 const TAIL_LINES = 20;
 
-type Hunk = { file: string; removed: string[]; added: string[] };
+export type Hunk = { file: string; removed: string[]; added: string[] };
 
 function tail(text: string): string {
     return text.trimEnd().split("\n").slice(-TAIL_LINES).join("\n");
@@ -109,6 +109,30 @@ export function scanLeaks(attempt: Attempt): void {
         );
 }
 
+/** A line git writes around a merge conflict. */
+const CONFLICT_MARKER = /^(<{7}|={7}|>{7})( |$)/m;
+
+/**
+ * Refuse a resolved merge whose conflicted paths are not all named (`named`: whether the committer named a path) or
+ * whose staged version still holds a conflict marker.
+ */
+export function checkResolved(attempt: Attempt, conflicts: string[], named: (file: string) => boolean): void {
+    const unnamed = conflicts.filter((file) => !named(file));
+    if (unnamed.length > 0)
+        throw new ToliError(
+            `refusing: --resolved, but conflicted ${unnamed.join(", ")} not named; name every resolved file after --`,
+        );
+    for (const file of conflicts) {
+        const staged = attempt.git(["show", `:${file}`]);
+        if (staged.code !== 0) continue; // resolved by deleting it
+        const marker = CONFLICT_MARKER.exec(staged.stdout);
+        if (marker !== null)
+            throw new ToliError(
+                `refusing: ${file} still has a merge conflict marker ${marker[1]}; finish resolving it`,
+            );
+    }
+}
+
 /** Refuse a staged Cargo.lock or bun.lock that does not parse (and a Cargo.lock that cargo rejects). */
 export function checkLockFiles(attempt: Attempt, files: string[]): void {
     for (const file of files) {
@@ -118,7 +142,7 @@ export function checkLockFiles(attempt: Attempt, files: string[]): void {
         if (staged.code !== 0) continue; // deleted in this commit
         const blob = staged.stdout;
         try {
-            const marker = /^(<{7}|={7}|>{7})( |$)/m.exec(blob);
+            const marker = CONFLICT_MARKER.exec(blob);
             if (marker !== null) throw new Error(`merge conflict marker ${marker[1]}`);
             if (name === "bun.lock") {
                 const parsed: unknown = Bun.JSONC.parse(blob);
@@ -160,12 +184,29 @@ export function checkLockFiles(attempt: Attempt, files: string[]): void {
 
 /**
  * Refuse when the change to `files` exactly undoes a hunk of one of the last REVERT_WINDOW commits. `files` are the
- * committer's own changes: a merge's files (unchanged on top of the merge result) are never passed in.
+ * committer's own changes: the files a clean merge brings (unchanged on top of the merge result) are never passed in.
+ * `brought`: the merged ref's own hunks (merge base to ref); a hunk of ours equal to one of them is the ref's change,
+ * taken as it is in a resolved conflict, so it is not checked.
  */
-export function checkReverts(dir: string, parent: string, tree: string, files: string[], allowed: string[]): void {
+export function checkReverts(
+    dir: string,
+    parent: string,
+    tree: string,
+    files: string[],
+    allowed: string[],
+    brought: Hunk[] = [],
+): void {
     if (files.length === 0) return;
     const ours = parseHunks(
         gitOk(dir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", parent, tree, "--", ...files]),
+    ).filter(
+        (hunk) =>
+            !brought.some(
+                (other) =>
+                    other.file === hunk.file &&
+                    other.removed.join("\n") === hunk.removed.join("\n") &&
+                    other.added.join("\n") === hunk.added.join("\n"),
+            ),
     );
     if (ours.length === 0) return;
     const recent = gitOk(dir, ["log", `-${REVERT_WINDOW}`, "--format=%H", parent, "--", ...files])

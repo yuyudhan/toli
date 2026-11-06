@@ -14,6 +14,11 @@ one. See docs/releasing.md.
 - A long job can pause the disk keeper: it writes its pid (and an optional reason) to `state/disk-keep.pause`, and
   `bin/toli disk keep` deletes nothing while that pid is alive; a dead pid's file is stale and ignored
   (docs/disk.md). Other tools no longer need to hold the keeper's own `state/disk-keep.lock`.
+- `bin/toli commit <p> --merge <ref> --resolved -m "..." -- <paths>` commits a merge whose conflicts were resolved in
+  the working tree: every conflicted path must be named and free of conflict markers, and the usual checks (secrets,
+  lock files, reverts, branch moved meanwhile) run on the result. A resolution keeping the ref's own change is not a
+  revert; a hand-made undo of a recent branch commit still is. A conflicted merge without `--resolved` is refused
+  with the conflicted paths and how to see them with conflict markers.
 
 ### Changed
 
