@@ -5,7 +5,8 @@ import { paths } from "../core/paths.ts";
 import { now, out, runCombined, ToliError } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { registerRun, removeRun } from "../fleet/resources.ts";
-import { headlessOmpArgs } from "../harness/harness.ts";
+import { harnessConfig, headlessOmpArgs } from "../harness/harness.ts";
+import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
 import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
 import { drainQueue } from "../jawans/supervise.ts";
@@ -14,14 +15,15 @@ import { startDueUpdateCheck } from "../release/update-check.ts";
 import {
     type BegunRun,
     beginJob,
-    deliverOutbox,
     dueJobs,
     findJob,
     finishJob,
+    type JobConfig,
     jobSubcommands,
     loadJobState,
     STALE_RUN_MS,
 } from "./jobs.ts";
+import { deliverOutbox } from "./outbox.ts";
 
 /** Hard ceiling for omp's own --max-time, so a wedged process is still reaped. */
 const HEADLESS_MAX_TIME = "45m";
@@ -32,11 +34,18 @@ function log(line: string): void {
     appendFileSync(paths.tickLog(), `${now().toISOString()} ${line}\n`);
 }
 
+/** The model a job runs on: its own tier, else its shape's work type, on this machine's omp tiers. */
+export function jobModel(job: Pick<JobConfig, "tier" | "shape">): ModelChoice {
+    return resolveModel("omp", { tier: job.tier ?? null, work: job.shape }, harnessConfig());
+}
+
 /**
- * Run a claimed job in headless omp, counted as load (a run record) while it runs; if the agent never called
- * `job finish`, record its captured output.
+ * Run a claimed job in headless omp on its tier's model, counted as load (a run record) while it runs; a run stopped
+ * by a rate or usage limit retries once on a lower allowed tier (never waiting: the tick runs every minute). If the
+ * agent never called `job finish`, record its captured output.
  */
-async function runHeadless(name: string, begun: BegunRun): Promise<string> {
+async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
+    const name = job.name;
     registerRun({
         runId: begun.runId,
         pid: process.pid,
@@ -45,26 +54,47 @@ async function runHeadless(name: string, begun: BegunRun): Promise<string> {
         startedAt: now().toISOString(),
         title: `job ${name}`,
     });
+    const choice = jobModel(job);
+    let model = choice.model;
+    let fallback = "";
     let result: { code: number; output: string };
     try {
-        result = await runCombined(headlessOmpArgs(begun.prompt, paths.root(), HEADLESS_MAX_TIME), {
-            cwd: paths.root(),
-            timeoutMs: HEADLESS_KILL_MS,
-        });
+        const attempt = (chosen: string | null) =>
+            runCombined(headlessOmpArgs(begun.prompt, paths.root(), HEADLESS_MAX_TIME, chosen), {
+                cwd: paths.root(),
+                timeoutMs: HEADLESS_KILL_MS,
+            });
+        result = await attempt(model);
+        if (hitLimit(result.output, result.code)) {
+            const at = now();
+            const plan = limitPlan(
+                { harness: "omp", model, tier: choice.tier, work: job.shape },
+                limitReset(result.output, at),
+                at,
+                harnessConfig(),
+            );
+            if (plan.kind === "switch") {
+                fallback = `; limit fallback ${model ?? "default"} -> ${plan.model} (${plan.reason})`;
+                model = plan.model;
+                result = await attempt(model);
+            } else fallback = `; hit a rate/usage limit, no retry (${plan.reason})`;
+        }
     } finally {
         removeRun(begun.runId);
     }
+    const ran = `omp ${choiceText({ ...choice, model })}${fallback}`;
     const stillRunning = loadJobState()[name]?.running?.runId === begun.runId;
-    if (!stillRunning) return `job ${name} ${begun.runId}: finished by the agent (omp exit ${result.code})`;
+    if (!stillRunning) return `job ${name} ${begun.runId}: finished by the agent (${ran}, exit ${result.code})`;
     const body = [
         `omp exited ${result.code} without calling \`bin/toli job finish\`; captured output follows.`,
+        `Model: ${ran}.`,
         "",
         "```text",
         result.output.trimEnd(),
         "```",
     ].join("\n");
     const path = finishJob(name, begun.runId, body, result.code === 0 ? "ok" : "failed");
-    return `job ${name} ${begun.runId}: omp exit ${result.code}, result ${path}`;
+    return `job ${name} ${begun.runId}: ${ran}, exit ${result.code}, result ${path}`;
 }
 
 /** Record runs stuck in "running" past the stale limit as failed so their schedule resumes. */
@@ -107,7 +137,7 @@ async function runDueJobs(origin: string): Promise<void> {
         }
         log(`job ${job.name} ${begun.runId}: started headless (${origin})`);
         try {
-            log(await runHeadless(job.name, begun));
+            log(await runHeadless(job, begun));
         } catch (error) {
             log(`job ${job.name} ${begun.runId}: run error: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -156,10 +186,10 @@ async function runNow(argv: string[]): Promise<void> {
     const args = new Args(argv);
     args.maxPositional(1);
     const name = args.pos(0, "name");
-    findJob(name);
+    const job = findJob(name);
     const begun = beginJob(name, "headless");
-    out(`job ${name} ${begun.runId}: running headless omp (up to ${HEADLESS_MAX_TIME})`);
-    const summary = await runHeadless(name, begun);
+    out(`job ${name} ${begun.runId}: running headless omp ${choiceText(jobModel(job))} (up to ${HEADLESS_MAX_TIME})`);
+    const summary = await runHeadless(job, begun);
     log(summary);
     out(summary);
     const result = loadJobState()[name]?.lastResult;

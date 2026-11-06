@@ -9,7 +9,15 @@ import { now, out, printJson, run, ToliError } from "../core/util.ts";
 import { fleetStatus } from "../fleet/pick.ts";
 import { type FleetEntry as AvailabilityEntry, availabilityLine } from "../fleet/resources.ts";
 import { configuredHarnesses, harnessPath } from "../harness/harness.ts";
-import { activeRuns, type JawanRun, runLine } from "../jawans/runs.ts";
+import {
+    activeRuns,
+    type JawanRun,
+    listRuns,
+    type ModelTotal,
+    modelTotalLine,
+    modelTotalsToday,
+    runLine,
+} from "../jawans/runs.ts";
 import { type JobResult, listResults, loadJobState } from "../jobs/jobs.ts";
 import { brokenLink } from "../projects/link.ts";
 import { loadProjects, type Mode } from "../projects/projects.ts";
@@ -56,6 +64,8 @@ export type Digest = {
     reports: ReportEntry[];
     /** Jawans started with `bin/toli spawn` that are still running. */
     jawanRuns?: JawanRun[];
+    /** Today's jawan runs per harness and model (started since local midnight). */
+    models?: ModelTotal[];
     /** Recommended next actions for the lead, most urgent first. */
     next?: NextAction[];
 };
@@ -145,6 +155,7 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
         reports: recentReports(),
         pushes: recentPushes(),
         jawanRuns: runs,
+        models: modelTotalsToday(listRuns()),
         next: nextActions({
             projects,
             backlog,
@@ -260,6 +271,12 @@ function render(digest: Digest, notices: readonly string[] = [], resurface: Read
         "",
         `jawan runs (${runs.length}):`,
         ...(runs.length === 0 ? ["  none"] : runs.map((entry) => `  ${runLine(entry)}`)),
+    );
+    const models = digest.models ?? [];
+    lines.push(
+        "",
+        `models today (${models.length}):`,
+        ...(models.length === 0 ? ["  none"] : models.map((entry) => `  ${modelTotalLine(entry)}`)),
     );
     const next = digest.next ?? [];
     lines.push("", `Next (${next.length}):`, ...next.map((action) => `  - ${action.action}: ${action.command}`));

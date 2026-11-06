@@ -15,15 +15,24 @@ import {
     type Harness,
     harnessConfig,
     parseHarness,
+    parseWork,
     requireInstalled,
-    WORK_TYPES,
     type WorkType,
 } from "../harness/harness.ts";
+import {
+    briefTier,
+    choiceText,
+    type ModelChoice,
+    parseOptionalTier,
+    resolveModel,
+    type Tier,
+    usageText,
+} from "../harness/models.ts";
 import { findProject } from "../projects/projects.ts";
 import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { jawanSlots, startOrQueue } from "./launch.ts";
-import { activeRuns, type JawanRun, killRun, listRuns, loadRun, runLine, updateRun } from "./runs.ts";
+import { activeRuns, type JawanRun, killRun, listRuns, loadRun, modelText, runLine, updateRun } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
@@ -31,10 +40,13 @@ const DEFAULT_MAX_MINUTES = 120;
 
 export type SpawnOptions = {
     harness?: Harness | undefined;
-    briefPath: string;
+    /** Required to spawn; `--dry-run` may leave it out (no brief, so no Tier: line). */
+    briefPath: string | undefined;
     task?: string | undefined;
     project?: string | undefined;
     model?: string | undefined;
+    /** `--tier`: the model tier, below --model and above the brief's Tier: line (src/harness/models.ts). */
+    tier?: Tier | undefined;
     work?: WorkType | undefined;
     cwd?: string | undefined;
     maxMinutes?: number | undefined;
@@ -52,19 +64,23 @@ function readBrief(path: string): string {
     return brief;
 }
 
-/** Resolve options against the backlog, project registry and harness config; nothing is written. */
-function plan(options: SpawnOptions): {
+/** What a spawn resolves to; nothing is written (`spawn --dry-run` prints it). */
+export type SpawnPlan = {
     harness: Harness;
     brief: string;
     task: string | null;
     project: string | null;
     work: WorkType | null;
-    model: string | null;
+    choice: ModelChoice;
     cwd: string;
-} {
-    const brief = readBrief(options.briefPath);
+};
+
+/** Resolve options against the backlog, project registry and harness config; nothing is written. */
+export function planSpawn(options: SpawnOptions): SpawnPlan {
+    const brief = options.briefPath === undefined ? "" : readBrief(options.briefPath);
     let project = options.project ?? null;
     let work = options.work ?? null;
+    let taskTier: Tier | null = null;
     const taskId = options.task ?? null;
     if (taskId !== null) {
         const task = loadBacklog().tasks.find((entry) => entry.id === taskId);
@@ -73,6 +89,7 @@ function plan(options: SpawnOptions): {
             throw new ToliError(`${taskId} belongs to project ${task.project}, not ${project}`);
         project = task.project;
         work ??= task.shape;
+        taskTier = task.tier ?? null;
     }
     let cwd: string;
     if (project !== null) {
@@ -88,8 +105,12 @@ function plan(options: SpawnOptions): {
     }
     const harness = options.harness ?? defaultHarness(work ?? undefined);
     requireInstalled(harness);
-    const model = options.model ?? harnessConfig().models?.[harness] ?? null;
-    return { harness, brief, task: taskId, project, work, model, cwd };
+    const choice = resolveModel(
+        harness,
+        { model: options.model, tier: options.tier, briefTier: briefTier(brief), taskTier, work },
+        harnessConfig(),
+    );
+    return { harness, brief, task: taskId, project, work, choice, cwd };
 }
 
 /**
@@ -118,7 +139,8 @@ function supersedeLiveRuns(task: string, replace: boolean): string[] {
  * naming the path and branch.
  */
 export function spawnJawan(options: SpawnOptions): JawanRun {
-    const resolved = plan(options);
+    if (options.briefPath === undefined) throw new ToliError("spawn needs --brief <file>");
+    const resolved = planSpawn(options);
     loadMachine();
     const replaced = resolved.task === null ? [] : supersedeLiveRuns(resolved.task, options.replace === true);
     // Ship briefs carry a goal contract (docs/brief-template.md `## Goal`); a missing one is warned about, not refused.
@@ -137,7 +159,9 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
             task: resolved.task,
             project: resolved.project,
             work: resolved.work,
-            model: resolved.model,
+            model: resolved.choice.model,
+            tier: resolved.choice.tier,
+            modelSource: resolved.choice.source,
             cwd: resolved.cwd,
             maxMinutes: options.maxMinutes ?? DEFAULT_MAX_MINUTES,
             baseBrief: resolved.brief,
@@ -153,35 +177,41 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
     return run;
 }
 
-function parseWork(value: string | undefined): WorkType | undefined {
-    if (value === undefined) return undefined;
-    if (!(WORK_TYPES as readonly string[]).includes(value))
-        throw new ToliError(`--work must be one of ${WORK_TYPES.join(", ")}`);
-    return value as WorkType;
-}
-
-/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--work w] [--cwd d] [--max-time min] [--now] [--replace]`. */
+/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--tier t] [--work w] [--cwd d] [--max-time min] [--now] [--replace] [--dry-run]`. */
 export function spawnCommand(argv: string[]): void {
     const args = new Args(argv, {
-        booleans: ["json", "now", "replace"],
-        values: ["harness", "brief", "task", "project", "model", "work", "cwd", "max-time"],
+        booleans: ["json", "now", "replace", "dry-run"],
+        values: ["harness", "brief", "task", "project", "model", "tier", "work", "cwd", "max-time"],
     });
     args.maxPositional(0);
     const briefPath = args.str("brief");
-    if (briefPath === undefined) throw new ToliError("spawn needs --brief <file>");
     const harnessName = args.str("harness");
-    const run = spawnJawan({
+    const workName = args.str("work");
+    const tierName = args.str("tier");
+    const options: SpawnOptions = {
         harness: harnessName === undefined ? undefined : parseHarness(harnessName),
         briefPath,
         task: args.str("task"),
         project: args.str("project"),
         model: args.str("model"),
-        work: parseWork(args.str("work")),
+        tier: parseOptionalTier(tierName),
+        work: workName === undefined ? undefined : parseWork(workName),
         cwd: args.str("cwd"),
         maxMinutes: parseMinutes(args.str("max-time")),
         now: args.bool("now"),
         replace: args.bool("replace"),
-    });
+    };
+    if (args.bool("dry-run")) {
+        const plan = planSpawn(options);
+        const { brief: _brief, ...shown } = plan;
+        if (args.bool("json")) printJson(shown);
+        else
+            out(
+                `would spawn: ${plan.harness} ${choiceText(plan.choice)}, work ${plan.work ?? "-"}, in ${plan.cwd}${plan.task === null ? "" : ` for ${plan.task}`}`,
+            );
+        return;
+    }
+    const run = spawnJawan(options);
     if (args.bool("json")) {
         printJson(run);
         return;
@@ -193,7 +223,7 @@ export function spawnCommand(argv: string[]): void {
         );
     else
         out(
-            `spawned ${run.id}: ${run.harness} in ${run.cwd} (supervisor pid ${run.supervisorPid}); log ${relative(paths.root(), run.logPath)}`,
+            `spawned ${run.id}: ${modelText(run)} in ${run.cwd} (supervisor pid ${run.supervisorPid}); log ${relative(paths.root(), run.logPath)}`,
         );
     out("The outcome arrives in the inbox (and the chat) when it finishes; `bin/toli run status <id>` meanwhile.");
 }
@@ -229,6 +259,13 @@ export async function runCommand(argv: string[]): Promise<void> {
                 out(
                     [
                         runLine(run),
+                        `model: ${choiceText({ model: run.model, tier: run.tier ?? null, ...(run.modelSource === undefined ? {} : { source: run.modelSource }) })}`,
+                        ...(run.fallback === undefined
+                            ? []
+                            : [
+                                  `limit fallback: ${run.fallback.from ?? "default"} -> ${run.fallback.to ?? "default"}${run.fallback.waitedMinutes > 0 ? ` after waiting ${run.fallback.waitedMinutes}m` : ""} (${run.fallback.reason})`,
+                              ]),
+                        ...(run.usage === undefined ? [] : [`usage: ${usageText(run.usage)}`]),
                         `command: ${run.command}`,
                         `cwd: ${run.cwd}`,
                         `pid: ${run.pid ?? "-"} (supervisor ${run.supervisorPid ?? "-"})`,

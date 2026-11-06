@@ -3,14 +3,24 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { machineSettings } from "../core/config.ts";
 import { run, ToliError } from "../core/util.ts";
+import { parseTier, type Tier } from "./models.ts";
 
 /** Agent harnesses toli can start a lead in and run jawans on. */
 export const HARNESSES = ["omp", "claude", "codex", "cursor", "grok", "pi"] as const;
 export type Harness = (typeof HARNESSES)[number];
 
-/** Kinds of jawan work that may route to a different harness (`harness.byWork` in config/machine.json). */
-export const WORK_TYPES = ["scout", "ship", "verify"] as const;
+/**
+ * Kinds of jawan work. Each runs on a model tier (src/harness/models.ts) and may route to a different harness
+ * (`harness.byWork` in config/machine.json).
+ */
+export const WORK_TYPES = ["scout", "mechanical", "ship", "verify", "release"] as const;
 export type WorkType = (typeof WORK_TYPES)[number];
+
+export function parseWork(value: string, label = "--work"): WorkType {
+    if (!(WORK_TYPES as readonly string[]).includes(value))
+        throw new ToliError(`${label} must be one of ${WORK_TYPES.join(", ")} (got "${value}")`);
+    return value as WorkType;
+}
 
 export type HarnessSpec = {
     name: Harness;
@@ -109,8 +119,8 @@ function headlessOmpFlags(cwd: string, maxTime: string): string[] {
 }
 
 /** The argv for one headless omp run of `prompt` in toli's `root` (scheduled jobs, `bin/toli exec`). */
-export function headlessOmpArgs(prompt: string, root: string, maxTime: string): string[] {
-    return [...headlessOmpFlags(root, maxTime), prompt];
+export function headlessOmpArgs(prompt: string, root: string, maxTime: string, model: string | null = null): string[] {
+    return [...headlessOmpFlags(root, maxTime), ...(model === null ? [] : ["--model", model]), prompt];
 }
 
 export type HeadlessInput = {
@@ -220,21 +230,40 @@ export type HarnessConfig = {
     jawan?: Harness;
     /** Per-work-type override of `jawan`. */
     byWork?: Partial<Record<WorkType, Harness>>;
-    /** Model passed to a harness when `spawn` gets no --model. */
+    /** Model passed to a harness when neither a tier nor a work type picks one. */
     models?: Partial<Record<Harness, string>>;
+    /** Per-harness model of each tier, over toli's defaults (src/harness/models.ts). */
+    tiers?: Partial<Record<Harness, Partial<Record<Tier, string>>>>;
+    /** Per-work-type tier, over toli's defaults. */
+    workTiers?: Partial<Record<WorkType, Tier>>;
+    /** A model's same-tier alternative (another account or provider) a run that hits a limit retries on first. */
+    fallback?: Record<string, string>;
+    /** Longest wait for a limit reset before retrying the same model (default 300). */
+    limitWaitMinutes?: number;
 };
 
 /** `harness` from config/machine.json, validated. */
 export function harnessConfig(): HarnessConfig {
     const raw = machineSettings().harness;
     if (raw === undefined) return {};
-    if (raw.jawan !== undefined) parseHarness(raw.jawan, "config/machine.json harness.jawan");
+    const where = "config/machine.json harness";
+    if (raw.jawan !== undefined) parseHarness(raw.jawan, `${where}.jawan`);
     for (const [work, value] of Object.entries(raw.byWork ?? {})) {
-        if (!(WORK_TYPES as readonly string[]).includes(work))
-            throw new ToliError(`config/machine.json harness.byWork: unknown work type "${work}"`);
-        parseHarness(String(value), `config/machine.json harness.byWork.${work}`);
+        parseWork(work, `${where}.byWork key`);
+        parseHarness(String(value), `${where}.byWork.${work}`);
     }
-    for (const key of Object.keys(raw.models ?? {})) parseHarness(key, "config/machine.json harness.models key");
+    for (const key of Object.keys(raw.models ?? {})) parseHarness(key, `${where}.models key`);
+    for (const [key, table] of Object.entries(raw.tiers ?? {})) {
+        parseHarness(key, `${where}.tiers key`);
+        for (const tier of Object.keys(table ?? {})) parseTier(tier, `${where}.tiers.${key} key`);
+    }
+    for (const [work, tier] of Object.entries(raw.workTiers ?? {})) {
+        parseWork(work, `${where}.workTiers key`);
+        parseTier(String(tier), `${where}.workTiers.${work}`);
+    }
+    const wait = raw.limitWaitMinutes;
+    if (wait !== undefined && (typeof wait !== "number" || !Number.isInteger(wait) || wait < 0))
+        throw new ToliError(`${where}.limitWaitMinutes must be a whole number of minutes`);
     return raw;
 }
 

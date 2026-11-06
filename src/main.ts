@@ -1,7 +1,8 @@
 import { out, ToliError, warn } from "./core/util.ts";
 import { diskCommand } from "./fleet/disk.ts";
-import { execCommand, initCommand, remoteCommand, syncCommand } from "./fleet/fleet.ts";
+import { initCommand, syncCommand } from "./fleet/fleet.ts";
 import { fleetCommand, pickCommand } from "./fleet/pick.ts";
+import { execCommand, remoteCommand } from "./fleet/remote.ts";
 import { resourcesCommand } from "./fleet/resources.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge/forge.ts";
 import { guidanceCommand } from "./harness/guidance.ts";
@@ -45,7 +46,7 @@ const USAGE = `usage: bin/toli <command> [args]
   project set --all --workspace <strategy>
   project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
   project setup <name> [--json] | setup --all [--json]
-  task add <project> "<title>" [--shape ship|scout] [--note "..."]
+  task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped]
   task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."]
@@ -62,7 +63,7 @@ const USAGE = `usage: bin/toli <command> [args]
   pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
   pr status <project> [<id>] [--task T<n>] [--json] | list <project> [--json]
   pr merge <project> <id> [--method merge|squash|rebase]
-  job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
+  job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--tier light|standard|deep]
   job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
   job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
   job results [--unseen] [--json] | ack
@@ -79,10 +80,11 @@ const USAGE = `usage: bin/toli <command> [args]
   fleet status [--json]
   pick [--project <name>] [--json]
   exec [--from <machine>] [--task <id>] (prompt on stdin)
-  remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>]
+  remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>] [--tier <t>] [--work <w>]
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
-        [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--replace] [--json]
+        [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
+        [--now] [--replace] [--dry-run] [--json]
   runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   harness sync [--check] [--json] | status [--json]
   hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)

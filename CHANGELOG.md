@@ -4,6 +4,44 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.3.0 - unreleased
+
+### Added
+
+- Model tiers: every jawan runs on `light`, `standard` or `deep`, by default `claude-haiku-5-5`,
+  `claude-sonnet-5-5` and `claude-opus-5-5` on omp and Claude Code (shipped in toli's code, so every machine has them
+  after upgrade with no config; other harnesses keep their own default). Work picks the tier: `mechanical` light,
+  `scout` and `ship` standard, `verify` and `release` deep. Precedence: `--model` > `spawn --tier` > the brief's
+  `Tier:` line > the task's tier (`task add --tier`) > the work type (`--work`, new types `mechanical` and `release`,
+  else the task's shape) > `harness.models` > the harness default. `harness.tiers` and `harness.workTiers` in
+  config/machine.json override the tables (docs/harnesses.md "Model tiers").
+- The tiers apply on every path: `bin/toli spawn` (queued starts and auto-resume keep the model), `bin/toli remote` /
+  `remote auto` (`--tier` and `--work`, else the task's tier and shape, travel to the target, which resolves them with
+  its own config; a `Tier:` line travels in the prompt) and scheduled headless jobs (`job add --tier`, else the
+  shape). The toli-dispatch skill tells the lead to pass the tier's model to its own subagents.
+- Limit fallback: a run that stops on a rate or usage limit (`429`, `rate_limit_error`, "usage limit") retries once,
+  on `harness.fallback[<model>]` (same tier, another account or provider) when configured, else one tier lower but
+  never below standard for ship, verify and release work, else on the same model after the reset the error names
+  (spawned runs only, up to `harness.limitWaitMinutes`, default 300). The decision is logged and kept on the run as
+  `fallback`.
+- `bin/toli spawn --dry-run [--work w] [--tier t] [--brief f]` prints the harness, model, tier and what chose it.
+- Runs record `tier` and `modelSource` beside `harness` and `model` (`bin/toli runs`, `run status`, inbox outcomes),
+  and `usage` (tokens, cost) when the harness prints it. `bin/toli digest` shows "models today" and
+  `bin/toli resources --json` carries the same per-model totals as `models`.
+
+### Changed
+
+- `harness.models` now applies only when neither a tier nor a work type picks the model: a spawn with `--work` or a
+  task runs on its tier's model.
+- `bin/toli exec` refuses a run when this machine's run slots are full or its free memory is under
+  `minMemAvailableMB`, so a target named in `bin/toli remote` is not overloaded.
+- `bin/toli spawn --task` refuses a second live jawan on the same task; `--replace` supersedes it.
+
+### Fixed
+
+- The disk keeper never wipes a build target a process uses (a test binary, a workspace's cwd, a build tool), beyond
+  cargo's own lock.
+
 ## v0.2.5 - 2026-11-06
 
 ### Added

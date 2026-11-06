@@ -5,7 +5,7 @@ import { type Machine, machineSettings, type RetentionConfig } from "../core/con
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { now, out, printJson, readJson, stamp, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
-import { queueOutbox } from "../jobs/jobs.ts";
+import { queueOutbox } from "../jobs/outbox.ts";
 import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
 import { addInboxItem, listInbox } from "./inbox.ts";
 

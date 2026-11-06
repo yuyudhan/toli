@@ -12,6 +12,9 @@ that machine's `data/pushes.jsonl` and its `bin/toli digest`; after a raw `git p
 `bin/toli push-log add <project> --by <this machine> --for <T-id> --word "<Malik's word>"` on that machine. The first
 line `TOLI_BRIEF v1` must stay the first line of every brief: AGENTS.md uses it to tell jawans apart from Sardar.
 Independent verification of ship work uses docs/verify-brief-template.md.
+Model tier: the work type picks the jawan's model (docs/harnesses.md "Model tiers": scout and ship standard,
+mechanical light, verify and release deep). A hard brief adds a line `Tier: deep` (or `light`, `standard`) right under
+the title, before the first `## ` section; `bin/toli spawn --tier` and `--model` still override it.
 -->
 
 # Task <T-id>: <short title>

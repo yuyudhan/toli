@@ -54,8 +54,8 @@ Next block) and with `bin/toli wake`.
 ## Jawans on any harness: `bin/toli spawn`
 
     bin/toli spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>]
-                   [--model <m>] [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--replace]
-                   [--json]
+                   [--model <m>] [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release]
+                   [--cwd <dir>] [--max-time <minutes>] [--now] [--replace] [--dry-run] [--json]
     bin/toli runs [--json] [--active]
     bin/toli run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
 
@@ -136,8 +136,60 @@ must outlive the lead session.
 ```
 
 `spawn` without `--harness` uses `byWork[<work>]` (from `--work`, or the task's shape), then `jawan`, then omp.
-`models` supplies `--model` when none is given. `bin/toli doctor` warns when a configured harness is missing or
-logged out, and the digest's Next block says how to install it.
+`models` supplies `--model` when neither a tier nor a work type picks one (next section). `bin/toli doctor` warns when a
+configured harness is missing or logged out, and the digest's Next block says how to install it.
+
+### Model tiers
+
+Every jawan runs on one of three model tiers, so cheap work does not spend the strongest model's usage:
+
+| Tier       | omp and Claude Code default | Work that runs on it by default               |
+| ---------- | --------------------------- | --------------------------------------------- |
+| `light`    | `claude-haiku-5-5`          | `mechanical` (lookups, bookkeeping, edits)    |
+| `standard` | `claude-sonnet-5-5`         | `scout`, `ship`                               |
+| `deep`     | `claude-opus-5-5`           | `verify` (the independent checker), `release` |
+
+The defaults ship in toli's code (`src/harness/models.ts`), so every machine has them after `bin/toli upgrade` with no
+config. Codex, Cursor, Grok and pi have no default tier models: they keep their own default model unless configured.
+
+**Precedence**, most specific first: `--model` > `--tier` > the brief's `Tier:` line (docs/brief-template.md) > the
+task's tier (`bin/toli task add --tier`) > the work type's tier (`--work`, else the task's shape) > `harness.models` >
+the harness's own default. A tier the harness has no model for falls through to `harness.models`, then the harness
+default. `bin/toli spawn --dry-run [--work w] [--tier t] [--brief f]` prints the harness, model, tier and what chose it,
+without writing anything.
+
+**Every path** resolves the same way on the machine that runs the work: `spawn` (and its queued starts and automatic
+continuations), `bin/toli remote` / `remote auto` (its `--tier` and `--work`, else the task's tier and shape, travel to
+the target as `TOLI_EXEC_TIER` / `TOLI_EXEC_WORK`, and the target picks the model with its own config; a `Tier:` line
+travels inside the prompt), and scheduled headless jobs (`job add --tier`, else the shape: scout and ship are
+`standard`). A lead's in-session subagents (omp `task`, Claude's Agent tool) are started by the lead, not toli: the
+toli-dispatch skill tells it to pass the tier's model to them.
+
+Configuration, all optional, in `config/machine.json`:
+
+```json
+{
+    "harness": {
+        "tiers": { "omp": { "light": "claude-haiku-5-5" }, "codex": { "deep": "gpt-5.2" } },
+        "workTiers": { "scout": "light" },
+        "fallback": { "claude-sonnet-5-5": "openrouter/anthropic/claude-sonnet-5-5" },
+        "limitWaitMinutes": 300
+    }
+}
+```
+
+`tiers` overrides a harness's model per tier, `workTiers` a work type's tier. **Limit fallback:** a run that stops on
+a rate or usage limit (`429`, `rate_limit_error`, "usage limit" in the tail of its output) retries once: on
+`fallback[<model>]` (the same tier on another account or provider) when configured, else one tier lower, never below
+standard for `ship`, `verify`, `release` or work of unknown type (scout and mechanical may drop to light); else on the
+same model after the reset the error names (15 minutes when it names none), unless that is more than
+`limitWaitMinutes` (default 300) away. The decision is logged in the run's output and recorded as `fallback` on the run.
+`bin/toli exec` (remote runs) and scheduled jobs never wait for a reset: they only switch model.
+
+**Records:** each run records `harness`, `model`, `tier` and `modelSource` (`bin/toli runs`, `run status`, the
+outcome in the inbox), plus `usage` (tokens, cost) when the harness prints them (Codex's `tokens used`; omp and Claude
+Code in text mode print neither). `bin/toli digest` lists today's runs per model ("models today") and
+`bin/toli resources --json` carries the same totals as `models`.
 
 ## Lead guard and guidance
 

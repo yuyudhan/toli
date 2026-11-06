@@ -6,6 +6,7 @@ import { type CapacityConfig, loadMachine, type Machine } from "../core/config.t
 import { isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writeJsonAtomic } from "../core/util.ts";
+import { type ModelTotal, modelTotalsToday } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 
 /** The machine's load thresholds; `autoResume` is not one (see autoResumeLimit). */
@@ -39,6 +40,8 @@ export type Resources = {
     available: boolean;
     reasons: string[];
     at: string;
+    /** Today's jawan runs per harness and model; absent from machines on an older toli. */
+    models?: ModelTotal[];
 };
 
 /** A unit of work counted as load on this machine: `state/runs/<runId>.json`. */
@@ -232,6 +235,7 @@ export function localResources(): Resources {
         available: reasons.length === 0,
         reasons,
         at: now().toISOString(),
+        models: modelTotalsToday(),
     };
 }
 
