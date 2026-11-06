@@ -1,7 +1,17 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+    closeSync,
+    copyFileSync,
+    existsSync,
+    mkdirSync,
+    openSync,
+    readFileSync,
+    realpathSync,
+    writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import type { Subprocess } from "bun";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
 import { parseSccacheStats } from "../src/fleet/disk-caches.ts";
@@ -162,6 +172,60 @@ describe("wiping a target between build steps", () => {
         closeSync(fd);
         expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
+    });
+
+    /** A cargo-like target with its lock file, in a workspace folder of its own. */
+    function workspaceTarget(): { workspace: string; target: string } {
+        const workspace = realpathSync(tempDir("disk"));
+        const target = join(workspace, "target");
+        mkdirSync(join(target, "debug", "deps"), { recursive: true });
+        writeFileSync(join(target, "debug", ".cargo-lock"), "");
+        return { workspace, target };
+    }
+
+    /** Run `sleep` (optionally a copy of it at `exe`) in `cwd` until the test ends. */
+    function sleeper(cwd: string, exe = "/bin/sleep"): Subprocess {
+        if (exe !== "/bin/sleep") copyFileSync("/bin/sleep", exe);
+        return Bun.spawn([exe, "30"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+    }
+
+    test("keeps the target while a test binary built into it runs, though no build holds the lock", () => {
+        const { target } = workspaceTarget();
+        const binary = join(target, "debug", "deps", "robo_agent_kit_store-0123");
+        const child = sleeper(realpathSync(tempDir("elsewhere")), binary);
+        try {
+            const outcome = wipeTargetBetweenBuilds(target, 0);
+            expect(outcome).toEqual({ wiped: false, reason: `process ${child.pid} runs ${binary}` });
+            expect(existsSync(binary)).toBe(true);
+        } finally {
+            child.kill("SIGKILL");
+        }
+    });
+
+    test("keeps the target while a process works inside its workspace", () => {
+        const { workspace, target } = workspaceTarget();
+        const crate = join(workspace, "crates", "store");
+        mkdirSync(crate, { recursive: true });
+        const child = sleeper(crate);
+        try {
+            const outcome = wipeTargetBetweenBuilds(target, 0);
+            expect(outcome).toEqual({ wiped: false, reason: `process ${child.pid} runs in ${crate}` });
+            expect(existsSync(target)).toBe(true);
+        } finally {
+            child.kill("SIGKILL");
+        }
+    });
+
+    test("wipes an idle target that no build locks and no process uses", () => {
+        const { workspace, target } = workspaceTarget();
+        const child = sleeper(realpathSync(tempDir("elsewhere")));
+        try {
+            expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
+            expect(existsSync(target)).toBe(false);
+            expect(existsSync(workspace)).toBe(true);
+        } finally {
+            child.kill("SIGKILL");
+        }
     });
 });
 

@@ -1,7 +1,8 @@
 // What the disk keeper (src/fleet/disk.ts) may delete, and what holds it: the checkouts of registered projects, their
 // git-ignored build output folders, the runs and processes using each checkout, and the files processes hold open.
-import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { basename, join, sep } from "node:path";
+import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, sep } from "node:path";
 import { git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { run } from "../core/util.ts";
@@ -150,6 +151,105 @@ export function openBelow(dir: string, limit = 3): string[] {
         }
     }
     return held;
+}
+
+/** Build tools that start binaries from a workspace's target at any moment, even between holding cargo's locks. */
+const BUILD_TOOLS: Record<string, true> = {
+    cargo: true,
+    "cargo-clippy": true,
+    "cargo-nextest": true,
+    "clippy-driver": true,
+    rustc: true,
+    rustdoc: true,
+    just: true,
+};
+
+/** One other process: its command line, the executable and mapped files it runs, and its working directory. */
+type ProcessUse = { pid: string; args: string; files: string[]; cwd: string | null };
+
+/** Every process but this one (`ps`), with what it runs and where; null when the table cannot be read. */
+function processTable(): ProcessUse[] | null {
+    const listed = run(["ps", "-axww", "-o", "pid=,args="], { timeoutMs: 30_000 });
+    if (listed.code !== 0) return null;
+    const me = String(process.pid);
+    const table = new Map<string, ProcessUse>();
+    for (const line of listed.stdout.split("\n")) {
+        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+        const pid = match?.[1];
+        if (pid === undefined || pid === me) continue;
+        table.set(pid, { pid, args: match?.[2] ?? "", files: [], cwd: null });
+    }
+    if (process.platform === "linux") {
+        for (const entry of table.values()) {
+            const exe = linkOf(`/proc/${entry.pid}/exe`);
+            if (exe !== null) entry.files.push(exe.replace(/ \(deleted\)$/, ""));
+            entry.cwd = linkOf(`/proc/${entry.pid}/cwd`);
+        }
+        return [...table.values()];
+    }
+    // macOS: the executable and every mapped file (`txt`) plus the working directory of each process, in one pass.
+    const files = run(["lsof", "-a", "-d", "cwd,txt", "-w", "-Fpfn"], { timeoutMs: 60_000 });
+    if (files.stdout === "") return files.code === 0 ? [...table.values()] : null;
+    let current: ProcessUse | undefined;
+    let fd = "";
+    for (const line of files.stdout.split("\n")) {
+        const value = line.slice(1);
+        if (line.startsWith("p")) current = table.get(value);
+        else if (line.startsWith("f")) fd = value;
+        else if (line.startsWith("n") && current !== undefined) {
+            if (fd === "cwd") current.cwd = value;
+            else current.files.push(value);
+        }
+    }
+    return [...table.values()];
+}
+
+/** Target of a /proc symlink, or null when the process is gone or not ours to inspect. */
+function linkOf(path: string): string | null {
+    try {
+        return readlinkSync(path);
+    } catch {
+        return null;
+    }
+}
+
+/** The build tool a command line runs (`cargo`, `rustc`, `just`, a kalki queue, ...), or null. */
+function buildTool(args: string): string | null {
+    const words = args.split(/\s+/).filter((word) => word !== "");
+    const program = basename(words[0] ?? "");
+    if (BUILD_TOOLS[program] === true) return program;
+    for (const [index, word] of words.entries()) {
+        const name = basename(word);
+        if (/^kalki-queue(\.|$)/.test(name) || (name === "kalki" && words[index + 1] === "queue")) return "kalki-queue";
+    }
+    return null;
+}
+
+/**
+ * Why a process uses `target` right now, or null when none does: one runs an executable or maps a file under it (a
+ * test binary cargo started after releasing its locks), works inside the workspace that owns it (the folder holding
+ * `target/`), or is a build tool running in, above or on that workspace. An unreadable process table is a reason too.
+ */
+export function targetUse(target: string): string | null {
+    const dir = real(target);
+    const workspaces = [...new Set([dirname(dir), dirname(target)])];
+    const table = processTable();
+    if (table === null) return "cannot read the process table to see who uses it";
+    const roots = new Set(["/", real(homedir())]);
+    for (const entry of table) {
+        const file = entry.files.find((path) => within(path, dir));
+        if (file !== undefined) return `process ${entry.pid} runs ${file}`;
+        const cwd = entry.cwd;
+        if (cwd !== null && workspaces.some((workspace) => within(cwd, workspace)))
+            return `process ${entry.pid} runs in ${cwd}`;
+        const tool = buildTool(entry.args);
+        if (tool === null) continue;
+        if (cwd === null) return `${tool} (pid ${entry.pid}) runs where it cannot be seen`;
+        const above = !roots.has(cwd) && workspaces.some((workspace) => within(workspace, cwd));
+        if (above || workspaces.some((workspace) => entry.args.includes(workspace)))
+            return `${tool} (pid ${entry.pid}) builds in ${workspaces[0]}`;
+    }
+    return null;
 }
 
 /** Size of a folder in GB from `du -sk` (0 when du fails). */
