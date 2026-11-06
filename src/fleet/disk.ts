@@ -8,6 +8,8 @@
 //   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no file in it open.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
+// Any long job that must keep its build output for now (a gate, a release build) writes its pid to
+// state/disk-keep.pause; the keeper deletes nothing while that pid is alive, and ignores the file once it is dead.
 import { spawn as spawnChild } from "node:child_process";
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
@@ -55,8 +57,10 @@ export type KeepReport = {
     freeBeforeGB: number;
     freeAfterGB: number;
     dryRun: boolean;
-    /** False when free space was already at or above the floor, or another keeper is running. */
+    /** False when free space was already at or above the floor, another keeper is running, or a pause holds it. */
     ran: boolean;
+    /** The live pid in state/disk-keep.pause that held the keeper off, if one did. */
+    pausedBy?: number;
     lines: string[];
 };
 
@@ -72,19 +76,35 @@ function freeGB(): number {
 
 const gb = (value: number): string => `${value.toFixed(1)} GB`;
 
-/** Claim the keeper lock for this pid; false while another live keeper holds it. */
-function claimKeeper(): boolean {
+/** Claim the keeper lock for this pid: null once claimed, else the live keeper's pid that holds it. */
+function claimKeeper(): number | null {
     const file = paths.lock(KEEPER_LOCK);
     mkdirSync(dirname(file), { recursive: true });
     try {
         writeFileSync(file, String(process.pid), { flag: "wx" });
-        return true;
+        return null;
     } catch {
         const holder = Number(readFileSync(file, "utf8").trim());
-        if (pidAlive(holder)) return false;
+        if (pidAlive(holder)) return holder;
         writeFileSync(file, String(process.pid));
-        return true;
+        return null;
     }
+}
+
+/**
+ * The pause marker state/disk-keep.pause: its first word is a pid, the rest of the file a free-text reason. Live pid:
+ * the keeper must not delete now. Missing, unreadable, or naming a dead pid (stale): no pause.
+ */
+export function diskPause(): { pid: number; reason: string } | null {
+    let text: string;
+    try {
+        text = readFileSync(paths.diskKeepPause(), "utf8").trim();
+    } catch {
+        return null;
+    }
+    const [first = "", ...rest] = text.split(/\s+/);
+    const pid = Number(first);
+    return pidAlive(pid) ? { pid, reason: rest.join(" ") } : null;
 }
 
 function releaseKeeper(): void {
@@ -112,16 +132,43 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         lines: [],
     };
     if (freeBeforeGB >= floorGB) return report;
-    const say = (line: string): void => {
-        report.lines.push(line);
-        if (options.echo) out(line);
+    const log = (line: string): void => {
         mkdirSync(paths.logsDir(), { recursive: true });
         appendFileSync(paths.diskLog(), `${now().toISOString()} ${dryRun ? "[dry run] " : ""}${line}\n`);
     };
-    if (!claimKeeper()) {
-        say(`free ${gb(freeBeforeGB)} < floor ${gb(floorGB)}: another disk keeper is already running`);
+    const say = (line: string): void => {
+        report.lines.push(line);
+        if (options.echo) out(line);
+        log(line);
+    };
+    // Why the keeper does not run this time: reported every time, logged only when the reason (`key`) changes, so a
+    // minute tick under a long pause or beside a long background keeper writes one line, not one a minute.
+    const skip = (key: string, reason: string): KeepReport => {
+        const line = `free ${gb(freeBeforeGB)} < floor ${gb(floorGB)}: ${reason}`;
+        report.lines.push(line);
+        if (options.echo) out(line);
+        let last = "";
+        try {
+            last = readFileSync(paths.diskKeepSkip(), "utf8");
+        } catch {
+            // Nothing skipped since the keeper last ran.
+        }
+        if (last !== key) {
+            log(line);
+            mkdirSync(dirname(paths.diskKeepSkip()), { recursive: true });
+            writeFileSync(paths.diskKeepSkip(), key);
+        }
         return report;
+    };
+    const pause = diskPause();
+    if (pause !== null) {
+        report.pausedBy = pause.pid;
+        const why = pause.reason === "" ? "" : ` (${pause.reason})`;
+        return skip(`paused ${pause.pid}`, `paused by pid ${pause.pid}${why} (state/disk-keep.pause)`);
     }
+    const holder = claimKeeper();
+    if (holder !== null) return skip(`keeper ${holder}`, `another disk keeper (pid ${holder}) is already running`);
+    rmSync(paths.diskKeepSkip(), { force: true });
     report.ran = true;
     try {
         let simulated = 0;
@@ -261,5 +308,6 @@ export function diskCommand(argv: string[]): void {
         echo: !json,
     });
     if (json) printJson(report);
-    else if (!report.ran) out(`free ${gb(report.freeBeforeGB)}, floor ${gb(report.floorGB)}: nothing to do`);
+    else if (report.lines.length === 0)
+        out(`free ${gb(report.freeBeforeGB)}, floor ${gb(report.floorGB)}: nothing to do`);
 }

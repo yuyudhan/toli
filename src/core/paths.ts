@@ -103,6 +103,10 @@ export const paths = {
     tickLog: () => join(repoRoot(), "logs", "tick.log"),
     /** The disk keeper's actions (src/fleet/disk.ts). */
     diskLog: () => join(repoRoot(), "logs", "disk.log"),
+    /** A live pid here (first line; the rest is a free-text reason) tells the disk keeper not to delete right now. */
+    diskKeepPause: () => join(repoRoot(), "state", "disk-keep.pause"),
+    /** Why the disk keeper last did not run, so that reason reaches logs/disk.log once, not every minute. */
+    diskKeepSkip: () => join(repoRoot(), "state", "disk-keep.skip"),
     /** Private per-installation helpers, never committed: local/{scripts,hooks,helpers.json,README.md}. */
     localDir: () => join(repoRoot(), "local"),
     localScriptsDir: () => join(repoRoot(), "local", "scripts"),

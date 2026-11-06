@@ -6,6 +6,20 @@ one. See docs/releasing.md.
 
 ## v0.2.5 - unreleased
 
+### Added
+
+- Helpers take an optional `maxFiles` key in `helpers.json`: the open-files limit, soft and hard (launchd
+  `NumberOfFiles`, systemd `LimitNOFILE`, crontab `ulimit -n`), for helpers that run builds, which outgrow launchd's
+  default of 256.
+- A long job can pause the disk keeper: it writes its pid (and an optional reason) to `state/disk-keep.pause`, and
+  `bin/toli disk keep` deletes nothing while that pid is alive; a dead pid's file is stale and ignored
+  (docs/disk.md). Other tools no longer need to hold the keeper's own `state/disk-keep.lock`.
+
+### Changed
+
+- The disk keeper logs why it did not run (paused, another keeper busy) once when that starts, instead of a line
+  every minute in `logs/disk.log`.
+
 ### Fixed
 
 - `bin/toli commit --merge <ref>` no longer refuses a clean merge because the ref itself undoes a recent branch

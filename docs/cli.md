@@ -84,7 +84,7 @@ default 7) once.
 
 ### Landing work
 
-    commit <project> [--task T<n>] -m "<message>"... [--merge <ref>] [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
+    commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
     forge <project> [--json]
@@ -173,7 +173,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.
 - `disk keep`: free rebuildable build output when the disk is under `capacity.diskKeepGB`. It also runs before every
-  jawan start and every tick, so low disk never stops work ([disk.md](disk.md)).
+  jawan start and every tick, so low disk never stops work; a live pid in `state/disk-keep.pause` pauses it
+  ([disk.md](disk.md)).
 - `remote` runs a prompt on another machine; `exec` is what it runs there (headless omp, up to an hour).
 
 Details: [fleet.md](fleet.md).
