@@ -86,11 +86,17 @@ each run reaches the inbox as usual, the stopped one's with `continued by: <id>`
 `capacity.autoResume` continuations (default 3, 0 turns it off); after that an inbox item says the chain stopped.
 A run that ended with a report is never resumed.
 
+omp jawans run with `--wait-async`: a turn that ends while an async `task` subagent, a background `bash` build, or a
+poll the run started is still going does not end the run. omp waits for that work and starts another turn with each
+result, until nothing the run owns is left or `--max-time` stops it. Without the flag, print mode exits at the first
+turn that yields and cancels that work. The same flags apply to `bin/toli exec` (and so `bin/toli remote`) and
+scheduled headless jobs.
+
 Headless commands (`src/harness/harness.ts`):
 
 | Harness | Command                                                                                                                                                        | Source                                                                                     |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| omp     | `omp -p --cwd <dir> --no-title --approval-mode yolo --max-time <n>m [--model M] <brief>`                                                                       | `omp --help`, `omp://cli-reference.md`                                                     |
+| omp     | `omp -p --wait-async --cwd <dir> --no-title --approval-mode yolo --max-time <n>m [--model M] <brief>`                                                          | `omp --help`, `omp://cli-reference.md`                                                     |
 | claude  | `claude -p --output-format text --permission-mode acceptEdits --allowedTools Bash,Read,Edit,Write,... --add-dir <toli> [--model M]`, brief on stdin            | `claude --help`, [CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) |
 | codex   | `codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir <toli> --skip-git-repo-check -C <dir> [-m M] -`, brief on stdin | [non-interactive mode](https://developers.openai.com/codex/noninteractive)                 |
 | cursor  | `cursor-agent -p --force --output-format text [--model M] <brief>`, cwd = project                                                                              | [headless](https://docs.cursor.com/en/cli/headless)                                        |

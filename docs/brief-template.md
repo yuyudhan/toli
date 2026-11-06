@@ -109,6 +109,8 @@ task needs, and never revert or reformat changes you did not make.
 - Of toli's own commands, run only those the Landing section names, and only for task <T-id>. Never run
   `bin/toli task add|start|answer|drop`, `bin/toli job`, or `bin/toli remote`.
 - Destructive, irreversible, or security-sensitive steps: stop and report instead of doing them.
+- Never end your turn while a subagent, background job, build, or poll you started is still running: wait for its
+  result in the same turn, then finish the work. A headless run that yields with nothing more to do is over.
 - Browsers run headless only; never open a visible browser window.
 - Stop and report if a login asks for an OTP, captcha, or any second factor. Never try to get past it.
 - Staging and any other shared environment are read-only: look, never change data, settings, or deployments.

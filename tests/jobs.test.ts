@@ -123,7 +123,9 @@ describe("job tick", () => {
         box.ok(["session", "start", "--pid", String(child.pid)]);
         box.ok(["job", "tick"], { now: "2026-03-04T10:05:00" });
         const args = readFileSync(join(box.root, "omp-args"), "utf8");
-        expect(args).toContain(`-p --cwd ${box.root} --no-title --approval-mode yolo --max-time 45m [toli job every`);
+        expect(args).toContain(
+            `-p --wait-async --cwd ${box.root} --no-title --approval-mode yolo --max-time 45m [toli job every`,
+        );
         expect(existsSync(join(box.root, "state", "session.json"))).toBe(false);
         const results = readdirSync(join(box.root, "data", "jobs", "every"));
         expect(results.length).toBe(1);
