@@ -165,9 +165,17 @@ function tailLines(output: string, count: number): string[] {
  * exit whose last line does (print modes that exit 0 after an API error).
  */
 export function hitLimit(output: string, exitCode: number | null): boolean {
-    const lines = exitCode === 0 ? tailLines(output, 1) : tailLines(output, LIMIT_TAIL_LINES);
-    return lines.some((line) => LIMIT_PATTERNS.some((pattern) => pattern.test(line)));
+    if (exitCode !== 0)
+        return tailLines(output, LIMIT_TAIL_LINES).some((line) => LIMIT_PATTERNS.some((pattern) => pattern.test(line)));
+    // A clean exit counts only when the output is little more than the API error itself: a finished report that
+    // mentions rate limits must never be run again.
+    const lines = tailLines(output, CLEAN_EXIT_LINES + 1);
+    return lines.length <= CLEAN_EXIT_LINES && CLEAN_EXIT_LIMIT.test(lines.at(-1) ?? "");
 }
+
+/** At most this many output lines on a clean exit, the last an API limit error, count as a limit. */
+const CLEAN_EXIT_LINES = 3;
+const CLEAN_EXIT_LIMIT = /rate_limit_error|usage limit reached|\b429\b/i;
 
 const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000 };
 

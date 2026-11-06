@@ -93,6 +93,10 @@ describe("limit fallback", () => {
         expect(hitLimit("build failed at line 429", 1)).toBe(false);
         expect(hitLimit("Fixed the rate limit handling.\nAll tests pass.", 0)).toBe(false);
         expect(hitLimit("done\nError: rate_limit_error", 0)).toBe(true);
+        // A finished report whose last line mentions a limit is not a limit, even with an error-like word.
+        expect(
+            hitLimit("Did the work.\nTests pass.\nCommitted abc.\nNote: usage limit reached earlier, retried.", 0),
+        ).toBe(false);
     });
 
     test("reads the reset the error names", () => {

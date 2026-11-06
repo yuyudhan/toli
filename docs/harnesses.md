@@ -160,7 +160,7 @@ without writing anything.
 
 **Every path** resolves the same way on the machine that runs the work: `spawn` (and its queued starts and automatic
 continuations), `bin/toli remote` / `remote auto` (its `--tier` and `--work`, else the task's tier and shape, travel to
-the target as `TOLI_EXEC_TIER` / `TOLI_EXEC_WORK`, and the target picks the model with its own config; a `Tier:` line
+the target as `TOLI_EXEC_TIER` / `TOLI_EXEC_TASK_TIER` / `TOLI_EXEC_WORK`, ranked as on spawn, and the target picks the model with its own config; a `Tier:` line
 travels inside the prompt), and scheduled headless jobs (`job add --tier`, else the shape: scout and ship are
 `standard`). A lead's in-session subagents (omp `task`, Claude's Agent tool) are started by the lead, not toli: the
 toli-dispatch skill tells it to pass the tier's model to them.
