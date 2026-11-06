@@ -1,13 +1,13 @@
 // Delete a cargo target folder between build steps: take cargo's own file locks (flock on `.cargo-lock` and friends,
-// held while cargo compiles), make sure no process uses the folder (cargo releases its locks before it runs the test
-// binaries, so a test binary, a process working in the workspace, or a build tool there counts as using it; so does any
-// open file under it), rename it aside under the locks, release them, then delete the renamed tree. A cargo that
-// starts meanwhile waits on the lock, then builds into a fresh, empty target.
+// held while cargo compiles), make sure no cargo runs in the target's workspace and no process uses the folder (cargo
+// releases its locks before it runs the test binaries, so a test binary, a process working in the workspace, or a
+// build tool there counts as using it; so does any open file under it), rename it aside under the locks, release them,
+// then delete the renamed tree. A cargo that starts meanwhile waits on the lock, then builds into a fresh, empty target.
 import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, type Dirent, openSync, readdirSync, renameSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { platform } from "../core/util.ts";
-import { openBelow, targetUse } from "./disk-scan.ts";
+import { cargoRunsIn, openBelow, targetUse } from "./disk-scan.ts";
 
 const CARGO_LOCKS: Record<string, true> = {
     ".cargo-lock": true,
@@ -92,11 +92,21 @@ function release(fds: number[], lock: Flock): void {
 
 export type WipeOutcome = { wiped: true } | { wiped: false; reason: string };
 
+function openIn(target: string): string | null {
+    const open = openBelow(target);
+    return open.length > 0 ? `open files, e.g. ${open.join(", ")}` : null;
+}
+
 /**
- * Wipe `target` once no build holds its locks and no process uses it, retrying for up to `waitMs`. Nothing is
- * deleted when that moment never comes; the returned reason says why.
+ * Wipe `target` once no build holds its locks, no cargo runs in its workspace (the folder holding it), no process uses
+ * it and `holdOff` (checked on every try) gives no reason to wait, retrying for up to `waitMs`. Nothing is deleted
+ * when that moment never comes; the returned reason says why.
  */
-export function wipeTargetBetweenBuilds(target: string, waitMs: number): WipeOutcome {
+export function wipeTargetBetweenBuilds(
+    target: string,
+    waitMs: number,
+    holdOff: () => string | null = () => null,
+): WipeOutcome {
     const lock = flock();
     if (lock === null) return { wiped: false, reason: "cannot load libc flock to take cargo's locks" };
     const deadline = Date.now() + waitMs;
@@ -106,10 +116,8 @@ export function wipeTargetBetweenBuilds(target: string, waitMs: number): WipeOut
         if (typeof held === "string") reason = `a build holds ${held}`;
         else {
             try {
-                const user = targetUse(target);
-                const open = user === null ? openBelow(target) : [];
-                if (user !== null) reason = user;
-                else if (open.length > 0) reason = `open files, e.g. ${open.join(", ")}`;
+                const busy = holdOff() ?? cargoRunsIn(dirname(target)) ?? targetUse(target) ?? openIn(target);
+                if (busy !== null) reason = busy;
                 else {
                     const aside = `${target}.toli-wipe-${Date.now()}`;
                     renameSync(target, aside);
