@@ -37,7 +37,7 @@ import { activeRuntime, syncRuntime } from "../release/runtime.ts";
 import { upgradeCommand } from "../release/upgrade.ts";
 import { keepDiskBeforeWork } from "./disk.ts";
 import { noCandidateText, pickMachine } from "./pick.ts";
-import { registerRun, removeRun } from "./resources.ts";
+import { localStartRefusal, registerRun, removeRun } from "./resources.ts";
 
 export function initCommand(argv: string[]): void {
     const args = new Args(argv, { values: ["name", "role", "coordinator-ssh", "coordinator-root"] });
@@ -181,6 +181,10 @@ export async function execCommand(argv: string[]): Promise<number> {
     if (task !== null) requireName("task", task);
     const projectEnv = process.env[EXEC_PROJECT_ENV];
     const project = projectEnv === undefined || projectEnv === "" ? null : requireName("project", projectEnv);
+    const refusal = localStartRefusal();
+    if (refusal.length > 0) {
+        throw new ToliError(`exec: ${machine.name} is full (${refusal.join("; ")}); not starting this run here`);
+    }
     keepDiskBeforeWork();
     const maxTime = `${maxMinutes}m`;
     const jawan = recordRun(
