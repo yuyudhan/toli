@@ -152,6 +152,22 @@ export function openBelow(dir: string, limit = 3): string[] {
     return held;
 }
 
+/**
+ * A cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) whose working directory lies in `workspace`, as
+ * `cargo (pid N) runs in <dir>`, or null. `cargo test` drops its build lock once compiling is done and then runs the
+ * test binaries one by one; between two of them nothing in the target is open, yet cargo is about to start the next.
+ */
+export function cargoRunsIn(workspace: string): string | null {
+    const listed = run(["lsof", "-a", "-d", "cwd", "-c", "cargo", "-w", "-Fpn"], { timeoutMs: 60_000 });
+    let pid = "";
+    for (const line of listed.stdout.split("\n")) {
+        if (line.startsWith("p")) pid = line.slice(1);
+        else if (line.startsWith("n") && within(line.slice(1), workspace))
+            return `cargo (pid ${pid}) runs in ${line.slice(1)}`;
+    }
+    return null;
+}
+
 /** Size of a folder in GB from `du -sk` (0 when du fails). */
 export function sizeGB(path: string): number {
     const result = run(["du", "-sk", path], { timeoutMs: 600_000 });
