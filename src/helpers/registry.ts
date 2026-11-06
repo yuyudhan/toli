@@ -29,6 +29,9 @@ export type Helper = {
     nice: number | undefined;
     /** Low-priority disk I/O (launchd LowPriorityIO, systemd IOSchedulingClass=idle). */
     lowPriorityIO: boolean;
+    /** Open-files limit, soft and hard (launchd Soft/HardResourceLimits NumberOfFiles, systemd LimitNOFILE, crontab
+     * `ulimit -n`); unset leaves the scheduler's default (launchd: 256). */
+    maxFiles: number | undefined;
     /** Extra environment; PATH here replaces the default scheduled PATH. */
     env: Record<string, string>;
     /** Platforms to install on (process.platform values); unset means every platform. */
@@ -45,6 +48,7 @@ const KEYS: readonly string[] = [
     "runAtLoad",
     "nice",
     "lowPriorityIO",
+    "maxFiles",
     "env",
     "platforms",
     "enabled",
@@ -116,6 +120,9 @@ function parseHelper(value: unknown, index: number, root: string, source: string
     const nice = value.nice;
     if (nice !== undefined && (typeof nice !== "number" || !Number.isInteger(nice) || nice < 0 || nice > 19))
         throw new ToliError(`${at}: "nice" must be an integer 0-19`);
+    const maxFiles = value.maxFiles;
+    if (maxFiles !== undefined && (typeof maxFiles !== "number" || !Number.isInteger(maxFiles) || maxFiles < 1))
+        throw new ToliError(`${at}: "maxFiles" must be a positive integer`);
     const env: Record<string, string> = {};
     if (value.env !== undefined) {
         if (!isJsonObject(value.env)) throw new ToliError(`${at}: "env" must be an object of strings`);
@@ -134,6 +141,7 @@ function parseHelper(value: unknown, index: number, root: string, source: string
         runAtLoad: optionalBool(value.runAtLoad, `${at}: "runAtLoad"`, false),
         nice: nice as number | undefined,
         lowPriorityIO: optionalBool(value.lowPriorityIO, `${at}: "lowPriorityIO"`, false),
+        maxFiles: maxFiles as number | undefined,
         env,
         platforms: value.platforms === undefined ? undefined : stringList(value.platforms, `${at}: "platforms"`),
         enabled: optionalBool(value.enabled, `${at}: "enabled"`, true),

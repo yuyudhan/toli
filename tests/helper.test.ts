@@ -28,6 +28,7 @@ const sweep: Entry = {
     schedule: { every: "15m" },
     nice: 10,
     lowPriorityIO: true,
+    maxFiles: 65536,
 };
 const daemon: Entry = { name: "daemon", exec: "local/scripts/daemon", schedule: { always: true } };
 const nightly: Entry = { name: "nightly", exec: "local/scripts/nightly", schedule: { cron: "30 2 * * 1-5" } };
@@ -69,6 +70,7 @@ describe("helpers.json parsing", () => {
             schedule: { kind: "every", seconds: 900 },
             nice: 10,
             lowPriorityIO: true,
+            maxFiles: 65536,
             runAtLoad: false,
             enabled: true,
             env: {},
@@ -90,6 +92,7 @@ describe("helpers.json parsing", () => {
             [[{ ...sweep, schedule: { cron: "* * *" } }], "expected 5 fields"],
             [[{ ...sweep, schedule: { always: false } }], "always must be true"],
             [[{ ...sweep, nice: 25 }], '"nice" must be an integer 0-19'],
+            [[{ ...sweep, maxFiles: 0 }], '"maxFiles" must be a positive integer'],
             [[{ ...sweep, env: { "BAD-NAME": "x" } }], 'bad env name "BAD-NAME"'],
             [[{ ...sweep, args: [1] }], '"args" must be an array of strings'],
         ];
@@ -157,7 +160,7 @@ describe("schedule translation", () => {
 });
 
 describe("rendering (dry run)", () => {
-    test("launchd: label, absolute exec, args, interval, nice, low-priority I/O, per-helper log", () => {
+    test("launchd: label, absolute exec, args, interval, nice, low-priority I/O, open-files limit, per-helper log", () => {
         const box = withHelpers([sweep]);
         const output = box.ok(["helper", "install", "sweep"], { env: { TOLI_PLATFORM: "darwin" } });
         expect(output).toContain(`<string>com.toli.helper.sweep</string>`);
@@ -167,6 +170,10 @@ describe("rendering (dry run)", () => {
         expect(output).toContain("<key>StartInterval</key>\n    <integer>900</integer>");
         expect(output).toContain("<key>Nice</key>\n    <integer>10</integer>");
         expect(output).toContain("<key>LowPriorityIO</key>\n    <true/>");
+        for (const key of ["SoftResourceLimits", "HardResourceLimits"])
+            expect(output).toContain(
+                `<key>${key}</key>\n    <dict>\n        <key>NumberOfFiles</key>\n        <integer>65536</integer>`,
+            );
         expect(output).not.toContain("RunAtLoad");
         expect(output).toContain(`<string>${join(box.root, "logs", "helpers", "sweep.log")}</string>`);
     });
@@ -178,6 +185,7 @@ describe("rendering (dry run)", () => {
         expect(always).toContain("<key>RunAtLoad</key>\n    <true/>");
         expect(always).toContain("<key>ProcessType</key>\n    <string>Background</string>");
         expect(always).not.toContain("StartInterval");
+        expect(always).not.toContain("NumberOfFiles");
         const cron = box.ok(["helper", "install", "nightly"], { env: { TOLI_PLATFORM: "darwin" } });
         expect(cron).toContain("<key>StartCalendarInterval</key>");
         expect(cron.match(/<key>Weekday<\/key>/g)).toHaveLength(5);
@@ -190,7 +198,7 @@ describe("rendering (dry run)", () => {
         expect(output).toContain(`would write ${join(box.root, "units", "toli-helper-sweep.service")}`);
         expect(output).toContain("Type=oneshot");
         expect(output).toContain(`ExecStart=${join(box.root, "local", "scripts", "sweep")} --fast`);
-        expect(output).toContain("Nice=10\nIOSchedulingClass=idle");
+        expect(output).toContain("Nice=10\nIOSchedulingClass=idle\nLimitNOFILE=65536");
         expect(output).toContain("OnActiveSec=900s\nOnUnitActiveSec=900s");
         expect(output).toContain("Unit=toli-helper-sweep.service");
         expect(output).toContain("WantedBy=timers.target");
@@ -223,13 +231,13 @@ describe("rendering (dry run)", () => {
         expect(output).toContain(`\nWorkingDirectory=${box.root}\n`);
     });
 
-    test("crontab: tagged line with cd, env, nice and log; always-running refused", () => {
+    test("crontab: tagged line with cd, ulimit, env, nice and log; always-running refused", () => {
         const box = withHelpers([sweep, daemon]);
         const env = { TOLI_SCHEDULER: "crontab" };
         box.stub("crontab", 'case "$1" in -l) echo "0 3 * * * /usr/bin/backup" ;; *) exit 2 ;; esac');
         const output = box.ok(["helper", "install", "sweep"], { env });
         const line = output.split("\n").find((entry) => entry.endsWith("# toli helper sweep")) ?? "";
-        expect(line.startsWith(`*/15 * * * * cd ${box.root} && env PATH=`)).toBe(true);
+        expect(line.startsWith(`*/15 * * * * cd ${box.root} && ulimit -n 65536 && env PATH=`)).toBe(true);
         expect(line).toContain(` nice -n 10 ${join(box.root, "local", "scripts", "sweep")} --fast >> `);
         expect(line).toContain(`${join(box.root, "logs", "helpers", "sweep.log")} 2>&1 # toli helper sweep`);
         expect(output).toContain("0 3 * * * /usr/bin/backup");

@@ -33,6 +33,7 @@ Keychain via `security`, or `secret-tool` on a Linux desktop; a headless Linux b
                 "runAtLoad": true,
                 "nice": 10,
                 "lowPriorityIO": true,
+                "maxFiles": 65536,
                 "env": { "LOW_GB": "50" },
                 "platforms": ["darwin", "linux"],
                 "enabled": true
@@ -44,7 +45,8 @@ Keychain via `security`, or `secret-tool` on a Linux desktop; a headless Linux b
 - `schedule`: exactly one of `{"every": "90s"|"15m"|"1h"|"1d"}`, `{"cron": "m h dom mon dow"}`, or `{"always": true}`
   (keep one process running and restart it when it exits; launchd or systemd only).
 - Optional: `description`, `args`, `runAtLoad` (also run once when installed and at login), `nice` (0-19),
-  `lowPriorityIO`, `env` (`PATH` here replaces the default scheduled PATH), `platforms`, `enabled` (default true).
+  `lowPriorityIO`, `maxFiles` (open-files limit; launchd's default is 256, too low for builds), `env` (`PATH` here
+  replaces the default scheduled PATH), `platforms`, `enabled` (default true).
 
 ## Creating a helper (Malik asks for one)
 
