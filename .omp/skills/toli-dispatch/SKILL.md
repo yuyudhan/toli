@@ -182,7 +182,9 @@ for UI/CLI/API checks. On Claude Code use the general-purpose agent; on `bin/tol
 **The async rule.** Every spawn is a background job: the call returns at once. Then reply to Malik in one or two
 lines ("Ji Malik, T12 is with a jawan; I'll tell you when it lands.") and end the turn. Never call `wait`, and never
 poll `proc://` or `agent://` while Malik may talk. Results arrive by themselves as new turns. If Malik changes his
-mind about a running jawan, steer it with `write agent://<id>`; do not re-spawn it.
+mind about a running jawan, steer it with `write agent://<id>`; do not kill and re-spawn it. `bin/toli spawn --task
+T<n>` refuses while T<n> has a live run and names it; `--replace` stops that run (as `run kill` does) and starts the
+new one, only when the running jawan cannot be steered (wrong harness, model or brief beyond repair).
 
 ## 6. Independent verification (ship work)
 

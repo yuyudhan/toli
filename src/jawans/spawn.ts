@@ -23,7 +23,7 @@ import { findProject } from "../projects/projects.ts";
 import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { jawanSlots, startOrQueue } from "./launch.ts";
-import { activeRuns, type JawanRun, killRun, listRuns, loadRun, runLine } from "./runs.ts";
+import { activeRuns, type JawanRun, killRun, listRuns, loadRun, runLine, updateRun } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
@@ -40,6 +40,8 @@ export type SpawnOptions = {
     maxMinutes?: number | undefined;
     /** Start even when every jawan slot is busy (the lead's explicit `--now`). */
     now?: boolean | undefined;
+    /** Supersede the task's live run (stopped as `run kill` does) instead of refusing (`--replace`). */
+    replace?: boolean | undefined;
 };
 
 function readBrief(path: string): string {
@@ -91,6 +93,25 @@ function plan(options: SpawnOptions): {
 }
 
 /**
+ * The task's live runs (queued, starting or running) on this machine. listRuns first records runs whose supervisor
+ * died as failed, so a dead run left marked running never counts. Without `replace` a live run refuses the spawn: the
+ * lead steers it instead of starting a second jawan on the same copy. With `replace` each is stopped as `run kill`
+ * does; the ids are returned for the replacement's record.
+ */
+function supersedeLiveRuns(task: string, replace: boolean): string[] {
+    const live = activeRuns().filter((run) => run.task === task);
+    if (live.length === 0) return [];
+    if (!replace) {
+        const names = live.map((run) => `${run.id} (${run.status})`).join(", ");
+        const first = live[0]?.id ?? "";
+        throw new ToliError(
+            `${task} already has a live jawan: ${names}. Steer it with \`write agent://${first}\`, or pass --replace to stop it and start this one`,
+        );
+    }
+    return live.map((run) => killRun(run.id).id);
+}
+
+/**
  * Record one jawan run and return it: started detached (status `starting`, supervisor pid set) when a jawan slot is
  * free or `now` is set, otherwise `queued` until one frees. A non-scout task first gets its workspace per the
  * project's strategy (branch switched or worktree added), the jawan runs there, and the brief gains a Workspace block
@@ -99,6 +120,7 @@ function plan(options: SpawnOptions): {
 export function spawnJawan(options: SpawnOptions): JawanRun {
     const resolved = plan(options);
     loadMachine();
+    const replaced = resolved.task === null ? [] : supersedeLiveRuns(resolved.task, options.replace === true);
     // Ship briefs carry a goal contract (docs/brief-template.md `## Goal`); a missing one is warned about, not refused.
     if (resolved.work === "ship" && !/^## Goal\b/m.test(resolved.brief))
         warn(
@@ -109,7 +131,7 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
         resolved.cwd = workspace.path;
         resolved.brief = `${resolved.brief.trimEnd()}\n${workspaceBrief(resolved.project, resolved.task, workspace)}`;
     }
-    return startOrQueue(
+    const run = startOrQueue(
         {
             harness: resolved.harness,
             task: resolved.task,
@@ -120,9 +142,15 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
             maxMinutes: options.maxMinutes ?? DEFAULT_MAX_MINUTES,
             baseBrief: resolved.brief,
             extra: "",
+            ...(replaced.length === 0 ? {} : { replaces: replaced }),
         },
         { now: options.now === true },
     );
+    for (const id of replaced)
+        updateRun(id, (record) => {
+            record.replacedBy = run.id;
+        });
+    return run;
 }
 
 function parseWork(value: string | undefined): WorkType | undefined {
@@ -132,10 +160,10 @@ function parseWork(value: string | undefined): WorkType | undefined {
     return value as WorkType;
 }
 
-/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--work w] [--cwd d] [--max-time min] [--now]`. */
+/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--work w] [--cwd d] [--max-time min] [--now] [--replace]`. */
 export function spawnCommand(argv: string[]): void {
     const args = new Args(argv, {
-        booleans: ["json", "now"],
+        booleans: ["json", "now", "replace"],
         values: ["harness", "brief", "task", "project", "model", "work", "cwd", "max-time"],
     });
     args.maxPositional(0);
@@ -152,11 +180,13 @@ export function spawnCommand(argv: string[]): void {
         cwd: args.str("cwd"),
         maxMinutes: parseMinutes(args.str("max-time")),
         now: args.bool("now"),
+        replace: args.bool("replace"),
     });
     if (args.bool("json")) {
         printJson(run);
         return;
     }
+    if (run.replaces !== undefined) out(`replaced ${run.replaces.join(", ")} (stopped as \`bin/toli run kill\` does)`);
     if (run.status === "queued")
         out(
             `queued ${run.id}: all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees (\`bin/toli runs\`). Log ${relative(paths.root(), run.logPath)}`,

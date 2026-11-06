@@ -54,7 +54,8 @@ Next block) and with `bin/toli wake`.
 ## Jawans on any harness: `bin/toli spawn`
 
     bin/toli spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>]
-                   [--model <m>] [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--json]
+                   [--model <m>] [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--replace]
+                   [--json]
     bin/toli runs [--json] [--active]
     bin/toli run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
 
@@ -74,6 +75,13 @@ quarter of the cores). `spawn` with every slot busy records the run as `queued` 
 returns; queued runs start oldest first as slots free, from the supervisor of each run that ends and from the minute
 tick (`bin/toli job tick`). `--now` starts the run regardless, for the lead's explicit use. `run kill` on a queued
 run cancels it.
+
+**One live jawan per task.** `spawn --task T<n>` refuses while T<n> already has a live run on this machine (queued,
+starting or running), naming the run and suggesting `write agent://<id>` to steer it, so two jawans never edit the
+same copy. `--replace` supersedes it instead: each live run is stopped as `bin/toli run kill` does (its outcome is
+still posted, as killed), the new run records `replaces`, the old one `replacedBy`, and both appear in the inbox
+outcomes. A run whose supervisor died while marked running does not block: it is recorded failed as `bin/toli runs`
+always does, and the spawn proceeds. Runs for other tasks, and spawns without `--task`, are unaffected.
 
 **Deadline and auto-resume.** When a run starts, its brief gains a `## Deadline (auto)` section: the wall-clock time
 its `--max-time` (default 120 minutes) ends it, and a request to write the report 10 minutes before (halfway for
