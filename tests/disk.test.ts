@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdirSync, openSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
@@ -94,6 +94,52 @@ describe("disk keeper", () => {
         );
         expect(order).toEqual([...order].sort((a, b) => a - b));
         expect(existsSync(join(idle, "target"))).toBe(true);
+    });
+
+    test("a live pid in state/disk-keep.pause holds it off, logged once; a dead pid's pause is stale", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const idle = realpathSync(withProject(box, "alpha"));
+        buildOutput(box, idle);
+        box.stub("docker", "exit 1");
+        box.stub("sccache", "exit 2");
+        const keep = (): KeepReport =>
+            JSON.parse(box.ok(["disk", "keep", "--dry-run", "--floor", "1000000000", "--json"])) as KeepReport;
+        const pause = join(box.root, "state", "disk-keep.pause");
+        const diskLog = join(box.root, "logs", "disk.log");
+        writeFileSync(pause, `${process.pid}\nrelease gate\n`);
+        for (const _ of [1, 2, 3]) {
+            const report = keep();
+            expect(report.ran).toBe(false);
+            expect(report.pausedBy).toBe(process.pid);
+            expect(report.lines.join("\n")).toContain(`paused by pid ${process.pid} (release gate)`);
+            expect(report.lines.join("\n")).not.toContain("would delete");
+        }
+        const pausedLines = readFileSync(diskLog, "utf8")
+            .split("\n")
+            .filter((line) => line.includes("paused by"));
+        expect(pausedLines).toHaveLength(1);
+
+        const dead = Bun.spawnSync(["true"]).pid;
+        writeFileSync(pause, `${dead}\n`);
+        const report = keep();
+        expect(report.ran).toBe(true);
+        expect(report.pausedBy).toBeUndefined();
+        expect(report.lines.join("\n")).toContain(`would delete ${join(idle, "target")} (`);
+    });
+
+    test("beside another live keeper it logs that once, not on every run", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        mkdirSync(join(box.root, "state"), { recursive: true });
+        writeFileSync(join(box.root, "state", "disk-keep.lock"), String(process.pid));
+        for (const _ of [1, 2, 3]) {
+            const report = JSON.parse(box.ok(["disk", "keep", "--floor", "1000000000", "--json"])) as KeepReport;
+            expect(report.ran).toBe(false);
+            expect(report.lines.join("\n")).toContain(`another disk keeper (pid ${process.pid}) is already running`);
+        }
+        const log = readFileSync(join(box.root, "logs", "disk.log"), "utf8");
+        expect(log.split("\n").filter((line) => line.includes("already running"))).toHaveLength(1);
     });
 });
 

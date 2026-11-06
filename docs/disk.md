@@ -15,7 +15,22 @@ output until free space is 20 GB above that floor. Nobody has to decide anything
 - By hand, with `bin/toli disk keep`. `--dry-run` (or `TOLI_DRY_RUN=1`) lists what would go and counts each folder's
   size as freed. `--floor` overrides the configured floor, so a dry run with a high floor shows the whole plan.
 
-Only one keeper runs at a time (`state/disk-keep.lock` holds its pid). Every action goes to `logs/disk.log`.
+Only one keeper runs at a time (`state/disk-keep.lock` holds its pid). Every action goes to `logs/disk.log`. A reason
+the keeper did not run (paused, or another keeper busy) is logged once when it starts, not on every minute's tick.
+
+## Pausing it for a long job
+
+A long job that must keep its build output for a while (a release build, a test gate, a benchmark) writes its own
+pid to `state/disk-keep.pause`, optionally followed by a short reason, and removes the file when done:
+
+    pause=/path/to/toli/state/disk-keep.pause        # in your toli checkout
+    printf '%s\nrelease gate\n' "$$" > "$pause"      # first word: a pid; the rest: a reason
+    ...                                              # the long job
+    rm -f "$pause"
+
+While that pid is alive the keeper deletes nothing (`bin/toli disk keep` says `paused by pid N (reason)`). Once the
+pid is dead the file is stale and ignored, so a job killed before its cleanup never blocks the keeper for good. Use
+this file, never `state/disk-keep.lock`: the lock belongs to the keeper itself.
 
 ## What it deletes, in order
 
