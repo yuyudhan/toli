@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { loadMachine, type Machine, remoteToliCommand, sshArgs } from "../core/config.ts";
+import { loadMachine, type Machine } from "../core/config.ts";
 import { cronFiredBetween, parseCron } from "../core/cron.ts";
 import { paths } from "../core/paths.ts";
 import {
@@ -11,16 +11,16 @@ import {
     readJson,
     readStdin,
     requireName,
-    run,
-    shellQuote,
     stamp,
     ToliError,
     withLock,
     writeJsonAtomic,
     writeTextAtomic,
 } from "../core/util.ts";
+import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { findProject } from "../projects/projects.ts";
 import { ackedThrough, ackThrough } from "../records/acks.ts";
+import { deliverOutbox, queueOutbox } from "./outbox.ts";
 
 export type JobShape = "scout" | "ship";
 export type Via = "session" | "headless";
@@ -33,6 +33,7 @@ export type JobConfig = {
     project?: string;
     machine?: string;
     shape: JobShape;
+    tier?: Tier;
     enabled: boolean;
     createdAt: string;
 };
@@ -204,59 +205,6 @@ export function finishJob(name: string, runId: string, body: string, status: Run
     return path;
 }
 
-type OutboxItem = { from: string; title: string; body: string };
-
-export function queueOutbox(machine: Machine, title: string, body: string, id: string): void {
-    writeJsonAtomic(join(paths.outboxDir(), `${id}.json`), { from: machine.name, title, body } satisfies OutboxItem);
-}
-
-const SENDING_STALE_MS = 10 * 60 * 1000;
-
-/**
- * Deliver every queued outbox item to the coordinator's inbox over ssh. Each item is claimed by an atomic
- * rename first, so overlapping ticks never send the same item twice; failures go back to the queue.
- */
-export function deliverOutbox(machine: Machine): { delivered: number; pending: number; errors: string[] } {
-    const dir = paths.outboxDir();
-    const result = { delivered: 0, pending: 0, errors: [] as string[] };
-    if (!existsSync(dir) || machine.role !== "worker" || !machine.coordinator) return result;
-    const coordinator = machine.coordinator;
-    for (const file of readdirSync(dir)) {
-        const sending = /^(.*\.json)\.sending-\d+$/.exec(file);
-        if (sending && Date.now() - statSync(join(dir, file)).mtimeMs > SENDING_STALE_MS) {
-            renameSync(join(dir, file), join(dir, sending[1] as string));
-        }
-    }
-    for (const file of readdirSync(dir)
-        .filter((entry) => entry.endsWith(".json"))
-        .sort()) {
-        const queued = join(dir, file);
-        const claimed = `${queued}.sending-${process.pid}`;
-        try {
-            renameSync(queued, claimed);
-        } catch {
-            continue;
-        }
-        const item = readJson<OutboxItem>(claimed, { from: machine.name, title: file, body: "" });
-        const remote = remoteToliCommand(
-            coordinator.root,
-            `inbox add --from ${shellQuote(item.from)} --title ${shellQuote(item.title)}`,
-        );
-        const sent = run([...sshArgs(coordinator.ssh), remote], { stdin: item.body, timeoutMs: 120_000 });
-        if (sent.code === 0) {
-            rmSync(claimed, { force: true });
-            result.delivered += 1;
-        } else {
-            renameSync(claimed, queued);
-            result.pending += 1;
-            result.errors.push(
-                `${file}: ssh ${coordinator.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`,
-            );
-        }
-    }
-    return result;
-}
-
 export function listResults(): JobResult[] {
     const base = paths.jobResultsDir();
     if (!existsSync(base)) return [];
@@ -276,7 +224,7 @@ export function listResults(): JobResult[] {
 }
 
 function add(argv: string[]): void {
-    const args = new Args(argv, { values: ["cron", "prompt", "project", "machine", "shape"] });
+    const args = new Args(argv, { values: ["cron", "prompt", "project", "machine", "shape", "tier"] });
     args.maxPositional(1);
     const name = requireName("job", args.positional[0]);
     const cron = args.str("cron");
@@ -286,6 +234,7 @@ function add(argv: string[]): void {
     parseCron(cron);
     const shape = args.str("shape") ?? "scout";
     if (shape !== "scout" && shape !== "ship") throw new ToliError("--shape must be scout or ship");
+    const tier = parseOptionalTier(args.str("tier"));
     const project = args.str("project");
     if (project !== undefined) findProject(project);
     const machineName = args.str("machine");
@@ -299,6 +248,7 @@ function add(argv: string[]): void {
             ...(project === undefined ? {} : { project }),
             ...(machineName === undefined ? {} : { machine: machineName }),
             shape,
+            ...(tier === undefined ? {} : { tier }),
             enabled: true,
             createdAt: now().toISOString(),
         });
@@ -324,7 +274,7 @@ function list(argv: string[]): void {
             job.name,
             job.enabled ? "active" : "paused",
             job.cron,
-            job.shape,
+            job.tier ? `${job.shape} tier=${job.tier}` : job.shape,
             job.project ? `project=${job.project}` : "",
             job.machine ? `machine=${job.machine}` : "",
             job.state.running ? `running since ${job.state.running.startedAt}` : "",

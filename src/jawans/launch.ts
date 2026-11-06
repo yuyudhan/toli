@@ -12,6 +12,7 @@ import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { capacityFor } from "../fleet/resources.ts";
 import { type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
+import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { deadlineSection } from "./limits.ts";
 import { type JawanRun, listRuns, loadRun, RUNNING, runMinuteMs, updateRun } from "./runs.ts";
@@ -27,6 +28,8 @@ export type NewRun = {
     project: string | null;
     work: WorkType | null;
     model: string | null;
+    tier: Tier | null;
+    modelSource: ModelSource;
     cwd: string;
     maxMinutes: number;
     /** The brief before generated sections. */
@@ -71,7 +74,7 @@ export type AttachedStart = { argv: string[]; ownerPid: number };
 
 /**
  * Write the run dir, its briefs and its record: status `queued`, nothing started; or, with `attached`, status
- * `running` under the calling process (`bin/toli exec`), which records the outcome itself (src/fleet/fleet.ts).
+ * `running` under the calling process (`bin/toli exec`), which records the outcome itself (src/fleet/remote.ts).
  */
 export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
     const createdAt = now();
@@ -99,6 +102,8 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         project: input.project,
         work: input.work,
         model: input.model,
+        tier: input.tier,
+        modelSource: input.modelSource,
         cwd: input.cwd,
         runDir,
         briefPath,

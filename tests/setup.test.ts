@@ -258,15 +258,19 @@ describe("setup CLI", () => {
 
     test("the Claude Code SessionStart hook hands the notice to the lead once", () => {
         const input = JSON.stringify({ cwd: box.root, hook_event_name: "SessionStart" });
+        // The lead's calls clear the jawan markers themselves: this test may itself run inside a jawan or gate agent.
+        const lead = { TOLI_ROLE: "", NO_MISTAKES_GATE: "" };
         // A jawan never takes the notice, so the lead still gets it afterwards.
-        expect(box.ok(["hook", "claude-session-start"], { stdin: input, env: { TOLI_ROLE: "jawan" } })).toBe("");
+        expect(box.ok(["hook", "claude-session-start"], { stdin: input, env: { ...lead, TOLI_ROLE: "jawan" } })).toBe(
+            "",
+        );
         expect(readMarker()).toBeNull();
-        const first = JSON.parse(box.ok(["hook", "claude-session-start"], { stdin: input })) as {
+        const first = JSON.parse(box.ok(["hook", "claude-session-start"], { stdin: input, env: lead })) as {
             hookSpecificOutput: { hookEventName: string; additionalContext: string };
         };
         expect(first.hookSpecificOutput.hookEventName).toBe("SessionStart");
         expect(first.hookSpecificOutput.additionalContext).toContain('say "set up toli"');
-        expect(box.ok(["hook", "claude-session-start"], { stdin: input })).toBe("");
+        expect(box.ok(["hook", "claude-session-start"], { stdin: input, env: lead })).toBe("");
     });
 
     test("seed-local creates local/ without touching existing files", () => {

@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { findProject } from "../projects/projects.ts";
 import type { Workspace } from "../projects/strategy.ts";
 
@@ -26,6 +27,8 @@ export type Task = {
     title: string;
     shape: Shape;
     status: Status;
+    /** The model tier its jawans run on (`task add --tier`); without it, the shape's work type picks (docs/harnesses.md). */
+    tier?: Tier;
     notes: string[];
     /** The held question for the user: the task's entry in the Needs-you queue (`bin/toli needs`). */
     question?: string;
@@ -95,11 +98,12 @@ function describe(task: Task): string {
 }
 
 function add(argv: string[]): void {
-    const args = new Args(argv, { values: ["shape", "note"] });
+    const args = new Args(argv, { values: ["shape", "note", "tier"] });
     args.maxPositional(2);
     const project = findProject(args.pos(0, "project")).name;
     const title = args.pos(1, "title");
     const shape = parseShape(args.str("shape"), "ship");
+    const tier = parseOptionalTier(args.str("tier"));
     const note = args.str("note");
     const id = updateBacklog((backlog) => {
         const taskId = `T${backlog.nextId}`;
@@ -111,6 +115,7 @@ function add(argv: string[]): void {
             title,
             shape,
             status: "queued",
+            ...(tier === undefined ? {} : { tier }),
             notes: note === undefined ? [] : [note],
             createdAt: stamp,
             updatedAt: stamp,

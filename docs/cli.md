@@ -67,7 +67,7 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
 
 ### Tasks
 
-    task add <project> "<title>" [--shape ship|scout] [--note "..."]
+    task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
     task list [--json] [--status queued|active|held|done|dropped]
     task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
     task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."]
@@ -111,7 +111,8 @@ default 7) once.
 ### Jawans and harnesses
 
     spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
-          [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--replace] [--json]
+          [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
+          [--now] [--replace] [--dry-run] [--json]
     runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
     harness sync [--check] [--json] | status [--json]
     hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
@@ -130,7 +131,7 @@ Details: [harnesses.md](harnesses.md).
 
 ### Scheduled jobs and results
 
-    job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
+    job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--tier light|standard|deep]
     job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
     job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
     job results [--unseen] [--json] | ack
@@ -169,7 +170,7 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     fleet status [--json]
     pick [--project <name>] [--json]
     exec [--from <machine>] [--task <id>] (prompt on stdin)
-    remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>]
+    remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>] [--tier <t>] [--work <w>]
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.

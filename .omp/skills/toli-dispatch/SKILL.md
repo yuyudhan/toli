@@ -150,13 +150,17 @@ Two ways to start a background jawan, both non-blocking:
 
 - **Native async subagents** of the harness you (the lead) run in: omp's `task` tool, Claude Code's Agent/Task tool
   (background by default), Grok's `spawn_subagent` with `run_in_background`. Default when you run in one of these.
+  **Pass the tier's model** (toli cannot set it for you): mechanical `claude-haiku-5-5`, scout and ship
+  `claude-sonnet-5-5`, verify, release and `Tier: deep` briefs `claude-opus-5-5` (omp `task` `model`, Claude's Agent
+  `model`); `bin/toli spawn --dry-run --work <w>` prints this machine's choice (docs/harnesses.md "Model tiers").
 - **`bin/toli spawn`**: the universal path. Required when your harness's subagents block or do not exist (Codex,
   Cursor CLI, pi), when the work should run on another harness or model, or when it must outlive this session:
 
-        bin/toli spawn --task T<n> --brief data/projects/<project>/briefs/T<n>.md [--harness omp|claude|codex|cursor|grok|pi] [--model <m>] [--work scout|ship|verify]
+        bin/toli spawn --task T<n> --brief data/projects/<project>/briefs/T<n>.md [--harness omp|claude|codex|cursor|grok|pi] [--model <m>] [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release]
 
     It returns a run id at once; without `--harness` it uses `harness` in `config/machine.json` (default omp, per-work
-    overrides). Its outcome arrives as a `[toli wake]` message like any inbox item. `bin/toli runs` lists runs;
+    overrides), and the model of the work's tier (`--tier` or a `Tier:` line overrides). Its outcome arrives as a
+    `[toli wake]` message like any inbox item. `bin/toli runs` lists runs with their model;
     `bin/toli run status|log|kill <id>`; never poll them while Malik may talk. A missing CLI fails at once with its
     install command: tell Malik, or pick another harness. Details: `docs/harnesses.md`.
 
