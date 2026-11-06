@@ -43,6 +43,10 @@ one. See docs/releasing.md.
   test binaries), and a keeper waiting on a busy target re-reads `state/disk-keep.pause` before every try (from
   macminim4, merged with the process scan below).
 - The SessionStart hook test clears `TOLI_ROLE` and `NO_MISTAKES_GATE` itself, so it passes when run inside a jawan.
+- The disk keeper's process scan fails safe: a process of this user that lsof leaves out (common under load while it
+  is exec'ing, such as a test binary cargo just started) is rechecked, read from `ps` (its program path), and otherwise
+  counted as using the target, so a busy target is never wiped because the scan missed its user. The keeper tests'
+  stand-in test binary is now a copy of bun: macOS launch constraints kill a copied `/bin/sleep`, which made them flaky.
 - The disk keeper never wipes a build target a process uses (a test binary, a workspace's cwd, a build tool), beyond
   cargo's own lock.
 
