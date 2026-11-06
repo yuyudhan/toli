@@ -111,7 +111,7 @@ default 7) once.
 ### Jawans and harnesses
 
     spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
-          [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--json]
+          [--work scout|ship|verify] [--cwd <dir>] [--max-time <minutes>] [--now] [--replace] [--json]
     runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
     harness sync [--check] [--json] | status [--json]
     hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
@@ -120,6 +120,7 @@ default 7) once.
 
 - `spawn` starts a jawan in the background on any harness and returns a run id; `runs` and `run` follow it. With
   every jawan slot busy (`capacity.maxRuns`) the run is queued and starts when one frees; `--now` starts it anyway.
+  A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
   A run stopped by its time limit without a report is continued automatically (`capacity.autoResume`, default 3).
 - `harness sync` links skills and commands into every harness; `harness status` shows installed CLIs and logins.
 - `hook`, `guidance`, `session`: called by the harness integrations (Claude Code hooks, the omp extension), not by

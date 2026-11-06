@@ -42,6 +42,9 @@ export type JawanRun = {
     resumeCount?: number;
     /** The continuation started (or queued) because this run hit its time limit without a report. */
     resumedBy?: string;
+    /** `spawn --replace`: the live runs of the same task this one superseded, and the run that superseded this one. */
+    replaces?: string[];
+    replacedBy?: string;
 };
 
 /** Waiting or in progress; queued runs have no supervisor yet. */

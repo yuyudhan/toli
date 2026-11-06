@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { jawanEnv } from "../src/jawans/env.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
@@ -17,6 +17,8 @@ type Run = {
     exitCode: number | null;
     inbox: string | null;
     model: string | null;
+    replaces?: string[];
+    replacedBy?: string;
 };
 
 function coordinator(): Sandbox {
@@ -194,6 +196,103 @@ describe("spawn", () => {
         const withGoal = box.toli(["spawn", "--harness", "omp", "--work", "ship", "--brief", goal, "--cwd", box.root]);
         expect(withGoal.code).toBe(0);
         expect(withGoal.stderr).not.toContain(warning);
+    });
+});
+
+describe("one live jawan per task", () => {
+    /** A coordinator with project alpha and scout tasks T1 and T2 (scouts need no workspace), and a long-running omp. */
+    function withTasks(): Sandbox {
+        const box = coordinator();
+        withProject(box, "alpha");
+        box.ok(["task", "add", "alpha", "look around", "--shape", "scout"]);
+        box.ok(["task", "add", "alpha", "look elsewhere", "--shape", "scout"]);
+        box.stub("omp", "sleep 30");
+        return box;
+    }
+
+    function spawnTask(box: Sandbox, task: string, extra: string[] = []): Run {
+        return spawnJson(box, ["--harness", "omp", "--task", task, "--brief", brief(box), ...extra]);
+    }
+
+    function stop(box: Sandbox, ids: string[]): void {
+        for (const id of ids) box.toli(["run", "kill", id]);
+    }
+
+    test("a second spawn on a task with a live run is refused, naming the run and how to steer or replace it", async () => {
+        const box = withTasks();
+        const live = spawnTask(box, "T1");
+        await waitFor(box, live.id, (run) => run.status === "running");
+        const refused = box.toli(["spawn", "--harness", "omp", "--task", "T1", "--brief", brief(box)]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain(`T1 already has a live jawan: ${live.id} (running)`);
+        expect(refused.stderr).toContain(`write agent://${live.id}`);
+        expect(refused.stderr).toContain("--replace");
+        expect(runs(box).map((run) => run.id)).toEqual([live.id]);
+        expect((await waitFor(box, live.id, (run) => run.status === "running")).status).toBe("running");
+        stop(box, [live.id]);
+    });
+
+    test("--replace stops the live run as run kill does, records the replacement on both, and starts the new one", async () => {
+        const box = withTasks();
+        const old = spawnTask(box, "T1");
+        await waitFor(box, old.id, (run) => run.status === "running");
+        const next = spawnTask(box, "T1", ["--replace"]);
+        expect(next.replaces).toEqual([old.id]);
+        expect(next.status).toBe("starting");
+        const stopped = await waitFor(box, old.id, (run) => run.inbox !== null);
+        expect(stopped.status).toBe("killed");
+        expect(stopped.replacedBy).toBe(next.id);
+        expect(readFileSync(stopped.inbox ?? "", "utf8")).toContain("- status: killed (signal SIGTERM)");
+        expect(box.ok(["task", "list"])).toContain(`(agent: ${next.id})`);
+        stop(box, [next.id]);
+    });
+
+    test("a dead run left marked running does not block: it is recorded failed and the spawn proceeds", () => {
+        const box = withTasks();
+        const dead = Bun.spawnSync(["true"]).pid;
+        const id = "j-20260101-000000-dead";
+        const record = {
+            id,
+            harness: "omp",
+            task: "T1",
+            project: "alpha",
+            work: "scout",
+            model: null,
+            cwd: box.root,
+            runDir: join(box.root, "state", "jawans", id),
+            briefPath: join(box.root, "brief.md"),
+            logPath: join(box.root, "state", "jawans", id, "output.log"),
+            command: "omp <brief>",
+            maxMinutes: 120,
+            status: "running",
+            supervisorPid: dead,
+            pid: dead,
+            exitCode: null,
+            signal: null,
+            startedAt: "2026-01-01T00:00:00.000Z",
+            endedAt: null,
+            inbox: null,
+            error: null,
+        };
+        mkdirSync(join(box.root, "state", "jawans"), { recursive: true });
+        writeFileSync(join(box.root, "state", "jawans", `${id}.json`), JSON.stringify(record));
+        const started = spawnTask(box, "T1");
+        expect(started.replaces).toBeUndefined();
+        const stale = JSON.parse(box.ok(["run", "status", id, "--json"])) as Run;
+        expect(stale.status).toBe("failed");
+        stop(box, [started.id]);
+    });
+
+    test("a live run on one task leaves other tasks free to spawn", async () => {
+        const box = withTasks();
+        const first = spawnTask(box, "T1");
+        await waitFor(box, first.id, (run) => run.status === "running");
+        const other = spawnTask(box, "T2");
+        expect(other.task).toBe("T2");
+        expect(other.replaces).toBeUndefined();
+        const ids = runs(box).map((run) => run.id);
+        expect(ids.sort()).toEqual([first.id, other.id].sort());
+        stop(box, [first.id, other.id]);
     });
 });
 

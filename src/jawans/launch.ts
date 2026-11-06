@@ -35,6 +35,8 @@ export type NewRun = {
     extra: string;
     resumeOf?: string | undefined;
     resumeCount?: number | undefined;
+    /** The live runs of the same task this one supersedes (`spawn --replace`). */
+    replaces?: string[] | undefined;
 };
 
 function newRunId(at: Date): string {
@@ -117,6 +119,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         error: null,
         ...(input.resumeOf === undefined ? {} : { resumeOf: input.resumeOf }),
         ...(input.resumeCount === undefined ? {} : { resumeCount: input.resumeCount }),
+        ...(input.replaces === undefined ? {} : { replaces: input.replaces }),
     };
     mkdirSync(paths.jawansDir(), { recursive: true });
     writeJsonAtomic(paths.jawanRecord(id), run);

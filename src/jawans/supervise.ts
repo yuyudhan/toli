@@ -54,6 +54,8 @@ export function outcomeMessage(run: JawanRun, output: string): { title: string; 
         ...(run.resumedBy === undefined
             ? []
             : [`- continued by: ${run.resumedBy} (started automatically, or queued for a free slot)`]),
+        ...(run.replaces === undefined ? [] : [`- replaces: ${run.replaces.join(", ")} (spawn --replace)`]),
+        ...(run.replacedBy === undefined ? [] : [`- replaced by: ${run.replacedBy} (spawn --replace)`]),
         `- started: ${run.startedAt}, took ${durationText(run)}`,
         `- log: ${relative(paths.root(), run.logPath)}`,
         `- brief: ${relative(paths.root(), run.briefPath)}`,
