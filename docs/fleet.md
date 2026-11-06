@@ -86,6 +86,9 @@ toli from before this records nothing in `state/jawans/`. Commands a jawan on an
 plain ssh (builds, tests) are not runs there: that worker's `runs` never shows them, only its load and `ps` do.
 
 `exec` and headless job runs also leave a record in `state/runs/` while they run; that is what `activeRuns` counts.
+`exec` refuses to start (exit 1, the reasons on stderr) when the target's run slots are full (`activeRuns` at
+`maxRuns`) or its free memory is under `minMemAvailableMB`, even when the target was named rather than picked by
+`auto`; load alone does not refuse, since it swings with the builds already running.
 Remote runs can take a long time, so the lead always starts them in the background and their result arrives in the
 chat by itself.
 

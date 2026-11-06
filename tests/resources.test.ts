@@ -11,6 +11,7 @@ import {
     parseMeminfo,
     parseVmStat,
     type Resources,
+    startReasons,
 } from "../src/fleet/resources.ts";
 import { sandbox } from "./helpers.ts";
 
@@ -136,6 +137,16 @@ describe("availability thresholds", () => {
             "load 9/10 cpus over 0.8",
             "memory 100 MB available, under 2048 MB",
             "3 of 2 runs active",
+        ]);
+    });
+
+    test("a run started by name is refused on full slots or low memory, never on load alone", () => {
+        const busyCpu = { ...atLimits, load1: 50 };
+        expect(startReasons(busyCpu, capacity)).toEqual([]);
+        expect(startReasons({ ...atLimits, activeRuns: 2 }, capacity)).toEqual(["2 of 2 runs active"]);
+        expect(startReasons({ ...atLimits, memAvailableMB: 2047, activeRuns: 4 }, capacity)).toEqual([
+            "memory 2047 MB available, under 2048 MB",
+            "4 of 2 runs active",
         ]);
     });
 

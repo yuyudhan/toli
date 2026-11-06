@@ -182,6 +182,22 @@ describe("run records", () => {
         expect(readdirSync(runs)).toEqual([]);
     });
 
+    test("exec refuses to start when this machine's run slots are full, so a target picked by name is not overloaded", () => {
+        const box = fleet(remoteSnapshot("m2"), { ...ROOMY, maxRuns: 1 });
+        const runs = join(box.root, "state", "runs");
+        mkdirSync(runs, { recursive: true });
+        writeFileSync(
+            join(runs, "busy.json"),
+            JSON.stringify({ runId: "busy", pid: process.pid, from: "m1", task: null, startedAt: "", title: "busy" }),
+        );
+        box.stub("omp", "echo started");
+        const result = box.toli(["exec", "--from", "m1"], { env: ENV, stdin: "work\n" });
+        expect(result.code).not.toBe(0);
+        expect(result.stdout).not.toContain("started");
+        expect(result.stderr).toContain("is full (1 of 1 runs active); not starting this run here");
+        expect(box.ok(["runs", "--json"])).toBe("[]");
+    });
+
     test("exec is a jawan run here: listed as running while omp runs, then done or failed with its log", () => {
         const box = fleet(remoteSnapshot("m2"));
         const jawans = join(box.root, "state", "jawans");

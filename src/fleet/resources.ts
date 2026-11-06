@@ -172,12 +172,29 @@ export function availabilityReasons(measured: Measured, capacity: Capacity): str
     if (measured.load1 > measured.cpus * capacity.maxLoadPerCpu) {
         reasons.push(`load ${measured.load1}/${measured.cpus} cpus over ${capacity.maxLoadPerCpu}`);
     }
+    return [...reasons, ...startReasons(measured, capacity)];
+}
+
+/**
+ * The thresholds that stop a run from starting even on a machine picked by name: full run slots or free memory under
+ * the floor. Load alone does not, since it swings with the builds already running.
+ */
+export function startReasons(measured: Pick<Measured, "memAvailableMB" | "activeRuns">, capacity: Capacity): string[] {
+    const reasons: string[] = [];
     if (measured.memAvailableMB < capacity.minMemAvailableMB) {
         reasons.push(`memory ${measured.memAvailableMB} MB available, under ${capacity.minMemAvailableMB} MB`);
     }
     if (measured.activeRuns >= capacity.maxRuns)
         reasons.push(`${measured.activeRuns} of ${capacity.maxRuns} runs active`);
     return reasons;
+}
+
+/** Why this machine must not start another run now (see startReasons); empty when it may. */
+export function localStartRefusal(): string[] {
+    const capacity = capacityFor(loadMachine(), Math.max(1, cpus().length));
+    const memory = measureMemory();
+    if (typeof memory === "string") return [`memory unknown: ${memory}`];
+    return startReasons({ memAvailableMB: memory.availableMB, activeRuns: countActiveRuns() }, capacity);
 }
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
