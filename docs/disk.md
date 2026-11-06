@@ -46,10 +46,13 @@ It stops as soon as free space reaches the floor plus 20 GB.
    entry is only a cache miss.
 5. Every `target/` still left, busy checkouts included, between build steps. A busy target is never simply skipped.
    The keeper takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; every cargo
-   command holds them for its whole build and test run) and checks that no process holds a file under the target
-   open, such as a server or test binary running from it. It then renames the folder aside under the locks,
-   releases them, and deletes the renamed tree. A cargo that starts meanwhile waits on the lock, then builds into an
-   empty target. The inline keeper tries once; the background keeper retries for up to 30 minutes per target.
+   command holds them while it compiles) and checks that no cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`,
+   ...) runs in the folder holding the target, since `cargo test` drops its locks before it runs the test binaries
+   one after another, and that no process holds a file under the target open, such as a server or test binary
+   running from it. It then renames the folder aside under the locks, releases them, and deletes the renamed tree. A
+   cargo that starts meanwhile waits on the lock, then builds into an empty target. The inline keeper tries once; the
+   background keeper retries for up to 30 minutes per target and checks `state/disk-keep.pause` again before every
+   try, so a job that writes the pause while the keeper waits is not cut off.
 
 ## What it never deletes
 

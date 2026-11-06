@@ -1,6 +1,15 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+    closeSync,
+    copyFileSync,
+    existsSync,
+    mkdirSync,
+    openSync,
+    readFileSync,
+    realpathSync,
+    writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
@@ -160,6 +169,48 @@ describe("wiping a target between build steps", () => {
         expect(existsSync(target)).toBe(true);
         libc.symbols.flock(fd, 8);
         closeSync(fd);
+        expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
+        expect(existsSync(target)).toBe(false);
+    });
+
+    /** A copy of `sleep` named `name` in `dir`, running with working directory `cwd` (Bun.spawn returns after exec). */
+    function standIn(dir: string, name: string, cwd: string): Bun.Subprocess {
+        mkdirSync(dir, { recursive: true });
+        mkdirSync(cwd, { recursive: true });
+        const binary = join(dir, name);
+        copyFileSync("/bin/sleep", binary);
+        return Bun.spawn([binary, "60"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+    }
+
+    test("keeps the target while a test binary runs from it, wipes it once the binary exits", async () => {
+        const workspace = realpathSync(tempDir("disk"));
+        const target = join(workspace, "target");
+        mkdirSync(join(target, "debug"), { recursive: true });
+        writeFileSync(join(target, "debug", ".cargo-lock"), "");
+        const binary = standIn(join(target, "debug", "deps"), "robo_store-0123abcd", workspace);
+        const busy = wipeTargetBetweenBuilds(target, 0);
+        expect(busy.wiped).toBe(false);
+        expect(existsSync(target)).toBe(true);
+        binary.kill();
+        await binary.exited;
+        expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
+        expect(existsSync(target)).toBe(false);
+    });
+
+    test("keeps the target while cargo runs in its workspace between test binaries, wipes it once cargo exits", async () => {
+        const workspace = realpathSync(tempDir("disk"));
+        const target = join(workspace, "target");
+        mkdirSync(join(target, "debug", "deps"), { recursive: true });
+        writeFileSync(join(target, "debug", ".cargo-lock"), "");
+        // `cargo test` releases its build lock before it runs the test binaries one after another; between two of
+        // them nothing in the target is open, yet cargo is about to start the next one from it.
+        const crate = join(workspace, "crates", "store");
+        const cargo = standIn(tempDir("bin"), "cargo", crate);
+        const busy = wipeTargetBetweenBuilds(target, 0);
+        expect(busy).toEqual({ wiped: false, reason: `cargo (pid ${cargo.pid}) runs in ${crate}` });
+        expect(existsSync(target)).toBe(true);
+        cargo.kill();
+        await cargo.exited;
         expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
     });

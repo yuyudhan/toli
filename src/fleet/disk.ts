@@ -5,11 +5,13 @@
 //   2. `node_modules/` and `dist/` of those idle checkouts;
 //   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune -af`; never volumes);
 //   4. sccache's local cache entries past its own cap;
-//   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no file in it open.
+//   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
+//      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
-// state/disk-keep.pause; the keeper deletes nothing while that pid is alive, and ignores the file once it is dead.
+// state/disk-keep.pause; the keeper deletes nothing while that pid is alive, and ignores the file once it is dead. A
+// keeper already waiting for a busy target to pause checks the marker again before every try.
 import { spawn as spawnChild } from "node:child_process";
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
@@ -249,7 +251,10 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
 }
 
 function wipeOutcome(target: string, waitMs: number): string | null {
-    const outcome = wipeTargetBetweenBuilds(target, waitMs);
+    const outcome = wipeTargetBetweenBuilds(target, waitMs, () => {
+        const pause = diskPause();
+        return pause === null ? null : `paused by pid ${pause.pid} (state/disk-keep.pause)`;
+    });
     return outcome.wiped ? null : outcome.reason;
 }
 
