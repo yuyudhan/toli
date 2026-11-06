@@ -99,9 +99,18 @@ export function requireInstalled(harness: Harness): string {
     return found;
 }
 
+/**
+ * Flags every headless omp run gets. `--wait-async` keeps print mode alive while background work the run started (an
+ * async `task` subagent, a background `bash` build or poll) is still going and wakes the session with each result;
+ * without it omp ends at the first turn that yields and cancels that work. `--max-time` still bounds the run.
+ */
+function headlessOmpFlags(cwd: string, maxTime: string): string[] {
+    return ["omp", "-p", "--wait-async", "--cwd", cwd, "--no-title", "--approval-mode", "yolo", "--max-time", maxTime];
+}
+
 /** The argv for one headless omp run of `prompt` in toli's `root` (scheduled jobs, `bin/toli exec`). */
 export function headlessOmpArgs(prompt: string, root: string, maxTime: string): string[] {
-    return ["omp", "-p", "--cwd", root, "--no-title", "--approval-mode", "yolo", "--max-time", maxTime, prompt];
+    return [...headlessOmpFlags(root, maxTime), prompt];
 }
 
 export type HeadlessInput = {
@@ -130,15 +139,7 @@ export function headlessCommand(harness: Harness, input: HeadlessInput): Headles
         case "omp":
             return {
                 argv: [
-                    "omp",
-                    "-p",
-                    "--cwd",
-                    input.cwd,
-                    "--no-title",
-                    "--approval-mode",
-                    "yolo",
-                    "--max-time",
-                    `${input.maxMinutes}m`,
+                    ...headlessOmpFlags(input.cwd, `${input.maxMinutes}m`),
                     ...(model ? ["--model", model] : []),
                     input.brief,
                 ],

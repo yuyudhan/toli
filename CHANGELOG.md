@@ -30,6 +30,10 @@ one. See docs/releasing.md.
 - `bin/toli commit --merge <ref>` no longer refuses a clean merge because the ref itself undoes a recent branch
   commit (such as upstream deleting a file the branch added); only changes made on top of the merge result count as
   reverts, so `--allow-revert` is needed only for those.
+- Headless omp jawans (`bin/toli spawn`, `bin/toli exec`/`remote`, scheduled headless jobs) no longer exit while
+  background work they started is still running: omp gets `--wait-async`, so a turn that ends while a `task`
+  subagent, background build or poll is live waits for it and continues with its result, bounded by `--max-time`.
+  Before, print mode ended at the first yield, cancelled that work and left edits uncommitted.
 
 ## v0.2.4 - 2026-11-05
 
