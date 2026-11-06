@@ -39,6 +39,10 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- The disk keeper also never wipes a target while a cargo process runs in its workspace (`cargo test` between two
+  test binaries), and a keeper waiting on a busy target re-reads `state/disk-keep.pause` before every try (from
+  macminim4, merged with the process scan below).
+- The SessionStart hook test clears `TOLI_ROLE` and `NO_MISTAKES_GATE` itself, so it passes when run inside a jawan.
 - The disk keeper never wipes a build target a process uses (a test binary, a workspace's cwd, a build tool), beyond
   cargo's own lock.
 
