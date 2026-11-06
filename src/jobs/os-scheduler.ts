@@ -112,6 +112,8 @@ export type PlistSpec = {
     processType?: "Background";
     nice?: number;
     lowPriorityIO?: boolean;
+    /** Soft and hard NumberOfFiles resource limits. */
+    numberOfFiles?: number;
     stdoutPath: string;
     stderrPath: string;
 };
@@ -152,6 +154,15 @@ export function renderLaunchdPlist(spec: PlistSpec): string {
         lines.push("    <key>ProcessType</key>", `    <string>${spec.processType}</string>`);
     if (spec.nice !== undefined) lines.push("    <key>Nice</key>", `    <integer>${spec.nice}</integer>`);
     if (spec.lowPriorityIO) lines.push("    <key>LowPriorityIO</key>", "    <true/>");
+    if (spec.numberOfFiles !== undefined)
+        for (const key of ["SoftResourceLimits", "HardResourceLimits"])
+            lines.push(
+                `    <key>${key}</key>`,
+                "    <dict>",
+                "        <key>NumberOfFiles</key>",
+                `        <integer>${spec.numberOfFiles}</integer>`,
+                "    </dict>",
+            );
     lines.push(
         "    <key>StandardOutPath</key>",
         `    <string>${xml(spec.stdoutPath)}</string>`,

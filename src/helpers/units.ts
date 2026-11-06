@@ -108,6 +108,7 @@ export function renderHelperPlist(helper: Helper): string {
         ...(always ? { processType: "Background" as const } : {}),
         ...(helper.nice === undefined ? {} : { nice: helper.nice }),
         lowPriorityIO: helper.lowPriorityIO,
+        ...(helper.maxFiles === undefined ? {} : { numberOfFiles: helper.maxFiles }),
         stdoutPath: log,
         stderrPath: log,
     });
@@ -125,7 +126,9 @@ export function renderHelperCronLine(helper: Helper): string {
     const env = Object.entries(helperEnv(helper)).map(([key, value]) => `${key}=${shellQuote(value)}`);
     const nice = helper.nice === undefined ? [] : ["nice", "-n", String(helper.nice)];
     const program = [helper.exec, ...helper.args].map(shellQuote);
-    const command = [`cd ${shellQuote(paths.root())}`, ["env", ...env, ...nice, ...program].join(" ")].join(" && ");
+    const ulimit = helper.maxFiles === undefined ? [] : [`ulimit -n ${helper.maxFiles}`];
+    const run = ["env", ...env, ...nice, ...program].join(" ");
+    const command = [`cd ${shellQuote(paths.root())}`, ...ulimit, run].join(" && ");
     return `${when} ${command} >> ${shellQuote(paths.helperLog(helper.name))} 2>&1 ${helperCronTag(helper.name)}`;
 }
 
@@ -146,6 +149,7 @@ export function renderHelperSystemd(helper: Helper): SystemdUnits {
         `ExecStart=${[helper.exec, ...helper.args].map(systemdWord).join(" ")}`,
         ...(helper.nice === undefined ? [] : [`Nice=${helper.nice}`]),
         ...(helper.lowPriorityIO ? ["IOSchedulingClass=idle"] : []),
+        ...(helper.maxFiles === undefined ? [] : [`LimitNOFILE=${helper.maxFiles}`]),
         `StandardOutput=append:${log}`,
         `StandardError=append:${log}`,
         ...(always ? ["Restart=always", "RestartSec=10", "", "[Install]", "WantedBy=default.target"] : []),

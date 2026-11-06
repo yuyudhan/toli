@@ -30,6 +30,7 @@ it dispatches a worker that writes the script, registers it, runs it once, insta
             "runAtLoad": true,
             "nice": 10,
             "lowPriorityIO": true,
+            "maxFiles": 65536,
             "env": { "LOW_GB": "50" },
             "platforms": ["darwin", "linux"],
             "enabled": true
@@ -48,6 +49,7 @@ it dispatches a worker that writes the script, registers it, runs it once, insta
 | `runAtLoad`     | no       | also run once when installed and at login/boot (default false)                                          |
 | `nice`          | no       | CPU priority 0-19, higher is gentler                                                                    |
 | `lowPriorityIO` | no       | low-priority disk I/O (launchd `LowPriorityIO`, systemd `IOSchedulingClass=idle`)                       |
+| `maxFiles`      | no       | open-files limit, soft and hard (launchd `NumberOfFiles`, systemd `LimitNOFILE`, crontab `ulimit -n`)   |
 | `env`           | no       | extra environment; `PATH` here replaces the default scheduled PATH                                      |
 | `platforms`     | no       | install only on these (`darwin`, `linux`); default every platform                                       |
 | `enabled`       | no       | default true; `install` refuses and `install --all` skips a disabled helper                             |

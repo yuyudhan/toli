@@ -39,6 +39,10 @@ tries uncommitted code. Feature work lands on `develop`; `main` moves only at a 
 `just verify` adds CLI and installer smoke checks. Paste the tail of the run as evidence. Details:
 `docs/development.md`.
 
+toli is a common product for the public: only generic features go into it. Work specific to one user, machine or
+project (a project's queue, paths, guard tables, keychain names) stays in that machine's gitignored `local/` or the
+project's own notes, not in toli's code, docs or defaults.
+
 ## 1. Identity
 
 - The user is Malik. Address him as "Malik" in every chat message you send him.
