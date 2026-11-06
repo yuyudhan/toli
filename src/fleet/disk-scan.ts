@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { run } from "../core/util.ts";
+import { pidAlive, run } from "../core/util.ts";
 import { listRuns, RUNNING } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { gitWorktrees } from "../projects/workspace.ts";
@@ -164,20 +164,58 @@ const BUILD_TOOLS: Record<string, true> = {
     just: true,
 };
 
-/** One other process: its command line, the executable and mapped files it runs, and its working directory. */
-type ProcessUse = { pid: string; args: string; files: string[]; cwd: string | null };
+/**
+ * One other process: its command line, the executable and mapped files it runs, and its working directory.
+ * `uninspected`: one of this user's processes whose files could not be read (lsof left it out, typically while it was
+ * exec'ing); the keeper counts it as using every target rather than guess.
+ */
+type ProcessUse = { pid: string; args: string; files: string[]; cwd: string | null; uninspected?: true };
 
-/** Every process but this one (`ps`), with what it runs and where; null when the table cannot be read. */
+/**
+ * Rechecks of one of this user's processes lsof left out, `RECHECK_MS` apart (about 2 s in all), before it counts as
+ * uninspected: a process caught mid-exec on a loaded machine becomes readable once its exec completes.
+ */
+const RECHECKS = 40;
+const RECHECK_MS = 50;
+
+/** Parse lsof `-Fpfn` output into the table's entries; returns the pids it reported. */
+function readLsof(stdout: string, table: Map<string, ProcessUse>): Set<string> {
+    const seen = new Set<string>();
+    let current: ProcessUse | undefined;
+    let fd = "";
+    for (const line of stdout.split("\n")) {
+        const value = line.slice(1);
+        if (line.startsWith("p")) {
+            current = table.get(value);
+            seen.add(value);
+        } else if (line.startsWith("f")) fd = value;
+        else if (line.startsWith("n") && current !== undefined) {
+            if (fd === "cwd") current.cwd = value;
+            else current.files.push(value);
+        }
+    }
+    return seen;
+}
+
+/**
+ * Every process but this one (`ps`), with what it runs and where; null when the table cannot be read. A process of
+ * this user that cannot be inspected is kept as `uninspected`, never as one that uses nothing: lsof silently leaves out
+ * a process caught mid-exec (a test binary cargo just started), and under load that is common.
+ */
 function processTable(): ProcessUse[] | null {
-    const listed = run(["ps", "-axww", "-o", "pid=,args="], { timeoutMs: 30_000 });
+    const listed = run(["ps", "-axww", "-o", "pid=,uid=,stat=,args="], { timeoutMs: 30_000 });
     if (listed.code !== 0) return null;
     const me = String(process.pid);
+    const uid = String(process.getuid?.() ?? -1);
     const table = new Map<string, ProcessUse>();
+    const mine: string[] = [];
     for (const line of listed.stdout.split("\n")) {
-        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+        const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
         const pid = match?.[1];
         if (pid === undefined || pid === me) continue;
-        table.set(pid, { pid, args: match?.[2] ?? "", files: [], cwd: null });
+        table.set(pid, { pid, args: match?.[4] ?? "", files: [], cwd: null });
+        // Zombies hold no files; other users' processes are not ours to read.
+        if (match?.[2] === uid && !(match?.[3] ?? "").startsWith("Z")) mine.push(pid);
     }
     if (process.platform === "linux") {
         for (const entry of table.values()) {
@@ -185,21 +223,32 @@ function processTable(): ProcessUse[] | null {
             if (exe !== null) entry.files.push(exe.replace(/ \(deleted\)$/, ""));
             entry.cwd = linkOf(`/proc/${entry.pid}/cwd`);
         }
+        for (const pid of mine) {
+            const entry = table.get(pid);
+            if (entry !== undefined && entry.files.length === 0 && existsSync(`/proc/${pid}`)) entry.uninspected = true;
+        }
         return [...table.values()];
     }
     // macOS: the executable and every mapped file (`txt`) plus the working directory of each process, in one pass.
     const files = run(["lsof", "-a", "-d", "cwd,txt", "-w", "-Fpfn"], { timeoutMs: 60_000 });
-    if (files.stdout === "") return files.code === 0 ? [...table.values()] : null;
-    let current: ProcessUse | undefined;
-    let fd = "";
-    for (const line of files.stdout.split("\n")) {
-        const value = line.slice(1);
-        if (line.startsWith("p")) current = table.get(value);
-        else if (line.startsWith("f")) fd = value;
-        else if (line.startsWith("n") && current !== undefined) {
-            if (fd === "cwd") current.cwd = value;
-            else current.files.push(value);
+    if (files.stdout === "" && files.code !== 0) return null;
+    const seen = readLsof(files.stdout, table);
+    for (const pid of mine) {
+        if (seen.has(pid)) continue;
+        const entry = table.get(pid);
+        if (entry === undefined) continue;
+        let inspected = false;
+        for (let attempt = 0; attempt < RECHECKS && !inspected; attempt++) {
+            if (attempt > 0) Bun.sleepSync(RECHECK_MS);
+            const one = run(["lsof", "-a", "-p", pid, "-d", "cwd,txt", "-w", "-Fpfn"], { timeoutMs: 10_000 });
+            inspected = readLsof(one.stdout, table).has(pid) || !pidAlive(Number(pid));
         }
+        if (inspected) continue;
+        entry.uninspected = true;
+        // lsof still cannot read it, but ps shows what it exec'd: its program path tells which target it runs from.
+        const args = run(["ps", "-o", "args=", "-p", pid], { timeoutMs: 10_000 }).stdout.trim();
+        const program = args.split(/\s+/)[0] ?? "";
+        if (program.startsWith("/")) entry.files.push(real(program));
     }
     return [...table.values()];
 }
@@ -249,7 +298,9 @@ export function targetUse(target: string): string | null {
         if (above || workspaces.some((workspace) => entry.args.includes(workspace)))
             return `${tool} (pid ${entry.pid}) builds in ${workspaces[0]}`;
     }
-    return null;
+    // Only when nothing seen uses it: a process that could not be inspected might be running from it.
+    const unseen = table.find((entry) => entry.uninspected === true);
+    return unseen === undefined ? null : `process ${unseen.pid} could not be inspected (lsof did not list it)`;
 }
 
 /**

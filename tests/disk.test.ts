@@ -183,10 +183,24 @@ describe("wiping a target between build steps", () => {
         return { workspace, target };
     }
 
-    /** Run `sleep` (optionally a copy of it at `exe`) in `cwd` until the test ends. */
+    /**
+     * Run a process that idles for `seconds` in `cwd`: `/bin/sleep` itself, or a copy of bun at `exe`. Not a copy of
+     * `/bin/sleep`: macOS launch constraints kill a platform binary started from another path, so that stand-in often
+     * died before the keeper looked, and the keeper rightly wiped a target nothing used any more.
+     */
+    function idler(cwd: string, exe: string, seconds: number): Subprocess {
+        if (exe === "/bin/sleep")
+            return Bun.spawn([exe, String(seconds)], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+        copyFileSync(process.execPath, exe);
+        return Bun.spawn([exe, "-e", `setTimeout(() => {}, ${seconds * 1000})`], {
+            cwd,
+            stdio: ["ignore", "ignore", "ignore"],
+        });
+    }
+
+    /** Run `sleep` (or an idling copy of bun at `exe`) in `cwd` until the test ends. */
     function sleeper(cwd: string, exe = "/bin/sleep"): Subprocess {
-        if (exe !== "/bin/sleep") copyFileSync("/bin/sleep", exe);
-        return Bun.spawn([exe, "30"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+        return idler(cwd, exe, 30);
     }
 
     test("keeps the target while a test binary built into it runs, though no build holds the lock", () => {
@@ -233,8 +247,7 @@ describe("wiping a target between build steps", () => {
         mkdirSync(dir, { recursive: true });
         mkdirSync(cwd, { recursive: true });
         const binary = join(dir, name);
-        copyFileSync("/bin/sleep", binary);
-        return Bun.spawn([binary, "60"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+        return idler(cwd, binary, 60);
     }
 
     test("keeps the target while a test binary runs from it, wipes it once the binary exits", async () => {
