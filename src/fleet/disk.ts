@@ -2,7 +2,10 @@
 // capacity.diskKeepGB (config/machine.json, default 60), it deletes rebuildable output only, cheapest to rebuild
 // first, until free space is the floor plus 20 GB:
 //   1. whole `target/` folders of project checkouts nothing uses (no running jawan, no process working there);
-//   2. `node_modules/` and `dist/` of those idle checkouts;
+//   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/`: builds run
+//      there between jobs (the kalki queue's builder) and cannot reinstall dependencies themselves, while cargo
+//      rebuilds a wiped `target/` on its own (that wipe matches the cargo-sweep helper's: under cargo's locks, only
+//      while no jawan of the project runs);
 //   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune -af`; never volumes);
 //   4. sccache's local cache entries past its own cap;
 //   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
@@ -205,7 +208,12 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             for (const dir of dirs) {
                 if (enough()) return;
                 if (!kinds.includes(dir.kind)) continue;
-                // Checked again just before a real deletion: a run may have started in that checkout meanwhile.
+                // A main clone's dependencies are never idle output. Use is checked again just before a real
+                // deletion: a run may have started in that checkout meanwhile.
+                if (dir.kind === "node_modules" && dir.checkout.main) {
+                    say(`kept ${dir.path}: a main clone's dependencies (its builds cannot reinstall them)`);
+                    continue;
+                }
                 let reason = checkoutUse(dir.checkout, holders, checkouts);
                 if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
                 if (reason === null) remove(dir, () => deleteIt(dir));

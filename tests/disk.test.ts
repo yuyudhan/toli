@@ -73,13 +73,19 @@ describe("disk keeper", () => {
         expect(box.ok(["disk", "keep", "--floor", "0"])).toContain("nothing to do");
     });
 
-    test("under the floor it plans idle build output first, skips a running jawan's clone, never tracked files", () => {
+    test("under the floor it plans idle build output first, skips a running jawan's clone, never tracked files or a main clone's node_modules", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const idle = realpathSync(withProject(box, "alpha"));
         const busy = realpathSync(withProject(box, "beta"));
         buildOutput(box, idle);
         buildOutput(box, busy);
+        // An idle worktree of alpha (a queue copy): its node_modules is rebuildable output, unlike the main clone's.
+        const copy = join(box.root, "projects", ".worktrees", "alpha", "T1");
+        box.git(idle, ["worktree", "add", "--detach", copy]);
+        const tree = realpathSync(copy);
+        mkdirSync(join(tree, "web", "node_modules", "pkg"), { recursive: true });
+        writeFileSync(join(tree, "web", "node_modules", "pkg", "index.js"), "1\n");
         runningJawan(box, "beta", busy);
         box.stub("docker", "exit 1");
         box.stub("sccache", "exit 2");
@@ -90,20 +96,25 @@ describe("disk keeper", () => {
         expect(report.dryRun).toBe(true);
         const lines = report.lines.join("\n");
         expect(lines).toContain(`would delete ${join(idle, "target")} (`);
-        expect(lines).toContain(`would delete ${join(idle, "web", "node_modules")} (`);
+        expect(lines).toContain(
+            `kept ${join(idle, "web", "node_modules")}: a main clone's dependencies (its builds cannot reinstall them)`,
+        );
+        expect(lines).not.toContain(`would delete ${join(idle, "web", "node_modules")}`);
+        expect(lines).toContain(`would delete ${join(tree, "web", "node_modules")} (`);
         expect(lines).toContain(`would delete ${join(idle, "web", "dist")} (`);
         expect(lines).toContain(`skipped ${join(busy, "target")}: jawan j-20261105-000000-test works in it`);
-        expect(lines).toContain(`skipped ${join(busy, "web", "node_modules")}: jawan`);
+        expect(lines).toContain(`kept ${join(busy, "web", "node_modules")}: a main clone's dependencies`);
         expect(lines).not.toContain(`would delete ${join(busy, "web", "node_modules")}`);
         expect(lines).not.toContain("docs/dist");
         expect(lines).toContain("docker: skipped (daemon not reachable)");
         // The busy clone's target is still freed, but only between build steps, under cargo's locks.
         expect(lines).toContain(`${join(busy, "target")} is in use (jawan j-20261105-000000-test works in it)`);
-        const order = ["alpha/target", "alpha/web/node_modules", "docker:", "beta/target is in use"].map((text) =>
+        const order = ["alpha/target", "T1/web/node_modules", "docker:", "beta/target is in use"].map((text) =>
             lines.indexOf(text),
         );
         expect(order).toEqual([...order].sort((a, b) => a - b));
         expect(existsSync(join(idle, "target"))).toBe(true);
+        expect(existsSync(join(idle, "web", "node_modules"))).toBe(true);
     });
 
     test("a live pid in state/disk-keep.pause holds it off, logged once; a dead pid's pause is stale", () => {
