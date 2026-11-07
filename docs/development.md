@@ -30,11 +30,11 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    shared index cannot reach the commit.
 2. It refuses, committing nothing, when the staged set: changes a path that was not named; holds a secret (gitleaks
    over the private index); stages a `Cargo.lock` or `bun.lock` that does not parse (merge markers, a TOML or JSONC
-   error, a `[[package]]` the parser dropped; for a whole-file `Cargo.lock` also `cargo metadata --locked`); or
-   exactly undoes a hunk of one of the last 20 commits that touched those files, which is what a stale copy of a file
-   looks like (`--allow-revert <sha>` when undoing that commit is the point). With `--merge` only the changes made on
-   top of the merge result are checked: what the merged ref itself brings is never a revert, including the ref's own
-   hunks a `--resolved` conflict keeps as they are.
+   error, a `[[package]]` the parser dropped; for a `Cargo.lock` also `cargo metadata --locked`, run in a copy of the
+   staged tree, so the crates a merge adds count); or exactly undoes a hunk of one of the last 20 commits that touched
+   those files, which is what a stale copy of a file looks like (`--allow-revert <sha>` when undoing that commit is
+   the point). With `--merge` only the changes made on top of the merge result are checked: what the merged ref itself
+   brings is never a revert, including the ref's own hunks a `--resolved` conflict keeps as they are.
 3. It writes the commit with `git commit-tree` on the tip it read and moves the branch with
    `git update-ref <branch> <new> <old>`, which fails if another commit landed meanwhile. It then rebuilds everything
    once from the new tip; a second move is a refusal ("run the same commit again").

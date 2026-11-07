@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
@@ -231,6 +231,59 @@ describe("bin/toli commit (R23 safe commits)", () => {
         );
         writeFileSync(join(dir, "bun.lock"), '{\n  "lockfileVersion": 1,\n  "workspaces": {},\n}\n');
         expect(safeCommit({ dir, paths: ["bun.lock"], message: "Lock" }).files).toEqual(["bun.lock"]);
+    });
+
+    test("--merge --resolved checks Cargo.lock against the merged tree, including the crates the merge adds", () => {
+        const manifest = (members: string[]) =>
+            `[workspace]\nmembers = [${members.map((name) => `"${name}"`).join(", ")}]\nresolver = "2"\n`;
+        const lock = (members: string[]) =>
+            `version = 4\n${members.map((name) => `\n[[package]]\nname = "${name}"\nversion = "0.1.0"\n`).join("")}`;
+        const crate = (dir: string, name: string) => {
+            mkdirSync(join(dir, name, "src"), { recursive: true });
+            writeFileSync(
+                join(dir, name, "Cargo.toml"),
+                `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2021"\n`,
+            );
+            writeFileSync(join(dir, name, "src", "lib.rs"), "");
+        };
+        const dir = repo({ "Cargo.toml": manifest(["a"]), "Cargo.lock": lock(["a"]), ".gitignore": "target/\n" });
+        crate(dir, "a");
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "crate a"]);
+        // Upstream adds crate b, the branch adds crate c: both change the members and the lock file.
+        git(dir, ["switch", "--quiet", "-c", "upstream"]);
+        crate(dir, "b");
+        writeFileSync(join(dir, "Cargo.toml"), manifest(["a", "b"]));
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b"]));
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "upstream: crate b"]);
+        git(dir, ["switch", "--quiet", "main"]);
+        crate(dir, "c");
+        writeFileSync(join(dir, "Cargo.toml"), manifest(["a", "c"]));
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "c"]));
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "main: crate c"]);
+        const before = head(dir);
+
+        // Crate b's files reach the working tree only once the merge is committed.
+        writeFileSync(join(dir, "Cargo.toml"), manifest(["a", "b", "c"]));
+        const resolve = () =>
+            safeCommit({
+                dir,
+                paths: ["Cargo.toml", "Cargo.lock"],
+                merge: "upstream",
+                resolved: true,
+                message: "Merge upstream",
+            });
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b"]));
+        expect(resolve).toThrow("cargo metadata --locked rejects the staged Cargo.lock");
+        expect(head(dir)).toBe(before);
+
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b", "c"]));
+        const merged = resolve();
+        expect(git(dir, ["show", `${merged.sha}:Cargo.lock`])).toBe(lock(["a", "b", "c"]).trimEnd());
+        expect(git(dir, ["show", `${merged.sha}:b/Cargo.toml`])).toContain('name = "b"');
+        expect(git(dir, ["status", "--porcelain"])).toBe("");
     });
 
     test("refuses a staged secret (gitleaks) and commits nothing", () => {

@@ -1,5 +1,5 @@
 // The private index and the refusals of `bin/toli commit` (src/projects/commit.ts): leaks, lock files, reverts.
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { git, gitOk } from "../core/git.ts";
@@ -78,6 +78,16 @@ export class Attempt {
         return result.stdout.trim();
     }
 
+    /**
+     * The private index's files written out under the scratch folder once (git checkout-index), so tools that read
+     * files see exactly the tree being committed, including what a merge brings before it reaches the working tree.
+     */
+    staged(): string {
+        const tree = join(this.scratch, "tree");
+        if (!existsSync(tree)) this.gitOk(["checkout-index", "--all", `--prefix=${tree}/`]);
+        return tree;
+    }
+
     dispose(): void {
         rmSync(this.scratch, { recursive: true, force: true });
     }
@@ -133,7 +143,7 @@ export function checkResolved(attempt: Attempt, conflicts: string[], named: (fil
     }
 }
 
-/** Refuse a staged Cargo.lock or bun.lock that does not parse (and a Cargo.lock that cargo rejects). */
+/** Refuse a staged Cargo.lock or bun.lock that does not parse (and a Cargo.lock that cargo rejects in the staged tree). */
 export function checkLockFiles(attempt: Attempt, files: string[]): void {
     for (const file of files) {
         const name = basename(file);
@@ -166,11 +176,9 @@ export function checkLockFiles(attempt: Attempt, files: string[]): void {
             );
         }
         if (name !== "Cargo.lock") continue;
-        const onDisk = join(attempt.dir, file);
-        // cargo reads the working tree: check it when that is what is staged (a whole-file commit).
-        if (!existsSync(onDisk) || readFileSync(onDisk, "utf8") !== blob) continue;
+        // cargo reads files: check the staged tree, which holds the crates a merge adds before the working tree does.
         const cargo = run(["cargo", "metadata", "--locked", "--format-version", "1"], {
-            cwd: dirname(onDisk),
+            cwd: dirname(join(attempt.staged(), file)),
             timeoutMs: LOCK_CHECK_TIMEOUT_MS,
         });
         if (cargo.code === 127)
