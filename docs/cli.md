@@ -97,8 +97,9 @@ default 7) once.
 
 - `commit` builds a private index from the branch tip and commits only the named paths and `--patch` hunks; it
   refuses secrets (gitleaks), lock files that do not parse, a revert of one of the last 20 commits, the wrong branch,
-  and a branch that moved twice meanwhile, and strips AI trailers. `toli` as the project commits toli itself on
-  `develop` ([development.md](development.md#working-on-toli-itself-in-place-landed-with-bintoli-commit)).
+  a branch that moved twice meanwhile, and a message the project's `commit-msg` hook rejects, and strips AI trailers.
+  `toli` as the project commits toli itself on `develop`
+  ([development.md](development.md#working-on-toli-itself-in-place-landed-with-bintoli-commit)).
 - `branch` creates a new branch in the clone and switches to it.
 - `workspace` prepares, lists, and prunes per-task branches and worktrees
   ([projects.md](projects.md#workspace-strategy)).

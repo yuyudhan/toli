@@ -19,6 +19,9 @@ one. See docs/releasing.md.
   reason instead of crashing. See docs/disk.md "On a full disk".
 - `bin/toli commit --merge --resolved` checks a staged Cargo.lock with cargo in the staged tree (the private index's
   files), not the working tree, which lacks the crates a merge adds until it is committed (T617).
+- `bin/toli commit` runs the project's `commit-msg` hook (`core.hooksPath` honoured) on toli's private index and
+  refuses the commit when it rejects the message; a message the hook edits is committed as edited. Commits no longer
+  skip message rules such as VelocityFSS's `Quality-change:` line. Pre-commit hooks stay skipped.
 
 ## v0.3.0 - 2026-11-06
 

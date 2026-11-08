@@ -150,8 +150,9 @@ jawans stop on any OTP or captcha.
    `toli/<T-id>-<slug>` branch (in the clone, or in its worktree) before the jawan starts, and commits go there
    with `bin/toli commit <project> --task <T-id>`. Every commit goes through `bin/toli commit`, never plain `git
 commit`: it builds a private index from the branch tip, commits only the named paths (`--patch <file>` for
-   hunks), refuses a secret (gitleaks), a lock file that does not parse, a revert of one of the last 20 commits, or
-   a branch that moved twice meanwhile, and strips AI co-author trailers. Pushing a task branch and opening its
+   hunks), refuses a secret (gitleaks), a lock file that does not parse, a revert of one of the last 20 commits, a
+   branch that moved twice meanwhile, or a message the project's commit-msg hook rejects, and strips AI co-author
+   trailers. Pushing a task branch and opening its
    PR/MR still need Malik's word for that change unless the project has an explicit standing grant (`standing`
    push/pr, set only on his word with `bin/toli project set <p> --standing-push yes --standing-pr yes`).
 7. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes

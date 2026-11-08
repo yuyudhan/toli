@@ -2,8 +2,9 @@
 //
 // Each attempt reads the branch tip once (`old`), builds a private temporary index from it (GIT_INDEX_FILE), stages
 // only the named paths and/or applies a patch of hunks, checks the staged set (it changes only the named paths, has
-// no leaks, every staged lock file parses, it does not revert a recent commit), writes the commit with `commit-tree`
-// on `old`, and moves the branch with `update-ref <branch> <new> <old>`, which fails if the branch moved meanwhile.
+// no leaks, every staged lock file parses, it does not revert a recent commit), runs the project's commit-msg hook on
+// that private index (pre-commit hooks are skipped, see `commitMsgHook`), writes the commit with `commit-tree` on
+// `old`, and moves the branch with `update-ref <branch> <new> <old>`, which fails if the branch moved meanwhile.
 // One retry rebuilds everything from the fresh tip; a second move is a refusal. The shared index and other jawans'
 // staged or unstaged changes are never read, so a stale shared index can no longer revert anyone's commits.
 // `--merge <ref>` starts the private index from the clean `git merge-tree` result instead and adds `<ref>` as second
@@ -24,6 +25,7 @@ import {
     checkLockFiles,
     checkResolved,
     checkReverts,
+    commitMsgHook,
     isLockFile,
     parseHunks,
     patchFiles,
@@ -210,20 +212,14 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
                       ]),
                   );
         checkReverts(dir, parent, tree, own, request.allowRevert ?? [], brought);
+        const message = commitMsgHook(attempt, request.message);
         const parents = ["-p", parent, ...(merge === null ? [] : ["-p", merge.commit])];
-        const created = git(dir, ["commit-tree", tree, ...parents, "-F", "-"], `${request.message}\n`);
+        const created = git(dir, ["commit-tree", tree, ...parents, "-F", "-"], `${message}\n`);
         if (created.code !== 0)
             throw new ToliError(`git commit-tree failed: ${(created.stderr || created.stdout).trim()}`);
         const sha = created.stdout.trim();
         hooks.beforeUpdateRef?.(attemptNo);
-        const moved = git(dir, [
-            "update-ref",
-            "-m",
-            `toli commit: ${request.message.split("\n")[0]}`,
-            ref,
-            sha,
-            parent,
-        ]);
+        const moved = git(dir, ["update-ref", "-m", `toli commit: ${message.split("\n")[0]}`, ref, sha, parent]);
         if (moved.code !== 0) return null;
         return { sha, branch, parent, files, merged: merge?.files ?? [], attempts: attemptNo };
     } finally {

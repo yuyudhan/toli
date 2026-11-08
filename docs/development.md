@@ -39,8 +39,13 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    `git update-ref <branch> <new> <old>`, which fails if another commit landed meanwhile. It then rebuilds everything
    once from the new tip; a second move is a refusal ("run the same commit again").
 4. It points the shared index's entries for the committed files at the commit (so `git status` shows no phantom
-   staged changes) and strips AI co-author trailers from the message. Git hooks do not run (`commit-tree`), which is
-   why `just check` comes first. Repeated `-m` values become separate paragraphs, as with `git commit`.
+   staged changes) and strips AI co-author trailers from the message. Before writing the commit it runs the
+   project's `commit-msg` hook (`core.hooksPath` honoured, else `.git/hooks/commit-msg`) on a temporary message file,
+   from the checkout root with `GIT_INDEX_FILE` at the private index, so a hook that reads the staged set sees
+   exactly the named paths; a non-zero exit refuses the commit with the hook's output, and a message the hook edits
+   is committed as edited. There is no bypass flag. Pre-commit hooks do not run: the checks above cover the staged
+   set, and pre-commit hooks often assume the shared index (re-staging formatters, `git stash`), which is why
+   `just check` comes first. Repeated `-m` values become separate paragraphs, as with `git commit`.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes, and named
