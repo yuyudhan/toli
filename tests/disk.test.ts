@@ -1,4 +1,3 @@
-import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import {
     closeSync,
@@ -15,23 +14,8 @@ import type { Subprocess } from "bun";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
 import { parseSccacheStats } from "../src/fleet/disk-caches.ts";
+import { buildOutput, libc } from "./disk-fixture.ts";
 import { type Sandbox, sandbox, tempDir, withProject } from "./helpers.ts";
-
-/** A clone with a cargo-style target, node_modules and dist, all git-ignored, plus a tracked dist in `docs/`. */
-function buildOutput(box: Sandbox, clone: string): void {
-    writeFileSync(join(clone, ".gitignore"), "target/\nnode_modules/\ndist/\n");
-    mkdirSync(join(clone, "docs", "dist"), { recursive: true });
-    writeFileSync(join(clone, "docs", "dist", "page.html"), "tracked\n");
-    box.git(clone, ["add", "-f", ".gitignore", "docs/dist/page.html"]);
-    box.git(clone, ["commit", "-m", "tracked dist"]);
-    mkdirSync(join(clone, "target", "debug", "deps"), { recursive: true });
-    writeFileSync(join(clone, "target", "debug", ".cargo-lock"), "");
-    writeFileSync(join(clone, "target", "debug", "deps", "libx.rlib"), "x".repeat(4096));
-    mkdirSync(join(clone, "web", "node_modules", "pkg"), { recursive: true });
-    writeFileSync(join(clone, "web", "node_modules", "pkg", "index.js"), "1\n");
-    mkdirSync(join(clone, "web", "dist"), { recursive: true });
-    writeFileSync(join(clone, "web", "dist", "app.js"), "1\n");
-}
 
 /** A running jawan run of `project` working in `cwd`, its supervisor this (live) test process. */
 function runningJawan(box: Sandbox, project: string, cwd: string): void {
@@ -154,10 +138,6 @@ describe("disk keeper", () => {
 });
 
 describe("wiping a target between build steps", () => {
-    const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
-        flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-    });
-
     test("keeps the target while a build holds cargo's lock, wipes it once the lock is free", () => {
         const target = join(tempDir("disk"), "target");
         mkdirSync(join(target, "debug", "deps"), { recursive: true });

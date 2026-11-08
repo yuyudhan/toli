@@ -9,10 +9,12 @@ import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writ
 import { type ModelTotal, modelTotalsToday } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 
-/** The machine's load thresholds; `autoResume` is not one (see autoResumeLimit). */
-export type Capacity = Required<Omit<CapacityConfig, "autoResume">>;
+/** The machine's load thresholds; `autoResume` and `diskSweepStaleMinutes` are not ones (see their readers below). */
+export type Capacity = Required<Omit<CapacityConfig, "autoResume" | "diskSweepStaleMinutes">>;
 
 const DEFAULT_AUTO_RESUME = 3;
+/** Default age (minutes without use) past which the disk keeper sweeps an artifact out of a busy cargo target. */
+export const DEFAULT_DISK_SWEEP_STALE_MINUTES = 180;
 
 /** `capacity.autoResume`: continuations per chain of time-limited runs (0 turns auto-resume off). */
 export function autoResumeLimit(machine: Machine): number {
@@ -20,6 +22,15 @@ export function autoResumeLimit(machine: Machine): number {
     if (raw === undefined) return DEFAULT_AUTO_RESUME;
     if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0)
         throw new ToliError("config/machine.json capacity.autoResume must be a non-negative whole number");
+    return raw;
+}
+
+/** `capacity.diskSweepStaleMinutes`: how long an artifact in a busy cargo target must go unused before it is swept. */
+export function diskSweepStaleMinutes(machine: Machine): number {
+    const raw = machine.capacity?.diskSweepStaleMinutes;
+    if (raw === undefined) return DEFAULT_DISK_SWEEP_STALE_MINUTES;
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0)
+        throw new ToliError("config/machine.json capacity.diskSweepStaleMinutes must be a positive number");
     return raw;
 }
 
@@ -106,7 +117,7 @@ export function parseDf(text: string): number | null {
 }
 
 /** Linux's /proc; `TOLI_PROC_DIR` overrides it for tests. */
-function procFile(name: string): string {
+export function procFile(name: string): string {
     return join(process.env.TOLI_PROC_DIR ?? "/proc", name);
 }
 

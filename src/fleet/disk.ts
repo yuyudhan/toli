@@ -6,20 +6,25 @@
 //   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune -af`; never volumes);
 //   4. sccache's local cache entries past its own cap;
 //   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
-//      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open.
+//      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open. A target
+//      that stays in use (builds back to back) is swept instead: every artifact in it unused for
+//      capacity.diskSweepStaleMinutes (default 180) goes, lock or no lock (src/fleet/stale-sweep.ts).
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
 // state/disk-keep.pause; the keeper deletes nothing while that pid is alive, and ignores the file once it is dead. A
 // keeper already waiting for a busy target to pause checks the marker again before every try.
+// On a full disk it still works: it writes nothing before it has freed something (log lines wait in memory; a keeper
+// lock it cannot write is done without), no failed write stops it, and when the keeper fails anyway the fallback
+// sweeps stale artifacts out of every target, writing nothing first.
 import { spawn as spawnChild } from "node:child_process";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, pidAlive, printJson, ToliError } from "../core/util.ts";
+import { out, printJson, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
 import { wipeTargetBetweenBuilds } from "./cargo-lock.ts";
 import { pruneDocker, trimSccache } from "./disk-caches.ts";
@@ -32,13 +37,14 @@ import {
     projectCheckouts,
     sizeGB,
 } from "./disk-scan.ts";
-import { capacityFor, measureDisk } from "./resources.ts";
+import { claimKeeper, DiskLog, describe, diskPause, GIB, gb, KEEPER_LOCK, releaseKeeper } from "./disk-state.ts";
+import { capacityFor, diskSweepStaleMinutes, measureDisk } from "./resources.ts";
+import { fallbackSweep, sweepLine, sweepStaleArtifacts } from "./stale-sweep.ts";
 
 /** Free GB above the floor the keeper stops at, so it does not run again at once. */
 export const DISK_HEADROOM_GB = 20;
 /** How long the background keeper waits for busy builds to pause before it gives up on a target (tier 5). */
 const BACKGROUND_LOCK_WAIT_MS = 30 * 60_000;
-const KEEPER_LOCK = "disk-keep";
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 
@@ -63,6 +69,8 @@ export type KeepReport = {
     ran: boolean;
     /** The live pid in state/disk-keep.pause that held the keeper off, if one did. */
     pausedBy?: number;
+    /** Busy targets swept of stale artifacts (tier 5), with what each freed (or, in a dry run, would free). */
+    swept: { target: string; artifacts: number; bytes: number }[];
     lines: string[];
 };
 
@@ -76,52 +84,14 @@ function freeGB(): number {
     return free;
 }
 
-const gb = (value: number): string => `${value.toFixed(1)} GB`;
-
-/** Claim the keeper lock for this pid: null once claimed, else the live keeper's pid that holds it. */
-function claimKeeper(): number | null {
-    const file = paths.lock(KEEPER_LOCK);
-    mkdirSync(dirname(file), { recursive: true });
-    try {
-        writeFileSync(file, String(process.pid), { flag: "wx" });
-        return null;
-    } catch {
-        const holder = Number(readFileSync(file, "utf8").trim());
-        if (pidAlive(holder)) return holder;
-        writeFileSync(file, String(process.pid));
-        return null;
-    }
-}
-
 /**
- * The pause marker state/disk-keep.pause: its first word is a pid, the rest of the file a free-text reason. Live pid:
- * the keeper must not delete now. Missing, unreadable, or naming a dead pid (stale): no pause.
+ * Free disk down to the floor's goal, in the order above. Never throws for a failed deletion or a failed write; it
+ * logs and moves on. It throws only when it cannot start (free disk or config unreadable): see fallbackSweep.
  */
-export function diskPause(): { pid: number; reason: string } | null {
-    let text: string;
-    try {
-        text = readFileSync(paths.diskKeepPause(), "utf8").trim();
-    } catch {
-        return null;
-    }
-    const [first = "", ...rest] = text.split(/\s+/);
-    const pid = Number(first);
-    return pidAlive(pid) ? { pid, reason: rest.join(" ") } : null;
-}
-
-function releaseKeeper(): void {
-    const file = paths.lock(KEEPER_LOCK);
-    try {
-        if (readFileSync(file, "utf8").trim() === String(process.pid)) rmSync(file, { force: true });
-    } catch {
-        // Already gone.
-    }
-}
-
-/** Free disk down to the floor's goal, in the order above. Never throws for a failed deletion; it logs and moves on. */
 export function keepDisk(options: KeepOptions = {}): KeepReport {
     const dryRun = options.dryRun === true || envDryRun();
     const floorGB = options.floorGB ?? diskFloorGB();
+    const staleMinutes = diskSweepStaleMinutes(loadMachine());
     const goalGB = floorGB + DISK_HEADROOM_GB;
     const freeBeforeGB = freeGB();
     const report: KeepReport = {
@@ -131,17 +101,16 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         freeAfterGB: freeBeforeGB,
         dryRun,
         ran: false,
+        swept: [],
         lines: [],
     };
     if (freeBeforeGB >= floorGB) return report;
-    const log = (line: string): void => {
-        mkdirSync(paths.logsDir(), { recursive: true });
-        appendFileSync(paths.diskLog(), `${now().toISOString()} ${dryRun ? "[dry run] " : ""}${line}\n`);
-    };
+    const log = new DiskLog(dryRun);
+    if (dryRun) log.open();
     const say = (line: string): void => {
         report.lines.push(line);
         if (options.echo) out(line);
-        log(line);
+        log.add(line);
     };
     // Why the keeper does not run this time: reported every time, logged only when the reason (`key`) changes, so a
     // minute tick under a long pause or beside a long background keeper writes one line, not one a minute.
@@ -156,9 +125,14 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             // Nothing skipped since the keeper last ran.
         }
         if (last !== key) {
-            log(line);
-            mkdirSync(dirname(paths.diskKeepSkip()), { recursive: true });
-            writeFileSync(paths.diskKeepSkip(), key);
+            log.add(line);
+            log.open();
+            try {
+                mkdirSync(dirname(paths.diskKeepSkip()), { recursive: true });
+                writeFileSync(paths.diskKeepSkip(), key);
+            } catch {
+                // A full disk: the reason is logged again next time, which is all this costs.
+            }
         }
         return report;
     };
@@ -168,15 +142,22 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         const why = pause.reason === "" ? "" : ` (${pause.reason})`;
         return skip(`paused ${pause.pid}`, `paused by pid ${pause.pid}${why} (state/disk-keep.pause)`);
     }
-    const holder = claimKeeper();
-    if (holder !== null) return skip(`keeper ${holder}`, `another disk keeper (pid ${holder}) is already running`);
-    rmSync(paths.diskKeepSkip(), { force: true });
+    const claim = claimKeeper();
+    if (claim.kind === "held")
+        return skip(`keeper ${claim.pid}`, `another disk keeper (pid ${claim.pid}) is already running`);
+    try {
+        rmSync(paths.diskKeepSkip(), { force: true });
+    } catch {
+        // Not a file (or not ours to remove): the next skip just logs its reason once more.
+    }
     report.ran = true;
     try {
         let simulated = 0;
         const free = (): number => (dryRun ? freeBeforeGB + simulated : freeGB());
         const enough = (): boolean => free() >= goalGB;
         say(`free ${gb(freeBeforeGB)} < floor ${gb(floorGB)}: freeing build output until ${gb(goalGB)}`);
+        if (claim.kind === "unwritable")
+            say(`cannot write ${paths.lock(KEEPER_LOCK)} (${claim.reason}): freeing without the keeper lock`);
         const checkouts = projectCheckouts();
         const dirs = checkouts.flatMap(buildDirs).sort((a, b) => a.mtimeMs - b.mtimeMs);
         /** Folders deleted (or, in a dry run, counted as deleted), and why each other one was kept: in use, or tried. */
@@ -198,6 +179,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 return;
             }
             done.add(dir.path);
+            log.open();
             say(`deleted ${dir.path}, freed ${gb(Math.max(0, free() - before))}`);
         };
         const idleTier = (kinds: BuildDir["kind"][], deleteIt: (dir: BuildDir) => string | null): void => {
@@ -227,16 +209,34 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         if (!enough()) pruneDocker(dryRun, say);
         if (!enough()) trimSccache(dryRun, say);
         // 5: every target still here, busy ones included, between build steps: "a run is active" never means
-        // "do nothing". Builds pause between cargo invocations; the wipe waits for such a pause under cargo's locks.
-        const waitMs = options.lockWaitMs ?? 0;
-        for (const dir of dirs) {
+        // "do nothing". Builds pause between cargo invocations; the wipe takes such a pause under cargo's locks. A
+        // target with no pause right now (builds back to back) has its stale artifacts swept instead, lock or not.
+        const busy = dirs.filter((dir) => dir.kind === "target" && !done.has(dir.path));
+        for (const dir of busy) {
             if (enough()) break;
-            if (dir.kind !== "target" || done.has(dir.path)) continue;
             const why = kept.get(dir.path);
-            if (why?.tried === true && waitMs === 0) continue;
-            const wait = waitMs > 0 ? `, waiting up to ${Math.round(waitMs / 60_000)} min for a pause` : "";
-            say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps${wait}`);
-            remove(dir, () => wipeOutcome(dir.path, waitMs));
+            if (why?.tried !== true) {
+                say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps`);
+                remove(dir, () => wipeOutcome(dir.path, 0));
+            }
+            if (done.has(dir.path) || enough()) continue;
+            const swept = sweepStaleArtifacts(dir.path, staleMinutes, dryRun);
+            report.swept.push({ target: dir.path, artifacts: swept.artifacts, bytes: swept.bytes });
+            if (dryRun) simulated += swept.bytes / GIB;
+            else if (swept.artifacts > 0) log.open();
+            say(sweepLine(dir.path, staleMinutes, swept, dryRun));
+        }
+        // The background keeper then waits for a pause in what is still busy, for up to waitMs per target.
+        const waitMs = options.lockWaitMs ?? 0;
+        if (waitMs > 0) {
+            for (const dir of busy) {
+                if (enough()) break;
+                if (done.has(dir.path)) continue;
+                const why = kept.get(dir.path)?.reason ?? "no reason recorded";
+                const wait = `waiting up to ${Math.round(waitMs / 60_000)} min for a pause`;
+                say(`${dir.path} is in use (${why}): wiping it between build steps, ${wait}`);
+                remove(dir, () => wipeOutcome(dir.path, waitMs));
+            }
         }
         report.freeAfterGB = free();
         say(
@@ -245,7 +245,9 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 : `done, still under the floor: free ${gb(freeBeforeGB)} -> ${gb(report.freeAfterGB)}; nothing more is rebuildable and free right now`,
         );
     } finally {
-        releaseKeeper();
+        if (claim.kind === "claimed") releaseKeeper();
+        const unwritten = log.flush();
+        if (unwritten !== null) warn(`disk keeper: ${unwritten}`);
     }
     return report;
 }
@@ -258,19 +260,32 @@ function wipeOutcome(target: string, waitMs: number): string | null {
     return outcome.wiped ? null : outcome.reason;
 }
 
-/** Start `bin/toli disk keep --wait` detached (its lines reach logs/disk.log), to wipe busy targets as builds pause. */
+/**
+ * Start `bin/toli disk keep --wait` detached (its lines reach logs/disk.log), to wipe busy targets as builds pause.
+ * Bun's transpiler cache is off for it, as `bin/toli disk` does: the disk may still be full.
+ */
 export function startBackgroundKeeper(): void {
-    mkdirSync(paths.logsDir(), { recursive: true });
-    const log = openSync(paths.diskLog(), "a");
+    let log: number | "ignore" = "ignore";
+    try {
+        mkdirSync(paths.logsDir(), { recursive: true });
+        log = openSync(paths.diskLog(), "a");
+    } catch {
+        // A full disk: the keeper's own lines still reach logs/disk.log once it has freed something.
+    }
     try {
         const child = spawnChild(
             process.execPath,
             [TOLI_SCRIPT, "disk", "keep", "--wait", String(BACKGROUND_LOCK_WAIT_MS / 60_000)],
-            { cwd: paths.root(), detached: true, stdio: ["ignore", "ignore", log] },
+            {
+                cwd: paths.root(),
+                detached: true,
+                stdio: ["ignore", "ignore", log],
+                env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+            },
         );
         child.unref();
     } finally {
-        closeSync(log);
+        if (log !== "ignore") closeSync(log);
     }
 }
 
@@ -279,14 +294,20 @@ export function startBackgroundKeeper(): void {
  * background keeper waiting for them if that was not enough. Never throws: disk never stops work.
  */
 export function keepDiskBeforeWork(): string | null {
+    let report: KeepReport;
     try {
-        const report = keepDisk({ lockWaitMs: 0 });
-        if (!report.ran) return null;
-        if (!report.dryRun && report.freeAfterGB < report.floorGB) startBackgroundKeeper();
-        return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (floor ${gb(report.floorGB)})`;
+        report = keepDisk({ lockWaitMs: 0 });
     } catch (error) {
-        return `disk keeper failed: ${error instanceof Error ? error.message : String(error)}`;
+        fallbackSweep(error, false, envDryRun());
+        return `disk keeper failed: ${describe(error)}; swept stale artifacts instead (logs/disk.log)`;
     }
+    if (!report.ran) return null;
+    try {
+        if (!report.dryRun && report.freeAfterGB < report.floorGB) startBackgroundKeeper();
+    } catch (error) {
+        return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)}; background keeper not started: ${describe(error)}`;
+    }
+    return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (floor ${gb(report.floorGB)})`;
 }
 
 /** `toli disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]`. */
@@ -306,12 +327,20 @@ export function diskCommand(argv: string[]): void {
     const floorGB = number("floor");
     const waitMinutes = number("wait");
     const json = args.bool("json");
-    const report = keepDisk({
-        dryRun: args.bool("dry-run"),
-        ...(floorGB === undefined ? {} : { floorGB }),
-        lockWaitMs: (waitMinutes ?? 0) * 60_000,
-        echo: !json,
-    });
+    const dryRun = args.bool("dry-run");
+    let report: KeepReport;
+    try {
+        report = keepDisk({
+            dryRun,
+            ...(floorGB === undefined ? {} : { floorGB }),
+            lockWaitMs: (waitMinutes ?? 0) * 60_000,
+            echo: !json,
+        });
+    } catch (error) {
+        const lines = fallbackSweep(error, !json, dryRun || envDryRun());
+        if (json) printJson({ error: describe(error), fallback: lines });
+        throw new ToliError(`disk keeper failed: ${describe(error)}; swept stale artifacts instead`);
+    }
     if (json) printJson(report);
     else if (report.lines.length === 0)
         out(`free ${gb(report.freeBeforeGB)}, floor ${gb(report.floorGB)}: nothing to do`);

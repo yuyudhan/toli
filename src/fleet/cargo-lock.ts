@@ -9,13 +9,14 @@ import { dirname, join } from "node:path";
 import { platform } from "../core/util.ts";
 import { cargoRunsIn, openBelow, targetUse } from "./disk-scan.ts";
 
-const CARGO_LOCKS: Record<string, true> = {
+/** The lock files cargo holds while it compiles; only a whole-target wipe under them ever removes one. */
+export const CARGO_LOCKS: Readonly<Record<string, true>> = {
     ".cargo-lock": true,
     ".cargo-build-lock": true,
     ".cargo-artifact-lock": true,
 };
 /** Profile dirs sit at most this deep: `target/debug`, `target/<triple>/debug`, `target/clippy/debug`. */
-const LOCK_DEPTH = 3;
+export const LOCK_DEPTH = 3;
 const LOCK_EX = 2;
 const LOCK_NB = 4;
 const LOCK_UN = 8;
@@ -119,11 +120,13 @@ export function wipeTargetBetweenBuilds(
                 const busy = holdOff() ?? cargoRunsIn(dirname(target)) ?? targetUse(target) ?? openIn(target);
                 if (busy !== null) reason = busy;
                 else {
-                    const aside = `${target}.toli-wipe-${Date.now()}`;
-                    renameSync(target, aside);
+                    // Renaming can need a directory block that a full disk lacks: then delete in place, still under
+                    // the locks, so the space comes back either way.
+                    const aside = renameAside(target);
+                    if (aside === null) rmSync(target, { recursive: true, force: true });
                     release(held, lock);
                     held.length = 0;
-                    rmSync(aside, { recursive: true, force: true });
+                    if (aside !== null) rmSync(aside, { recursive: true, force: true });
                     return { wiped: true };
                 }
             } finally {
@@ -132,5 +135,16 @@ export function wipeTargetBetweenBuilds(
         }
         if (Date.now() + RETRY_MS > deadline) return { wiped: false, reason };
         Bun.sleepSync(RETRY_MS);
+    }
+}
+
+/** Rename `target` to a sibling `<target>.toli-wipe-<ms>`; null when the rename fails. */
+function renameAside(target: string): string | null {
+    const aside = `${target}.toli-wipe-${Date.now()}`;
+    try {
+        renameSync(target, aside);
+        return aside;
+    } catch {
+        return null;
     }
 }

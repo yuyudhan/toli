@@ -139,14 +139,22 @@ export function checkoutUse(checkout: Checkout, holders: Holders, all: Checkout[
 
 /** Paths below `dir` that any process other than this one holds open (`lsof -Fpn`), at most `limit` of them. */
 export function openBelow(dir: string, limit = 3): string[] {
+    return heldOpenBelow(dir, limit).map((held) => `${held.path} (pid ${held.pid})`);
+}
+
+/**
+ * Files below `dir` that any process other than this one holds open, runs or maps (`lsof -Fpn` lists all three), with
+ * the holding pid; at most `limit` of them.
+ */
+export function heldOpenBelow(dir: string, limit = Number.POSITIVE_INFINITY): { path: string; pid: string }[] {
     const listed = run(["lsof", "-n", "-P", "-w", "-Fpn"], { timeoutMs: 120_000 });
     const me = String(process.pid);
-    const held: string[] = [];
+    const held: { path: string; pid: string }[] = [];
     let pid = "";
     for (const line of listed.stdout.split("\n")) {
         if (line.startsWith("p")) pid = line.slice(1);
         else if (line.startsWith("n") && pid !== me && within(line.slice(1), dir)) {
-            held.push(`${line.slice(1)} (pid ${pid})`);
+            held.push({ path: line.slice(1), pid });
             if (held.length >= limit) break;
         }
     }
