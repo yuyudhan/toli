@@ -286,6 +286,53 @@ describe("bin/toli commit (R23 safe commits)", () => {
         expect(git(dir, ["status", "--porcelain"])).toBe("");
     });
 
+    test("--merge takes a named, regenerated Cargo.lock when the clean merge leaves the lock stale", () => {
+        const lock = (members: string[]) =>
+            `version = 4\n${members.map((name) => `\n[[package]]\nname = "${name}"\nversion = "0.1.0"\n`).join("")}`;
+        const crate = (dir: string, name: string) => {
+            mkdirSync(join(dir, "crates", name, "src"), { recursive: true });
+            writeFileSync(
+                join(dir, "crates", name, "Cargo.toml"),
+                `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2021"\n`,
+            );
+            writeFileSync(join(dir, "crates", name, "src", "lib.rs"), "");
+        };
+        const dir = repo({
+            "Cargo.toml": '[workspace]\nmembers = ["crates/*"]\nresolver = "2"\n',
+            "Cargo.lock": lock(["a"]),
+            ".gitignore": "target/\n",
+        });
+        crate(dir, "a");
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "crate a"]);
+        // Upstream adds crate b and touches the lock without its entry: the lock merges cleanly yet misses b.
+        git(dir, ["switch", "--quiet", "-c", "upstream"]);
+        crate(dir, "b");
+        writeFileSync(join(dir, "Cargo.lock"), `# upstream\n${lock(["a"])}`);
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "upstream: crate b"]);
+        git(dir, ["switch", "--quiet", "main"]);
+        writeFileSync(join(dir, "main.txt"), "main\n");
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "main: unrelated"]);
+        const before = head(dir);
+        const merge = (paths: string[]) => () =>
+            safeCommit({ dir, paths, merge: "upstream", message: "Merge upstream" });
+
+        expect(merge([])).toThrow("cargo metadata --locked rejects the staged Cargo.lock");
+        // A named lock is still checked: a wrong one is refused.
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "c"]));
+        expect(merge(["Cargo.lock"])).toThrow("cargo metadata --locked rejects the staged Cargo.lock");
+        expect(head(dir)).toBe(before);
+
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b"]));
+        const merged = merge(["Cargo.lock"])();
+        expect(git(dir, ["show", `${merged.sha}:Cargo.lock`])).toBe(lock(["a", "b"]).trimEnd());
+        expect(git(dir, ["show", `${merged.sha}:crates/b/Cargo.toml`])).toContain('name = "b"');
+        expect(git(dir, ["rev-parse", `${merged.sha}^2`])).toBe(git(dir, ["rev-parse", "upstream"]));
+        expect(git(dir, ["status", "--porcelain"])).toBe("");
+    });
+
     test("refuses a staged secret (gitleaks) and commits nothing", () => {
         const dir = repo();
         const token = `ghp_${Array.from(crypto.getRandomValues(new Uint8Array(36)), (byte) => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[byte % 62]).join("")}`;

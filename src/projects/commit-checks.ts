@@ -143,11 +143,17 @@ export function checkResolved(attempt: Attempt, conflicts: string[], named: (fil
     }
 }
 
+/** A lock file the package manager regenerates: checked by `checkLockFiles`, never merged by hand. */
+export function isLockFile(file: string): boolean {
+    const name = basename(file);
+    return name === "Cargo.lock" || name === "bun.lock";
+}
+
 /** Refuse a staged Cargo.lock or bun.lock that does not parse (and a Cargo.lock that cargo rejects in the staged tree). */
 export function checkLockFiles(attempt: Attempt, files: string[]): void {
     for (const file of files) {
+        if (!isLockFile(file)) continue;
         const name = basename(file);
-        if (name !== "Cargo.lock" && name !== "bun.lock") continue;
         const staged = attempt.git(["show", `:${file}`]);
         if (staged.code !== 0) continue; // deleted in this commit
         const blob = staged.stdout;

@@ -44,12 +44,14 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes, and named
-   paths the merge also changes (commit the merge first). A conflicted merge is refused, naming the conflicted paths
-   and the merge-tree tree (`git show <tree>:<path>` shows each with conflict markers). Write the resolved files in
-   the working tree, then run the same commit with `--resolved -- <conflicted paths>`: the named files replace the
-   conflicted ones, every conflicted path must be named and free of conflict markers, and every check above runs on
-   the result (`--resolved` on a clean merge is refused). After the branch moves it checks the merged files out into
-   the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
+   paths the merge also changes (commit the merge first), except a lock file: a clean merge can leave `Cargo.lock` or
+   `bun.lock` stale (each side's text merges, the entries both sides need do not), so a named, regenerated lock file
+   replaces the merged one and goes through the lock check like any staged lock. A conflicted merge is refused, naming
+   the conflicted paths and the merge-tree tree (`git show <tree>:<path>` shows each with conflict markers). Write the
+   resolved files in the working tree, then run the same commit with `--resolved -- <conflicted paths>`: the named files
+   replace the conflicted ones, every conflicted path must be named and free of conflict markers, and every check
+   above runs on the result (`--resolved` on a clean merge is refused). After the branch moves it checks the merged
+   files out into the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
 
 For toli, it then refreshes the installed runtime (below), so the live session runs the new commit from the next
 `bin/toli` call.
