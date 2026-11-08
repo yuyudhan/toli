@@ -14,7 +14,7 @@ import type { Subprocess } from "bun";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
 import { parseSccacheStats } from "../src/fleet/disk-caches.ts";
-import { buildOutput, libc } from "./disk-fixture.ts";
+import { buildOutput, holdLock, libc } from "./disk-fixture.ts";
 import { type Sandbox, sandbox, tempDir, withProject } from "./helpers.ts";
 
 /** A running jawan run of `project` working in `cwd`, its supervisor this (live) test process. */
@@ -78,7 +78,10 @@ describe("disk keeper", () => {
         expect(lines).toContain(`would delete ${join(idle, "web", "dist")} (`);
         expect(lines).toContain(`skipped ${join(busy, "target")}: jawan j-20261105-000000-test works in it`);
         expect(lines).toContain(`skipped ${join(busy, "web", "node_modules")}: jawan`);
-        expect(lines).not.toContain(`would delete ${join(busy, "web", "node_modules")}`);
+        // The busy clone's node_modules goes only in the last resort, after everything else.
+        const lastResort = lines.indexOf("is still under the floor: deleting every build folder left, in use or not");
+        expect(lastResort).toBeGreaterThan(-1);
+        expect(lines.indexOf(`would delete ${join(busy, "web", "node_modules")}`)).toBeGreaterThan(lastResort);
         expect(lines).not.toContain("docs/dist");
         expect(lines).toContain("docker: skipped (daemon not reachable)");
         // The busy clone's target is still freed, but only between build steps, under cargo's locks.
@@ -88,6 +91,76 @@ describe("disk keeper", () => {
         );
         expect(order).toEqual([...order].sort((a, b) => a - b));
         expect(existsSync(join(idle, "target"))).toBe(true);
+    });
+
+    /**
+     * Two clones: idle `alpha`, and `beta` held by a running jawan and a build holding cargo's lock. `df` reports
+     * 1 GB free while alpha's target exists and 100 GB once it is gone; nothing else changes it.
+     */
+    function heldTree(box: Sandbox): { idle: string; busy: string; release: () => void } {
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const idle = realpathSync(withProject(box, "alpha"));
+        const busy = realpathSync(withProject(box, "beta"));
+        buildOutput(box, idle);
+        buildOutput(box, busy);
+        writeFileSync(join(busy, "main.rs"), "fn main() {}\n");
+        runningJawan(box, "beta", busy);
+        box.stub("docker", "exit 1");
+        box.stub("sccache", "exit 2");
+        box.stub(
+            "df",
+            `if [ -e "${join(idle, "target")}" ]; then kb=1048576; else kb=104857600; fi
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 209715200 1 %s 50%% /\\n' "$kb"`,
+        );
+        return { idle, busy, release: holdLock(join(busy, "target", "debug", ".cargo-lock")) };
+    }
+
+    test("still under the floor after the normal tiers, it deletes held build output too, never sources or git", () => {
+        const box = sandbox();
+        const { idle, busy, release } = heldTree(box);
+        const browsers = join(box.root, ".playwright");
+        mkdirSync(join(browsers, "chromium-1140"), { recursive: true });
+        writeFileSync(join(browsers, "chromium-1140", "chrome"), "x");
+        writeFileSync(join(browsers, "notes.txt"), "not a browser\n");
+        try {
+            const keep = ["disk", "keep", "--floor", "1000000000", "--json"];
+            const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
+            const lines = report.lines.join("\n");
+            expect(report.lastResort).toBe(true);
+            expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
+            expect(lines).toContain(`kept ${join(busy, "target")}: a build holds `);
+            expect(lines).toContain(`${join(busy, "target")} is in use (a build holds `);
+            expect(lines).toContain(`deleted ${join(busy, "target")}, freed `);
+            expect(lines).toContain(`deleted ${join(busy, "web", "node_modules")}, freed `);
+            expect(lines).toContain(`deleted ${join(browsers, "chromium-1140")}, freed `);
+            for (const gone of ["target", "web/node_modules", "web/dist"])
+                expect(existsSync(join(busy, gone))).toBe(false);
+            expect(existsSync(join(browsers, "chromium-1140"))).toBe(false);
+            expect(readFileSync(join(browsers, "notes.txt"), "utf8")).toBe("not a browser\n");
+            expect(readFileSync(join(busy, "main.rs"), "utf8")).toBe("fn main() {}\n");
+            expect(readFileSync(join(busy, "docs", "dist", "page.html"), "utf8")).toBe("tracked\n");
+            expect(box.git(busy, ["log", "--format=%s", "-1"])).toBe("tracked dist");
+        } finally {
+            release();
+        }
+    });
+
+    test("back above the floor after the normal tiers, it keeps held build output", () => {
+        const box = sandbox();
+        const { idle, busy, release } = heldTree(box);
+        try {
+            // Floor 50, goal 70: deleting idle alpha's target brings free from 1 GB to 100 GB.
+            const keep = ["disk", "keep", "--floor", "50", "--json"];
+            const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
+            const lines = report.lines.join("\n");
+            expect(report.lastResort).toBe(false);
+            expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
+            expect(lines).not.toContain("still under the floor");
+            for (const held of ["target/debug/deps/libx.rlib", "web/node_modules/pkg/index.js", "web/dist/app.js"])
+                expect(existsSync(join(busy, held))).toBe(true);
+        } finally {
+            release();
+        }
     });
 
     test("a live pid in state/disk-keep.pause holds it off, logged once; a dead pid's pause is stale", () => {

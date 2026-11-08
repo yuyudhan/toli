@@ -8,6 +8,10 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A full disk means delete the build folders: when free space is still under `capacity.diskKeepGB` after the disk
+  keeper's normal steps, it deletes every `target/` in the clones and task worktrees, in use or not, then
+  `node_modules/`, `dist/` and Playwright's browser builds, logging each with what it freed (`--json`:
+  `lastResort`). It still touches only git-ignored build output, never sources or `.git`. See docs/disk.md step 6.
 - The disk keeper frees space while builds never stop: a cargo target whose lock is always held (jawans building
   the same clone back to back) was kept whole every run. It is now swept: artifacts in a profile's `deps`, `build`,
   `.fingerprint` and `incremental` unused for `capacity.diskSweepStaleMinutes` (default 180) go, judged by access

@@ -83,6 +83,8 @@ export function sandbox(): Sandbox {
                 PATH: path,
                 TOLI_ROOT: root,
                 TOLI_DRY_RUN: "1",
+                // The disk keeper's last resort deletes Playwright's browsers: never the host's.
+                PLAYWRIGHT_BROWSERS_PATH: join(root, ".playwright"),
                 ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),
                 ...options.env,
             },

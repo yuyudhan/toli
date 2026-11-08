@@ -70,9 +70,15 @@ describe("sweeping stale artifacts out of a target in use", () => {
         writeFileSync(machineFile, JSON.stringify({ ...machine, capacity: { diskSweepStaleMinutes: 60 } }));
         box.stub("docker", "exit 1");
         box.stub("sccache", "exit 2");
+        // 1 GB free until the sweep removes the stale rlib, 100 GB after: floor 50, so the last resort never runs.
+        box.stub(
+            "df",
+            `if [ -e "${stale[0]}" ]; then kb=1048576; else kb=104857600; fi
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 209715200 1 %s 50%% /\\n' "$kb"`,
+        );
         const release = holdLock(lock);
         try {
-            const keep = ["disk", "keep", "--floor", "1000000000", "--json"];
+            const keep = ["disk", "keep", "--floor", "50", "--json"];
             const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
             const lines = report.lines.join("\n");
             expect(lines).toContain(`kept ${target}: a build holds ${lock}`);

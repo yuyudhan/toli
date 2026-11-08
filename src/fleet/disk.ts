@@ -8,7 +8,10 @@
 //   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
 //      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open. A target
 //      that stays in use (builds back to back) is swept instead: every artifact in it unused for
-//      capacity.diskSweepStaleMinutes (default 180) goes, lock or no lock (src/fleet/stale-sweep.ts).
+//      capacity.diskSweepStaleMinutes (default 180) goes, lock or no lock (src/fleet/stale-sweep.ts);
+//   6. last resort, when free space is still under the floor itself: every `target/` left, in use or not, then every
+//      `node_modules/` and `dist/` and Playwright's browser cache. All of it rebuilds itself; a build cut off fails
+//      once and compiles again. A full disk means delete the build folders, without asking anyone.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
@@ -18,7 +21,7 @@
 // lock it cannot write is done without), no failed write stops it, and when the keeper fails anyway the fallback
 // sweeps stale artifacts out of every target, writing nothing first.
 import { spawn as spawnChild } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, resolve } from "node:path";
 import { Args } from "../core/args.ts";
@@ -27,7 +30,7 @@ import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
 import { wipeTargetBetweenBuilds } from "./cargo-lock.ts";
-import { pruneDocker, trimSccache } from "./disk-caches.ts";
+import { playwrightBrowsers, pruneDocker, trimSccache } from "./disk-caches.ts";
 import {
     type BuildDir,
     buildDirs,
@@ -36,6 +39,7 @@ import {
     openBelow,
     projectCheckouts,
     sizeGB,
+    within,
 } from "./disk-scan.ts";
 import { claimKeeper, DiskLog, describe, diskPause, GIB, gb, KEEPER_LOCK, releaseKeeper } from "./disk-state.ts";
 import { capacityFor, diskSweepStaleMinutes, measureDisk } from "./resources.ts";
@@ -71,6 +75,8 @@ export type KeepReport = {
     pausedBy?: number;
     /** Busy targets swept of stale artifacts (tier 5), with what each freed (or, in a dry run, would free). */
     swept: { target: string; artifacts: number; bytes: number }[];
+    /** True when the last resort ran: still under the floor, so build output in use went too (tier 6). */
+    lastResort: boolean;
     lines: string[];
 };
 
@@ -102,6 +108,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         dryRun,
         ran: false,
         swept: [],
+        lastResort: false,
         lines: [],
     };
     if (freeBeforeGB >= floorGB) return report;
@@ -163,24 +170,24 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         /** Folders deleted (or, in a dry run, counted as deleted), and why each other one was kept: in use, or tried. */
         const done = new Set<string>();
         const kept = new Map<string, { reason: string; tried: boolean }>();
-        const remove = (dir: BuildDir, deleteIt: () => string | null): void => {
+        const remove = (path: string, deleteIt: () => string | null): void => {
             if (dryRun) {
-                const size = sizeGB(dir.path);
+                const size = sizeGB(path);
                 simulated += size;
-                done.add(dir.path);
-                say(`would delete ${dir.path} (${gb(size)})`);
+                done.add(path);
+                say(`would delete ${path} (${gb(size)})`);
                 return;
             }
             const before = free();
             const refusal = deleteIt();
             if (refusal !== null) {
-                kept.set(dir.path, { reason: refusal, tried: true });
-                say(`kept ${dir.path}: ${refusal}`);
+                kept.set(path, { reason: refusal, tried: true });
+                say(`kept ${path}: ${refusal}`);
                 return;
             }
-            done.add(dir.path);
+            done.add(path);
             log.open();
-            say(`deleted ${dir.path}, freed ${gb(Math.max(0, free() - before))}`);
+            say(`deleted ${path}, freed ${gb(Math.max(0, free() - before))}`);
         };
         const idleTier = (kinds: BuildDir["kind"][], deleteIt: (dir: BuildDir) => string | null): void => {
             const holders = currentHolders();
@@ -190,7 +197,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 // Checked again just before a real deletion: a run may have started in that checkout meanwhile.
                 let reason = checkoutUse(dir.checkout, holders, checkouts);
                 if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
-                if (reason === null) remove(dir, () => deleteIt(dir));
+                if (reason === null) remove(dir.path, () => deleteIt(dir));
                 else {
                     kept.set(dir.path, { reason, tried: false });
                     say(`skipped ${dir.path}: ${reason}`);
@@ -217,7 +224,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             const why = kept.get(dir.path);
             if (why?.tried !== true) {
                 say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps`);
-                remove(dir, () => wipeOutcome(dir.path, 0));
+                remove(dir.path, () => wipeOutcome(dir.path, 0));
             }
             if (done.has(dir.path) || enough()) continue;
             const swept = sweepStaleArtifacts(dir.path, staleMinutes, dryRun);
@@ -226,16 +233,38 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             else if (swept.artifacts > 0) log.open();
             say(sweepLine(dir.path, staleMinutes, swept, dryRun));
         }
+        // 6: the last resort. Still under the floor itself, not just short of the goal: every target left goes now,
+        // in use or not, then node_modules and dist (Vite's cache lives in node_modules/.vite) and Playwright's
+        // browsers, until the goal. Docker's build cache already went in 3. Only what buildDirs listed, never
+        // anything else.
+        if (free() < floorGB) {
+            report.lastResort = true;
+            say(`free ${gb(free())} is still under the floor: deleting every build folder left, in use or not`);
+            const force = (path: string): void => {
+                const why = kept.get(path)?.reason;
+                if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway`);
+                remove(path, () => forceDelete(path));
+            };
+            const left = (dir: BuildDir): boolean =>
+                !done.has(dir.path) && ![...done].some((gone) => within(dir.path, gone)) && existsSync(dir.path);
+            for (const dir of dirs) if (dir.kind === "target" && left(dir)) force(dir.path);
+            for (const dir of dirs) if (dir.kind !== "target" && !enough() && left(dir)) force(dir.path);
+            if (!enough()) {
+                const browsers = playwrightBrowsers();
+                if (browsers.length === 0) say("playwright: no browser cache");
+                for (const path of browsers) if (!enough()) force(path);
+            }
+        }
         // The background keeper then waits for a pause in what is still busy, for up to waitMs per target.
         const waitMs = options.lockWaitMs ?? 0;
-        if (waitMs > 0) {
+        if (waitMs > 0 && !report.lastResort) {
             for (const dir of busy) {
                 if (enough()) break;
                 if (done.has(dir.path)) continue;
                 const why = kept.get(dir.path)?.reason ?? "no reason recorded";
                 const wait = `waiting up to ${Math.round(waitMs / 60_000)} min for a pause`;
                 say(`${dir.path} is in use (${why}): wiping it between build steps, ${wait}`);
-                remove(dir, () => wipeOutcome(dir.path, waitMs));
+                remove(dir.path, () => wipeOutcome(dir.path, waitMs));
             }
         }
         report.freeAfterGB = free();
@@ -258,6 +287,16 @@ function wipeOutcome(target: string, waitMs: number): string | null {
         return pause === null ? null : `paused by pid ${pause.pid} (state/disk-keep.pause)`;
     });
     return outcome.wiped ? null : outcome.reason;
+}
+
+/** Delete `path` whatever uses it; the reason when it could not (a build may keep writing into it meanwhile). */
+function forceDelete(path: string): string | null {
+    try {
+        rmSync(path, { recursive: true, force: true, maxRetries: 3 });
+        return null;
+    } catch (error) {
+        return `could not delete it: ${describe(error)}`;
+    }
 }
 
 /**
@@ -307,7 +346,8 @@ export function keepDiskBeforeWork(): string | null {
     } catch (error) {
         return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)}; background keeper not started: ${describe(error)}`;
     }
-    return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (floor ${gb(report.floorGB)})`;
+    const cut = report.lastResort ? "; build output in use was deleted too, so a build may need running again" : "";
+    return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (floor ${gb(report.floorGB)})${cut}`;
 }
 
 /** `toli disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]`. */

@@ -226,8 +226,10 @@ and runs the prompt there, which can take up to an hour: run it only as `bash` w
 never in the foreground; its output arrives as a new turn. Thresholds live in `config/machine.json` `capacity` (`maxRuns`,
 `maxLoadPerCpu`, `minMemAvailableMB`). When no machine is available, queue the task and tell Malik. Low disk is never a
 reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
-every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). Never write a disk floor into a
-brief.
+every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). A full disk means delete the
+`target/` folders, in use or not, without asking: cargo rebuilds them. When free space is still under the floor, the
+keeper does that itself; on any machine, run `bin/toli disk keep` the moment a disk is full. Never write a disk floor
+into a brief.
 
 ## 7b. Custom machine helpers
 
