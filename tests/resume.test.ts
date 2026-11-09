@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { continuePrompt, deadlineSection, hasReport, resumeSection, usedTimeLimit } from "../src/jawans/limits.ts";
+import {
+    continuePrompt,
+    deadlineSection,
+    hasReport,
+    onlyHarnessErrors,
+    resumeSection,
+    usedTimeLimit,
+} from "../src/jawans/limits.ts";
 import { CPU_PROGRESS_SECONDS, parseCpuTime, rootExited, StallWatch, treeCpuSeconds } from "../src/jawans/progress.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
@@ -91,10 +98,20 @@ async function waitForRuns(box: Sandbox, done: (all: Run[]) => boolean): Promise
 }
 
 describe("time limits", () => {
-    test("only harness warnings are no report; any other line is", () => {
+    test("harness warnings and errors are no report; any other line is", () => {
         expect(hasReport("")).toBe(false);
         expect(hasReport('Warning: MCP server "kalki" failed to connect\nWorking...\n\n')).toBe(false);
         expect(hasReport("Warning: MCP server x failed\nWorking...\nMalik, T93 is done: abc123.\n")).toBe(true);
+        // A harness or API error is never the jawan's answer, whatever surrounds it.
+        const errors = 'Warning: x\nError: 429 rate_limit_error\nAPI Error: 500 {"type":"error"}\n';
+        expect(hasReport(errors)).toBe(false);
+        expect(hasReport("Claude AI usage limit reached|1767225600\n")).toBe(false);
+        expect(hasReport(`${errors}Malik, T93 is done: abc123.\n`)).toBe(true);
+        expect([onlyHarnessErrors(errors), onlyHarnessErrors(""), onlyHarnessErrors(`${errors}done\n`)]).toEqual([
+            true,
+            false,
+            false,
+        ]);
     });
 
     test("a run used its limit when killed for time or after 95% of it", () => {

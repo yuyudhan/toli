@@ -13,7 +13,9 @@ saved_ifs=$IFS
 IFS=:
 for dir in $PATH; do
     [ -n "$dir" ] || dir=.
-    [ -f "$dir/cargo" ] && [ -x "$dir/cargo" ] || continue
+    if [ ! -f "$dir/cargo" ] || [ ! -x "$dir/cargo" ]; then
+        continue
+    fi
     resolved=$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P) || continue
     [ "$resolved" = "$shims" ] && continue
     case $(sed -n '2{p;q;}' "$dir/cargo" 2>/dev/null) in

@@ -8,7 +8,7 @@
 // freed slot starts the oldest queued run.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
-import { availableParallelism } from "node:os";
+import { availableParallelism, constants } from "node:os";
 import { relative } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
@@ -19,7 +19,7 @@ import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.t
 import { autoResume, notify } from "./continue.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
-import { deadlineSection, hasReport, usedTimeLimit } from "./limits.ts";
+import { deadlineSection, hasReport, onlyHarnessErrors, usedTimeLimit } from "./limits.ts";
 import { stallText, watchStall } from "./progress.ts";
 import { type JawanRun, killGroup, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
 
@@ -39,6 +39,17 @@ function durationText(run: JawanRun): string {
     if (run.endedAt === null) return "";
     const seconds = Math.max(0, Math.round((Date.parse(run.endedAt) - Date.parse(run.startedAt)) / 1000));
     return seconds < 120 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
+}
+
+/**
+ * How a killed run's harness ended, as the signal toli sent: a shell harness whose foreground command dies by signal n
+ * exits 128 + n instead of dying by it, so `exit 143` from a killed run is SIGTERM.
+ */
+export function killedExit(exit: ChildExit): ChildExit {
+    const code = exit.code;
+    if (exit.signal !== null || code === null || code <= 128) return exit;
+    const name = Object.entries(constants.signals).find(([, number]) => number === code - 128)?.[0];
+    return name === undefined ? exit : { ...exit, code: null, signal: name };
 }
 
 /** The inbox title and body for a finished run. */
@@ -291,8 +302,9 @@ export async function superviseRun(id: string): Promise<void> {
         const reported = hasReport(output);
         const usage = parseUsage(last.output);
         let finished = updateRun(id, (run) => {
-            run.exitCode = result.code;
-            run.signal = result.signal;
+            const exit = run.status === "killed" ? killedExit(result) : result;
+            run.exitCode = exit.code;
+            run.signal = exit.signal;
             run.endedAt = now().toISOString();
             if (usage !== null) run.usage = usage;
             if (run.status === "killed") return;
@@ -311,12 +323,16 @@ export async function superviseRun(id: string): Promise<void> {
                 run.error = `stopped by its ${run.maxMinutes}-minute time limit without a report`;
                 return;
             }
-            // A run that reported and then stalled (waiting on nothing) delivered its work.
-            run.status = (result.code === 0 && !timedOut) || (last.stalled && reported) ? "done" : "failed";
+            // A run that reported and then stalled (waiting on nothing) delivered its work; one that printed only
+            // harness errors (a 429, an API error) did not, whatever its exit code.
+            const errorOnly = onlyHarnessErrors(output);
+            run.status =
+                (result.code === 0 && !timedOut && !errorOnly) || (last.stalled && reported) ? "done" : "failed";
             if (result.error !== null) run.error = result.error;
             else if (timedOut) run.error = `timed out after ${(run.maxMinutes ?? 0) + KILL_GRACE_MINUTES} minutes`;
             else if (run.status === "failed" && hitLimit(last.output, result.code))
                 run.error = "stopped on a rate/usage limit";
+            else if (errorOnly) run.error = "the harness printed only errors, no report";
         });
         const stopped =
             finished.status === "stalled"

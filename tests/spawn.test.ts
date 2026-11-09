@@ -1,63 +1,12 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox, withProject } from "./helpers.ts";
+import { type Sandbox, withProject } from "./helpers.ts";
+import { brief, coordinator, type Run, runs, spawnJson, waitFor } from "./jawan-fixture.ts";
 
 // Each test runs several bin/toli processes and waits on detached runs (up to 10 s per waitFor); on a loaded machine
 // that passes Bun's 5 s default, so this file allows 30 s per test.
 setDefaultTimeout(30_000);
-
-type Run = {
-    id: string;
-    harness: string;
-    status: string;
-    task: string | null;
-    project: string | null;
-    cwd: string;
-    logPath: string;
-    pid: number | null;
-    supervisorPid: number | null;
-    exitCode: number | null;
-    inbox: string | null;
-    model: string | null;
-    tier?: string | null;
-    modelSource?: string;
-    fallback?: { from: string | null; to: string | null; tier: string | null; waitedMinutes: number; reason: string };
-    replaces?: string[];
-    replacedBy?: string;
-};
-
-function coordinator(): Sandbox {
-    const box = sandbox();
-    box.ok(["init", "--name", "m1", "--role", "coordinator"]);
-    return box;
-}
-
-function brief(box: Sandbox, body = "say hi"): string {
-    const path = join(box.root, "brief.md");
-    writeFileSync(path, `TOLI_BRIEF v1\n${body}\n`);
-    return path;
-}
-
-function runs(box: Sandbox): Run[] {
-    return JSON.parse(box.ok(["runs", "--json"])) as Run[];
-}
-/**
- * Poll the run until `done` holds, failing after ~10 s. Real time is unavoidable here: the supervisor and the
- * harness are separate detached OS processes, so there is no in-process promise or event to await.
- */
-async function waitFor(box: Sandbox, id: string, done: (run: Run) => boolean): Promise<Run> {
-    for (let attempt = 0; attempt < 100; attempt++) {
-        const run = JSON.parse(box.ok(["run", "status", id, "--json"])) as Run;
-        if (done(run)) return run;
-        await Bun.sleep(100);
-    }
-    throw new Error(`run ${id} never reached the expected state: ${box.ok(["run", "status", id])}`);
-}
-
-function spawnJson(box: Sandbox, args: string[]): Run {
-    return JSON.parse(box.ok(["spawn", ...args, "--json"])) as Run;
-}
 
 describe("spawn", () => {
     test("runs detached, moves starting -> running -> done, logs output, and posts the outcome to the inbox", async () => {
@@ -82,16 +31,6 @@ describe("spawn", () => {
         expect(box.ok(["runs", "--active"])).toBe("no active jawan runs");
         // The load record (state/runs) is gone once the run ends.
         expect(existsSync(join(box.root, "state", "runs", `${started.id}.json`))).toBe(false);
-    });
-
-    test("a failing harness is recorded as failed with its exit code", async () => {
-        const box = coordinator();
-        box.stub("omp", 'echo "boom"; exit 3');
-        const started = spawnJson(box, ["--harness", "omp", "--brief", brief(box), "--cwd", box.root]);
-        const done = await waitFor(box, started.id, (run) => run.inbox !== null);
-        expect(done.status).toBe("failed");
-        expect(done.exitCode).toBe(3);
-        expect(readFileSync(done.inbox ?? "", "utf8")).toContain("- status: failed (exit 3)");
     });
 
     test("claude gets the brief on stdin, runs in the task's project clone, and logs under the project's runs dir", async () => {
