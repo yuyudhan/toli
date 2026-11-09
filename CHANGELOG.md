@@ -30,7 +30,7 @@ one. See docs/releasing.md.
   per commit. A pass is recorded under `state/gates/` with its sha, recipe and log, and a later run or push of the
   same commit skips it and says why. A gate runs as a detached process that outlives the jawan, hook or ssh session
   that started it; the next caller attaches to it instead of starting another. It has no time limit: it is stopped
-  only after printing nothing for `capacity.gateStallMinutes` (default 30). `bin/toli push --gate "<recipe>"` runs
+  only after making no progress for `capacity.gateStallMinutes` (default 30). `bin/toli push --gate "<recipe>"` runs
   the gate first. toli's own pre-push hook skips a commit that already passed and records a clean-tree run for the
   pushed commit (a checkout that differs from it is checked as before, unrecorded). See docs/delivery.md.
 - Heavy-build slots: each machine runs at most `capacity.buildSlots` heavy cargo builds at once (default cores / 6,
@@ -41,6 +41,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A gate that works silently (cargo linking hundreds of test binaries before any test prints) is no longer stopped
+  as stalled. Its stall check now is the jawan one: it counts the gate as stuck only when its log did not grow, its
+  checkout did not change and its process tree burned under 10 CPU seconds for the stall minutes. Before, it watched
+  the log alone and killed a busy `just verify all` after 30 minutes without output. A real hang is still stopped
+  after the same time.
 - A gate, a commit and a push never take lost git output for an answer. On a loaded machine a git child that
   succeeded has handed back no stdout: a gate then ran at an empty sha and was recorded failed ("HEAD moved"), and an
   empty `git status` could make a dirty checkout look clean. Commit shas are now read with one check (a full sha, read

@@ -183,6 +183,27 @@ describe("gate", () => {
         expect(gatesLog(box)).toMatch(/ app [0-9a-f]{12} stall: /);
     });
 
+    test("a silent gate whose processes burn CPU outlives the stall limit; an idle silent one is still stopped", () => {
+        const { box, dir } = setup();
+        // Eighteen seconds of silent CPU from three processes (a build linking quietly), past the twelve-second limit.
+        const burn = `"${process.execPath}" -e 'const end = Date.now() + 18_000; while (Date.now() < end) {}'`;
+        const busy = recipe(box, "busy", `for i in 1 2 3; do ${burn} & done; wait; echo linked`);
+        const ok = box.toli(["gate", "run", "app", "--recipe", busy, "--stall", "4"], { env: FAST });
+        expect(ok.stderr).not.toContain("stalled");
+        expect(ok.code).toBe(0);
+        expect(records(box).find((entry) => entry.recipe === busy)?.status).toBe("passed");
+        commitFile(box, dir, "a.txt");
+        const idle = recipe(box, "idle", "sleep 60; echo never");
+        const started = Date.now();
+        const stalled = box.toli(["gate", "run", "app", "--recipe", idle, "--stall", "4"], { env: FAST });
+        expect(Date.now() - started).toBeLessThan(35_000);
+        expect(stalled.code).toBe(1);
+        const record = records(box).find((entry) => entry.recipe === idle);
+        expect(record?.status).toBe("stalled");
+        expect(record?.reason).toContain("CPU use");
+        expect(readFileSync(record?.log ?? "", "utf8")).not.toContain("never");
+    }, 120_000);
+
     test("a second run attaches to the running gate, and the runner outlives a killed caller", async () => {
         const { box } = setup();
         const verify = recipe(box, "verify", "echo begin; sleep 2; echo done");

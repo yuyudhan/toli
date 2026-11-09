@@ -114,10 +114,11 @@ and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a 
   shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog.
 - `gate run` runs a long verification command (a gate, such as `just verify all`) once per commit and recipe: a gate
   that already passed at HEAD is skipped, a running one is waited on instead of started twice, and a new one runs in
-  the background so it survives its caller. It never times out; only a gate with no new output for `--stall` minutes
-  (`capacity.gateStallMinutes`, default 30) is stopped. `gate check` exits 0 only when HEAD already passed the recipe
-  (for pre-push hooks); `gate status` lists a project's gates, newest first. `push --gate "<recipe>"` runs the gate
-  first and pushes only once it passed ([delivery.md](delivery.md#gates-long-checks-run-once-per-commit)).
+  the background so it survives its caller. It never times out; only a gate with no new output, checkout change or
+  CPU use for `--stall` minutes (`capacity.gateStallMinutes`, default 30) is stopped. `gate check` exits 0 only when
+  HEAD already passed the recipe (for pre-push hooks); `gate status` lists a project's gates, newest first.
+  `push --gate "<recipe>"` runs the gate first and pushes only once it passed
+  ([delivery.md](delivery.md#gates-long-checks-run-once-per-commit)).
 
 ### Jawans and harnesses
 
