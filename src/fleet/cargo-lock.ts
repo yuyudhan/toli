@@ -7,7 +7,7 @@ import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, type Dirent, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { platform } from "../core/util.ts";
-import { cargoRunsIn, openBelow, targetUse } from "./disk-scan.ts";
+import { cargoRunsIn, LIVE_PROBES, openBelow, targetUse, type UseProbes } from "./disk-scan.ts";
 
 /** The lock files cargo holds while it compiles; only a whole-target wipe under them ever removes one. */
 export const CARGO_LOCKS: Readonly<Record<string, true>> = {
@@ -93,20 +93,22 @@ function release(fds: number[], lock: Flock): void {
 
 export type WipeOutcome = { wiped: true } | { wiped: false; reason: string };
 
-function openIn(target: string): string | null {
-    const open = openBelow(target);
+function openIn(target: string, probes: UseProbes): string | null {
+    const open = openBelow(target, 3, probes.openFiles);
     return open.length > 0 ? `open files, e.g. ${open.join(", ")}` : null;
 }
 
 /**
  * Wipe `target` once no build holds its locks, no cargo runs in its workspace (the folder holding it), no process uses
  * it and `holdOff` (checked on every try) gives no reason to wait, retrying for up to `waitMs`. Nothing is deleted
- * when that moment never comes; the returned reason says why.
+ * when that moment never comes; the returned reason says why. `probes` say who uses the target: the live machine
+ * unless a test injects its own process list.
  */
 export function wipeTargetBetweenBuilds(
     target: string,
     waitMs: number,
     holdOff: () => string | null = () => null,
+    probes: UseProbes = LIVE_PROBES,
 ): WipeOutcome {
     const lock = flock();
     if (lock === null) return { wiped: false, reason: "cannot load libc flock to take cargo's locks" };
@@ -117,7 +119,11 @@ export function wipeTargetBetweenBuilds(
         if (typeof held === "string") reason = `a build holds ${held}`;
         else {
             try {
-                const busy = holdOff() ?? cargoRunsIn(dirname(target)) ?? targetUse(target) ?? openIn(target);
+                const busy =
+                    holdOff() ??
+                    cargoRunsIn(dirname(target), probes.cargos) ??
+                    targetUse(target, probes.processes) ??
+                    openIn(target, probes);
                 if (busy !== null) reason = busy;
                 else {
                     // Renaming can need a directory block that a full disk lacks: then delete in place, still under

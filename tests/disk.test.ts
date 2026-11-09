@@ -1,19 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import {
-    closeSync,
-    copyFileSync,
-    existsSync,
-    mkdirSync,
-    openSync,
-    readFileSync,
-    realpathSync,
-    writeFileSync,
-} from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Subprocess } from "bun";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
 import { parseSccacheStats } from "../src/fleet/disk-caches.ts";
+import type { HeldFile, ProcessUse, UseProbes } from "../src/fleet/disk-scan.ts";
 import { buildOutput, holdLock, libc } from "./disk-fixture.ts";
 import { type Sandbox, sandbox, tempDir, withProject } from "./helpers.ts";
 
@@ -50,48 +41,72 @@ function runningJawan(box: Sandbox, project: string, cwd: string): void {
     );
 }
 
+/**
+ * A keeper test: each builds origin repos and clones with git and runs bin/toli several times. That real I/O takes
+ * 2-8 s on an idle machine but has taken 67 s at load average 30-60, so each allows 120 s.
+ */
+function keeperTest(name: string, run: () => void): void {
+    test(name, run, 120_000);
+}
+
+/**
+ * A sandbox whose `ps` and `lsof` report no other processes and no open files, so the keeper sees only what a test
+ * sets up (running jawans in state/, cargo's locks) and never the host's own processes.
+ */
+function keeperBox(): Sandbox {
+    const box = sandbox();
+    box.stub("ps", "exit 0");
+    box.stub("lsof", "exit 0");
+    return box;
+}
+
 describe("disk keeper", () => {
-    test("above the floor it does nothing", () => {
-        const box = sandbox();
+    keeperTest("above the floor it does nothing", () => {
+        const box = keeperBox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         expect(box.ok(["disk", "keep", "--floor", "0"])).toContain("nothing to do");
     });
 
-    test("under the floor it plans idle build output first, skips a running jawan's clone, never tracked files", () => {
-        const box = sandbox();
-        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
-        const idle = realpathSync(withProject(box, "alpha"));
-        const busy = realpathSync(withProject(box, "beta"));
-        buildOutput(box, idle);
-        buildOutput(box, busy);
-        runningJawan(box, "beta", busy);
-        box.stub("docker", "exit 1");
-        box.stub("sccache", "exit 2");
-        const report = JSON.parse(
-            box.ok(["disk", "keep", "--dry-run", "--floor", "1000000000", "--json"]),
-        ) as KeepReport;
-        expect(report.ran).toBe(true);
-        expect(report.dryRun).toBe(true);
-        const lines = report.lines.join("\n");
-        expect(lines).toContain(`would delete ${join(idle, "target")} (`);
-        expect(lines).toContain(`would delete ${join(idle, "web", "node_modules")} (`);
-        expect(lines).toContain(`would delete ${join(idle, "web", "dist")} (`);
-        expect(lines).toContain(`skipped ${join(busy, "target")}: jawan j-20261105-000000-test works in it`);
-        expect(lines).toContain(`skipped ${join(busy, "web", "node_modules")}: jawan`);
-        // The busy clone's node_modules goes only in the last resort, after everything else.
-        const lastResort = lines.indexOf("is still under the floor: deleting every build folder left, in use or not");
-        expect(lastResort).toBeGreaterThan(-1);
-        expect(lines.indexOf(`would delete ${join(busy, "web", "node_modules")}`)).toBeGreaterThan(lastResort);
-        expect(lines).not.toContain("docs/dist");
-        expect(lines).toContain("docker: skipped (daemon not reachable)");
-        // The busy clone's target is still freed, but only between build steps, under cargo's locks.
-        expect(lines).toContain(`${join(busy, "target")} is in use (jawan j-20261105-000000-test works in it)`);
-        const order = ["alpha/target", "alpha/web/node_modules", "docker:", "beta/target is in use"].map((text) =>
-            lines.indexOf(text),
-        );
-        expect(order).toEqual([...order].sort((a, b) => a - b));
-        expect(existsSync(join(idle, "target"))).toBe(true);
-    });
+    keeperTest(
+        "under the floor it plans idle build output first, skips a running jawan's clone, never tracked files",
+        () => {
+            const box = keeperBox();
+            box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+            const idle = realpathSync(withProject(box, "alpha"));
+            const busy = realpathSync(withProject(box, "beta"));
+            buildOutput(box, idle);
+            buildOutput(box, busy);
+            runningJawan(box, "beta", busy);
+            box.stub("docker", "exit 1");
+            box.stub("sccache", "exit 2");
+            const report = JSON.parse(
+                box.ok(["disk", "keep", "--dry-run", "--floor", "1000000000", "--json"]),
+            ) as KeepReport;
+            expect(report.ran).toBe(true);
+            expect(report.dryRun).toBe(true);
+            const lines = report.lines.join("\n");
+            expect(lines).toContain(`would delete ${join(idle, "target")} (`);
+            expect(lines).toContain(`would delete ${join(idle, "web", "node_modules")} (`);
+            expect(lines).toContain(`would delete ${join(idle, "web", "dist")} (`);
+            expect(lines).toContain(`skipped ${join(busy, "target")}: jawan j-20261105-000000-test works in it`);
+            expect(lines).toContain(`skipped ${join(busy, "web", "node_modules")}: jawan`);
+            // The busy clone's node_modules goes only in the last resort, after everything else.
+            const lastResort = lines.indexOf(
+                "is still under the floor: deleting every build folder left, in use or not",
+            );
+            expect(lastResort).toBeGreaterThan(-1);
+            expect(lines.indexOf(`would delete ${join(busy, "web", "node_modules")}`)).toBeGreaterThan(lastResort);
+            expect(lines).not.toContain("docs/dist");
+            expect(lines).toContain("docker: skipped (daemon not reachable)");
+            // The busy clone's target is still freed, but only between build steps, under cargo's locks.
+            expect(lines).toContain(`${join(busy, "target")} is in use (jawan j-20261105-000000-test works in it)`);
+            const order = ["alpha/target", "alpha/web/node_modules", "docker:", "beta/target is in use"].map((text) =>
+                lines.indexOf(text),
+            );
+            expect(order).toEqual([...order].sort((a, b) => a - b));
+            expect(existsSync(join(idle, "target"))).toBe(true);
+        },
+    );
 
     /**
      * Two clones: idle `alpha`, and `beta` held by a running jawan and a build holding cargo's lock. `df` reports
@@ -115,38 +130,41 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
         return { idle, busy, release: holdLock(join(busy, "target", "debug", ".cargo-lock")) };
     }
 
-    test("still under the floor after the normal tiers, it deletes held build output too, never sources or git", () => {
-        const box = sandbox();
-        const { idle, busy, release } = heldTree(box);
-        const browsers = join(box.root, ".playwright");
-        mkdirSync(join(browsers, "chromium-1140"), { recursive: true });
-        writeFileSync(join(browsers, "chromium-1140", "chrome"), "x");
-        writeFileSync(join(browsers, "notes.txt"), "not a browser\n");
-        try {
-            const keep = ["disk", "keep", "--floor", "1000000000", "--json"];
-            const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
-            const lines = report.lines.join("\n");
-            expect(report.lastResort).toBe(true);
-            expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
-            expect(lines).toContain(`kept ${join(busy, "target")}: a build holds `);
-            expect(lines).toContain(`${join(busy, "target")} is in use (a build holds `);
-            expect(lines).toContain(`deleted ${join(busy, "target")}, freed `);
-            expect(lines).toContain(`deleted ${join(busy, "web", "node_modules")}, freed `);
-            expect(lines).toContain(`deleted ${join(browsers, "chromium-1140")}, freed `);
-            for (const gone of ["target", "web/node_modules", "web/dist"])
-                expect(existsSync(join(busy, gone))).toBe(false);
-            expect(existsSync(join(browsers, "chromium-1140"))).toBe(false);
-            expect(readFileSync(join(browsers, "notes.txt"), "utf8")).toBe("not a browser\n");
-            expect(readFileSync(join(busy, "main.rs"), "utf8")).toBe("fn main() {}\n");
-            expect(readFileSync(join(busy, "docs", "dist", "page.html"), "utf8")).toBe("tracked\n");
-            expect(box.git(busy, ["log", "--format=%s", "-1"])).toBe("tracked dist");
-        } finally {
-            release();
-        }
-    });
+    keeperTest(
+        "still under the floor after the normal tiers, it deletes held build output too, never sources or git",
+        () => {
+            const box = keeperBox();
+            const { idle, busy, release } = heldTree(box);
+            const browsers = join(box.root, ".playwright");
+            mkdirSync(join(browsers, "chromium-1140"), { recursive: true });
+            writeFileSync(join(browsers, "chromium-1140", "chrome"), "x");
+            writeFileSync(join(browsers, "notes.txt"), "not a browser\n");
+            try {
+                const keep = ["disk", "keep", "--floor", "1000000000", "--json"];
+                const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
+                const lines = report.lines.join("\n");
+                expect(report.lastResort).toBe(true);
+                expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
+                expect(lines).toContain(`kept ${join(busy, "target")}: a build holds `);
+                expect(lines).toContain(`${join(busy, "target")} is in use (a build holds `);
+                expect(lines).toContain(`deleted ${join(busy, "target")}, freed `);
+                expect(lines).toContain(`deleted ${join(busy, "web", "node_modules")}, freed `);
+                expect(lines).toContain(`deleted ${join(browsers, "chromium-1140")}, freed `);
+                for (const gone of ["target", "web/node_modules", "web/dist"])
+                    expect(existsSync(join(busy, gone))).toBe(false);
+                expect(existsSync(join(browsers, "chromium-1140"))).toBe(false);
+                expect(readFileSync(join(browsers, "notes.txt"), "utf8")).toBe("not a browser\n");
+                expect(readFileSync(join(busy, "main.rs"), "utf8")).toBe("fn main() {}\n");
+                expect(readFileSync(join(busy, "docs", "dist", "page.html"), "utf8")).toBe("tracked\n");
+                expect(box.git(busy, ["log", "--format=%s", "-1"])).toBe("tracked dist");
+            } finally {
+                release();
+            }
+        },
+    );
 
-    test("back above the floor after the normal tiers, it keeps held build output", () => {
-        const box = sandbox();
+    keeperTest("back above the floor after the normal tiers, it keeps held build output", () => {
+        const box = keeperBox();
         const { idle, busy, release } = heldTree(box);
         try {
             // Floor 50, goal 70: deleting idle alpha's target brings free from 1 GB to 100 GB.
@@ -163,8 +181,8 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
         }
     });
 
-    test("a live pid in state/disk-keep.pause holds it off, logged once; a dead pid's pause is stale", () => {
-        const box = sandbox();
+    keeperTest("a live pid in state/disk-keep.pause holds it off, logged once; a dead pid's pause is stale", () => {
+        const box = keeperBox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const idle = realpathSync(withProject(box, "alpha"));
         buildOutput(box, idle);
@@ -195,8 +213,8 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
         expect(report.lines.join("\n")).toContain(`would delete ${join(idle, "target")} (`);
     });
 
-    test("beside another live keeper it logs that once, not on every run", () => {
-        const box = sandbox();
+    keeperTest("beside another live keeper it logs that once, not on every run", () => {
+        const box = keeperBox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         mkdirSync(join(box.root, "state"), { recursive: true });
         writeFileSync(join(box.root, "state", "disk-keep.lock"), String(process.pid));
@@ -211,6 +229,22 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
 });
 
 describe("wiping a target between build steps", () => {
+    /** The processes, open files and cargo runs a wipe sees: injected, so the host's own processes never count. */
+    type Machine = { processes: ProcessUse[]; openFiles: HeldFile[]; cargos: { pid: string; cwd: string }[] };
+
+    function quiet(): Machine {
+        return { processes: [], openFiles: [], cargos: [] };
+    }
+
+    function probes(machine: Machine): UseProbes {
+        return { processes: () => machine.processes, openFiles: () => machine.openFiles, cargos: () => machine.cargos };
+    }
+
+    /** A `sleep` working in `cwd`: it runs and maps nothing but `/bin/sleep`. */
+    function sleeping(pid: string, cwd: string): ProcessUse {
+        return { pid, args: "/bin/sleep 30", files: ["/bin/sleep"], cwd };
+    }
+
     test("keeps the target while a build holds cargo's lock, wipes it once the lock is free", () => {
         const target = join(tempDir("disk"), "target");
         mkdirSync(join(target, "debug", "deps"), { recursive: true });
@@ -218,12 +252,12 @@ describe("wiping a target between build steps", () => {
         writeFileSync(lock, "");
         const fd = openSync(lock, "r");
         expect(libc.symbols.flock(fd, 2 | 4)).toBe(0);
-        const held = wipeTargetBetweenBuilds(target, 0);
+        const held = wipeTargetBetweenBuilds(target, 0, undefined, probes(quiet()));
         expect(held).toEqual({ wiped: false, reason: `a build holds ${lock}` });
         expect(existsSync(target)).toBe(true);
         libc.symbols.flock(fd, 8);
         closeSync(fd);
-        expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
+        expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(quiet()))).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
     });
 
@@ -236,103 +270,80 @@ describe("wiping a target between build steps", () => {
         return { workspace, target };
     }
 
-    /**
-     * Run a process that idles for `seconds` in `cwd`: `/bin/sleep` itself, or a copy of bun at `exe`. Not a copy of
-     * `/bin/sleep`: macOS launch constraints kill a platform binary started from another path, so that stand-in often
-     * died before the keeper looked, and the keeper rightly wiped a target nothing used any more.
-     */
-    function idler(cwd: string, exe: string, seconds: number): Subprocess {
-        if (exe === "/bin/sleep")
-            return Bun.spawn([exe, String(seconds)], { cwd, stdio: ["ignore", "ignore", "ignore"] });
-        copyFileSync(process.execPath, exe);
-        return Bun.spawn([exe, "-e", `setTimeout(() => {}, ${seconds * 1000})`], {
-            cwd,
-            stdio: ["ignore", "ignore", "ignore"],
-        });
-    }
-
-    /** Run `sleep` (or an idling copy of bun at `exe`) in `cwd` until the test ends. */
-    function sleeper(cwd: string, exe = "/bin/sleep"): Subprocess {
-        return idler(cwd, exe, 30);
-    }
-
     test("keeps the target while a test binary built into it runs, though no build holds the lock", () => {
         const { target } = workspaceTarget();
         const binary = join(target, "debug", "deps", "robo_agent_kit_store-0123");
-        const child = sleeper(realpathSync(tempDir("elsewhere")), binary);
-        try {
-            const outcome = wipeTargetBetweenBuilds(target, 0);
-            expect(outcome).toEqual({ wiped: false, reason: `process ${child.pid} runs ${binary}` });
-            expect(existsSync(binary)).toBe(true);
-        } finally {
-            child.kill("SIGKILL");
-        }
+        writeFileSync(binary, "");
+        const machine = quiet();
+        machine.processes.push({ pid: "4101", args: binary, files: [binary], cwd: realpathSync(tempDir("elsewhere")) });
+        const outcome = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+        expect(outcome).toEqual({ wiped: false, reason: `process 4101 runs ${binary}` });
+        expect(existsSync(binary)).toBe(true);
     });
 
     test("keeps the target while a process works inside its workspace", () => {
         const { workspace, target } = workspaceTarget();
         const crate = join(workspace, "crates", "store");
         mkdirSync(crate, { recursive: true });
-        const child = sleeper(crate);
-        try {
-            const outcome = wipeTargetBetweenBuilds(target, 0);
-            expect(outcome).toEqual({ wiped: false, reason: `process ${child.pid} runs in ${crate}` });
-            expect(existsSync(target)).toBe(true);
-        } finally {
-            child.kill("SIGKILL");
-        }
+        const machine = quiet();
+        machine.processes.push(sleeping("4102", crate));
+        const outcome = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+        expect(outcome).toEqual({ wiped: false, reason: `process 4102 runs in ${crate}` });
+        expect(existsSync(target)).toBe(true);
     });
 
     test("wipes an idle target that no build locks and no process uses", () => {
         const { workspace, target } = workspaceTarget();
-        const child = sleeper(realpathSync(tempDir("elsewhere")));
-        try {
-            expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
-            expect(existsSync(target)).toBe(false);
-            expect(existsSync(workspace)).toBe(true);
-        } finally {
-            child.kill("SIGKILL");
-        }
+        const machine = quiet();
+        machine.processes.push(sleeping("4103", realpathSync(tempDir("elsewhere"))));
+        expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
+        expect(existsSync(target)).toBe(false);
+        expect(existsSync(workspace)).toBe(true);
     });
 
-    /** A copy of `sleep` named `name` in `dir`, running with working directory `cwd` (Bun.spawn returns after exec). */
-    function standIn(dir: string, name: string, cwd: string): Bun.Subprocess {
-        mkdirSync(dir, { recursive: true });
-        mkdirSync(cwd, { recursive: true });
-        const binary = join(dir, name);
-        return idler(cwd, binary, 60);
-    }
-
-    test("keeps the target while a test binary runs from it, wipes it once the binary exits", async () => {
-        const workspace = realpathSync(tempDir("disk"));
-        const target = join(workspace, "target");
-        mkdirSync(join(target, "debug"), { recursive: true });
-        writeFileSync(join(target, "debug", ".cargo-lock"), "");
-        const binary = standIn(join(target, "debug", "deps"), "robo_store-0123abcd", workspace);
-        const busy = wipeTargetBetweenBuilds(target, 0);
-        expect(busy.wiped).toBe(false);
+    test("keeps the target while a process holds a file in it open, wipes it once the file is closed", () => {
+        const { target } = workspaceTarget();
+        const log = join(target, "debug", "build.log");
+        writeFileSync(log, "");
+        const machine = quiet();
+        machine.openFiles.push({ path: log, pid: "4104" });
+        const busy = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+        expect(busy).toEqual({ wiped: false, reason: `open files, e.g. ${log} (pid 4104)` });
         expect(existsSync(target)).toBe(true);
-        binary.kill();
-        await binary.exited;
-        expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
+        machine.openFiles.length = 0;
+        expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
     });
 
-    test("keeps the target while cargo runs in its workspace between test binaries, wipes it once cargo exits", async () => {
-        const workspace = realpathSync(tempDir("disk"));
-        const target = join(workspace, "target");
-        mkdirSync(join(target, "debug", "deps"), { recursive: true });
-        writeFileSync(join(target, "debug", ".cargo-lock"), "");
+    test("keeps the target while a test binary runs from it, wipes it once the binary exits", () => {
+        const { workspace, target } = workspaceTarget();
+        const binary = join(target, "debug", "deps", "robo_store-0123abcd");
+        writeFileSync(binary, "");
+        const machine = quiet();
+        machine.processes.push({ pid: "4105", args: binary, files: [binary], cwd: workspace });
+        const busy = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+        expect(busy.wiped).toBe(false);
+        expect(existsSync(target)).toBe(true);
+        machine.processes.length = 0;
+        expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
+        expect(existsSync(target)).toBe(false);
+    });
+
+    test("keeps the target while cargo runs in its workspace between test binaries, wipes it once cargo exits", () => {
+        const { workspace, target } = workspaceTarget();
         // `cargo test` releases its build lock before it runs the test binaries one after another; between two of
         // them nothing in the target is open, yet cargo is about to start the next one from it.
         const crate = join(workspace, "crates", "store");
-        const cargo = standIn(tempDir("bin"), "cargo", crate);
-        const busy = wipeTargetBetweenBuilds(target, 0);
-        expect(busy).toEqual({ wiped: false, reason: `cargo (pid ${cargo.pid}) runs in ${crate}` });
+        mkdirSync(crate, { recursive: true });
+        const machine = quiet();
+        machine.processes.push({ pid: "4106", args: "cargo test", files: ["/opt/cargo/bin/cargo"], cwd: crate });
+        machine.cargos.push({ pid: "4106", cwd: crate });
+        const busy = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+        expect(busy).toEqual({ wiped: false, reason: `cargo (pid 4106) runs in ${crate}` });
         expect(existsSync(target)).toBe(true);
-        cargo.kill();
-        await cargo.exited;
-        expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: true });
+        machine.processes.length = 0;
+        machine.cargos.length = 0;
+        expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
     });
 });
