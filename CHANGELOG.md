@@ -4,6 +4,54 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.4.0 - unreleased
+
+### Changed
+
+- Jawan runs have no wall-clock limit by default (`bin/toli spawn`, `bin/toli remote`/`exec`, scheduled headless
+  jobs): they work until done. `--max-time` stays as an explicit opt-in. A run counts as stuck only when it shows no
+  progress for `capacity.stallMinutes` (default 30): no output, no omp session activity (messages, tool calls), no
+  file change in its working tree, and under 10 CPU seconds in its process tree. A stalled run is stopped and
+  resumed; after `capacity.autoResume` resumes (default 3) the chain stops and the inbox and task notes say why.
+- A stopped run is resumed, never restarted: each omp run keeps its session in `<run dir>/session`, and the
+  continuation runs `omp --resume <session file>` with a short continue prompt instead of re-reading the whole brief.
+  Every resume is recorded on both runs and in the task's notes. Other harnesses still get a fresh run with a
+  `## RESUME` section.
+- omp's per-subagent request budget is off for toli: `.omp/config.yml` in toli's root sets
+  `task.softRequestBudget: 0` (omp's default 200 told long subagent jawans to wrap up and force-stopped them at 300),
+  and headless jawans working in project clones get it with `--config`.
+- Brief templates say there is no time limit, to commit as you go, and that the session may be resumed.
+
+### Added
+
+- `bin/toli resume <run> [--note "<text>"] [--max-time <minutes>] [--now]`: the lead continues any finished run in
+  its own omp session.
+- `bin/toli gate run|check|status <project> --recipe "<command>"`: a long gate (a verify, a push gate) runs once
+  per commit. A pass is recorded under `state/gates/` with its sha, recipe and log, and a later run or push of the
+  same commit skips it and says why. A gate runs as a detached process that outlives the jawan, hook or ssh session
+  that started it; the next caller attaches to it instead of starting another. It has no time limit: it is stopped
+  only after printing nothing for `capacity.gateStallMinutes` (default 30). `bin/toli push --gate "<recipe>"` runs
+  the gate first. toli's own pre-push hook skips a commit that already passed and records a clean-tree run for the
+  pushed commit (a checkout that differs from it is checked as before, unrecorded). See docs/delivery.md.
+- Heavy-build slots: each machine runs at most `capacity.buildSlots` heavy cargo builds at once (default cores / 6,
+  at least 1); the rest wait for a slot instead of compiling together. Jawans get a `cargo` shim first on `PATH`
+  that queues build, check, test, clippy, nextest, run, bench, doc and install for a slot
+  (`bin/toli build-slot -- <command>`), and `CARGO_BUILD_JOBS` defaults to cores / slots, so the total matches the
+  cores. `bin/toli resources` shows busy slots. See docs/fleet.md.
+
+### Fixed
+
+- The disk keeper never deletes forever: its floor is min(`capacity.diskKeepGB`, 15% of the disk), so a setting
+  near or above the disk's free space can no longer make it delete build folders on every run; it stops as soon as
+  free space reaches the floor (no extra margin) and deletes idle folders oldest first. On Linux without `lsof` it
+  reads working directories, open files and cargo processes from `/proc`, so a build folder in use is never deleted
+  there either. `capacity.diskBuildTools` names a machine's own build-queue tools that count as using a folder.
+- `state/disk-keep.pause` expires by itself after 2 hours without being touched, even if its pid is alive, and the
+  keeper logs that cleaning resumed, so a forgotten pause no longer turns cleaning off for good.
+- A jawan run whose harness already exited is never stopped as stalled: a supervisor starved by a busy machine
+  could probe the finished process before handling its exit and record it stalled (or done, its error counted as a
+  report) instead of retrying a rate limit or reporting its failure.
+
 ## v0.3.1 - 2026-11-09
 
 ### Fixed

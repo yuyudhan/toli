@@ -140,9 +140,11 @@ jawans stop on any OTP or captcha.
    task worktree toli made), into that checkout's normal build folder (`target/`, `node_modules/`, `dist/`): never
    a private `CARGO_TARGET_DIR` or other side build directory, a `/tmp` target, a `git archive` or temporary copy
    of the code to verify "cleanly", or any other duplicate of the code or its build output. Cargo's build-directory
-   lock serializes concurrent builds: wait for it, never work around it. In a shared clone cap parallel builds with
-   `CARGO_BUILD_JOBS` at half the machine's cores (`bin/toli spawn` sets it for the jawans it starts). Never put
-   "own CARGO_TARGET_DIR", "build in a temp dir" or "verify on a scratch copy" in a brief.
+   lock serializes concurrent builds: wait for it, never work around it. Heavy builds queue for one of the machine's
+   heavy-build slots (`capacity.buildSlots`, default one per six cores), each with `CARGO_BUILD_JOBS` at one slot's
+   share of the cores (`bin/toli spawn` puts toli's cargo shim first on its jawans' PATH and sets it; run other heavy
+   commands under `bin/toli build-slot -- <command>`). Never put "own CARGO_TARGET_DIR", "build in a temp dir" or
+   "verify on a scratch copy" in a brief.
 6. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
    commit on the project's working branch; no branches unless Malik asks. When the project has a fixed branch
    (`branch`), all work happens on it and `bin/toli commit` refuses on any other branch: never switch branches to

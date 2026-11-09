@@ -95,6 +95,8 @@ export const paths = {
     outboxDir: () => join(repoRoot(), "state", "outbox"),
     runsDir: () => join(repoRoot(), "state", "runs"),
     runRecord: (runId: string) => join(repoRoot(), "state", "runs", `${runId}.json`),
+    /** omp session dirs of headless scheduled job runs, watched for progress while they run. */
+    jobSessionDir: (runId: string) => join(repoRoot(), "state", "job-sessions", runId),
     /** Index of spawned jawan runs (status/pid); project-less runs also keep their logs in state/jawans/<runId>/. */
     jawansDir: () => join(repoRoot(), "state", "jawans"),
     jawanRecord: (runId: string) => join(repoRoot(), "state", "jawans", `${runId}.json`),
@@ -107,6 +109,14 @@ export const paths = {
     diskKeepPause: () => join(repoRoot(), "state", "disk-keep.pause"),
     /** Why the disk keeper last did not run, so that reason reaches logs/disk.log once, not every minute. */
     diskKeepSkip: () => join(repoRoot(), "state", "disk-keep.skip"),
+    /** One flock'd file per heavy-build slot, `<n>.lock` (src/fleet/build-slots.ts). */
+    buildSlotsDir: () => join(repoRoot(), "state", "build-slots"),
+    /** The cargo shim jawans get first on PATH; it routes heavy cargo commands through a build slot. */
+    buildShimsDir: () => join(repoRoot(), "bin", "shims"),
+    /** Gate records and logs of a project (`bin/toli gate`): state/gates/<project>/<sha>-<recipe hash>.{json,log}. */
+    gatesDir: (project: string) => join(repoRoot(), "state", "gates", project),
+    /** Every gate skip, attach, start, stall and outcome (src/forge/gate.ts). */
+    gatesLog: () => join(repoRoot(), "logs", "gates.log"),
     /** Private per-installation helpers, never committed: local/{scripts,hooks,helpers.json,README.md}. */
     localDir: () => join(repoRoot(), "local"),
     localScriptsDir: () => join(repoRoot(), "local", "scripts"),

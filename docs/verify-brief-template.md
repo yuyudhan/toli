@@ -85,6 +85,8 @@ the PR/MR?" --option "yes => a jawan pushes and opens the PR/MR" --option "no =>
 
 - Read-only on the project except `bin/toli commit` above: never edit project files, never revert or reformat
   anything, never fix gaps yourself.
+- There is no time limit: run every check to its end. Your session may be resumed where it stopped if it shows no
+  progress for 30 minutes; a passing gate already recorded for the commit (`bin/toli gate check`) need not be re-run.
 - Stay on the branch above; never create, switch, or rebase branches. Run git only through `bash`.
 - Never push, merge, or open a PR, except the push and PR/MR the Landing section allows when Push / PR above is
   granted. Never merge.

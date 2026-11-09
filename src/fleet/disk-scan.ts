@@ -1,14 +1,17 @@
 // What the disk keeper (src/fleet/disk.ts) may delete, and what holds it: the checkouts of registered projects, their
 // git-ignored build output folders, the runs and processes using each checkout, and the files processes hold open.
-import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { pidAlive, run } from "../core/util.ts";
+import { pidAlive, platform, run } from "../core/util.ts";
 import { listRuns, RUNNING } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { gitWorktrees } from "../projects/workspace.ts";
+import { buildTool, configuredBuildTools } from "./build-tools.ts";
+import { procCargoCwds, procCwds, procLink, procOpenFiles } from "./disk-proc.ts";
+import { procFile } from "./resources.ts";
 
 /** One working tree of a registered project: its main clone or one of the clone's git worktrees. */
 export type Checkout = { project: string; path: string; main: boolean };
@@ -106,9 +109,13 @@ export function currentHolders(): Holders {
     return { runs, cwds: processCwds() };
 }
 
-/** Working directory of every process of this user, keyed by path, valued by one pid (`lsof -d cwd`). */
+/** Working directory of every process of this user, keyed by path, valued by one pid (`lsof -d cwd`, Linux /proc). */
 function processCwds(): Map<string, string> {
     const cwds = new Map<string, string>();
+    if (platform() === "linux") {
+        for (const { pid, cwd } of procCwds()) cwds.set(cwd, pid);
+        return cwds;
+    }
     const uid = process.getuid?.();
     const user = uid === undefined ? [] : ["-u", String(uid)];
     const listed = run(["lsof", "-a", "-d", "cwd", ...user, "-w", "-Fpn"], { timeoutMs: 60_000 });
@@ -138,46 +145,48 @@ export function checkoutUse(checkout: Checkout, holders: Holders, all: Checkout[
 }
 
 /** Paths below `dir` that any process other than this one holds open (`lsof -Fpn`), at most `limit` of them. */
-export function openBelow(dir: string, limit = 3): string[] {
-    return heldOpenBelow(dir, limit).map((held) => `${held.path} (pid ${held.pid})`);
+export function openBelow(dir: string, limit = 3, openFiles: () => HeldFile[] = allOpenFiles): string[] {
+    return heldOpenBelow(dir, limit, openFiles).map((held) => `${held.path} (pid ${held.pid})`);
 }
 
-/**
- * Files below `dir` that any process other than this one holds open, runs or maps (`lsof -Fpn` lists all three), with
- * the holding pid; at most `limit` of them.
- */
-export function heldOpenBelow(dir: string, limit = Number.POSITIVE_INFINITY): { path: string; pid: string }[] {
+/** One file a process holds open, runs or maps, with the holding pid. */
+export type HeldFile = { path: string; pid: string };
+
+/** Every file any process other than this one holds open, runs or maps (`lsof -Fpn` lists all three; Linux /proc). */
+function allOpenFiles(): HeldFile[] {
+    if (platform() === "linux") return procOpenFiles();
     const listed = run(["lsof", "-n", "-P", "-w", "-Fpn"], { timeoutMs: 120_000 });
     const me = String(process.pid);
-    const held: { path: string; pid: string }[] = [];
+    const held: HeldFile[] = [];
     let pid = "";
     for (const line of listed.stdout.split("\n")) {
         if (line.startsWith("p")) pid = line.slice(1);
-        else if (line.startsWith("n") && pid !== me && within(line.slice(1), dir)) {
-            held.push({ path: line.slice(1), pid });
-            if (held.length >= limit) break;
-        }
+        else if (line.startsWith("n") && pid !== me) held.push({ path: line.slice(1), pid });
     }
     return held;
 }
 
-/** Build tools that start binaries from a workspace's target at any moment, even between holding cargo's locks. */
-const BUILD_TOOLS: Record<string, true> = {
-    cargo: true,
-    "cargo-clippy": true,
-    "cargo-nextest": true,
-    "clippy-driver": true,
-    rustc: true,
-    rustdoc: true,
-    just: true,
-};
+/** Files below `dir` that any process other than this one holds open, runs or maps; at most `limit` of them. */
+export function heldOpenBelow(
+    dir: string,
+    limit = Number.POSITIVE_INFINITY,
+    openFiles: () => HeldFile[] = allOpenFiles,
+): HeldFile[] {
+    const held: HeldFile[] = [];
+    for (const file of openFiles()) {
+        if (!within(file.path, dir)) continue;
+        held.push(file);
+        if (held.length >= limit) break;
+    }
+    return held;
+}
 
 /**
  * One other process: its command line, the executable and mapped files it runs, and its working directory.
  * `uninspected`: one of this user's processes whose files could not be read (lsof left it out, typically while it was
  * exec'ing); the keeper counts it as using every target rather than guess.
  */
-type ProcessUse = { pid: string; args: string; files: string[]; cwd: string | null; uninspected?: true };
+export type ProcessUse = { pid: string; args: string; files: string[]; cwd: string | null; uninspected?: true };
 
 /**
  * Rechecks of one of this user's processes lsof left out, `RECHECK_MS` apart (about 2 s in all), before it counts as
@@ -225,15 +234,15 @@ function processTable(): ProcessUse[] | null {
         // Zombies hold no files; other users' processes are not ours to read.
         if (match?.[2] === uid && !(match?.[3] ?? "").startsWith("Z")) mine.push(pid);
     }
-    if (process.platform === "linux") {
+    if (platform() === "linux") {
         for (const entry of table.values()) {
-            const exe = linkOf(`/proc/${entry.pid}/exe`);
-            if (exe !== null) entry.files.push(exe.replace(/ \(deleted\)$/, ""));
-            entry.cwd = linkOf(`/proc/${entry.pid}/cwd`);
+            const exe = procLink(entry.pid, "exe");
+            if (exe !== null) entry.files.push(exe);
+            entry.cwd = procLink(entry.pid, "cwd");
         }
         for (const pid of mine) {
             const entry = table.get(pid);
-            if (entry !== undefined && entry.files.length === 0 && existsSync(`/proc/${pid}`)) entry.uninspected = true;
+            if (entry !== undefined && entry.files.length === 0 && existsSync(procFile(pid))) entry.uninspected = true;
         }
         return [...table.values()];
     }
@@ -261,37 +270,21 @@ function processTable(): ProcessUse[] | null {
     return [...table.values()];
 }
 
-/** Target of a /proc symlink, or null when the process is gone or not ours to inspect. */
-function linkOf(path: string): string | null {
-    try {
-        return readlinkSync(path);
-    } catch {
-        return null;
-    }
-}
-
-/** The build tool a command line runs (`cargo`, `rustc`, `just`, a kalki queue, ...), or null. */
-function buildTool(args: string): string | null {
-    const words = args.split(/\s+/).filter((word) => word !== "");
-    const program = basename(words[0] ?? "");
-    if (BUILD_TOOLS[program] === true) return program;
-    for (const [index, word] of words.entries()) {
-        const name = basename(word);
-        if (/^kalki-queue(\.|$)/.test(name) || (name === "kalki" && words[index + 1] === "queue")) return "kalki-queue";
-    }
-    return null;
-}
-
 /**
  * Why a process uses `target` right now, or null when none does: one runs an executable or maps a file under it (a
  * test binary cargo started after releasing its locks), works inside the workspace that owns it (the folder holding
  * `target/`), or is a build tool running in, above or on that workspace. An unreadable process table is a reason too.
  */
-export function targetUse(target: string): string | null {
+export function targetUse(
+    target: string,
+    processes: () => ProcessUse[] | null = processTable,
+    buildTools: () => string[] = configuredBuildTools,
+): string | null {
     const dir = real(target);
     const workspaces = [...new Set([dirname(dir), dirname(target)])];
-    const table = processTable();
+    const table = processes();
     if (table === null) return "cannot read the process table to see who uses it";
+    const extra = buildTools();
     const roots = new Set(["/", real(homedir())]);
     for (const entry of table) {
         const file = entry.files.find((path) => within(path, dir));
@@ -299,7 +292,7 @@ export function targetUse(target: string): string | null {
         const cwd = entry.cwd;
         if (cwd !== null && workspaces.some((workspace) => within(cwd, workspace)))
             return `process ${entry.pid} runs in ${cwd}`;
-        const tool = buildTool(entry.args);
+        const tool = buildTool(entry.args, extra);
         if (tool === null) continue;
         if (cwd === null) return `${tool} (pid ${entry.pid}) runs where it cannot be seen`;
         const above = !roots.has(cwd) && workspaces.some((workspace) => within(workspace, cwd));
@@ -311,21 +304,50 @@ export function targetUse(target: string): string | null {
     return unseen === undefined ? null : `process ${unseen.pid} could not be inspected (lsof did not list it)`;
 }
 
-/**
- * A cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) whose working directory lies in `workspace`, as
- * `cargo (pid N) runs in <dir>`, or null. `cargo test` drops its build lock once compiling is done and then runs the
- * test binaries one by one; between two of them nothing in the target is open, yet cargo is about to start the next.
- */
-export function cargoRunsIn(workspace: string): string | null {
+/** The working directory of every cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...; `lsof -c cargo`). */
+function cargoCwds(): { pid: string; cwd: string }[] {
+    if (platform() === "linux") return procCargoCwds();
     const listed = run(["lsof", "-a", "-d", "cwd", "-c", "cargo", "-w", "-Fpn"], { timeoutMs: 60_000 });
+    const cwds: { pid: string; cwd: string }[] = [];
     let pid = "";
     for (const line of listed.stdout.split("\n")) {
         if (line.startsWith("p")) pid = line.slice(1);
-        else if (line.startsWith("n") && within(line.slice(1), workspace))
-            return `cargo (pid ${pid}) runs in ${line.slice(1)}`;
+        else if (line.startsWith("n")) cwds.push({ pid, cwd: line.slice(1) });
     }
-    return null;
+    return cwds;
 }
+
+/**
+ * A cargo process whose working directory lies in `workspace`, as `cargo (pid N) runs in <dir>`, or null. `cargo test`
+ * drops its build lock once compiling is done and then runs the test binaries one by one; between two of them nothing
+ * in the target is open, yet cargo is about to start the next.
+ */
+export function cargoRunsIn(
+    workspace: string,
+    cargos: () => { pid: string; cwd: string }[] = cargoCwds,
+): string | null {
+    const found = cargos().find((cargo) => within(cargo.cwd, workspace));
+    return found === undefined ? null : `cargo (pid ${found.pid}) runs in ${found.cwd}`;
+}
+
+/** What a target wipe asks the machine about who uses the target; the live machine unless a caller injects its own. */
+export type UseProbes = {
+    /** Every process but this one with what it runs and where; null when the table cannot be read. */
+    processes: () => ProcessUse[] | null;
+    /** Every file a process other than this one holds open, runs or maps. */
+    openFiles: () => HeldFile[];
+    /** The working directory of every cargo process. */
+    cargos: () => { pid: string; cwd: string }[];
+    /** The machine's own build tools (capacity.diskBuildTools), beside the generic ones. */
+    buildTools: () => string[];
+};
+
+export const LIVE_PROBES: UseProbes = {
+    processes: processTable,
+    openFiles: allOpenFiles,
+    cargos: cargoCwds,
+    buildTools: configuredBuildTools,
+};
 
 /** Size of a folder in GB from `du -sk` (0 when du fails). */
 export function sizeGB(path: string): number {

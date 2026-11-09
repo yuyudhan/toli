@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# pre-push: the full gate. `bun run check` (= `just check`: fmt-check, lint, typecheck, tests) plus a gitleaks scan of the
-# commits being pushed. The gate checks the working tree, so push from a clean checkout of what you push.
+# pre-push: the full gate. A gitleaks scan of the commits being pushed, then `bun run check` (= `just check`:
+# fmt-check, lint, typecheck, tests). A pushed commit that already passed (`bin/toli gate check`) is not checked
+# again. When the checkout is exactly the pushed commit (HEAD, no changed or untracked files), the checks run as a
+# `bin/toli gate`, so the result is recorded for that commit. Otherwise they run on the working tree as they always
+# did, after listing how it differs: that result is not recorded, since it is not the commit's. No copy is made.
 #
 # git feeds one line per ref: <local ref> <local sha> <remote ref> <remote sha>. Per ref:
 #   - deletion (local sha all zeros): no commits to check
@@ -28,6 +31,7 @@ refs=0
 commits=0
 unknown=0
 scans=()
+shas=()
 
 while read -r local_ref local_sha remote_ref remote_sha; do
     [[ -n "${local_ref:-}" ]] || continue
@@ -46,6 +50,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     elif ((count > 0)); then
         commits=$((commits + count))
         scans+=("$log_opts")
+        [[ " ${shas[*]:-} " == *" $local_sha "* ]] || shas+=("$local_sha")
     fi
 done
 
@@ -57,6 +62,7 @@ fi
 if ((refs == 0 || unknown == 1)); then
     echo "pre-push: pushed range unknown; secrets scan over full history"
     gitleaks git --config .gitleaks.toml --redact --no-banner --log-level warn
+    shas=("$(git rev-parse HEAD)")
 else
     echo "pre-push: secrets scan over $commits pushed commit(s)"
     for log_opts in "${scans[@]}"; do
@@ -64,5 +70,31 @@ else
     done
 fi
 
-echo "pre-push: bun run check (just check)"
-bun run check
+recipe="bun run check"
+toli="$root/bin/toli"
+tree_check=0
+for sha in "${shas[@]}"; do
+    short="${sha:0:12}"
+    if "$toli" gate check toli --sha "$sha" --recipe "$recipe" >/dev/null 2>&1; then
+        echo "pre-push: $recipe already passed on $short (bin/toli gate check); skipping it"
+        continue
+    fi
+    head="$(git rev-parse HEAD)"
+    changes="$(git status --porcelain)"
+    if [[ "$sha" == "$head" && -z "$changes" ]]; then
+        # The checkout is exactly the pushed commit, so its code is what runs (TOLI_DEV=1) and what is tested.
+        echo "pre-push: $recipe on $short (bin/toli gate run)"
+        TOLI_DEV=1 "$toli" gate run toli --recipe "$recipe"
+        continue
+    fi
+    echo "pre-push: this checkout is not exactly the pushed commit $short, so its check is not recorded for it:"
+    [[ "$sha" == "$head" ]] || echo "    HEAD is ${head:0:12}, not the pushed commit"
+    [[ -z "$changes" ]] || printf '%s\n' "$changes" | sed -n '1,20s/^/    /p'
+    tree_check=1
+done
+
+if ((tree_check == 1)); then
+    # One run covers every such commit: it tests the working tree, whichever commit is pushed.
+    echo "pre-push: $recipe on the working tree (just check)"
+    bun run check
+fi

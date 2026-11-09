@@ -9,7 +9,7 @@ import { hasMachine, loadMachine } from "../core/config.ts";
 import { currentBranch, git, gitOk } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, requireName, ToliError } from "../core/util.ts";
-import { projectCloneDir } from "../projects/projects.ts";
+import { projectCloneDir, toliSelfCheckout } from "../projects/projects.ts";
 
 /**
  * Set by `bin/toli exec` for the headless run it starts: the machine that issued the run and its task there, so a
@@ -129,7 +129,7 @@ function add(argv: string[]): void {
     const args = new Args(argv, { values: ["branch", "old", "new", "by", "for", "word"] });
     args.maxPositional(1);
     const project = args.pos(0, "project");
-    const dir = projectCloneDir(project);
+    const dir = toliSelfCheckout(project) ?? projectCloneDir(project);
     const branch = args.str("branch") ?? currentBranch(dir);
     if (branch === null) throw new ToliError(`${dir} is on a detached HEAD: pass --branch <branch>`);
     gitOk(dir, ["check-ref-format", "--branch", branch]);

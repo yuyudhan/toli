@@ -34,7 +34,7 @@ on several.
 
 ## Capacity and picking a machine
 
-    bin/toli resources [--json]               # this machine: load, free memory/disk, active runs, clones, available?
+    bin/toli resources [--json]               # this machine: load, memory/disk, runs, build slots, clones, available?
     bin/toli fleet status [--json]            # every machine, probed over ssh in parallel; unreachable is not fatal
     bin/toli pick [--project <p>] [--json]    # best machine for one unit of work; exit 2 with reasons when none
 
@@ -46,22 +46,42 @@ before work starts instead ([disk.md](disk.md)):
 { "capacity": { "maxRuns": 2, "maxLoadPerCpu": 0.8, "minMemAvailableMB": 2048, "diskKeepGB": 60 } }
 ```
 
-`capacity.cargoJobs` (default `max(1, floor(cpus / 2))`) is the machine's one cap on parallel compile jobs per cargo
-run: `bin/toli spawn` sets every jawan's `CARGO_BUILD_JOBS` to it, and `[build] jobs` in `~/.cargo/config.toml`
-holds the same number so native subagents and hand-run cargo get it too (`bin/toli doctor` warns when the two
-differ). One shared build folder runs one cargo build at a time (Cargo's lock), so the cap is per build, not split
-across jawans; leave cores for the desktop.
-
 `capacity.maxRuns` is also a hard cap on `bin/toli spawn` jawans here: with that many running, a new spawn (or an
 automatic continuation) is queued and starts when one ends (`--now` overrides). `capacity.autoResume` (default 3)
-is how many automatic continuations a chain of runs stopped by their time limit without a report gets
+is how many times a chain of runs that stalled (no progress for `capacity.stallMinutes`, default 30) or used an
+explicit `--max-time` without a report is resumed in the same session
 ([harnesses.md](harnesses.md#jawans-on-any-harness-bintoli-spawn)).
 
 `pick` scores each available machine by min(cpu headroom, memory headroom) minus its share of busy run slots. Within
 0.1 of the best it prefers this machine, then one that already has the clone, then name order. A machine that is
-asleep, unreachable, or busy is skipped. Apart from the spawn queue above, nothing is locked or refused because a
-machine is busy: availability steers where work goes. When no machine is available, the lead queues the task and
-tells you.
+asleep, unreachable, or busy is skipped. Apart from the spawn queue above and the build slots below, nothing is
+locked or refused because a machine is busy: availability steers where work goes. When no machine is available, the
+lead queues the task and tells you.
+
+### Heavy-build slots
+
+    bin/toli build-slot -- <command...>       # run a heavy build in one of this machine's build slots
+
+Many cargo builds at once make every one of them slow, and slow builds hit time limits. So each machine has
+`capacity.buildSlots` heavy-build slots (default `max(1, floor(cpus / 6))`: 3 on 18 cores, 1 on 4), and
+`capacity.cargoJobs` (default `max(1, floor(cpus / buildSlots))`: 6 on 18 cores, 4 on 4) compile jobs per slot, so
+all slots busy use about every core once. Setting either key in `config/machine.json` overrides its default.
+
+`bin/toli build-slot -- <command>` takes a free slot, runs the command with `CARGO_BUILD_JOBS` at one slot's share and
+`TOLI_BUILD_SLOT` set to the slot's number, and frees the slot when the command ends. When every slot is busy it prints
+`waiting for a heavy-build slot (N busy)` once and waits for one; it never fails for lack of a slot. A slot is a lock
+on `state/build-slots/<n>.lock` held by the `build-slot` process, so a holder that is killed or crashes frees its
+slot at once. Inside a slot already (`TOLI_BUILD_SLOT` set), it runs the command at once: a nested build never waits
+on its own slot.
+
+`bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH and sets its
+`CARGO_BUILD_JOBS` to `capacity.cargoJobs`. The shim sends the heavy cargo commands (`build`, `check`, `test`,
+`clippy`, `nextest`, `run`, `bench`, `doc`, `install`, `rustc`, `rustdoc` and their one-letter aliases) through
+`bin/toli build-slot`, and runs everything else (`cargo --version`, `metadata`, `fmt`, ...) and any cargo inside a
+slot straight away, with the first real cargo on PATH after the shim. `[build] jobs` in `~/.cargo/config.toml` holds
+the same per-slot number so native subagents and hand-run cargo get it too (`bin/toli doctor` warns when the two
+differ). `bin/toli resources` shows the slots as `builds <busy>/<total>` (`buildSlots` and `buildSlotsBusy` in
+`--json`).
 
 ## Running work on another machine
 
@@ -70,12 +90,14 @@ tells you.
 
 `remote auto` prints `local` when this machine wins `pick` (the lead then dispatches jawans here). Otherwise it runs
 `bin/toli project ensure` on the target when the project's URL is known here (clone and register if needed), then
-pipes the prompt to `bin/toli exec` there. `exec` runs the prompt in headless omp for up to `--max-time` minutes
-(default 180) and kills it 5 minutes after that, under the remote-run rules: commit on the current branch only, never
-push, merge, open a PR, or ask questions; finish with the outcome and evidence. The output is saved in
-`data/projects/<p>/runs/` (or `data/remote/` without a project) and the outcome reaches the coordinator's inbox.
-`remote` hands the limit and the project to `exec` in `TOLI_EXEC_MAX_MINUTES` and `TOLI_EXEC_PROJECT`, not flags,
-so a target on an older toli still runs the prompt, under that toli's own limit (60 minutes) until it upgrades.
+pipes the prompt to `bin/toli exec` there. `exec` runs the prompt in headless omp with no time limit (an explicit
+`--max-time` gives omp that limit and kills it 5 minutes after); a run with no progress for `capacity.stallMinutes`
+is stopped and its own omp session resumed (up to `capacity.autoResume` times). It runs under the remote-run rules:
+commit on the current branch only, never push, merge, open a PR, or ask questions; finish with the outcome and
+evidence. The output is saved in `data/projects/<p>/runs/` (or `data/remote/` without a project) and the outcome
+reaches the coordinator's inbox. `remote` hands an explicit limit and the project to `exec` in
+`TOLI_EXEC_MAX_MINUTES` and `TOLI_EXEC_PROJECT`, not flags, so a target on an older toli still runs the prompt, under
+that toli's own limit until it upgrades.
 
 On the target, `exec` records the prompt as a jawan run like `bin/toli spawn` does (harness omp, the `--task` and
 `--project`, its log in the run dir's `output.log`), so the target's `bin/toli runs --active`, `digest`, jawan slots

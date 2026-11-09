@@ -1,0 +1,59 @@
+#!/bin/sh
+# toli's cargo shim, first on every jawan's PATH (src/jawans/env.ts). Heavy cargo commands (build, check, test,
+# clippy, nextest, run, bench, doc, install, rustc, rustdoc) wait for one of the machine's heavy-build slots through
+# `bin/toli build-slot` (src/fleet/build-slots.ts); light ones (`--version`, `metadata`, `fmt`, ...) and any cargo
+# run inside a slot already (TOLI_BUILD_SLOT set) go straight to the real cargo: the first cargo on PATH that is not
+# this folder's or another copy of this shim (its second line starts "# toli's cargo shim"), so a shim never calls
+# itself or another shim.
+shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127
+
+real=""
+set -f
+saved_ifs=$IFS
+IFS=:
+for dir in $PATH; do
+    [ -n "$dir" ] || dir=.
+    [ -f "$dir/cargo" ] && [ -x "$dir/cargo" ] || continue
+    resolved=$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P) || continue
+    [ "$resolved" = "$shims" ] && continue
+    case $(sed -n '2{p;q;}' "$dir/cargo" 2>/dev/null) in
+    "# toli's cargo shim"*) continue ;;
+    esac
+    real="$dir/cargo"
+    break
+done
+IFS=$saved_ifs
+set +f
+if [ -z "$real" ]; then
+    echo "toli: cargo not found on PATH (outside $shims)" >&2
+    exit 127
+fi
+
+[ -n "${TOLI_BUILD_SLOT:-}" ] && exec "$real" "$@"
+
+# The subcommand: the first word that is not a `+toolchain` or a global option (skipping the values of those that
+# take one).
+sub=""
+skip=""
+for arg in "$@"; do
+    if [ -n "$skip" ]; then
+        skip=""
+        continue
+    fi
+    case $arg in
+    --color | --config | --explain | -C | -Z) skip=1 ;;
+    --) break ;;
+    +* | -*) ;;
+    *)
+        sub=$arg
+        break
+        ;;
+    esac
+done
+
+case $sub in
+build | b | check | c | test | t | clippy | nextest | run | r | bench | doc | d | install | rustc | rustdoc)
+    exec "$shims/../toli" build-slot -- "$real" "$@"
+    ;;
+esac
+exec "$real" "$@"

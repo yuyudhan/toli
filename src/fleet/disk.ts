@@ -1,6 +1,7 @@
-// The disk keeper: low free disk is never a reason to stop work. When free space on toli's volume is under
-// capacity.diskKeepGB (config/machine.json, default 60), it deletes rebuildable output only, cheapest to rebuild
-// first, until free space is the floor plus 20 GB:
+// The disk keeper: low free disk is never a reason to stop work. When free space on toli's volume is under its floor
+// (capacity.diskKeepGB in config/machine.json, default 60, capped at 15% of the volume's size so a small disk is never
+// emptied), it deletes rebuildable output only, cheapest to rebuild first and oldest first within each step, until
+// free space is back at the floor:
 //   1. whole `target/` folders of project checkouts nothing uses (no running jawan, no process working there);
 //   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/`: builds run
 //      there between jobs (a project's build queue) and cannot reinstall dependencies themselves, while cargo
@@ -18,15 +19,15 @@
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
-// state/disk-keep.pause; the keeper deletes nothing while that pid is alive, and ignores the file once it is dead. A
-// keeper already waiting for a busy target to pause checks the marker again before every try.
+// state/disk-keep.pause; the keeper deletes nothing while that pid is alive and the file was touched within 2 h (a
+// longer job touches it again). It ignores the file once the pid is dead, and drops it, logged once, once it is older.
+// A keeper already waiting for a busy target to pause checks the marker again before every try.
 // On a full disk it still works: it writes nothing before it has freed something (log lines wait in memory; a keeper
 // lock it cannot write is done without), no failed write stops it, and when the keeper fails anyway the fallback
 // sweeps stale artifacts out of every target, writing nothing first.
-import { spawn as spawnChild } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
@@ -44,19 +45,24 @@ import {
     sizeGB,
     within,
 } from "./disk-scan.ts";
-import { claimKeeper, DiskLog, describe, diskPause, GIB, gb, KEEPER_LOCK, releaseKeeper } from "./disk-state.ts";
-import { capacityFor, diskSweepStaleMinutes, measureDisk } from "./resources.ts";
+import {
+    claimKeeper,
+    DiskLog,
+    describe,
+    diskPause,
+    expirePause,
+    GIB,
+    gb,
+    KEEPER_LOCK,
+    PAUSE_EXPIRY_MS,
+    releaseKeeper,
+    startBackgroundKeeper,
+} from "./disk-state.ts";
+import { capacityFor, diskKeepFloor, diskSweepStaleMinutes, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep, sweepLine, sweepStaleArtifacts } from "./stale-sweep.ts";
 
-/** Free GB above the floor the keeper stops at, so it does not run again at once. */
-export const DISK_HEADROOM_GB = 20;
-/** How long the background keeper waits for busy builds to pause before it gives up on a target (tier 5). */
-const BACKGROUND_LOCK_WAIT_MS = 30 * 60_000;
-/** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
-const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
-
 export type KeepOptions = {
-    /** Overrides capacity.diskKeepGB. */
+    /** Overrides the floor (capacity.diskKeepGB, capped at 15% of the disk); not capped itself. */
     floorGB?: number;
     /** Plan only: report what would go, counting each folder's size as freed. Also on with TOLI_DRY_RUN=1. */
     dryRun?: boolean;
@@ -68,7 +74,9 @@ export type KeepOptions = {
 
 export type KeepReport = {
     floorGB: number;
-    goalGB: number;
+    /** Why the floor is under capacity.diskKeepGB, when the 15% cap lowered it. */
+    floorNote?: string;
+    diskTotalGB: number;
     freeBeforeGB: number;
     freeAfterGB: number;
     dryRun: boolean;
@@ -83,9 +91,9 @@ export type KeepReport = {
     lines: string[];
 };
 
-export function diskFloorGB(): number {
-    return capacityFor(loadMachine(), Math.max(1, cpus().length)).diskKeepGB;
-}
+/** `floor X GB`, with why when the cap lowered it. */
+const floorText = (report: KeepReport): string =>
+    `floor ${gb(report.floorGB)}${report.floorNote === undefined ? "" : ` (${report.floorNote})`}`;
 
 function freeGB(): number {
     const free = measureDisk(paths.root());
@@ -94,18 +102,26 @@ function freeGB(): number {
 }
 
 /**
- * Free disk down to the floor's goal, in the order above. Never throws for a failed deletion or a failed write; it
- * logs and moves on. It throws only when it cannot start (free disk or config unreadable): see fallbackSweep.
+ * Free disk up to the floor, in the order above. Never throws for a failed deletion or a failed write; it logs and
+ * moves on. It throws only when it cannot start (free disk or config unreadable): see fallbackSweep.
  */
 export function keepDisk(options: KeepOptions = {}): KeepReport {
     const dryRun = options.dryRun === true || envDryRun();
-    const floorGB = options.floorGB ?? diskFloorGB();
-    const staleMinutes = diskSweepStaleMinutes(loadMachine());
-    const goalGB = floorGB + DISK_HEADROOM_GB;
-    const freeBeforeGB = freeGB();
+    const machine = loadMachine();
+    const staleMinutes = diskSweepStaleMinutes(machine);
+    const volume = measureVolume(paths.root());
+    if (typeof volume === "string") throw new ToliError(`cannot read free disk: ${volume}`);
+    const freeBeforeGB = volume.freeGB;
+    // An explicit floor is the caller's choice; the configured one is capped so a small disk is never emptied.
+    const floor =
+        options.floorGB === undefined
+            ? diskKeepFloor(capacityFor(machine, Math.max(1, cpus().length)).diskKeepGB, volume.totalGB)
+            : { floorGB: options.floorGB };
+    const floorGB = floor.floorGB;
     const report: KeepReport = {
         floorGB,
-        goalGB,
+        ...(floor.note === undefined ? {} : { floorNote: floor.note }),
+        diskTotalGB: volume.totalGB,
         freeBeforeGB,
         freeAfterGB: freeBeforeGB,
         dryRun,
@@ -125,7 +141,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
     // Why the keeper does not run this time: reported every time, logged only when the reason (`key`) changes, so a
     // minute tick under a long pause or beside a long background keeper writes one line, not one a minute.
     const skip = (key: string, reason: string): KeepReport => {
-        const line = `free ${gb(freeBeforeGB)} < floor ${gb(floorGB)}: ${reason}`;
+        const line = `free ${gb(freeBeforeGB)} < ${floorText(report)}: ${reason}`;
         report.lines.push(line);
         if (options.echo) out(line);
         let last = "";
@@ -146,6 +162,12 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         }
         return report;
     };
+    // A pause past its expiry is dropped, once, with a line saying so; on a full disk the line waits in memory.
+    const expired = expirePause();
+    if (expired !== null) {
+        say(`pause by pid ${expired} expired after ${PAUSE_EXPIRY_MS / 3_600_000} h; cleaning resumed`);
+        log.flush();
+    }
     const pause = diskPause();
     if (pause !== null) {
         report.pausedBy = pause.pid;
@@ -164,8 +186,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
     try {
         let simulated = 0;
         const free = (): number => (dryRun ? freeBeforeGB + simulated : freeGB());
-        const enough = (): boolean => free() >= goalGB;
-        say(`free ${gb(freeBeforeGB)} < floor ${gb(floorGB)}: freeing build output until ${gb(goalGB)}`);
+        const enough = (): boolean => free() >= floorGB;
+        say(`free ${gb(freeBeforeGB)} < ${floorText(report)}: freeing build output until free space is back there`);
         if (claim.kind === "unwritable")
             say(`cannot write ${paths.lock(KEEPER_LOCK)} (${claim.reason}): freeing without the keeper lock`);
         const checkouts = projectCheckouts();
@@ -241,10 +263,10 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             else if (swept.artifacts > 0) log.open();
             say(sweepLine(dir.path, staleMinutes, swept, dryRun));
         }
-        // 6: the last resort. Still under the floor itself, not just short of the goal: every target left goes now,
-        // in use or not, then node_modules (never a main clone's, see 2) and dist (Vite's cache lives in
-        // node_modules/.vite) and Playwright's browsers, until the goal. Docker's build cache already went in 3. Only what buildDirs listed, never
-        // anything else.
+        // 6: the last resort. Still under the floor after 1 to 5: every target left goes now, in use or not, then
+        // node_modules (never a main clone's, see 2) and dist (Vite's cache lives in node_modules/.vite) and
+        // Playwright's browsers, until the floor. Docker's build cache already went in 3. Only what buildDirs listed,
+        // never anything else.
         if (free() < floorGB) {
             report.lastResort = true;
             say(`free ${gb(free())} is still under the floor: deleting every build folder left, in use or not`);
@@ -310,35 +332,6 @@ function forceDelete(path: string): string | null {
 }
 
 /**
- * Start `bin/toli disk keep --wait` detached (its lines reach logs/disk.log), to wipe busy targets as builds pause.
- * Bun's transpiler cache is off for it, as `bin/toli disk` does: the disk may still be full.
- */
-export function startBackgroundKeeper(): void {
-    let log: number | "ignore" = "ignore";
-    try {
-        mkdirSync(paths.logsDir(), { recursive: true });
-        log = openSync(paths.diskLog(), "a");
-    } catch {
-        // A full disk: the keeper's own lines still reach logs/disk.log once it has freed something.
-    }
-    try {
-        const child = spawnChild(
-            process.execPath,
-            [TOLI_SCRIPT, "disk", "keep", "--wait", String(BACKGROUND_LOCK_WAIT_MS / 60_000)],
-            {
-                cwd: paths.root(),
-                detached: true,
-                stdio: ["ignore", "ignore", log],
-                env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
-            },
-        );
-        child.unref();
-    } finally {
-        if (log !== "ignore") closeSync(log);
-    }
-}
-
-/**
  * Before work starts (each jawan launch, each tick): free disk inline without waiting on busy builds, then leave a
  * background keeper waiting for them if that was not enough. Never throws: disk never stops work.
  */
@@ -357,7 +350,7 @@ export function keepDiskBeforeWork(): string | null {
         return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)}; background keeper not started: ${describe(error)}`;
     }
     const cut = report.lastResort ? "; build output in use was deleted too, so a build may need running again" : "";
-    return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (floor ${gb(report.floorGB)})${cut}`;
+    return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (${floorText(report)})${cut}`;
 }
 
 /** `toli disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]`. */
@@ -392,6 +385,5 @@ export function diskCommand(argv: string[]): void {
         throw new ToliError(`disk keeper failed: ${describe(error)}; swept stale artifacts instead`);
     }
     if (json) printJson(report);
-    else if (report.lines.length === 0)
-        out(`free ${gb(report.freeBeforeGB)}, floor ${gb(report.floorGB)}: nothing to do`);
+    else if (report.lines.length === 0) out(`free ${gb(report.freeBeforeGB)}, ${floorText(report)}: nothing to do`);
 }

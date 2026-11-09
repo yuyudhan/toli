@@ -85,9 +85,11 @@ Staging is only read, never changed, and jawans stop at any OTP or captcha.
 - No git worktrees or terminal multiplexer windows, except the per-task worktrees toli itself creates for a
   project whose strategy is `worktree-per-task`.
 - One code folder, one build folder: jawans build in the checkout they work in, into its normal build folder,
-  never a private build directory or a temporary copy of the code; concurrent builds wait on the build tool's lock,
-  and each build uses the machine's one jobs cap, `capacity.cargoJobs` in config/machine.json (mirrored in
-  ~/.cargo/config.toml `[build] jobs`).
+  never a private build directory or a temporary copy of the code; concurrent builds wait on the build tool's lock.
+  Heavy builds take turns in the machine's heavy-build slots (`capacity.buildSlots`, default one per six cores)
+  instead of all compiling at once, and each uses one slot's share of the cores, `capacity.cargoJobs` in
+  config/machine.json (mirrored in ~/.cargo/config.toml `[build] jobs`); see
+  [fleet.md](fleet.md#heavy-build-slots).
 - No AI co-author trailers (`bin/toli commit` strips them); your name appears in chat only, never in commits,
   PRs, or code.
 - Scheduled and headless runs never push, merge, open PRs, or ask questions; they write results to files.

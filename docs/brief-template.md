@@ -95,6 +95,10 @@ task needs, and never revert or reformat changes you did not make.
 
 - Read the project's own AGENTS.md / CLAUDE.md (and any nested ones for files you touch) before editing, and follow
   them.
+- There is no time limit: work until the Goal's Stop when holds. Commit as you go (when the Landing section lets you
+  commit; otherwise keep the tree in a state you can describe), because your session may be resumed: a run that shows
+  no progress for 30 minutes is stopped and resumed where it stopped, in the same session. Long builds or tests you wait
+  on count as progress while they use CPU.
 - Work directly in the workspace path above. Never create a git worktree yourself (toli prepares the one a
   worktree-per-task project uses). Stay on the branch named above; never create, switch, or rebase branches.
 - Run git only through `bash` (git CLI), never through other git tools or integrations.

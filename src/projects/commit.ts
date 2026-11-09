@@ -15,7 +15,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Args } from "../core/args.ts";
-import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
+import { currentBranch, git, gitOk } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, ToliError, warn } from "../core/util.ts";
@@ -33,7 +33,7 @@ import {
     patchFiles,
     scanLeaks,
 } from "./commit-checks.ts";
-import { findProject, loadProjects, projectCloneDir } from "./projects.ts";
+import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
 import { perTask } from "./strategy.ts";
 import { refExists, samePath, workDir } from "./workspace.ts";
 
@@ -301,9 +301,8 @@ function requireWorkingBranch(name: string, dir: string): void {
  * or run from inside the task's worktree); same-branch projects keep the fixed-branch check on the clone.
  */
 function commitDir(name: string, taskId: string | undefined): string {
-    if (name === "toli" && !loadProjects().some((project) => project.name === "toli")) {
-        const root = paths.root();
-        if (!isGitRepo(root)) throw new ToliError(`${root} is not a git checkout`);
+    const root = toliSelfCheckout(name);
+    if (root !== null) {
         const branch = currentBranch(root);
         if (refExists(root, `refs/heads/${DEVELOP_BRANCH}`) && branch !== DEVELOP_BRANCH)
             throw new ToliError(

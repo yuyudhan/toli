@@ -1,12 +1,18 @@
-// The disk keeper's own files (src/fleet/disk.ts): logs/disk.log, its lock state/disk-keep.lock and the pause marker
-// state/disk-keep.pause. Each is handled so that a full disk never stops the keeper: log lines wait in memory until
-// it has freed something, a lock it cannot write is done without, and no failed write throws.
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+// The disk keeper's own files and processes (src/fleet/disk.ts): logs/disk.log, its lock state/disk-keep.lock, the
+// pause marker state/disk-keep.pause, and the background keeper. Each is handled so that a full disk never stops the
+// keeper: log lines wait in memory until it has freed something, a lock it cannot write is done without, and no
+// failed write throws.
+import { spawn as spawnChild } from "node:child_process";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { paths } from "../core/paths.ts";
 import { now, pidAlive } from "../core/util.ts";
 
 export const KEEPER_LOCK = "disk-keep";
+/** How long the background keeper waits for busy builds to pause before it gives up on a target (tier 5). */
+const BACKGROUND_LOCK_WAIT_MS = 30 * 60_000;
+/** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
+const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 
 /** GB with one decimal, as every keeper line prints sizes. */
 export const gb = (value: number): string => `${value.toFixed(1)} GB`;
@@ -66,20 +72,48 @@ export function releaseKeeper(): void {
     }
 }
 
-/**
- * The pause marker state/disk-keep.pause: its first word is a pid, the rest of the file a free-text reason. Live pid:
- * the keeper must not delete now. Missing, unreadable, or naming a dead pid (stale): no pause.
- */
-export function diskPause(): { pid: number; reason: string } | null {
-    let text: string;
+/** A pause marker older than this (file mtime) no longer pauses, even while its pid lives; a long job re-touches it. */
+export const PAUSE_EXPIRY_MS = 2 * 60 * 60_000;
+
+/** The pause marker's pid, reason and mtime, or null when it is missing or unreadable. */
+function readPause(): { pid: number; reason: string; mtimeMs: number } | null {
     try {
-        text = readFileSync(paths.diskKeepPause(), "utf8").trim();
+        const file = paths.diskKeepPause();
+        const mtimeMs = statSync(file).mtimeMs;
+        const [first = "", ...rest] = readFileSync(file, "utf8").trim().split(/\s+/);
+        return { pid: Number(first), reason: rest.join(" "), mtimeMs };
     } catch {
         return null;
     }
-    const [first = "", ...rest] = text.split(/\s+/);
-    const pid = Number(first);
-    return pidAlive(pid) ? { pid, reason: rest.join(" ") } : null;
+}
+
+const expiredPause = (mtimeMs: number): boolean => now().getTime() - mtimeMs > PAUSE_EXPIRY_MS;
+
+/**
+ * The pause marker state/disk-keep.pause: its first word is a pid, the rest of the file a free-text reason. Live pid
+ * and touched within PAUSE_EXPIRY_MS: the keeper must not delete now. Missing, unreadable, naming a dead pid (stale)
+ * or older than that (expired): no pause.
+ */
+export function diskPause(): { pid: number; reason: string } | null {
+    const pause = readPause();
+    if (pause === null || expiredPause(pause.mtimeMs) || !pidAlive(pause.pid)) return null;
+    return { pid: pause.pid, reason: pause.reason };
+}
+
+/**
+ * Remove an expired pause marker whose pid is still alive, so its expiry is logged once; returns that pid, or null
+ * when there is none. A marker touched again since it was read stays. A dead pid's marker is merely stale: left alone.
+ */
+export function expirePause(): number | null {
+    const pause = readPause();
+    if (pause === null || !expiredPause(pause.mtimeMs) || !pidAlive(pause.pid)) return null;
+    try {
+        if (statSync(paths.diskKeepPause()).mtimeMs !== pause.mtimeMs) return null;
+        rmSync(paths.diskKeepPause(), { force: true });
+    } catch {
+        // Gone meanwhile, or not removable (a full disk keeps the file): diskPause ignores it either way.
+    }
+    return pause.pid;
 }
 
 /**
@@ -115,5 +149,34 @@ export class DiskLog {
         } catch (error) {
             return `${this.pending.length} lines not written to logs/disk.log: ${describe(error)}`;
         }
+    }
+}
+
+/**
+ * Start `bin/toli disk keep --wait` detached (its lines reach logs/disk.log), to wipe busy targets as builds pause.
+ * Bun's transpiler cache is off for it, as `bin/toli disk` does: the disk may still be full.
+ */
+export function startBackgroundKeeper(): void {
+    let log: number | "ignore" = "ignore";
+    try {
+        mkdirSync(paths.logsDir(), { recursive: true });
+        log = openSync(paths.diskLog(), "a");
+    } catch {
+        // A full disk: the keeper's own lines still reach logs/disk.log once it has freed something.
+    }
+    try {
+        const child = spawnChild(
+            process.execPath,
+            [TOLI_SCRIPT, "disk", "keep", "--wait", String(BACKGROUND_LOCK_WAIT_MS / 60_000)],
+            {
+                cwd: paths.root(),
+                detached: true,
+                stdio: ["ignore", "ignore", log],
+                env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+            },
+        );
+        child.unref();
+    } finally {
+        if (log !== "ignore") closeSync(log);
     }
 }

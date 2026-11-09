@@ -62,13 +62,14 @@ Next block) and with `bin/toli wake`.
 `spawn` checks the brief starts with `TOLI_BRIEF v1` and the harness CLI is installed (a missing CLI fails at once
 with its install and login commands), then returns a run id. A detached supervisor runs the harness in the project
 clone (`--task` names the project and is marked active with the run id as its agent) with `TOLI_ROLE=jawan`, no
-`CARGO_TARGET_DIR` (it builds in the clone's own build folder) and `CARGO_BUILD_JOBS` set to the machine's
-`capacity.cargoJobs` (config/machine.json, default half the cores; ~/.cargo/config.toml `[build] jobs` mirrors it and
-`bin/toli doctor` warns when they differ), counts it as load (`bin/toli resources`), streams output to
-`data/projects/<p>/runs/<id>/output.log` (`state/jawans/<id>/` without a project), and on exit records `done`,
-`failed` or `killed` and posts the outcome to the inbox. The omp extension (and Claude's prompt hook) bring it into
-the lead's chat as a `[toli wake]` message. On a worker machine the outcome is also forwarded to the coordinator's
-inbox. Run records live in `state/jawans/<id>.json`.
+`CARGO_TARGET_DIR` (it builds in the clone's own build folder), toli's cargo shim first on PATH (heavy cargo commands
+wait for a heavy-build slot, [fleet.md](fleet.md#heavy-build-slots)) and `CARGO_BUILD_JOBS` set to the machine's
+`capacity.cargoJobs` (config/machine.json, default one build slot's share of the cores; ~/.cargo/config.toml
+`[build] jobs` mirrors it and `bin/toli doctor` warns when they differ), counts it as load (`bin/toli resources`),
+streams output to `data/projects/<p>/runs/<id>/output.log` (`state/jawans/<id>/` without a project), and on exit
+records `done`, `failed` or `killed` and posts the outcome to the inbox. The omp extension (and Claude's prompt hook)
+bring it into the lead's chat as a `[toli wake]` message. On a worker machine the outcome is also forwarded to the
+coordinator's inbox. Run records live in `state/jawans/<id>.json`.
 
 **Jawan slots.** A machine runs at most `capacity.maxRuns` spawned jawans at once (config/machine.json, default a
 quarter of the cores). `spawn` with every slot busy records the run as `queued` (shown by `bin/toli runs`) and
@@ -83,33 +84,45 @@ still posted, as killed), the new run records `replaces`, the old one `replacedB
 outcomes. A run whose supervisor died while marked running does not block: it is recorded failed as `bin/toli runs`
 always does, and the spawn proceeds. Runs for other tasks, and spawns without `--task`, are unaffected.
 
-**Deadline and auto-resume.** When a run starts, its brief gains a `## Deadline (auto)` section: the wall-clock time
-its `--max-time` (default 120 minutes) ends it, and a request to write the report 10 minutes before (halfway for
-limits under 20 minutes). A run that used its limit (killed by the supervisor 10 minutes past it, or lasting at least
-95% of it, as omp's own `--max-time` exits 0 at the limit) and whose output holds nothing beyond harness warnings
-(`Warning: ...`, omp's `Working...`) is recorded `time-limit`, and a continuation starts on its own, or queues: the
-same task, project, cwd, harness, model and limit, and the original brief plus a `## RESUME (auto, N)` section naming
-the previous run, its log, and its uncommitted edits. The task names the continuation as its agent; the outcome of
-each run reaches the inbox as usual, the stopped one's with `continued by: <id>`. A chain gets at most
-`capacity.autoResume` continuations (default 3, 0 turns it off); after that an inbox item says the chain stopped.
-A run that ended with a report is never resumed.
+**No time limit; stalls are resumed in the same session.** A jawan run has no wall-clock limit: it works until it is
+done, like the lead. toli stops it only when it shows no progress for `capacity.stallMinutes` (default 30): its output
+log did not grow, its omp session (`<run dir>/session`, passed as `--session-dir`, where omp writes every message and
+tool call) did not change, the files of its working tree did not change, and its process tree used less than 10 CPU
+seconds. A long build or test the run waits on keeps it alive through its CPU use. A stalled run without a report is
+recorded `stalled` and resumed: on omp the same session continues (`omp --resume <session file>`) with a short
+`## RESUME (auto, N)` prompt saying why it stopped, so nothing is re-read or redone; on other harnesses a fresh run
+gets the original brief plus a `## RESUME (auto, N)` section naming the previous run, its log and its uncommitted
+edits. The continuation has the same task, project, cwd, harness and model; the task's notes record every resume and
+name the continuation as its agent, and the stopped run's inbox item says `continued by: <id>`. A chain gets at most
+`capacity.autoResume` resumes (default 3, 0 turns it off); after that an inbox item and the task's notes say why the
+chain stopped. A run that ended with a report is never resumed. The lead can resume any finished run with
+`bin/toli resume <run> [--note "<text>"] [--max-time <minutes>] [--now]`: the same session continues, with the note.
+
+`--max-time <minutes>` is an explicit opt-in limit: the brief then gains a `## Deadline (auto)` section (when the
+limit ends the run, and a request to report 10 minutes before, halfway for limits under 20 minutes); a run that used
+it without a report is recorded `time-limit` and resumed the same way.
+
+**No request budget.** omp's `task.softRequestBudget` (200 requests per subagent by default, force-stopped at 1.5x)
+told long-running subagent jawans to wrap up and then stopped them. toli's root carries `.omp/config.yml` with
+`task.softRequestBudget: 0` (no budget), which omp reads as project settings for the lead and every run in toli's
+root (`bin/toli exec`, scheduled jobs), and every headless omp jawan working elsewhere gets it with `--config`.
 
 omp jawans run with `--wait-async`: a turn that ends while an async `task` subagent, a background `bash` build, or a
 poll the run started is still going does not end the run. omp waits for that work and starts another turn with each
-result, until nothing the run owns is left or `--max-time` stops it. Without the flag, print mode exits at the first
-turn that yields and cancels that work. The same flags apply to `bin/toli exec` (and so `bin/toli remote`) and
-scheduled headless jobs.
+result, until nothing the run owns is left (or an explicit `--max-time` stops it). Without the flag, print mode exits
+at the first turn that yields and cancels that work. The same flags apply to `bin/toli exec` (and so
+`bin/toli remote`) and scheduled headless jobs.
 
 Headless commands (`src/harness/harness.ts`):
 
-| Harness | Command                                                                                                                                                        | Source                                                                                     |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| omp     | `omp -p --wait-async --cwd <dir> --no-title --approval-mode yolo --max-time <n>m [--model M] <brief>`                                                          | `omp --help`, `omp://cli-reference.md`                                                     |
-| claude  | `claude -p --output-format text --permission-mode acceptEdits --allowedTools Bash,Read,Edit,Write,... --add-dir <toli> [--model M]`, brief on stdin            | `claude --help`, [CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) |
-| codex   | `codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir <toli> --skip-git-repo-check -C <dir> [-m M] -`, brief on stdin | [non-interactive mode](https://developers.openai.com/codex/noninteractive)                 |
-| cursor  | `cursor-agent -p --force --output-format text [--model M] <brief>`, cwd = project                                                                              | [headless](https://docs.cursor.com/en/cli/headless)                                        |
-| grok    | `grok --cwd <dir> --always-approve --no-auto-update --output-format plain [-m M] -p <brief>`                                                                   | [headless & scripting](https://docs.x.ai/build/cli/headless-scripting)                     |
-| pi      | `pi -p [--model M] <brief>`, cwd = project                                                                                                                     | [pi README](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md) |
+| Harness | Command                                                                                                                                                                                 | Source                                                                                     |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| omp     | `omp -p --wait-async --cwd <dir> --no-title --approval-mode yolo [--max-time <n>m] [--config <toli>/.omp/config.yml] --session-dir <run>/session [--resume <file>] [--model M] <brief>` | `omp --help`, `omp://cli-reference.md`                                                     |
+| claude  | `claude -p --output-format text --permission-mode acceptEdits --allowedTools Bash,Read,Edit,Write,... --add-dir <toli> [--model M]`, brief on stdin                                     | `claude --help`, [CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) |
+| codex   | `codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir <toli> --skip-git-repo-check -C <dir> [-m M] -`, brief on stdin                          | [non-interactive mode](https://developers.openai.com/codex/noninteractive)                 |
+| cursor  | `cursor-agent -p --force --output-format text [--model M] <brief>`, cwd = project                                                                                                       | [headless](https://docs.cursor.com/en/cli/headless)                                        |
+| grok    | `grok --cwd <dir> --always-approve --no-auto-update --output-format plain [-m M] -p <brief>`                                                                                            | [headless & scripting](https://docs.x.ai/build/cli/headless-scripting)                     |
+| pi      | `pi -p [--model M] <brief>`, cwd = project                                                                                                                                              | [pi README](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md) |
 
 `--add-dir <toli>` lets Claude and Codex jawans write their report and run `bin/toli` in toli's root. Codex jawans
 have network access by default: Codex's `workspace-write` sandbox blocks the network on its own, and toli always

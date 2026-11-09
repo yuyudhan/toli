@@ -3,14 +3,23 @@
 // start oldest first as slots free, from the supervisor of each finishing run and from the minute tick. Before any
 // start, the disk keeper frees build output when the disk is low (src/fleet/disk.ts): low disk never holds a run.
 import { spawn as spawnChild } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { cpus } from "node:os";
 import { join, resolve } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
-import { capacityFor } from "../fleet/resources.ts";
+import { capacityFor, stallMinutes } from "../fleet/resources.ts";
 import { type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
 import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
@@ -31,13 +40,20 @@ export type NewRun = {
     tier: Tier | null;
     modelSource: ModelSource;
     cwd: string;
-    maxMinutes: number;
+    /** Wall-clock limit, only when asked for (`--max-time`); null runs until done or stalled. */
+    maxMinutes: number | null;
     /** The brief before generated sections. */
     baseBrief: string;
-    /** Sections to add after it (a continuation's RESUME); the Deadline section is added at launch. */
+    /** Sections to add after it (a fresh continuation's RESUME); a Deadline section is added at launch with a limit. */
     extra: string;
     resumeOf?: string | undefined;
     resumeCount?: number | undefined;
+    resumeReason?: string | undefined;
+    /** omp: the chain's session dir (a new chain gets `<runDir>/session`) and the session file this run resumes. */
+    sessionDir?: string | undefined;
+    resumeSession?: string | undefined;
+    /** What the harness is sent instead of the brief (the prompt that resumes a session). */
+    prompt?: string | undefined;
     /** The live runs of the same task this one supersedes (`spawn --replace`). */
     replaces?: string[] | undefined;
 };
@@ -69,6 +85,17 @@ export function baseBriefOf(run: JawanRun): string {
     }
 }
 
+/** The newest omp session file in `dir`, or null when the run left none (it never started, or another harness). */
+export function sessionFile(dir: string | undefined): string | null {
+    if (dir === undefined || !existsSync(dir)) return null;
+    const files = readdirSync(dir)
+        .filter((name) => name.endsWith(".jsonl"))
+        .map((name) => join(dir, name))
+        .map((path) => ({ path, mtime: statSync(path).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+    return files[0]?.path ?? null;
+}
+
 /** A run started by its own caller rather than a supervisor: the process recording it and the argv it runs. */
 export type AttachedStart = { argv: string[]; ownerPid: number };
 
@@ -82,9 +109,11 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
     const runDir = input.project === null ? join(paths.jawansDir(), id) : join(paths.projectRunsDir(input.project), id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(join(runDir, BASE_BRIEF), input.baseBrief);
-    const brief = `${input.baseBrief.trimEnd()}\n${input.extra}`;
+    const brief = input.prompt ?? `${input.baseBrief.trimEnd()}\n${input.extra}`;
     const briefPath = join(runDir, "brief.md");
     writeFileSync(briefPath, brief);
+    const sessionDir = input.harness === "omp" ? (input.sessionDir ?? join(runDir, "session")) : undefined;
+    if (sessionDir !== undefined) mkdirSync(sessionDir, { recursive: true });
     const command =
         attached === undefined
             ? headlessCommand(input.harness, {
@@ -93,6 +122,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
                   root: paths.root(),
                   model: input.model ?? undefined,
                   maxMinutes: input.maxMinutes,
+                  ...(sessionDir === undefined ? {} : { session: { dir: sessionDir, resume: input.resumeSession } }),
               })
             : { argv: attached.argv, stdin: null };
     const run: JawanRun = {
@@ -113,6 +143,9 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
             ...(command.stdin === null ? [] : ["< brief"]),
         ].join(" "),
         maxMinutes: input.maxMinutes,
+        stallMinutes: stallMinutes(loadMachine()),
+        ...(sessionDir === undefined ? {} : { sessionDir }),
+        ...(input.resumeSession === undefined ? {} : { resumeSession: input.resumeSession }),
         status: attached === undefined ? "queued" : "running",
         supervisorPid: attached?.ownerPid ?? null,
         pid: null,
@@ -124,6 +157,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         error: null,
         ...(input.resumeOf === undefined ? {} : { resumeOf: input.resumeOf }),
         ...(input.resumeCount === undefined ? {} : { resumeCount: input.resumeCount }),
+        ...(input.resumeReason === undefined ? {} : { resumeReason: input.resumeReason }),
         ...(input.replaces === undefined ? {} : { replaces: input.replaces }),
     };
     mkdirSync(paths.jawansDir(), { recursive: true });
@@ -146,11 +180,13 @@ function launch(id: string): JawanRun {
     });
     if (!claimed) return run;
     try {
-        const brief = readFileSync(run.briefPath, "utf8");
-        writeFileSync(
-            run.briefPath,
-            `${brief.trimEnd()}\n${deadlineSection(startedAt, run.maxMinutes, runMinuteMs())}`,
-        );
+        if (run.maxMinutes !== null) {
+            const brief = readFileSync(run.briefPath, "utf8");
+            writeFileSync(
+                run.briefPath,
+                `${brief.trimEnd()}\n${deadlineSection(startedAt, run.maxMinutes, runMinuteMs())}`,
+            );
+        }
         const supervisorLog = openSync(join(run.runDir, "supervisor.log"), "a");
         let pid: number | undefined;
         try {

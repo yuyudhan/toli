@@ -32,8 +32,9 @@ ambiguous ("in the morning", "evening"), ask once.
 - `--prompt`: a self-contained instruction; the run will not see this conversation.
 - `--shape`: `scout` (default choice for reports and checks) unless the job must change code.
 - `--machine`: run the job only on that machine (e.g. where the project is cloned), when that is not this one.
-- `bin/toli job run <name>` runs a job once now, for testing. It takes as long as the job (up to 45 minutes), so run
-  it only through `bash` with `async: true` and `timeout: 0`, then end the turn; its result arrives as a new turn.
+- `bin/toli job run <name>` runs a job once now, for testing. It takes as long as the job (there is no time limit; it
+  is stopped only if it stalls), so run it only through `bash` with `async: true` and `timeout: 0`, then end the turn;
+  its result arrives as a new turn.
 
 Present `list` as a short table: name, schedule in words, project, paused or active, last result.
 

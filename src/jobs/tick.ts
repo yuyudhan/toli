@@ -1,14 +1,17 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, runCombined, ToliError } from "../core/util.ts";
+import { now, out, pidAlive, readJson, runCombined, ToliError } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
-import { registerRun, removeRun } from "../fleet/resources.ts";
-import { harnessConfig, headlessOmpArgs } from "../harness/harness.ts";
+import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
+import { harnessConfig } from "../harness/harness.ts";
 import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
+import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
+import { stallText, watchStall } from "../jawans/progress.ts";
+import { runMinuteMs } from "../jawans/runs.ts";
 import { drainQueue } from "../jawans/supervise.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
@@ -25,10 +28,6 @@ import {
 } from "./jobs.ts";
 import { deliverOutbox } from "./outbox.ts";
 
-/** Hard ceiling for omp's own --max-time, so a wedged process is still reaped. */
-const HEADLESS_MAX_TIME = "45m";
-const HEADLESS_KILL_MS = 50 * 60 * 1000;
-
 function log(line: string): void {
     mkdirSync(paths.logsDir(), { recursive: true });
     appendFileSync(paths.tickLog(), `${now().toISOString()} ${line}\n`);
@@ -40,9 +39,10 @@ export function jobModel(job: Pick<JobConfig, "tier" | "shape">): ModelChoice {
 }
 
 /**
- * Run a claimed job in headless omp on its tier's model, counted as load (a run record) while it runs; a run stopped
- * by a rate or usage limit retries once on a lower allowed tier (never waiting: the tick runs every minute). If the
- * agent never called `job finish`, record its captured output.
+ * Run a claimed job in headless omp on its tier's model, counted as load (a run record) while it runs. It has no
+ * wall-clock limit: omp is stopped only when it shows no progress for capacity.stallMinutes (src/jawans/progress.ts).
+ * A run stopped by a rate or usage limit retries once on a lower allowed tier (never waiting: the tick runs every
+ * minute). If the agent never called `job finish`, record its captured output.
  */
 async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     const name = job.name;
@@ -58,12 +58,34 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     let model = choice.model;
     let fallback = "";
     let result: { code: number; output: string };
+    const stall = stallMinutes(loadMachine());
+    const sessionDir = paths.jobSessionDir(begun.runId);
+    let stalled = false;
     try {
-        const attempt = (chosen: string | null) =>
-            runCombined(headlessOmpArgs(begun.prompt, paths.root(), HEADLESS_MAX_TIME, chosen), {
-                cwd: paths.root(),
-                timeoutMs: HEADLESS_KILL_MS,
-            });
+        const attempt = async (chosen: string | null): Promise<{ code: number; output: string }> => {
+            let pid: number | null = null;
+            const stopWatch = watchStall(
+                () => ({ pid, logPath: null, sessionDir, cwd: paths.root() }),
+                stall * runMinuteMs(),
+                () => {
+                    stalled = true;
+                    if (pid !== null && pidAlive(pid)) process.kill(pid, "SIGTERM");
+                },
+            );
+            try {
+                return await runCombined(
+                    headlessOmpArgs(begun.prompt, paths.root(), null, chosen, { dir: sessionDir }),
+                    {
+                        cwd: paths.root(),
+                        onStart: (started) => {
+                            pid = started;
+                        },
+                    },
+                );
+            } finally {
+                stopWatch();
+            }
+        };
         result = await attempt(model);
         if (hitLimit(result.output, result.code)) {
             const at = now();
@@ -81,7 +103,9 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
         }
     } finally {
         removeRun(begun.runId);
+        rmSync(sessionDir, { recursive: true, force: true });
     }
+    if (stalled) fallback += `; stopped: ${stallText(stall)}`;
     const ran = `omp ${choiceText({ ...choice, model })}${fallback}`;
     const stillRunning = loadJobState()[name]?.running?.runId === begun.runId;
     if (!stillRunning) return `job ${name} ${begun.runId}: finished by the agent (${ran}, exit ${result.code})`;
@@ -97,12 +121,17 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     return `job ${name} ${begun.runId}: ${ran}, exit ${result.code}, result ${path}`;
 }
 
-/** Record runs stuck in "running" past the stale limit as failed so their schedule resumes. */
+/**
+ * Record runs stuck in "running" past the stale limit as failed so their schedule resumes. A headless run whose omp
+ * is still alive (its load record names a live pid) is not stale: it has no time limit and stops only when it stalls.
+ */
 function failStaleRuns(): string[] {
     const cutoff = now().getTime() - STALE_RUN_MS;
-    const stale = Object.entries(loadJobState()).filter(
-        ([, state]) => state.running && new Date(state.running.startedAt).getTime() < cutoff,
-    );
+    const stale = Object.entries(loadJobState()).filter(([, state]) => {
+        if (!state.running || new Date(state.running.startedAt).getTime() >= cutoff) return false;
+        const load = readJson<RunRecord | null>(paths.runRecord(state.running.runId), null);
+        return load === null || !pidAlive(load.pid);
+    });
     const notes: string[] = [];
     for (const [name, state] of stale) {
         const running = state.running;
@@ -188,7 +217,9 @@ async function runNow(argv: string[]): Promise<void> {
     const name = args.pos(0, "name");
     const job = findJob(name);
     const begun = beginJob(name, "headless");
-    out(`job ${name} ${begun.runId}: running headless omp ${choiceText(jobModel(job))} (up to ${HEADLESS_MAX_TIME})`);
+    out(
+        `job ${name} ${begun.runId}: running headless omp ${choiceText(jobModel(job))} (no time limit; stopped if it stalls)`,
+    );
     const summary = await runHeadless(job, begun);
     log(summary);
     out(summary);

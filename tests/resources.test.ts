@@ -109,7 +109,14 @@ describe("Linux measurement", () => {
 });
 
 describe("availability thresholds", () => {
-    const capacity = { maxRuns: 2, maxLoadPerCpu: 0.8, minMemAvailableMB: 2048, diskKeepGB: 60, cargoJobs: 9 };
+    const capacity = {
+        maxRuns: 2,
+        maxLoadPerCpu: 0.8,
+        minMemAvailableMB: 2048,
+        diskKeepGB: 60,
+        cargoJobs: 9,
+        buildSlots: 1,
+    };
     const atLimits = { cpus: 10, load1: 8, memAvailableMB: 2048, diskFreeGB: 5, activeRuns: 1 };
 
     test("every value exactly at its threshold is still available", () => {
@@ -157,7 +164,8 @@ describe("availability thresholds", () => {
             maxLoadPerCpu: 0.8,
             minMemAvailableMB: 2048,
             diskKeepGB: 60,
-            cargoJobs: 4,
+            cargoJobs: 8,
+            buildSlots: 1,
         });
         expect(capacityFor(machine, 3).maxRuns).toBe(1);
         expect(capacityFor({ ...machine, capacity: { maxRuns: 5, diskKeepGB: 20, cargoJobs: 12 } }, 8)).toEqual({
@@ -166,12 +174,13 @@ describe("availability thresholds", () => {
             minMemAvailableMB: 2048,
             diskKeepGB: 20,
             cargoJobs: 12,
+            buildSlots: 1,
         });
     });
 
-    test("cargoJobs defaults to half the cpus, at least one, and must be a positive integer", () => {
+    test("cargoJobs defaults to one build slot's share of the cpus and must be a positive integer", () => {
         const machine = { name: "m1", role: "coordinator" as const };
-        expect(capacityFor(machine, 18).cargoJobs).toBe(9);
+        expect(capacityFor(machine, 18).cargoJobs).toBe(6);
         expect(capacityFor(machine, 1).cargoJobs).toBe(1);
         expect(() => capacityFor({ ...machine, capacity: { cargoJobs: 0 } }, 8)).toThrow("positive integer");
         expect(() => capacityFor({ ...machine, capacity: { cargoJobs: 2.5 } }, 8)).toThrow("positive integer");

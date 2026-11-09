@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { machineSettings } from "../core/config.ts";
 import { run, ToliError } from "../core/util.ts";
 import { parseTier, type Tier } from "./models.ts";
+import { headlessOmpFlags, type OmpSession } from "./omp-args.ts";
 
 /** Agent harnesses toli can start a lead in and run jawans on. */
 export const HARNESSES = ["omp", "claude", "codex", "cursor", "grok", "pi"] as const;
@@ -109,20 +110,6 @@ export function requireInstalled(harness: Harness): string {
     return found;
 }
 
-/**
- * Flags every headless omp run gets. `--wait-async` keeps print mode alive while background work the run started (an
- * async `task` subagent, a background `bash` build or poll) is still going and wakes the session with each result;
- * without it omp ends at the first turn that yields and cancels that work. `--max-time` still bounds the run.
- */
-function headlessOmpFlags(cwd: string, maxTime: string): string[] {
-    return ["omp", "-p", "--wait-async", "--cwd", cwd, "--no-title", "--approval-mode", "yolo", "--max-time", maxTime];
-}
-
-/** The argv for one headless omp run of `prompt` in toli's `root` (scheduled jobs, `bin/toli exec`). */
-export function headlessOmpArgs(prompt: string, root: string, maxTime: string, model: string | null = null): string[] {
-    return [...headlessOmpFlags(root, maxTime), ...(model === null ? [] : ["--model", model]), prompt];
-}
-
 export type HeadlessInput = {
     /** Full brief text; its first line is `TOLI_BRIEF v1`. */
     brief: string;
@@ -131,7 +118,10 @@ export type HeadlessInput = {
     /** toli's root, granted as an extra writable directory so the jawan can write its report there. */
     root: string;
     model?: string | undefined;
-    maxMinutes: number;
+    /** Wall-clock limit in minutes, only when the caller asked for one (`--max-time`). */
+    maxMinutes: number | null;
+    /** omp only: the run's session dir, and the session file when resuming it. */
+    session?: OmpSession | undefined;
 };
 
 export type HeadlessCommand = { argv: string[]; stdin: string | null };
@@ -149,7 +139,12 @@ export function headlessCommand(harness: Harness, input: HeadlessInput): Headles
         case "omp":
             return {
                 argv: [
-                    ...headlessOmpFlags(input.cwd, `${input.maxMinutes}m`),
+                    ...headlessOmpFlags(
+                        input.cwd,
+                        input.root,
+                        input.maxMinutes === null ? null : `${input.maxMinutes}m`,
+                        input.session ?? null,
+                    ),
                     ...(model ? ["--model", model] : []),
                     input.brief,
                 ],

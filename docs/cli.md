@@ -90,7 +90,9 @@ and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a 
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
     forge <project> [--json]
-    push <project> [--task T<n>] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+    push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+    gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
+    gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json]
     push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
     push-log list [--json]
     pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
@@ -110,6 +112,12 @@ and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a 
 - `push` logs each push that moved origin's branch in this machine's `data/pushes.jsonl` (old..new sha, the issuing
   machine and task, the owner's quoted word; inside `exec`, the issuing machine and task by default), and `digest`
   shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog.
+- `gate run` runs a long verification command (a gate, such as `just verify all`) once per commit and recipe: a gate
+  that already passed at HEAD is skipped, a running one is waited on instead of started twice, and a new one runs in
+  the background so it survives its caller. It never times out; only a gate with no new output for `--stall` minutes
+  (`capacity.gateStallMinutes`, default 30) is stopped. `gate check` exits 0 only when HEAD already passed the recipe
+  (for pre-push hooks); `gate status` lists a project's gates, newest first. `push --gate "<recipe>"` runs the gate
+  first and pushes only once it passed ([delivery.md](delivery.md#gates-long-checks-run-once-per-commit)).
 
 ### Jawans and harnesses
 
@@ -117,6 +125,7 @@ and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a 
           [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
           [--now] [--replace] [--dry-run] [--json]
     runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
+    resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
     harness sync [--check] [--json] | status [--json]
     hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
     guidance
@@ -125,7 +134,9 @@ and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a 
 - `spawn` starts a jawan in the background on any harness and returns a run id; `runs` and `run` follow it. With
   every jawan slot busy (`capacity.maxRuns`) the run is queued and starts when one frees; `--now` starts it anyway.
   A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
-  A run stopped by its time limit without a report is continued automatically (`capacity.autoResume`, default 3).
+  Runs have no time limit unless given `--max-time`; a run that shows no progress for `capacity.stallMinutes`
+  (default 30), or uses its explicit limit, without a report is resumed in the same omp session
+  (`capacity.autoResume`, default 3). `resume` lets the lead continue any finished run's session.
 - `harness sync` links skills and commands into every harness; `harness status` shows installed CLIs and logins.
 - `hook`, `guidance`, `session`: called by the harness integrations (Claude Code hooks, the omp extension), not by
   hand. `guidance` prints the lead reminder they inject; `session` registers the live lead session.
@@ -169,6 +180,7 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 
     sync [--all]
     resources [--json]
+    build-slot -- <command...>
     disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]
     fleet status [--json]
     pick [--project <name>] [--json]
@@ -177,9 +189,12 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.
-- `disk keep`: free rebuildable build output when the disk is under `capacity.diskKeepGB`; still under it after the
-  normal steps, every `target/` goes, in use or not. It also runs before every jawan start and every tick, so low
-  disk never stops work; a live pid in `state/disk-keep.pause` pauses it ([disk.md](disk.md)).
+- `build-slot -- <command...>`: run a heavy build in one of this machine's heavy-build slots (`capacity.buildSlots`),
+  waiting while all are busy; jawans' cargo goes through it on its own ([fleet.md](fleet.md#heavy-build-slots)).
+- `disk keep`: free rebuildable build output, oldest first, when the disk is under its floor (`capacity.diskKeepGB`,
+  capped at 15% of the disk) and until it is back there; still under it after the normal steps, every `target/` goes,
+  in use or not. It also runs before every jawan start and every tick, so low disk never stops work; a live pid in
+  `state/disk-keep.pause` pauses it for up to 2 hours after the file was last written ([disk.md](disk.md)).
 - `remote` runs a prompt on another machine; `exec` is what it runs there (headless omp, up to an hour).
 
 Details: [fleet.md](fleet.md).

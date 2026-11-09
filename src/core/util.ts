@@ -157,8 +157,11 @@ export function run(cmd: string[], options: RunOptions = {}): RunResult {
     };
 }
 
-/** Run a program asynchronously with stdout and stderr captured into one interleaved stream. */
-export async function runCombined(cmd: string[], options: RunOptions = {}): Promise<{ code: number; output: string }> {
+/** Run a program asynchronously with stdout and stderr captured into one interleaved stream; `onStart` gets its pid. */
+export async function runCombined(
+    cmd: string[],
+    options: RunOptions & { onStart?: (pid: number) => void } = {},
+): Promise<{ code: number; output: string }> {
     const program = cmd[0];
     if (program === undefined) throw new Error("runCombined: empty command");
     const resolved = program.includes("/") ? program : Bun.which(program, { PATH: process.env.PATH ?? "" });
@@ -172,6 +175,7 @@ export async function runCombined(cmd: string[], options: RunOptions = {}): Prom
         stderr: "pipe",
         ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
     });
+    options.onStart?.(proc.pid);
     const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
         const decoder = new TextDecoder();
         for await (const chunk of stream) chunks.push(decoder.decode(chunk, { stream: true }));
