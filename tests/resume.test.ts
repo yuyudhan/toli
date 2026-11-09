@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { continuePrompt, deadlineSection, hasReport, resumeSection, usedTimeLimit } from "../src/jawans/limits.ts";
-import { CPU_PROGRESS_SECONDS, parseCpuTime, StallWatch, treeCpuSeconds } from "../src/jawans/progress.ts";
+import { CPU_PROGRESS_SECONDS, parseCpuTime, rootExited, StallWatch, treeCpuSeconds } from "../src/jawans/progress.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Run = {
@@ -143,8 +143,15 @@ describe("stall detection", () => {
         expect(parseCpuTime("1-00:00:01")).toBe(86_401);
         expect(parseCpuTime("0:02.50")).toBe(2.5);
         expect(parseCpuTime("garbage")).toBeNull();
-        const ps = ["  10     1 0:10.00", "  11    10 0:05.00", "  12    11 1:00.00", "  13     1 9:00.00"].join("\n");
+        const ps = [
+            "  10     1 0:10.00 S",
+            "  11    10 0:05.00 R",
+            "  12    11 1:00.00 S+",
+            "  13     1 9:00.00 Z",
+        ].join("\n");
         expect(treeCpuSeconds(ps, 10)).toBe(75);
+        // A harness that exited (gone, or a zombie not yet reaped) is ending on its own, never stalled.
+        expect([rootExited(ps, 10), rootExited(ps, 13), rootExited(ps, 99)]).toEqual([false, true, true]);
     });
 
     test("a run is stalled only after nothing moved for the whole stall time", () => {

@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
+
+// Each test runs several bin/toli processes and waits on detached runs (up to 10 s per waitFor); on a loaded machine
+// that passes Bun's 5 s default, so this file allows 30 s per test.
+setDefaultTimeout(30_000);
 
 type Run = {
     id: string;
@@ -182,6 +186,15 @@ describe("spawn", () => {
 
     test("a verify run stopped by a rate limit retries once on standard, never light, and records the fallback", async () => {
         const box = coordinator();
+        // TOLI_RUN_MINUTE_MS shortens the 15-minute reset wait, and with it the 30-minute stall to 600 ms, which a stub
+        // starved under load outlasts: the stall watch then stopped it instead of the limit. 10,000 minutes (200 s)
+        // outlasts the test, so its runs end only by their own exit.
+        const machinePath = join(box.root, "config", "machine.json");
+        const machine = JSON.parse(readFileSync(machinePath, "utf8"));
+        writeFileSync(
+            machinePath,
+            JSON.stringify({ ...machine, capacity: { ...machine.capacity, stallMinutes: 10_000 } }),
+        );
         const calls = join(box.root, ".calls");
         box.stub(
             "omp",

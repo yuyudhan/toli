@@ -36,7 +36,7 @@ export function parseCpuTime(text: string): number | null {
     return days * 86_400 + seconds;
 }
 
-/** CPU seconds used by `root` and every live descendant, from `ps -A -o pid=,ppid=,time=` output. */
+/** CPU seconds used by `root` and every live descendant, from `ps -A -o pid=,ppid=,time=` output (extra columns ignored). */
 export function treeCpuSeconds(psOutput: string, root: number): number {
     const children = new Map<number, number[]>();
     const cpu = new Map<number, number>();
@@ -95,16 +95,29 @@ function treeMark(cwd: string): string {
     return Bun.hash(`${head.stdout}\0${status.stdout}`).toString(16);
 }
 
-/** Look at the run's output, session, working tree and CPU now. */
-export function probeProgress(sources: ProgressSources): Probe {
-    const logSize = sources.logPath !== null && existsSync(sources.logPath) ? statSync(sources.logPath).size : 0;
-    const session = sources.sessionDir === null ? "" : dirMark(sources.sessionDir);
-    let cpuSeconds = 0;
-    if (sources.pid !== null) {
-        const ps = run(["ps", "-A", "-o", "pid=,ppid=,time="], { timeoutMs: PROBE_TIMEOUT_MS });
-        if (ps.code === 0) cpuSeconds = treeCpuSeconds(ps.stdout, sources.pid);
+/**
+ * Whether `root` has exited, from `ps -A -o pid=,ppid=,time=,stat=` output: absent, or a zombie its parent has not
+ * reaped yet. A starved supervisor may probe a harness that already exited before it handles the exit.
+ */
+export function rootExited(psOutput: string, root: number): boolean {
+    for (const line of psOutput.split("\n")) {
+        const [pid, , , stat] = line.trim().split(/\s+/);
+        if (Number(pid) === root) return stat?.startsWith("Z") ?? false;
     }
-    return { marks: `${logSize}|${session}|${treeMark(sources.cwd)}`, cpuSeconds };
+    return true;
+}
+
+/**
+ * Look at the run's output, session, working tree and CPU now; `exited` when its root process is gone. `ps` runs last,
+ * so `exited` is as fresh as possible when the caller decides on a stall.
+ */
+export function probeProgress(sources: ProgressSources): Probe & { exited: boolean } {
+    const logSize = sources.logPath !== null && existsSync(sources.logPath) ? statSync(sources.logPath).size : 0;
+    const marks = `${logSize}|${sources.sessionDir === null ? "" : dirMark(sources.sessionDir)}|${treeMark(sources.cwd)}`;
+    if (sources.pid === null) return { marks, cpuSeconds: 0, exited: false };
+    const ps = run(["ps", "-A", "-o", "pid=,ppid=,time=,stat="], { timeoutMs: PROBE_TIMEOUT_MS });
+    if (ps.code !== 0) return { marks, cpuSeconds: 0, exited: false };
+    return { marks, cpuSeconds: treeCpuSeconds(ps.stdout, sources.pid), exited: rootExited(ps.stdout, sources.pid) };
 }
 
 /** Decides from successive probes when a run has made no progress for `stallMs`. */
@@ -141,14 +154,17 @@ export function probeIntervalMs(stallMs: number): number {
 
 /**
  * Probe `sources()` until stopped; calls `onStall` once when the run made no progress for `stallMs`. Returns the stop
- * function. `sources` is read on every probe, so a pid learned after the start is picked up.
+ * function. `sources` is read on every probe, so a pid learned after the start is picked up. A run whose root process
+ * already exited is never stalled: it ended on its own, and the caller stops the watch once it handles the exit.
  */
 export function watchStall(sources: () => ProgressSources, stallMs: number, onStall: () => void): () => void {
     const watch = new StallWatch(stallMs, Date.now());
     let fired = false;
     const timer = setInterval(() => {
         if (fired) return;
-        if (watch.observe(probeProgress(sources()), Date.now())) {
+        const probe = probeProgress(sources());
+        if (probe.exited) return;
+        if (watch.observe(probe, Date.now())) {
             fired = true;
             clearInterval(timer);
             onStall();

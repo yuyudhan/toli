@@ -48,6 +48,9 @@ one. See docs/releasing.md.
   there either. `capacity.diskBuildTools` names a machine's own build-queue tools that count as using a folder.
 - `state/disk-keep.pause` expires by itself after 2 hours without being touched, even if its pid is alive, and the
   keeper logs that cleaning resumed, so a forgotten pause no longer turns cleaning off for good.
+- A jawan run whose harness already exited is never stopped as stalled: a supervisor starved by a busy machine
+  could probe the finished process before handling its exit and record it stalled (or done, its error counted as a
+  report) instead of retrying a rate limit or reporting its failure.
 
 ## v0.3.1 - 2026-11-09
 
