@@ -16,6 +16,74 @@ export function gitOk(dir: string, args: string[]): string {
     return result.stdout.trim();
 }
 
+const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * The commit `rev` names in `dir`, or null when git says there is none. Its output is checked to be a full sha: on a
+ * loaded machine a successful child's stdout has been seen to arrive empty, so an empty or malformed answer is read
+ * once more (rev-parse is read-only) and then refused, never returned as a sha.
+ */
+export function resolveSha(dir: string, rev: string): string | null {
+    const args = ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`];
+    let printed = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const result = git(dir, args);
+        if (result.code !== 0) return null;
+        printed = result.stdout.trim();
+        if (SHA.test(printed)) return printed;
+    }
+    throw new ToliError(
+        `git ${args.join(" ")} in ${dir} succeeded twice but printed ${printed === "" ? "nothing" : `"${printed}"`} instead of a commit sha`,
+    );
+}
+
+/** The commit `rev` (default HEAD) names in `dir`; throws when there is none. See resolveSha. */
+export function headSha(dir: string, rev = "HEAD"): string {
+    const sha = resolveSha(dir, rev);
+    if (sha === null) throw new ToliError(`git rev-parse ${rev} failed in ${dir}: no such commit`);
+    return sha;
+}
+
+/** `git <args>` asked a yes/no question by exit status: 0 no, 1 yes, anything else an error. */
+function differs(dir: string, args: string[]): boolean {
+    const result = git(dir, args);
+    if (result.code === 0) return false;
+    if (result.code === 1) return true;
+    const detail = result.stderr.trim();
+    throw new ToliError(`git ${args.join(" ")} failed in ${dir}${detail ? `: ${detail}` : ""}`);
+}
+
+export type DirtyOptions = {
+    /** Count untracked files (default true). */
+    untracked?: boolean;
+    /** Count ignored files too, as untracked ones (default false). */
+    ignored?: boolean;
+    /** Only these paths (default the whole checkout). */
+    paths?: string[];
+};
+
+/**
+ * Whether the checkout in `dir` differs from its HEAD commit: changed tracked files (staged or not) and, unless
+ * `untracked` is false, untracked files that are not ignored (any untracked file with `ignored`). Tracked changes are
+ * decided by `git diff --quiet` exit statuses, never by reading stdout, so output lost on a loaded machine can never
+ * make a dirty tree look clean; the untracked listing has no such status, so an empty one is read twice before it
+ * counts as none.
+ */
+export function checkoutDirty(dir: string, options: DirtyOptions = {}): boolean {
+    const only = options.paths === undefined ? [] : ["--", ...options.paths];
+    if (differs(dir, ["diff", "--quiet", ...only]) || differs(dir, ["diff", "--cached", "--quiet", ...only]))
+        return true;
+    if (options.untracked === false) return false;
+    const args = ["ls-files", "--others", ...(options.ignored === true ? [] : ["--exclude-standard"]), "-z", ...only];
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const listed = git(dir, args);
+        if (listed.code !== 0)
+            throw new ToliError(`git ls-files --others failed in ${dir}: ${listed.stderr.trim() || "no detail"}`);
+        if (listed.stdout !== "") return true;
+    }
+    return false;
+}
+
 export function isGitRepo(dir: string): boolean {
     return existsSync(join(dir, ".git"));
 }

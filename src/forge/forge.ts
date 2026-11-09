@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
+import { currentBranch, git, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "../core/util.ts";
@@ -229,7 +229,7 @@ export async function pushCommand(argv: string[]): Promise<void> {
             throw new ToliError(
                 `refusing to push: gate ${recipe} ${gate.status} at ${gate.sha.slice(0, 12)}${gate.reason === undefined ? "" : ` (${gate.reason})`}, log ${gate.log}`,
             );
-        const head = gitOk(dir, ["rev-parse", "HEAD"]);
+        const head = headSha(dir);
         if (head !== gate.sha)
             throw new ToliError(
                 `refusing to push: HEAD moved to ${head.slice(0, 12)} while the gate ran on ${gate.sha.slice(0, 12)}; run the push again`,
@@ -243,7 +243,7 @@ export async function pushCommand(argv: string[]): Promise<void> {
     const old = before.stdout.trim().split(/\s+/)[0] || null;
     const code = await runInherit(["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`], { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push -u origin ${branch} failed (exit ${code})`);
-    const pushed = gitOk(dir, ["rev-parse", ref]);
+    const pushed = headSha(dir, ref);
     if (pushed === old) {
         out(`push log: nothing new on origin/${branch}`);
         return;
@@ -259,7 +259,7 @@ function requirePushed(dir: string, pushHint: string, branch: string): void {
     const remoteSha = remote.stdout.trim().split(/\s+/)[0] ?? "";
     const push = `run ${pushHint} first (only with ${persona().user}'s word to push, or the project's standing push grant)`;
     if (remoteSha === "") throw new ToliError(`refusing: branch ${branch} is not on origin; ${push}`);
-    const head = gitOk(dir, ["rev-parse", "HEAD"]);
+    const head = headSha(dir);
     if (remoteSha !== head && git(dir, ["merge-base", "--is-ancestor", head, remoteSha]).code !== 0)
         throw new ToliError(`refusing: origin/${branch} does not contain local HEAD ${head.slice(0, 12)}; ${push}`);
 }

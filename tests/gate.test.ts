@@ -6,8 +6,11 @@ import { GIT_ENV, type Sandbox, sandbox, TOLI_BIN, withProject } from "./helpers
 // Gates run real detached runners and wait on them; on a loaded machine one test can take tens of seconds.
 setDefaultTimeout(60_000);
 
-/** One stall minute lasts this many milliseconds, so `--stall 1` stops a gate silent for about a second. */
-const MINUTE_MS = "1000";
+/**
+ * One stall minute lasts this many milliseconds, so `--stall 1` stops a gate silent for about three seconds: a loaded
+ * machine can starve a recipe's shell for over a second between two lines, which a shorter limit would take for silence.
+ */
+const MINUTE_MS = "3000";
 const FAST = { TOLI_RUN_MINUTE_MS: MINUTE_MS };
 
 type GateRecord = {
@@ -158,11 +161,11 @@ describe("gate", () => {
 
     test("a gate printing steadily outlives the stall limit; a silent one is stopped and recorded stalled", () => {
         const { box, dir } = setup();
-        // Three seconds of output every 0.2 s, three times the one-second stall limit.
+        // Nine seconds of output every 0.2 s, three times the three-second stall limit.
         const steady = recipe(
             box,
             "steady",
-            "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do echo tick $i; sleep 0.2; done",
+            "i=1; while [ $i -le 45 ]; do echo tick $i; i=$((i + 1)); sleep 0.2; done",
         );
         const ok = box.ok(["gate", "run", "app", "--recipe", steady, "--stall", "1"], { env: FAST });
         expect(ok).toContain("passed");

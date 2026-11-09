@@ -8,7 +8,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, stat
 import { join, resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import { type Machine, machineSettings } from "../core/config.ts";
-import { git, gitOk } from "../core/git.ts";
+import { checkoutDirty, git, headSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, printJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { killGroup, runMinuteMs } from "../jawans/runs.ts";
@@ -127,10 +127,12 @@ export type GateRun = {
 };
 
 /**
- * How the checkout differs from its HEAD commit: `git status --porcelain` lines for changed tracked files and
- * untracked, not ignored ones (either can change what a gate sees). Empty when the checkout is exactly HEAD.
+ * How the checkout differs from its HEAD commit, or null when it is exactly HEAD (changed tracked files and untracked,
+ * not ignored ones: either can change what a gate sees). Whether it differs comes from git exit statuses
+ * (checkoutDirty); the `git status --porcelain` lines only name the changes, and may be empty if git's output was lost.
  */
-function checkoutChanges(dir: string): string[] {
+function checkoutChanges(dir: string): string[] | null {
+    if (!checkoutDirty(dir)) return null;
     const status = git(dir, ["status", "--porcelain"]);
     if (status.code !== 0) throw new ToliError(`git status failed in ${dir}: ${status.stderr.trim()}`);
     return status.stdout.split("\n").filter((line) => line.trim() !== "");
@@ -138,6 +140,7 @@ function checkoutChanges(dir: string): string[] {
 
 /** At most five changed paths, then how many more. */
 function changesText(changes: string[]): string {
+    if (changes.length === 0) return "changes git status did not list";
     const shown = changes.slice(0, 5).map((line) => line.slice(3));
     return changes.length > shown.length
         ? `${shown.join(", ")} and ${changes.length - shown.length} more`
@@ -151,12 +154,12 @@ function changesText(changes: string[]): string {
 export async function runGate(input: GateRun): Promise<GateRecord> {
     const say = input.json ? warn : out;
     const changes = checkoutChanges(input.dir);
-    if (changes.length > 0)
+    if (changes !== null)
         throw new ToliError(
             `refusing to run the gate: ${input.dir} differs from its HEAD commit (${changesText(changes)}), so the ` +
                 "result would not belong to any commit and could not be reused; commit them (or set them aside) first",
         );
-    const sha = gitOk(input.dir, ["rev-parse", "HEAD"]);
+    const sha = headSha(input.dir);
     const file = recordFile(input.project, sha, input.recipe);
     const decided = withLock(`${file}.lock`, (): { record: GateRecord; action: "skip" | "attach" | "start" } => {
         const existing = readRecord(file);
@@ -279,12 +282,12 @@ async function runGateProcess(file: string): Promise<void> {
             entry.status = "failed";
         } else {
             // A pass counts only if the checkout still was exactly the commit when the gate ended.
-            const head = gitOk(entry.dir, ["rev-parse", "HEAD"]);
+            const head = headSha(entry.dir);
             const changes = checkoutChanges(entry.dir);
             if (head !== entry.sha) {
                 entry.status = "failed";
                 entry.reason = `HEAD moved to ${short(head)} while it ran, so the pass may not hold for ${short(entry.sha)}`;
-            } else if (changes.length > 0) {
+            } else if (changes !== null) {
                 entry.status = "failed";
                 entry.reason = `the checkout changed while it ran (${changesText(changes)}), so the pass may not hold for ${short(entry.sha)}`;
             } else {
@@ -316,7 +319,7 @@ function gateCheck(argv: string[]): number {
     const project = args.pos(0, "project");
     const recipe = requireRecipe(args);
     const dir = toliSelfCheckout(project) ?? workDir(project, args.str(TASK_FLAG)).dir;
-    const sha = gitOk(dir, ["rev-parse", "--verify", `${args.str("sha") ?? "HEAD"}^{commit}`]);
+    const sha = headSha(dir, args.str("sha") ?? "HEAD");
     const record = reconcile(recordFile(project, sha, recipe));
     if (record?.status !== "passed") {
         const last = record === null ? "" : `; its last run is ${record.status}, log ${record.log}`;
