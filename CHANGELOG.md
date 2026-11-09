@@ -41,6 +41,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A gate, a commit and a push never take lost git output for an answer. On a loaded machine a git child that
+  succeeded has handed back no stdout: a gate then ran at an empty sha and was recorded failed ("HEAD moved"), and an
+  empty `git status` could make a dirty checkout look clean. Commit shas are now read with one check (a full sha, read
+  once more if not, then refused), and whether a checkout differs from HEAD comes from `git diff --quiet` exit
+  statuses, never from reading output.
 - The disk keeper never deletes forever: its floor is min(`capacity.diskKeepGB`, 15% of the disk), so a setting
   near or above the disk's free space can no longer make it delete build folders on every run; it stops as soon as
   free space reaches the floor (no extra margin) and deletes idle folders oldest first. On Linux without `lsof` it

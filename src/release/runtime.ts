@@ -29,7 +29,7 @@ import {
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { Args } from "../core/args.ts";
-import { gitOk } from "../core/git.ts";
+import { gitOk, headSha } from "../core/git.ts";
 import { codeRoot, paths, RUNTIME_MARKER } from "../core/paths.ts";
 import { isJsonObject, out, printJson, run, ToliError, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
 
@@ -83,7 +83,7 @@ function markerCommit(dir: string): string | null {
 }
 
 export function runtimeStatus(checkout: string = paths.root()): RuntimeStatus {
-    const head = gitOk(checkout, ["rev-parse", "HEAD"]);
+    const head = headSha(checkout);
     const runtime = activeRuntime(checkout);
     const commit = runtime === null ? null : markerCommit(runtime);
     const state = runtime === null ? "none" : commit === null ? "missing" : commit === head ? "current" : "stale";
@@ -157,7 +157,7 @@ function prune(store: string, active: string): void {
  * state/runtime atomically. Refuses, leaving the active runtime in place, when the snapshot does not load.
  */
 export function syncRuntime(checkout: string = paths.root()): Synced {
-    const commit = gitOk(checkout, ["rev-parse", "HEAD"]);
+    const commit = headSha(checkout);
     const store = storeFor(checkout);
     mkdirSync(store, { recursive: true });
     const target = join(store, commit.slice(0, 12));

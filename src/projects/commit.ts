@@ -15,7 +15,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Args } from "../core/args.ts";
-import { currentBranch, git, gitOk } from "../core/git.ts";
+import { checkoutDirty, currentBranch, git, gitOk, headSha, resolveSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, ToliError, warn } from "../core/util.ts";
@@ -90,9 +90,8 @@ type Merge = { ref: string; commit: string; tree: string; files: string[]; confl
  * resolution).
  */
 function cleanMerge(dir: string, parent: string, ref: string, resolved: boolean, named: string[]): Merge {
-    const target = git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
-    if (target.code !== 0) throw new ToliError(`--merge ${ref}: no such commit`);
-    const commit = target.stdout.trim();
+    const commit = resolveSha(dir, ref);
+    if (commit === null) throw new ToliError(`--merge ${ref}: no such commit`);
     if (git(dir, ["merge-base", "--is-ancestor", commit, parent]).code === 0)
         throw new ToliError(`nothing to commit: ${ref} (${commit.slice(0, 12)}) is already merged`);
     const merged = git(dir, ["merge-tree", "--write-tree", "--name-only", "--no-messages", parent, commit]);
@@ -111,25 +110,25 @@ function cleanMerge(dir: string, parent: string, ref: string, resolved: boolean,
     const files = gitOk(dir, ["diff", "--name-only", "--no-renames", parent, tree]).split("\n").filter(Boolean);
     const regenerated = files.filter((file) => isLockFile(file) && named.includes(file));
     const checked = files.filter((file) => !conflicts.includes(file) && !regenerated.includes(file));
-    const dirty =
-        checked.length === 0
-            ? ""
-            : gitOk(dir, [
-                  "--no-optional-locks",
-                  "status",
-                  "--porcelain",
-                  "--untracked-files=all",
-                  "--ignored=matching",
-                  "--",
-                  ...checked,
-              ]);
-    if (dirty !== "")
+    // Whether they differ comes from git exit statuses (checkoutDirty); `git status` only names them for the message.
+    if (checked.length > 0 && checkoutDirty(dir, { ignored: true, paths: checked })) {
+        const listed = gitOk(dir, [
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored=matching",
+            "--",
+            ...checked,
+        ]);
+        const names = listed
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => line.slice(3));
         throw new ToliError(
-            `refusing: local changes to files the merge changes: ${dirty
-                .split("\n")
-                .map((line) => line.slice(3))
-                .join(", ")}; commit or move them first`,
+            `refusing: local changes to files the merge changes: ${names.length > 0 ? names.join(", ") : checked.join(", ")}; commit or move them first`,
         );
+    }
     return { ref, commit, tree, files, conflicts, regenerated };
 }
 
@@ -141,7 +140,7 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
     const branch = currentBranch(dir);
     if (branch === null) throw new ToliError(`refusing: ${dir} is on a detached HEAD; commit on a branch`);
     const ref = `refs/heads/${branch}`;
-    const parent = gitOk(dir, ["rev-parse", "--verify", `${ref}^{commit}`]);
+    const parent = headSha(dir, ref);
     const merge =
         request.merge === undefined
             ? null
