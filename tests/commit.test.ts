@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
@@ -128,6 +128,23 @@ describe("bin/toli commit (R23 safe commits)", () => {
         expect(safeCommit({ dir, paths: ["a.txt"], message: "Third" }).files).toEqual(["a.txt"]);
     });
 
+    test("adding back elsewhere a line a recent commit removed is not a revert; restoring it in place is", () => {
+        const fields = (...names: string[]) =>
+            `fn default() -> Self {\n    Self {\n${names.map((name) => `        ${name}: true,\n`).join("")}    }\n}\n`;
+        const dir = repo({ "config.rs": fields("apps", "files", "calc") });
+        // The recent commit drops `files` and adds fields after `calc`; mine only adds `files` back after those
+        // (quickhop d8f9732 over 730f7dd).
+        const recent = otherJawan(dir, "config.rs", fields("apps", "calc", "emoji", "scripts"));
+        writeFileSync(join(dir, "config.rs"), fields("apps", "calc", "emoji", "scripts", "files"));
+        expect(safeCommit({ dir, paths: ["config.rs"], message: "Files provider" }).parent).toBe(recent);
+        // Restoring a recently removed line where it was is still refused.
+        const dropped = otherJawan(dir, "config.rs", fields("apps", "calc", "emoji", "files"));
+        writeFileSync(join(dir, "config.rs"), fields("apps", "calc", "emoji", "scripts", "files"));
+        expect(() => safeCommit({ dir, paths: ["config.rs"], message: "Mine" })).toThrow(
+            `would revert config.rs lines from ${dropped.slice(0, 7)}`,
+        );
+    });
+
     test("--merge: what the merged ref brings is never a revert; edits on top still are", () => {
         const stale = "fn main() {\n    run();\n}\n";
         const dir = repo({ "main.rs": stale });
@@ -233,6 +250,106 @@ describe("bin/toli commit (R23 safe commits)", () => {
         expect(safeCommit({ dir, paths: ["bun.lock"], message: "Lock" }).files).toEqual(["bun.lock"]);
     });
 
+    test("--merge --resolved checks Cargo.lock against the merged tree, including the crates the merge adds", () => {
+        const manifest = (members: string[]) =>
+            `[workspace]\nmembers = [${members.map((name) => `"${name}"`).join(", ")}]\nresolver = "2"\n`;
+        const lock = (members: string[]) =>
+            `version = 4\n${members.map((name) => `\n[[package]]\nname = "${name}"\nversion = "0.1.0"\n`).join("")}`;
+        const crate = (dir: string, name: string) => {
+            mkdirSync(join(dir, name, "src"), { recursive: true });
+            writeFileSync(
+                join(dir, name, "Cargo.toml"),
+                `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2021"\n`,
+            );
+            writeFileSync(join(dir, name, "src", "lib.rs"), "");
+        };
+        const dir = repo({ "Cargo.toml": manifest(["a"]), "Cargo.lock": lock(["a"]), ".gitignore": "target/\n" });
+        crate(dir, "a");
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "crate a"]);
+        // Upstream adds crate b, the branch adds crate c: both change the members and the lock file.
+        git(dir, ["switch", "--quiet", "-c", "upstream"]);
+        crate(dir, "b");
+        writeFileSync(join(dir, "Cargo.toml"), manifest(["a", "b"]));
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b"]));
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "upstream: crate b"]);
+        git(dir, ["switch", "--quiet", "main"]);
+        crate(dir, "c");
+        writeFileSync(join(dir, "Cargo.toml"), manifest(["a", "c"]));
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "c"]));
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "main: crate c"]);
+        const before = head(dir);
+
+        // Crate b's files reach the working tree only once the merge is committed.
+        writeFileSync(join(dir, "Cargo.toml"), manifest(["a", "b", "c"]));
+        const resolve = () =>
+            safeCommit({
+                dir,
+                paths: ["Cargo.toml", "Cargo.lock"],
+                merge: "upstream",
+                resolved: true,
+                message: "Merge upstream",
+            });
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b"]));
+        expect(resolve).toThrow("cargo metadata --locked rejects the staged Cargo.lock");
+        expect(head(dir)).toBe(before);
+
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b", "c"]));
+        const merged = resolve();
+        expect(git(dir, ["show", `${merged.sha}:Cargo.lock`])).toBe(lock(["a", "b", "c"]).trimEnd());
+        expect(git(dir, ["show", `${merged.sha}:b/Cargo.toml`])).toContain('name = "b"');
+        expect(git(dir, ["status", "--porcelain"])).toBe("");
+    });
+
+    test("--merge takes a named, regenerated Cargo.lock when the clean merge leaves the lock stale", () => {
+        const lock = (members: string[]) =>
+            `version = 4\n${members.map((name) => `\n[[package]]\nname = "${name}"\nversion = "0.1.0"\n`).join("")}`;
+        const crate = (dir: string, name: string) => {
+            mkdirSync(join(dir, "crates", name, "src"), { recursive: true });
+            writeFileSync(
+                join(dir, "crates", name, "Cargo.toml"),
+                `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2021"\n`,
+            );
+            writeFileSync(join(dir, "crates", name, "src", "lib.rs"), "");
+        };
+        const dir = repo({
+            "Cargo.toml": '[workspace]\nmembers = ["crates/*"]\nresolver = "2"\n',
+            "Cargo.lock": lock(["a"]),
+            ".gitignore": "target/\n",
+        });
+        crate(dir, "a");
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "crate a"]);
+        // Upstream adds crate b and touches the lock without its entry: the lock merges cleanly yet misses b.
+        git(dir, ["switch", "--quiet", "-c", "upstream"]);
+        crate(dir, "b");
+        writeFileSync(join(dir, "Cargo.lock"), `# upstream\n${lock(["a"])}`);
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "upstream: crate b"]);
+        git(dir, ["switch", "--quiet", "main"]);
+        writeFileSync(join(dir, "main.txt"), "main\n");
+        git(dir, ["add", "--all"]);
+        git(dir, ["commit", "--quiet", "-m", "main: unrelated"]);
+        const before = head(dir);
+        const merge = (paths: string[]) => () =>
+            safeCommit({ dir, paths, merge: "upstream", message: "Merge upstream" });
+
+        expect(merge([])).toThrow("cargo metadata --locked rejects the staged Cargo.lock");
+        // A named lock is still checked: a wrong one is refused.
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "c"]));
+        expect(merge(["Cargo.lock"])).toThrow("cargo metadata --locked rejects the staged Cargo.lock");
+        expect(head(dir)).toBe(before);
+
+        writeFileSync(join(dir, "Cargo.lock"), lock(["a", "b"]));
+        const merged = merge(["Cargo.lock"])();
+        expect(git(dir, ["show", `${merged.sha}:Cargo.lock`])).toBe(lock(["a", "b"]).trimEnd());
+        expect(git(dir, ["show", `${merged.sha}:crates/b/Cargo.toml`])).toContain('name = "b"');
+        expect(git(dir, ["rev-parse", `${merged.sha}^2`])).toBe(git(dir, ["rev-parse", "upstream"]));
+        expect(git(dir, ["status", "--porcelain"])).toBe("");
+    });
+
     test("refuses a staged secret (gitleaks) and commits nothing", () => {
         const dir = repo();
         const token = `ghp_${Array.from(crypto.getRandomValues(new Uint8Array(36)), (byte) => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[byte % 62]).join("")}`;
@@ -276,8 +393,8 @@ describe("bin/toli commit (R23 safe commits)", () => {
             "+added",
         ].join("\n");
         expect(parseHunks(diff)).toEqual([
-            { file: "x", removed: ["old"], added: ["new"] },
-            { file: "x", removed: [], added: ["added"] },
+            { file: "x", removed: ["old"], added: ["new"], oldStart: 1, newStart: 1 },
+            { file: "x", removed: [], added: ["added"], oldStart: 5, newStart: 6 },
         ]);
     });
 });

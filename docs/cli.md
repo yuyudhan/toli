@@ -99,8 +99,9 @@ and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a 
 
 - `commit` builds a private index from the branch tip and commits only the named paths and `--patch` hunks; it
   refuses secrets (gitleaks), lock files that do not parse, a revert of one of the last 20 commits, the wrong branch,
-  and a branch that moved twice meanwhile, and strips AI trailers. `toli` as the project commits toli itself on
-  `develop` ([development.md](development.md#working-on-toli-itself-in-place-landed-with-bintoli-commit)).
+  a branch that moved twice meanwhile, and a message the project's `commit-msg` hook rejects, and strips AI trailers.
+  `toli` as the project commits toli itself on `develop`
+  ([development.md](development.md#working-on-toli-itself-in-place-landed-with-bintoli-commit)).
 - `branch` creates a new branch in the clone and switches to it.
 - `workspace` prepares, lists, and prunes per-task branches and worktrees
   ([projects.md](projects.md#workspace-strategy)).
@@ -176,9 +177,9 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.
-- `disk keep`: free rebuildable build output when the disk is under `capacity.diskKeepGB`. It also runs before every
-  jawan start and every tick, so low disk never stops work; a live pid in `state/disk-keep.pause` pauses it
-  ([disk.md](disk.md)).
+- `disk keep`: free rebuildable build output when the disk is under `capacity.diskKeepGB`; still under it after the
+  normal steps, every `target/` goes, in use or not. It also runs before every jawan start and every tick, so low
+  disk never stops work; a live pid in `state/disk-keep.pause` pauses it ([disk.md](disk.md)).
 - `remote` runs a prompt on another machine; `exec` is what it runs there (headless omp, up to an hour).
 
 Details: [fleet.md](fleet.md).

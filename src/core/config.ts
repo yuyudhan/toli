@@ -12,6 +12,11 @@ export type CapacityConfig = {
     minMemAvailableMB?: number;
     /** Free disk (GB) the disk keeper holds: below it, rebuildable build output goes (src/fleet/disk.ts; default 60). */
     diskKeepGB?: number;
+    /**
+     * Minutes without use after which the disk keeper sweeps an artifact out of a cargo target a build holds
+     * (src/fleet/stale-sweep.ts; default 180).
+     */
+    diskSweepStaleMinutes?: number;
     /** Parallel compile jobs per cargo run (`CARGO_BUILD_JOBS` for jawans, mirrored in ~/.cargo/config.toml). */
     cargoJobs?: number;
     /** Automatic continuations per task chain when a jawan run hits its time limit without a report (default 3). */

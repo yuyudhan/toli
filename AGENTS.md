@@ -150,8 +150,9 @@ jawans stop on any OTP or captcha.
    `toli/<T-id>-<slug>` branch (in the clone, or in its worktree) before the jawan starts, and commits go there
    with `bin/toli commit <project> --task <T-id>`. Every commit goes through `bin/toli commit`, never plain `git
 commit`: it builds a private index from the branch tip, commits only the named paths (`--patch <file>` for
-   hunks), refuses a secret (gitleaks), a lock file that does not parse, a revert of one of the last 20 commits, or
-   a branch that moved twice meanwhile, and strips AI co-author trailers. Pushing a task branch and opening its
+   hunks), refuses a secret (gitleaks), a lock file that does not parse, a revert of one of the last 20 commits, a
+   branch that moved twice meanwhile, or a message the project's commit-msg hook rejects, and strips AI co-author
+   trailers. Pushing a task branch and opening its
    PR/MR still need Malik's word for that change unless the project has an explicit standing grant (`standing`
    push/pr, set only on his word with `bin/toli project set <p> --standing-push yes --standing-pr yes`).
 7. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes
@@ -225,8 +226,10 @@ and runs the prompt there, which can take up to an hour: run it only as `bash` w
 never in the foreground; its output arrives as a new turn. Thresholds live in `config/machine.json` `capacity` (`maxRuns`,
 `maxLoadPerCpu`, `minMemAvailableMB`). When no machine is available, queue the task and tell Malik. Low disk is never a
 reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
-every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). Never write a disk floor into a
-brief.
+every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). A full disk means delete the
+`target/` folders, in use or not, without asking: cargo rebuilds them. When free space is still under the floor, the
+keeper does that itself; on any machine, run `bin/toli disk keep` the moment a disk is full. Never write a disk floor
+into a brief.
 
 ## 7b. Custom machine helpers
 

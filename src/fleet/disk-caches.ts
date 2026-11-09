@@ -1,8 +1,37 @@
 // Machine-wide caches the disk keeper (src/fleet/disk.ts) shrinks after project build output: Docker's build cache and
-// unused images (never volumes or containers), and sccache's local cache when it has grown past its own cap.
-import { rmSync } from "node:fs";
+// unused images (never volumes or containers), sccache's local cache when it has grown past its own cap, and, as its
+// last resort, Playwright's downloaded browsers.
+import { readdirSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { run } from "../core/util.ts";
 import { cacheFiles } from "./disk-scan.ts";
+
+/** A browser build Playwright downloaded (`chromium-1140`, `chromium_headless_shell-1155`, `ffmpeg-1010`, ...). */
+const PLAYWRIGHT_BUILD = /^[a-z][a-z_-]*-\d+$/;
+
+/**
+ * Playwright's downloaded browser builds, each one folder (`playwright install` downloads them again): from
+ * PLAYWRIGHT_BROWSERS_PATH, else the platform's cache folder. Only folders named like a browser build, so a
+ * PLAYWRIGHT_BROWSERS_PATH pointing somewhere shared loses nothing else. `0` keeps them in node_modules: none here.
+ */
+export function playwrightBrowsers(): string[] {
+    const configured = process.env.PLAYWRIGHT_BROWSERS_PATH;
+    if (configured === "0") return [];
+    const dir =
+        configured !== undefined && configured !== ""
+            ? configured
+            : process.platform === "darwin"
+              ? join(homedir(), "Library", "Caches", "ms-playwright")
+              : join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "ms-playwright");
+    try {
+        return readdirSync(dir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && PLAYWRIGHT_BUILD.test(entry.name))
+            .map((entry) => join(dir, entry.name));
+    } catch {
+        return [];
+    }
+}
 
 const DOCKER_PRUNE_TIMEOUT_MS = 30 * 60_000;
 

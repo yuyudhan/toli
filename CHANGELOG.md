@@ -4,6 +4,36 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.3.1 - 2026-11-09
+
+### Fixed
+
+- A full disk means delete the build folders: when free space is still under `capacity.diskKeepGB` after the disk
+  keeper's normal steps, it deletes every `target/` in the clones and task worktrees, in use or not, then
+  `node_modules/`, `dist/` and Playwright's browser builds, logging each with what it freed (`--json`:
+  `lastResort`). It still touches only git-ignored build output, never sources or `.git`. See docs/disk.md step 6.
+- The disk keeper frees space while builds never stop: a cargo target whose lock is always held (jawans building
+  the same clone back to back) was kept whole every run. It is now swept: artifacts in a profile's `deps`, `build`,
+  `.fingerprint` and `incremental` unused for `capacity.diskSweepStaleMinutes` (default 180) go, judged by access
+  time where the mount keeps it current (else modification time: `noatime`, Linux `relatime`, macOS without
+  `strictatime`), never a cargo lock, anything newer or anything held open. Bytes freed are logged per target.
+- `bin/toli disk keep` works on a full disk: it writes nothing before it has freed something (log lines wait in
+  memory, an unwritable keeper lock is done without, Bun's transpiler cache is off for `bin/toli disk`), no failed
+  write stops it, and when the keeper fails anyway a fallback sweeps stale artifacts and the command exits 1 with the
+  reason instead of crashing. See docs/disk.md "On a full disk".
+- `bin/toli commit --merge --resolved` checks a staged Cargo.lock with cargo in the staged tree (the private index's
+  files), not the working tree, which lacks the crates a merge adds until it is committed (T617).
+- `bin/toli commit` runs the project's `commit-msg` hook (`core.hooksPath` honoured) on toli's private index and
+  refuses the commit when it rejects the message; a message the hook edits is committed as edited. Commits no longer
+  skip message rules such as VelocityFSS's `Quality-change:` line. Pre-commit hooks stay skipped.
+- `bin/toli commit --merge` takes a named, regenerated Cargo.lock or bun.lock when the clean merge leaves the lock
+  stale (each side's text merged but missed entries both sides need); the named lock still goes through the lock
+  checks (T650).
+- `bin/toli commit --merge --resolved` accepts a conflict resolved by deletion (e.g. a rename/rename source): such a
+  path is left deleted in the private index; any other absent path is refused with a clear message.
+- The revert guard counts a pure addition as a revert only when it restores a removed line in the same place; adding
+  that line back elsewhere is a new change.
+
 ## v0.3.0 - 2026-11-06
 
 ### Added

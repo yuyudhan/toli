@@ -30,26 +30,35 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    shared index cannot reach the commit.
 2. It refuses, committing nothing, when the staged set: changes a path that was not named; holds a secret (gitleaks
    over the private index); stages a `Cargo.lock` or `bun.lock` that does not parse (merge markers, a TOML or JSONC
-   error, a `[[package]]` the parser dropped; for a whole-file `Cargo.lock` also `cargo metadata --locked`); or
-   exactly undoes a hunk of one of the last 20 commits that touched those files, which is what a stale copy of a file
-   looks like (`--allow-revert <sha>` when undoing that commit is the point). With `--merge` only the changes made on
-   top of the merge result are checked: what the merged ref itself brings is never a revert, including the ref's own
-   hunks a `--resolved` conflict keeps as they are.
+   error, a `[[package]]` the parser dropped; for a `Cargo.lock` also `cargo metadata --locked`, run in a copy of the
+   staged tree, so the crates a merge adds count); or exactly undoes a hunk of one of the last 20 commits that touched
+   those files, which is what a stale copy of a file looks like (`--allow-revert <sha>` when undoing that commit is
+   the point). A pure insertion or removal counts only in the same place (the same lines border it), so adding back
+   elsewhere a line a recent commit removed is not a revert. With `--merge` only the changes made on top of the merge
+   result are checked: what the merged ref itself brings is never a revert, including the ref's own hunks a
+   `--resolved` conflict keeps as they are.
 3. It writes the commit with `git commit-tree` on the tip it read and moves the branch with
    `git update-ref <branch> <new> <old>`, which fails if another commit landed meanwhile. It then rebuilds everything
    once from the new tip; a second move is a refusal ("run the same commit again").
 4. It points the shared index's entries for the committed files at the commit (so `git status` shows no phantom
-   staged changes) and strips AI co-author trailers from the message. Git hooks do not run (`commit-tree`), which is
-   why `just check` comes first. Repeated `-m` values become separate paragraphs, as with `git commit`.
+   staged changes) and strips AI co-author trailers from the message. Before writing the commit it runs the
+   project's `commit-msg` hook (`core.hooksPath` honoured, else `.git/hooks/commit-msg`) on a temporary message file,
+   from the checkout root with `GIT_INDEX_FILE` at the private index, so a hook that reads the staged set sees
+   exactly the named paths; a non-zero exit refuses the commit with the hook's output, and a message the hook edits
+   is committed as edited. There is no bypass flag. Pre-commit hooks do not run: the checks above cover the staged
+   set, and pre-commit hooks often assume the shared index (re-staging formatters, `git stash`), which is why
+   `just check` comes first. Repeated `-m` values become separate paragraphs, as with `git commit`.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes, and named
-   paths the merge also changes (commit the merge first). A conflicted merge is refused, naming the conflicted paths
-   and the merge-tree tree (`git show <tree>:<path>` shows each with conflict markers). Write the resolved files in
-   the working tree, then run the same commit with `--resolved -- <conflicted paths>`: the named files replace the
-   conflicted ones, every conflicted path must be named and free of conflict markers, and every check above runs on
-   the result (`--resolved` on a clean merge is refused). After the branch moves it checks the merged files out into
-   the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
+   paths the merge also changes (commit the merge first), except a lock file: a clean merge can leave `Cargo.lock` or
+   `bun.lock` stale (each side's text merges, the entries both sides need do not), so a named, regenerated lock file
+   replaces the merged one and goes through the lock check like any staged lock. A conflicted merge is refused, naming
+   the conflicted paths and the merge-tree tree (`git show <tree>:<path>` shows each with conflict markers). Write the
+   resolved files in the working tree, then run the same commit with `--resolved -- <conflicted paths>`: the named files
+   replace the conflicted ones, every conflicted path must be named and free of conflict markers, and every check
+   above runs on the result (`--resolved` on a clean merge is refused). After the branch moves it checks the merged
+   files out into the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
 
 For toli, it then refreshes the installed runtime (below), so the live session runs the new commit from the next
 `bin/toli` call.
