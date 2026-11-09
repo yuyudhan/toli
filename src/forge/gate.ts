@@ -4,17 +4,27 @@
 // its caller (a jawan ending, a hook timing out, ssh dropping) and has no time limit: it only stops a gate whose log
 // stopped growing for the stall minutes (config/machine.json capacity.gateStallMinutes).
 import { type ChildProcess, spawn as spawnChild } from "node:child_process";
-import { createHash } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import { type Machine, machineSettings } from "../core/config.ts";
 import { git, gitOk } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, pidAlive, printJson, readJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
+import { now, out, pidAlive, printJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { killGroup, runMinuteMs } from "../jawans/runs.ts";
 import { toliSelfCheckout } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
+import {
+    type GateRecord,
+    type GateStatus,
+    logDecision,
+    outcomeText,
+    readRecord,
+    reconcile,
+    recordFile,
+    short,
+    updateRecord,
+} from "./gate-record.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
@@ -24,29 +34,6 @@ const DEFAULT_STALL_MINUTES = 30;
 const STOP_GRACE_MS = 10_000;
 /** How often an attached caller re-reads the record and the log. */
 const FOLLOW_POLL_MS = 250;
-
-/** `stalled`: stopped by the runner for going silent; `killed`: stopped by a signal, or its runner vanished. */
-export type GateStatus = "running" | "passed" | "failed" | "stalled" | "killed";
-
-export type GateRecord = {
-    project: string;
-    sha: string;
-    recipe: string;
-    /** The checkout the gate runs in (the one `bin/toli push` uses). */
-    dir: string;
-    status: GateStatus;
-    /** The runner's pid; null only while its caller is starting it. */
-    pid: number | null;
-    startedAt: string;
-    endedAt: string | null;
-    /** When the runner last saw the log grow. */
-    lastOutputAt: string | null;
-    exitCode: number | null;
-    log: string;
-    stallMinutes: number;
-    /** Why a gate that did not pass stopped. */
-    reason?: string;
-};
 
 /** `capacity.gateStallMinutes`: minutes without new gate output before the runner stops the gate. */
 function gateStallMinutes(machine: Partial<Machine>): number {
@@ -69,67 +56,6 @@ function requireRecipe(args: Args): string {
     const recipe = args.str("recipe");
     if (recipe === undefined || recipe.trim() === "") throw new ToliError('missing --recipe "<shell command>"');
     return recipe;
-}
-
-/** The record file of one project, commit and recipe: <sha>-<first 16 hex of the recipe's sha256>.json. */
-function recordFile(project: string, sha: string, recipe: string): string {
-    const hash = createHash("sha256").update(recipe).digest("hex").slice(0, 16);
-    return join(paths.gatesDir(project), `${sha}-${hash}.json`);
-}
-
-function readRecord(file: string): GateRecord | null {
-    return readJson<GateRecord | null>(file, null);
-}
-
-/** Read-modify-write one record under its lock (the runner, its callers and attachers race on it). */
-function updateRecord(file: string, change: (record: GateRecord) => void): GateRecord {
-    return withLock(`${file}.lock`, () => {
-        const record = readRecord(file);
-        if (record === null) throw new ToliError(`gate record ${file} is gone`);
-        change(record);
-        writeJsonAtomic(file, record);
-        return record;
-    });
-}
-
-/** A `running` record whose runner is gone is recorded `killed`; returns the record as it now stands. */
-function reconcile(file: string): GateRecord | null {
-    const record = readRecord(file);
-    if (record === null || record.status !== "running" || (record.pid !== null && pidAlive(record.pid))) return record;
-    return withLock(`${file}.lock`, () => {
-        const current = readRecord(file);
-        if (current === null || current.status !== "running" || (current.pid !== null && pidAlive(current.pid)))
-            return current;
-        current.status = "killed";
-        current.endedAt = now().toISOString();
-        current.reason = `its runner (pid ${current.pid ?? "unknown"}) exited without recording an outcome`;
-        writeJsonAtomic(file, current);
-        return current;
-    });
-}
-
-function short(sha: string): string {
-    return sha.slice(0, 12);
-}
-
-/** One line in logs/gates.log: `<time> <project> <sha12> <decision>: <message>`. */
-function logDecision(record: Pick<GateRecord, "project" | "sha">, decision: string, message: string): void {
-    mkdirSync(paths.logsDir(), { recursive: true });
-    appendFileSync(
-        paths.gatesLog(),
-        `${now().toISOString()} ${record.project} ${short(record.sha)} ${decision}: ${message}\n`,
-    );
-}
-
-function outcomeText(record: GateRecord): string {
-    const minutes =
-        record.endedAt === null
-            ? null
-            : Math.round((Date.parse(record.endedAt) - Date.parse(record.startedAt)) / 60_000);
-    const after = minutes === null ? "" : ` after ${minutes}m`;
-    const exit = record.exitCode === null ? "" : ` (exit ${record.exitCode})`;
-    const reason = record.reason === undefined ? "" : `: ${record.reason}`;
-    return `${record.recipe} ${record.status} at ${short(record.sha)}${exit}${after}${reason}, log ${record.log}`;
 }
 
 /** Copy the log's complete new lines (all of it once the gate ended) to stdout; returns the new offset. */
