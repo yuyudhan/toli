@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
@@ -6,6 +6,10 @@ import type { KeepReport } from "../src/fleet/disk.ts";
 import { atimeVerdict, sweepStaleArtifacts } from "../src/fleet/stale-sweep.ts";
 import { age, agedTarget, artifact, buildOutput, holdLock } from "./disk-fixture.ts";
 import { sandbox, tempDir, withProject } from "./helpers.ts";
+
+// The keeper tests build a sandbox with git repos and several bin/toli runs: on a loaded machine that alone can take
+// longer than bun's 5 s default.
+setDefaultTimeout(60_000);
 
 describe("sweeping stale artifacts out of a target in use", () => {
     test("while a build holds the lock it deletes what went unused past the age; the lock and fresh artifacts stay", () => {
@@ -103,6 +107,11 @@ describe("the disk keeper on a full disk", () => {
         buildOutput(box, idle);
         box.stub("docker", "exit 1");
         box.stub("sccache", "exit 2");
+        // A full disk for real: 1 GB free of 200 GB, under the emergency level, never this host's own free space.
+        box.stub(
+            "df",
+            `printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 209715200 1 1048576 99%% /\\n'`,
+        );
         // Every write the keeper would make fails, for root too: logs/ is a file, the lock file a folder.
         const logs = join(box.root, "logs");
         rmSync(logs, { recursive: true, force: true });
