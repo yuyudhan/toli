@@ -6,7 +6,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, type Dirent, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { platform } from "../core/util.ts";
 import { cargoRunsIn, LIVE_PROBES, openBelow, targetUse, type UseProbes } from "./disk-scan.ts";
 
 /** The lock files cargo holds while it compiles; only a whole-target wipe under them ever removes one. */
@@ -17,20 +16,23 @@ export const CARGO_LOCKS: Readonly<Record<string, true>> = {
 };
 /** Profile dirs sit at most this deep: `target/debug`, `target/<triple>/debug`, `target/clippy/debug`. */
 export const LOCK_DEPTH = 3;
-const LOCK_EX = 2;
-const LOCK_NB = 4;
-const LOCK_UN = 8;
+export const LOCK_EX = 2;
+export const LOCK_NB = 4;
+export const LOCK_UN = 8;
 const RETRY_MS = 2000;
 
-type Flock = (fd: number, operation: number) => number;
+export type Flock = (fd: number, operation: number) => number;
 
 let flockFn: Flock | null | undefined;
 
-/** libc flock(2) through Bun's FFI; null where libc cannot be loaded (then no lock is ever taken). */
-function flock(): Flock | null {
+/**
+ * libc flock(2) through Bun's FFI (also the build slots' lock); null where libc cannot be loaded. The library is the
+ * host's own, so it follows the real OS, never `TOLI_PLATFORM`.
+ */
+export function flock(): Flock | null {
     if (flockFn !== undefined) return flockFn;
     const candidates =
-        platform() === "darwin" ? ["libc.dylib", "/usr/lib/libSystem.B.dylib"] : ["libc.so.6", "libc.so"];
+        process.platform === "darwin" ? ["libc.dylib", "/usr/lib/libSystem.B.dylib"] : ["libc.so.6", "libc.so"];
     flockFn = null;
     for (const name of candidates) {
         try {
@@ -122,7 +124,7 @@ export function wipeTargetBetweenBuilds(
                 const busy =
                     holdOff() ??
                     cargoRunsIn(dirname(target), probes.cargos) ??
-                    targetUse(target, probes.processes) ??
+                    targetUse(target, probes.processes, probes.buildTools) ??
                     openIn(target, probes);
                 if (busy !== null) reason = busy;
                 else {

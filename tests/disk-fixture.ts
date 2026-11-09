@@ -1,9 +1,41 @@
-// Cargo-like build output for the disk keeper's tests (tests/disk.test.ts, tests/disk-sweep.test.ts).
+// Cargo-like build output and sandboxes for the disk keeper's tests (tests/disk*.test.ts).
 import { dlopen, FFIType } from "bun:ffi";
-import { expect } from "bun:test";
-import { closeSync, mkdirSync, openSync, utimesSync, writeFileSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { closeSync, mkdirSync, openSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Sandbox } from "./helpers.ts";
+import { type Sandbox, sandbox } from "./helpers.ts";
+
+/**
+ * A keeper test: each builds origin repos and clones with git and runs bin/toli several times. That real I/O takes
+ * 2-8 s on an idle machine but has taken 67 s at load average 30-60, so each allows 120 s.
+ */
+export function keeperTest(name: string, run: () => void): void {
+    test(name, run, 120_000);
+}
+
+/**
+ * A sandbox whose `ps` and `lsof` report no other processes and no open files, so the keeper sees only what a test
+ * sets up (running jawans in state/, cargo's locks) and never the host's own processes.
+ */
+export function keeperBox(): Sandbox {
+    const box = sandbox();
+    box.stub("ps", "exit 0");
+    box.stub("lsof", "exit 0");
+    return box;
+}
+
+/** Merge `capacity` into the sandbox's config/machine.json. */
+export function setCapacity(box: Sandbox, capacity: Record<string, number>): void {
+    const file = join(box.root, "config", "machine.json");
+    const machine = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    writeFileSync(file, JSON.stringify({ ...machine, capacity }));
+}
+
+/** A `df -Pk` stub line for a volume of `totalGB` with `$kb` (a shell variable the script sets) available. */
+export function dfLine(totalGB: number): string {
+    const total = totalGB * 1024 * 1024;
+    return `printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x ${total} 1 %s 50%% /\\n' "$kb"`;
+}
 
 /** A clone with a cargo-style target, node_modules and dist, all git-ignored, plus a tracked dist in `docs/`. */
 export function buildOutput(box: Sandbox, clone: string): void {

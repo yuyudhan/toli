@@ -1,8 +1,13 @@
 # The disk keeper
 
 Low free disk never stops work on a toli machine. No floor refuses a spawn, a pick, or a build. When free space on
-the volume holding toli is under `capacity.diskKeepGB` in `config/machine.json` (default 60), toli deletes rebuildable
-output until free space is 20 GB above that floor. Nobody has to decide anything and nobody is asked.
+the volume holding toli is under the floor, toli deletes rebuildable output until free space is back at the floor.
+Nobody has to decide anything and nobody is asked. The floor is `capacity.diskKeepGB` in `config/machine.json`
+(default 60), but never more than 15% of the volume's size: a setting too high for a small disk would otherwise keep
+the keeper deleting forever, since free space could never reach it. On a 117 GB disk with `diskKeepGB` 100 the floor
+is 17.5 GB, and `bin/toli disk keep` says so: `floor 17.5 GB (15% of 117.0 GB disk; capacity.diskKeepGB 100 is above
+it)` (`--json`: `floorGB`, `floorNote`, `diskTotalGB`; the same text reaches `logs/disk.log` whenever the keeper
+runs or skips).
 
 **A full disk means delete the build folders.** Every `target/` folder can go at any time, even one a running build
 uses: cargo builds it again. If free space is still under the floor after the normal steps, the keeper deletes every
@@ -18,7 +23,8 @@ Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep
   `bin/toli disk keep --wait 30`, and the run starts anyway.
 - Every minute from the tick (`bin/toli schedule install`), the same way.
 - By hand, with `bin/toli disk keep`. `--dry-run` (or `TOLI_DRY_RUN=1`) lists what would go and counts each folder's
-  size as freed. `--floor` overrides the configured floor, so a dry run with a high floor shows the whole plan.
+  size as freed. `--floor` overrides the floor and is not capped (it is the caller's choice), so a dry run with a high
+  floor shows the whole plan.
 
 Only one keeper runs at a time (`state/disk-keep.lock` holds its pid). Every action goes to `logs/disk.log`. A reason
 the keeper did not run (paused, or another keeper busy) is logged once when it starts, not on every minute's tick.
@@ -34,17 +40,25 @@ pid to `state/disk-keep.pause`, optionally followed by a short reason, and remov
     rm -f "$pause"
 
 While that pid is alive the keeper deletes nothing (`bin/toli disk keep` says `paused by pid N (reason)`). Once the
-pid is dead the file is stale and ignored, so a job killed before its cleanup never blocks the keeper for good. Use
-this file, never `state/disk-keep.lock`: the lock belongs to the keeper itself.
+pid is dead the file is stale and ignored, so a job killed before its cleanup never blocks the keeper for good. A
+pause also expires 2 hours after the file was last written (its modification time), even while the pid lives: a
+job that hangs, or forgets its cleanup while its shell lives on, cannot turn cleaning off for good. The keeper then
+removes the file and logs once `pause by pid N expired after 2 h; cleaning resumed`. A job that runs longer than 2
+hours touches the file again before then (`touch "$pause"`, say once an hour) to keep its pause. Use this file,
+never `state/disk-keep.lock`: the lock belongs to the keeper itself.
 
 ## What it deletes, in order
 
-It stops as soon as free space reaches the floor plus 20 GB. Steps 1 to 5 spare build output in use; step 6 does not.
+It stops as soon as free space is back at the floor: no margin on top, since every build folder it deletes beyond
+that is one a build would have reused, and the keeper runs again before the next jawan starts and every minute
+anyway. Within each step it takes the least recently used folders first (by the newest modification time of the
+folder and its direct children: a build rewrites `target/debug`, `node_modules/.bin`), so the output of the work
+going on now goes last. Steps 1 to 5 spare build output in use; step 6 does not.
 
 1. Whole `target/` folders of project checkouts that nothing uses. A checkout is all registered projects' clones
    plus their git worktrees. Nothing uses it when no running jawan works in it (or, for a main clone, on its
    project) and no process has its working directory inside it. The wipe still takes cargo's locks and checks
-   that no process uses the target (see 5), so a build or test started from elsewhere is never cut off. Oldest first.
+   that no process uses the target (see 5), so a build or test started from elsewhere is never cut off.
 2. `node_modules/` and `dist/` of those idle checkouts, unless a process holds a file in them open. A project main
    clone's `node_modules/` is never deleted: builds run there between jobs (a project's build queue) and do not
    reinstall dependencies on their own, while cargo rebuilds a wiped `target/` by itself.
@@ -57,11 +71,14 @@ It stops as soon as free space reaches the floor plus 20 GB. Steps 1 to 5 spare 
    the test binaries, so the locks alone are not enough. The target is in use when, from the process table (`ps`,
    then each process's executable, mapped files and working directory: `lsof -d cwd,txt` on macOS, `/proc/<pid>/exe`
    and `/proc/<pid>/cwd` on Linux), any process runs an executable or maps a file under it, works inside its
-   workspace (the folder holding `target/`), or is `cargo`, `rustc`, `rustdoc`, `clippy-driver`, `just` or a kalki
-   queue working in, above, or naming that workspace; when a cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`,
-   ...) runs in the folder holding the target (`cargo test` drops its locks before it runs the test binaries one after
-   another); or when any process holds a file under it open. A process table it cannot read counts as in use. Each
-   skip is logged with its reason. Only then does it rename the folder aside under the locks, release them, and delete
+   workspace (the folder holding `target/`), or is `cargo`, `rustc`, `rustdoc`, `clippy-driver`, `just` or one of the
+   machine's own build tools (`capacity.diskBuildTools`, below) working in, above, or naming that workspace; when a
+   cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) runs in the folder holding the target (`cargo test`
+   drops its locks before it runs the test binaries one after
+   another); or when any process holds a file under it open. A process table it cannot read counts as in use. On
+   Linux every one of these checks, and the working directories and open files of steps 1 and 2, reads `/proc`
+   (`/proc/<pid>/cwd`, `exe`, `maps`, `fd/*`, `comm`), so they hold where `lsof` is not installed. Each skip is
+   logged with its reason. Only then does it rename the folder aside under the locks, release them, and delete
    the renamed tree (where the rename fails, as it can on a full disk, it deletes the folder in place under the locks).
    A cargo that starts meanwhile waits on the lock, then builds into an empty target.
 
@@ -76,16 +93,16 @@ It stops as soon as free space reaches the floor plus 20 GB. Steps 1 to 5 spare 
     day or more), and macOS volumes not mounted `strictatime`. The keeper reads the mount's options from
     `/proc/self/mounts` or `mount` and names its choice in the log line (`by mtime: relatime mount ...`). It never
     deletes a cargo lock file, anything holding one, anything newer than the age, or anything a process holds open,
-    runs or maps (lsof). Cargo rebuilds an artifact it finds missing; a build already running that needs one swept
-    from under it fails once and rebuilds it when run again.
+    runs or maps (lsof; `/proc` on Linux). Cargo rebuilds an artifact it finds missing; a build already running that
+    needs one swept from under it fails once and rebuilds it when run again.
 
     The inline keeper tries the wipe once and then sweeps; the background keeper also retries the wipe for up to 30
     minutes per target and checks `state/disk-keep.pause` again before every try, so a job that writes the pause while
     the keeper waits is not cut off.
 
-6. The last resort, only when free space is still under the floor itself (not merely short of the floor plus 20 GB)
-   after steps 1 to 5: every `target/` folder still there, in use or not, held lock or not, is deleted outright. Then,
-   until free space reaches the floor plus 20 GB, every `node_modules/` (never a main clone's, see 2) and `dist/`
+6. The last resort, only when free space is still under the floor after steps 1 to 5: every `target/` folder still
+   there, in use or not, held lock or not, is deleted outright. Then, until free space reaches the floor, every
+   `node_modules/` (never a main clone's, see 2) and `dist/`
    left (Vite's cache is
    `node_modules/.vite`, so it goes with them) and Playwright's downloaded browsers (the `chromium-1140`-style folders
    in `PLAYWRIGHT_BROWSERS_PATH`, else `~/Library/Caches/ms-playwright` on macOS and `~/.cache/ms-playwright` on
@@ -124,11 +141,16 @@ its own caches.
 ## Settings
 
 ```json
-{ "capacity": { "diskKeepGB": 60, "diskSweepStaleMinutes": 180 } }
+{ "capacity": { "diskKeepGB": 60, "diskSweepStaleMinutes": 180, "diskBuildTools": ["my-queue", "my-tool queue"] } }
 ```
 
-`diskKeepGB` is the floor in GB. `diskSweepStaleMinutes` is how long an artifact in a busy target must go unused
+`diskKeepGB` is the floor in GB, capped at 15% of the size of the volume holding toli (see the top of this page).
+`diskSweepStaleMinutes` is how long an artifact in a busy target must go unused
 before the sweep deletes it (a positive number of minutes; at 1440 or more, Linux `relatime` access times count too).
+`diskBuildTools` (default none) names this machine's own build tools, such as a project's build queue that runs
+cargo from above its workspaces: while one runs, a target in a workspace it works in, above or names counts as in
+use. An entry is a program name, matched against every word of a command line by file name (`my-queue` also
+matches a script `/opt/tools/my-queue.ts`), or several words that must follow each other (`my-tool queue`).
 
 Each machine reads its own `config/machine.json`. Machine-private cleanup scripts ([helpers.md](helpers.md)) can
 still run on top of the keeper, but none of them may refuse work on low disk.

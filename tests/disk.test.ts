@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
 import { parseSccacheStats } from "../src/fleet/disk-caches.ts";
 import type { HeldFile, ProcessUse, UseProbes } from "../src/fleet/disk-scan.ts";
-import { buildOutput, holdLock, libc } from "./disk-fixture.ts";
-import { type Sandbox, sandbox, tempDir, withProject } from "./helpers.ts";
+import { buildOutput, holdLock, keeperBox, keeperTest, libc } from "./disk-fixture.ts";
+import { type Sandbox, tempDir, withProject } from "./helpers.ts";
 
 /** A running jawan run of `project` working in `cwd`, its supervisor this (live) test process. */
 function runningJawan(box: Sandbox, project: string, cwd: string): void {
@@ -39,25 +39,6 @@ function runningJawan(box: Sandbox, project: string, cwd: string): void {
             error: null,
         }),
     );
-}
-
-/**
- * A keeper test: each builds origin repos and clones with git and runs bin/toli several times. That real I/O takes
- * 2-8 s on an idle machine but has taken 67 s at load average 30-60, so each allows 120 s.
- */
-function keeperTest(name: string, run: () => void): void {
-    test(name, run, 120_000);
-}
-
-/**
- * A sandbox whose `ps` and `lsof` report no other processes and no open files, so the keeper sees only what a test
- * sets up (running jawans in state/, cargo's locks) and never the host's own processes.
- */
-function keeperBox(): Sandbox {
-    const box = sandbox();
-    box.stub("ps", "exit 0");
-    box.stub("lsof", "exit 0");
-    return box;
 }
 
 describe("disk keeper", () => {
@@ -236,15 +217,25 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
 });
 
 describe("wiping a target between build steps", () => {
-    /** The processes, open files and cargo runs a wipe sees: injected, so the host's own processes never count. */
-    type Machine = { processes: ProcessUse[]; openFiles: HeldFile[]; cargos: { pid: string; cwd: string }[] };
+    /** The processes, open files, cargo runs and configured build tools a wipe sees: injected, never the host's. */
+    type Machine = {
+        processes: ProcessUse[];
+        openFiles: HeldFile[];
+        cargos: { pid: string; cwd: string }[];
+        buildTools: string[];
+    };
 
     function quiet(): Machine {
-        return { processes: [], openFiles: [], cargos: [] };
+        return { processes: [], openFiles: [], cargos: [], buildTools: [] };
     }
 
     function probes(machine: Machine): UseProbes {
-        return { processes: () => machine.processes, openFiles: () => machine.openFiles, cargos: () => machine.cargos };
+        return {
+            processes: () => machine.processes,
+            openFiles: () => machine.openFiles,
+            cargos: () => machine.cargos,
+            buildTools: () => machine.buildTools,
+        };
     }
 
     /** A `sleep` working in `cwd`: it runs and maps nothing but `/bin/sleep`. */
@@ -350,6 +341,24 @@ describe("wiping a target between build steps", () => {
         expect(existsSync(target)).toBe(true);
         machine.processes.length = 0;
         machine.cargos.length = 0;
+        expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
+        expect(existsSync(target)).toBe(false);
+    });
+
+    test("keeps the target while a tool in capacity.diskBuildTools runs above its workspace, and only then", () => {
+        const { workspace, target } = workspaceTarget();
+        const above = dirname(workspace);
+        const machine = quiet();
+        machine.processes.push({ pid: "4107", args: "bun /opt/tools/my-queue.ts run", files: [], cwd: above });
+        machine.processes.push({ pid: "4108", args: "/usr/local/bin/my-tool queue", files: [], cwd: above });
+        machine.buildTools.push("my-queue");
+        const queue = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+        expect(queue).toEqual({ wiped: false, reason: `my-queue (pid 4107) builds in ${workspace}` });
+        machine.buildTools.splice(0, 1, "my-tool queue");
+        const words = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+        expect(words).toEqual({ wiped: false, reason: `my-tool queue (pid 4108) builds in ${workspace}` });
+        expect(existsSync(target)).toBe(true);
+        machine.buildTools.length = 0;
         expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
     });
