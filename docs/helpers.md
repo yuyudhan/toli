@@ -48,6 +48,7 @@ it dispatches a worker that writes the script, registers it, runs it once, insta
 | `args`          | no       | arguments, as-is; the working directory is the toli root                                                |
 | `runAtLoad`     | no       | also run once when installed and at login/boot (default false)                                          |
 | `nice`          | no       | CPU priority 0-19, higher is gentler                                                                    |
+| `interactive`   | no       | launchd `ProcessType Interactive` (macOS): normal CPU priority; default false                           |
 | `lowPriorityIO` | no       | low-priority disk I/O (launchd `LowPriorityIO`, systemd `IOSchedulingClass=idle`)                       |
 | `maxFiles`      | no       | open-files limit, soft and hard (launchd `NumberOfFiles`, systemd `LimitNOFILE`, crontab `ulimit -n`)   |
 | `env`           | no       | extra environment; `PATH` here replaces the default scheduled PATH                                      |
@@ -57,6 +58,12 @@ it dispatches a worker that writes the script, registers it, runs it once, insta
 `always` keeps one process running and restarts it when it exits; it needs launchd or systemd (crontab cannot do
 it). A `cron` schedule may restrict day-of-month or day-of-week, not both (launchd and systemd cannot express cron's
 "either day" rule). An `every` interval under crontab must divide an hour or a day evenly; otherwise use `cron`.
+
+launchd starts a job without `ProcessType` at a throttled (utility) priority, 20 against 31 for anything started from
+a terminal; under load that job gets about half the CPU. `"interactive": true` makes it `ProcessType Interactive`
+(31), for helpers whose speed matters (a build queue). It applies to `every` and `cron` helpers: an `always` helper
+stays `ProcessType Background` (efficiency cores only). systemd user services and crontab jobs already run at normal
+priority, so the field is a no-op there. Reinstall (`helper install <name>`) to apply a change; it restarts the helper.
 
 Unknown keys and malformed values are errors that name the helper, so a typo never installs silently.
 

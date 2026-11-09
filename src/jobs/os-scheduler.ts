@@ -109,7 +109,8 @@ export type PlistSpec = {
     runAtLoad?: boolean;
     /** Restart whenever it exits (a long-running service). */
     keepAlive?: boolean;
-    processType?: "Background";
+    /** Background: throttled, efficiency cores; Interactive: full priority (launchd's default is throttled). */
+    processType?: "Background" | "Interactive";
     nice?: number;
     lowPriorityIO?: boolean;
     /** Soft and hard NumberOfFiles resource limits. */

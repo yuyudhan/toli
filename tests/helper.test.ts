@@ -93,6 +93,7 @@ describe("helpers.json parsing", () => {
             [[{ ...sweep, schedule: { always: false } }], "always must be true"],
             [[{ ...sweep, nice: 25 }], '"nice" must be an integer 0-19'],
             [[{ ...sweep, maxFiles: 0 }], '"maxFiles" must be a positive integer'],
+            [[{ ...sweep, interactive: "yes" }], '"interactive" must be true or false'],
             [[{ ...sweep, env: { "BAD-NAME": "x" } }], 'bad env name "BAD-NAME"'],
             [[{ ...sweep, args: [1] }], '"args" must be an array of strings'],
         ];

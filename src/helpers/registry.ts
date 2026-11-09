@@ -27,6 +27,10 @@ export type Helper = {
     runAtLoad: boolean;
     /** Scheduling priority 0-19 (higher is gentler); unset leaves the default. */
     nice: number | undefined;
+    /** launchd ProcessType Interactive: the helper and its children run at normal scheduling priority instead of
+     * launchd's default throttled (utility) one; ignored under systemd and crontab, whose jobs already run at normal
+     * priority. */
+    interactive: boolean;
     /** Low-priority disk I/O (launchd LowPriorityIO, systemd IOSchedulingClass=idle). */
     lowPriorityIO: boolean;
     /** Open-files limit, soft and hard (launchd Soft/HardResourceLimits NumberOfFiles, systemd LimitNOFILE, crontab
@@ -47,6 +51,7 @@ const KEYS: readonly string[] = [
     "schedule",
     "runAtLoad",
     "nice",
+    "interactive",
     "lowPriorityIO",
     "maxFiles",
     "env",
@@ -140,6 +145,7 @@ function parseHelper(value: unknown, index: number, root: string, source: string
         schedule: parseSchedule(value.schedule, `${at}: "schedule"`),
         runAtLoad: optionalBool(value.runAtLoad, `${at}: "runAtLoad"`, false),
         nice: nice as number | undefined,
+        interactive: optionalBool(value.interactive, `${at}: "interactive"`, false),
         lowPriorityIO: optionalBool(value.lowPriorityIO, `${at}: "lowPriorityIO"`, false),
         maxFiles: maxFiles as number | undefined,
         env,
