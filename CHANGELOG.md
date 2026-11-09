@@ -46,6 +46,14 @@ one. See docs/releasing.md.
   empty `git status` could make a dirty checkout look clean. Commit shas are now read with one check (a full sha, read
   once more if not, then refused), and whether a checkout differs from HEAD comes from `git diff --quiet` exit
   statuses, never from reading output.
+- A toli lock left by a process killed inside it (a gate caller whose ssh session dropped, a killed jawan) is taken
+  over at once: the lock file names its holder's pid. Before, the next caller waited 10 s for a lock that only went
+  stale after 30 s, and failed ("timed out waiting for lock"), as a second `bin/toli gate run` did after its first
+  caller was killed on a loaded machine.
+- The disk keeper deletes build output in use (its last resort) only under an emergency level, max(5 GB, 3% of the
+  disk) and never above the floor (`--json`: `emergencyGB`). Before, it did so as soon as free space stayed under the
+  floor itself after the normal steps, so a disk a few GB under its floor cost running builds their `target/`;
+  between the floor and the emergency level only idle output goes now.
 - The disk keeper never deletes forever: its floor is min(`capacity.diskKeepGB`, 15% of the disk), so a setting
   near or above the disk's free space can no longer make it delete build folders on every run; it stops as soon as
   free space reaches the floor (no extra margin) and deletes idle folders oldest first. On Linux without `lsof` it

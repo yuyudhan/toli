@@ -95,11 +95,9 @@ describe("disk keeper", () => {
         },
     );
 
-    /**
-     * Two clones: idle `alpha`, and `beta` held by a running jawan and a build holding cargo's lock. `df` reports
-     * 1 GB free while alpha's target exists and 100 GB once it is gone; nothing else changes it.
-     */
-    function heldTree(box: Sandbox): { idle: string; busy: string; release: () => void } {
+    /** Idle `alpha` and `beta`, held by a jawan and a cargo lock, on a 200 GB disk (emergency level 6 GB): 1 GB free
+     * while alpha's target exists, `afterGB` once it is gone. */
+    function heldTree(box: Sandbox, afterGB = 100): { idle: string; busy: string; release: () => void } {
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const idle = realpathSync(withProject(box, "alpha"));
         const busy = realpathSync(withProject(box, "beta"));
@@ -111,26 +109,28 @@ describe("disk keeper", () => {
         box.stub("sccache", "exit 2");
         box.stub(
             "df",
-            `if [ -e "${join(idle, "target")}" ]; then kb=1048576; else kb=104857600; fi
+            `if [ -e "${join(idle, "target")}" ]; then kb=1048576; else kb=${afterGB * 1048576}; fi
 printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 209715200 1 %s 50%% /\\n' "$kb"`,
         );
         return { idle, busy, release: holdLock(join(busy, "target", "debug", ".cargo-lock")) };
     }
 
     keeperTest(
-        "still under the floor after the normal tiers, it deletes held build output too, never sources, git or a main clone's node_modules",
+        "still under the emergency level after the normal tiers, it deletes held build output too, never sources, git or a main clone's node_modules",
         () => {
             const box = keeperBox();
-            const { idle, busy, release } = heldTree(box);
+            const { idle, busy, release } = heldTree(box, 1);
             const browsers = join(box.root, ".playwright");
             mkdirSync(join(browsers, "chromium-1140"), { recursive: true });
             writeFileSync(join(browsers, "chromium-1140", "chrome"), "x");
             writeFileSync(join(browsers, "notes.txt"), "not a browser\n");
             try {
-                const keep = ["disk", "keep", "--floor", "1000000000", "--json"];
+                const keep = ["disk", "keep", "--floor", "50", "--json"];
                 const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
                 const lines = report.lines.join("\n");
+                expect(report.emergencyGB).toBe(6);
                 expect(report.lastResort).toBe(true);
+                expect(lines).toContain("free 1.0 GB is under the emergency level 6.0 GB: deleting every build folder");
                 expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
                 expect(lines).toContain(`kept ${join(busy, "target")}: a build holds `);
                 expect(lines).toContain(`${join(busy, "target")} is in use (a build holds `);
@@ -162,6 +162,24 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
             expect(report.lastResort).toBe(false);
             expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
             expect(lines).not.toContain("still under the floor");
+            for (const held of ["target/debug/deps/libx.rlib", "web/node_modules/pkg/index.js", "web/dist/app.js"])
+                expect(existsSync(join(busy, held))).toBe(true);
+        } finally {
+            release();
+        }
+    });
+
+    keeperTest("under the floor but over the emergency level, it never deletes build output in use", () => {
+        const box = keeperBox();
+        const { idle, busy, release } = heldTree(box, 45); // floor 50, emergency 6: 45 GB free after alpha's target
+        try {
+            const keep = ["disk", "keep", "--floor", "50", "--json"];
+            const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
+            const lines = report.lines.join("\n");
+            expect(report.lastResort).toBe(false);
+            expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
+            expect(lines).not.toContain("deleting it anyway");
+            expect(lines).toContain("done, still under the floor");
             for (const held of ["target/debug/deps/libx.rlib", "web/node_modules/pkg/index.js", "web/dist/app.js"])
                 expect(existsSync(join(busy, held))).toBe(true);
         } finally {

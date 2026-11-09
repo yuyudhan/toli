@@ -13,9 +13,10 @@
 //      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open. A target
 //      that stays in use (builds back to back) is swept instead: every artifact in it unused for
 //      capacity.diskSweepStaleMinutes (default 180) goes, lock or no lock (src/fleet/stale-sweep.ts);
-//   6. last resort, when free space is still under the floor itself: every `target/` left, in use or not, then every
-//      `node_modules/` (but a main clone's) and `dist/` and Playwright's browser cache. All of it rebuilds itself; a build cut off fails
-//      once and compiles again. A full disk means delete the build folders, without asking anyone.
+//   6. last resort, only under the emergency level (max(5 GB, 3% of the disk), at most the floor) after 1 to 5: every
+//      `target/` left, in use or not, then every `node_modules/` (but a main clone's) and `dist/` and Playwright's
+//      browser cache. All of it rebuilds itself; a build cut off fails once and compiles again. Between the floor and
+//      the emergency level only idle output goes, so a disk a little under its floor never cuts a build off.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
@@ -58,7 +59,14 @@ import {
     releaseKeeper,
     startBackgroundKeeper,
 } from "./disk-state.ts";
-import { capacityFor, diskKeepFloor, diskSweepStaleMinutes, measureDisk, measureVolume } from "./resources.ts";
+import {
+    capacityFor,
+    diskEmergencyGB,
+    diskKeepFloor,
+    diskSweepStaleMinutes,
+    measureDisk,
+    measureVolume,
+} from "./resources.ts";
 import { fallbackSweep, sweepLine, sweepStaleArtifacts } from "./stale-sweep.ts";
 
 export type KeepOptions = {
@@ -74,6 +82,8 @@ export type KeepOptions = {
 
 export type KeepReport = {
     floorGB: number;
+    /** Free disk under which build output in use goes too (tier 6): max(5 GB, 3% of the disk), at most the floor. */
+    emergencyGB: number;
     /** Why the floor is under capacity.diskKeepGB, when the 15% cap lowered it. */
     floorNote?: string;
     diskTotalGB: number;
@@ -86,7 +96,7 @@ export type KeepReport = {
     pausedBy?: number;
     /** Busy targets swept of stale artifacts (tier 5), with what each freed (or, in a dry run, would free). */
     swept: { target: string; artifacts: number; bytes: number }[];
-    /** True when the last resort ran: still under the floor, so build output in use went too (tier 6). */
+    /** True when the last resort ran: under the emergency level, so build output in use went too (tier 6). */
     lastResort: boolean;
     lines: string[];
 };
@@ -120,6 +130,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
     const floorGB = floor.floorGB;
     const report: KeepReport = {
         floorGB,
+        emergencyGB: diskEmergencyGB(floorGB, volume.totalGB),
         ...(floor.note === undefined ? {} : { floorNote: floor.note }),
         diskTotalGB: volume.totalGB,
         freeBeforeGB,
@@ -263,13 +274,13 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             else if (swept.artifacts > 0) log.open();
             say(sweepLine(dir.path, staleMinutes, swept, dryRun));
         }
-        // 6: the last resort. Still under the floor after 1 to 5: every target left goes now, in use or not, then
+        // 6: the last resort, under the emergency level after 1 to 5: every target left goes now, in use or not, then
         // node_modules (never a main clone's, see 2) and dist (Vite's cache lives in node_modules/.vite) and
-        // Playwright's browsers, until the floor. Docker's build cache already went in 3. Only what buildDirs listed,
-        // never anything else.
-        if (free() < floorGB) {
+        // Playwright's browsers, until the floor. Docker's build cache already went in 3. Only what buildDirs listed.
+        if (free() < report.emergencyGB) {
             report.lastResort = true;
-            say(`free ${gb(free())} is still under the floor: deleting every build folder left, in use or not`);
+            const level = `the emergency level ${gb(report.emergencyGB)}`;
+            say(`free ${gb(free())} is under ${level}: deleting every build folder left, in use or not`);
             const force = (path: string): void => {
                 const why = kept.get(path)?.reason;
                 if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway`);

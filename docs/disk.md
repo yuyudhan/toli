@@ -10,9 +10,12 @@ it)` (`--json`: `floorGB`, `floorNote`, `diskTotalGB`; the same text reaches `lo
 runs or skips).
 
 **A full disk means delete the build folders.** Every `target/` folder can go at any time, even one a running build
-uses: cargo builds it again. If free space is still under the floor after the normal steps, the keeper deletes every
-`target/` folder in the clones and task worktrees, in use or not, then the rest of the build output (step 6). A
-Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep` and never asks first.
+uses: cargo builds it again. If free space is still under the emergency level after the normal steps (max(5 GB, 3%
+of the disk), never above the floor; `--json`: `emergencyGB`), the keeper deletes every `target/` folder in the
+clones and task worktrees, in use or not, then the rest of the build output (step 6). Between the floor and the
+emergency level it deletes only what the normal steps allow, so a disk a little under its floor never costs a
+running build its output. A Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep` and
+never asks first.
 
     bin/toli disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]
 
@@ -53,7 +56,7 @@ It stops as soon as free space is back at the floor: no margin on top, since eve
 that is one a build would have reused, and the keeper runs again before the next jawan starts and every minute
 anyway. Within each step it takes the least recently used folders first (by the newest modification time of the
 folder and its direct children: a build rewrites `target/debug`, `node_modules/.bin`), so the output of the work
-going on now goes last. Steps 1 to 5 spare build output in use; step 6 does not.
+going on now goes last. Steps 1 to 5 spare build output in use; step 6, under the emergency level only, does not.
 
 1. Whole `target/` folders of project checkouts that nothing uses. A checkout is all registered projects' clones
    plus their git worktrees. Nothing uses it when no running jawan works in it (or, for a main clone, on its
@@ -100,10 +103,12 @@ going on now goes last. Steps 1 to 5 spare build output in use; step 6 does not.
     minutes per target and checks `state/disk-keep.pause` again before every try, so a job that writes the pause while
     the keeper waits is not cut off.
 
-6. The last resort, only when free space is still under the floor after steps 1 to 5: every `target/` folder still
-   there, in use or not, held lock or not, is deleted outright. Then, until free space reaches the floor, every
-   `node_modules/` (never a main clone's, see 2) and `dist/`
-   left (Vite's cache is
+6. The last resort, only when free space is still under the emergency level after steps 1 to 5: max(5 GB, 3% of the
+   disk), never above the floor (6.8 GB on a 228 GB disk, 14 GB on a 468 GB one). Under the floor but over that
+   level the keeper stops after step 5 (`done, still under the floor`) and build output in use stays. Under it,
+   every `target/` folder still there, in use or not, held lock or not, is deleted outright (`free X GB is under the
+emergency level Y GB: deleting every build folder left, in use or not`). Then, until free space reaches the
+   floor, every `node_modules/` (never a main clone's, see 2) and `dist/` left (Vite's cache is
    `node_modules/.vite`, so it goes with them) and Playwright's downloaded browsers (the `chromium-1140`-style folders
    in `PLAYWRIGHT_BROWSERS_PATH`, else `~/Library/Caches/ms-playwright` on macOS and `~/.cache/ms-playwright` on
    Linux; `playwright install` fetches them again). Docker's build cache already went in step 3. Each deletion is
