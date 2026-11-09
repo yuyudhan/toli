@@ -342,9 +342,13 @@ describe("auto-resume", () => {
 });
 
 describe("jawan slots", () => {
+    // An omp stand-in that holds its slot until `release` exists, however slowly the next spawns run under load.
+    const gatedOmp = (release: string): string => `until [ -f "${release}" ]; do sleep 0.1; done; echo finished`;
+
     test("spawn above capacity.maxRuns queues the run; it starts when a slot frees, oldest first", async () => {
         const box = coordinator({ maxRuns: 1 });
-        box.stub("omp", "sleep 1; echo finished");
+        const release = join(box.root, "release");
+        box.stub("omp", gatedOmp(release));
         const args = ["--harness", "omp", "--cwd", box.root, "--brief", brief(box, "x")];
         const first = spawnJson(box, args);
         expect(["starting", "running"]).toContain(first.status);
@@ -362,6 +366,7 @@ describe("jawan slots", () => {
         // The lead's --now bypasses the queue.
         const urgent = spawnJson(box, [...args, "--now"]);
         expect(["starting", "running"]).toContain(urgent.status);
+        writeFileSync(release, "");
 
         const all = await waitForRuns(box, (list) => list.length === 4 && list.every((run) => run.inbox !== null));
         expect(all.every((run) => run.status === "done")).toBe(true);
@@ -376,12 +381,14 @@ describe("jawan slots", () => {
 
     test("a queued run killed before it starts never runs", async () => {
         const box = coordinator({ maxRuns: 1 });
-        box.stub("omp", "sleep 1");
+        const release = join(box.root, "release");
+        box.stub("omp", gatedOmp(release));
         const args = ["--harness", "omp", "--cwd", box.root, "--brief", brief(box, "x")];
         const first = spawnJson(box, args);
         const queued = spawnJson(box, args);
         expect(queued.status).toBe("queued");
         expect(box.ok(["run", "kill", queued.id])).toBe(`killed ${queued.id} (omp) before it started`);
+        writeFileSync(release, "");
         await waitForRuns(box, (list) => list.find((run) => run.id === first.id)?.inbox !== null);
         // A killed run is never claimed from the queue, so its status stays killed after the slot frees.
         const killed = JSON.parse(box.ok(["run", "status", queued.id, "--json"])) as Run;
