@@ -2,7 +2,10 @@
 // capacity.diskKeepGB (config/machine.json, default 60), it deletes rebuildable output only, cheapest to rebuild
 // first, until free space is the floor plus 20 GB:
 //   1. whole `target/` folders of project checkouts nothing uses (no running jawan, no process working there);
-//   2. `node_modules/` and `dist/` of those idle checkouts;
+//   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/`: builds run
+//      there between jobs (a project's build queue) and cannot reinstall dependencies themselves, while cargo
+//      rebuilds a wiped `target/` on its own (that wipe matches the cargo-sweep helper's: under cargo's locks, only
+//      while no jawan of the project runs);
 //   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune -af`; never volumes);
 //   4. sccache's local cache entries past its own cap;
 //   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
@@ -10,7 +13,7 @@
 //      that stays in use (builds back to back) is swept instead: every artifact in it unused for
 //      capacity.diskSweepStaleMinutes (default 180) goes, lock or no lock (src/fleet/stale-sweep.ts);
 //   6. last resort, when free space is still under the floor itself: every `target/` left, in use or not, then every
-//      `node_modules/` and `dist/` and Playwright's browser cache. All of it rebuilds itself; a build cut off fails
+//      `node_modules/` (but a main clone's) and `dist/` and Playwright's browser cache. All of it rebuilds itself; a build cut off fails
 //      once and compiles again. A full disk means delete the build folders, without asking anyone.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
@@ -194,7 +197,12 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             for (const dir of dirs) {
                 if (enough()) return;
                 if (!kinds.includes(dir.kind)) continue;
-                // Checked again just before a real deletion: a run may have started in that checkout meanwhile.
+                // A main clone's dependencies are never idle output. Use is checked again just before a real
+                // deletion: a run may have started in that checkout meanwhile.
+                if (dir.kind === "node_modules" && dir.checkout.main) {
+                    say(`kept ${dir.path}: a main clone's dependencies (its builds cannot reinstall them)`);
+                    continue;
+                }
                 let reason = checkoutUse(dir.checkout, holders, checkouts);
                 if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
                 if (reason === null) remove(dir.path, () => deleteIt(dir));
@@ -234,8 +242,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             say(sweepLine(dir.path, staleMinutes, swept, dryRun));
         }
         // 6: the last resort. Still under the floor itself, not just short of the goal: every target left goes now,
-        // in use or not, then node_modules and dist (Vite's cache lives in node_modules/.vite) and Playwright's
-        // browsers, until the goal. Docker's build cache already went in 3. Only what buildDirs listed, never
+        // in use or not, then node_modules (never a main clone's, see 2) and dist (Vite's cache lives in
+        // node_modules/.vite) and Playwright's browsers, until the goal. Docker's build cache already went in 3. Only what buildDirs listed, never
         // anything else.
         if (free() < floorGB) {
             report.lastResort = true;
@@ -248,7 +256,9 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             const left = (dir: BuildDir): boolean =>
                 !done.has(dir.path) && ![...done].some((gone) => within(dir.path, gone)) && existsSync(dir.path);
             for (const dir of dirs) if (dir.kind === "target" && left(dir)) force(dir.path);
-            for (const dir of dirs) if (dir.kind !== "target" && !enough() && left(dir)) force(dir.path);
+            const mainDeps = (dir: BuildDir): boolean => dir.kind === "node_modules" && dir.checkout.main;
+            for (const dir of dirs)
+                if (dir.kind !== "target" && !mainDeps(dir) && !enough() && left(dir)) force(dir.path);
             if (!enough()) {
                 const browsers = playwrightBrowsers();
                 if (browsers.length === 0) say("playwright: no browser cache");

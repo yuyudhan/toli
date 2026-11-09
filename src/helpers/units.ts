@@ -91,6 +91,12 @@ export function everyToCron(seconds: number, text: string): string {
     throw new ToliError(`every ${text} has no exact crontab form; use a "cron" schedule for this helper`);
 }
 
+/** launchd ProcessType: always-running helpers stay in the background (efficiency cores) unless `interactive`. */
+function processType(helper: Helper, always: boolean): { processType?: "Background" | "Interactive" } {
+    if (always) return { processType: "Background" };
+    return helper.interactive ? { processType: "Interactive" } : {};
+}
+
 export function renderHelperPlist(helper: Helper): string {
     const log = paths.helperLog(helper.name);
     const always = helper.schedule.kind === "always";
@@ -105,7 +111,7 @@ export function renderHelperPlist(helper: Helper): string {
             : {}),
         runAtLoad: helper.runAtLoad || always,
         keepAlive: always,
-        ...(always ? { processType: "Background" as const } : {}),
+        ...processType(helper, always),
         ...(helper.nice === undefined ? {} : { nice: helper.nice }),
         lowPriorityIO: helper.lowPriorityIO,
         ...(helper.maxFiles === undefined ? {} : { numberOfFiles: helper.maxFiles }),

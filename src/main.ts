@@ -49,7 +49,7 @@ const USAGE = `usage: bin/toli <command> [args]
   task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped]
   task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
-  task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."]
+  task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
   task answer <id> "<answer>" | drop <id>
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>] [--allow-revert <sha>]... [-- <path>...]

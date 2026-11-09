@@ -202,13 +202,20 @@ The verifier re-runs the checks against every acceptance line and either lands t
 `bin/toli task done`) and returns `PASS <sha>`, or returns `GAPS` without committing.
 
 - `GAPS`: spawn a fix jawan with the original brief plus the gaps verbatim in its Spec, then verify again. After two
-  rounds of gaps, hold the task in the Needs-you format (`bin/toli task hold T<n> --question "..." --option "<choice>
-=> <what happens then>"` with 2-4 options, `--recommend <n> --blocks "..."`) and raise it with the queue.
+  rounds of gaps, decide, then tell (below), or hold the task in the Needs-you format (`bin/toli task hold T<n>`
+  with `--question "..."`, 2-4 `--option "<choice> => <what happens then>"`, `--recommend <n> --blocks "..."`, and
+  `--reversible` when the recommended option is safe to undo) and raise it with the queue.
 - `HELD` or an implementer that reports an open question: the jawan already recorded the hold. Check `bin/toli
 needs`; if the hold lacks options or a recommendation the answer needs, re-hold it with them from the report. Raise
   it as AGENTS.md section 2 "Needs you" says (batched with any other open questions, never one by one across turns),
   record the reply verbatim with `bin/toli task answer T<n> "<answer>"`, and dispatch the unblocked task in the same
   turn (`skill://toli-ahoy`).
+- Decide, then tell (you and every jawan): when the recommended option follows Malik's earlier words (brief, notes,
+  decisions) and is reversible, take it without holding and report it as `decided: <X>, reversible by <Y>`. Hold
+  only for new scope or behaviour that contradicts his words, destructive or irreversible steps, security-sensitive
+  changes, money, and push to main, MRs/PRs, merges, tags or releases. A reversible hold is marked `--reversible`
+  (toli refuses the mark on those kinds); it waits for him like any other unless the installation applies the
+  recommendation after a timeout.
 - A jawan that died without a result (session ended, crash): check `bin/toli task list --json`; re-dispatch the task
   with the same brief.
 

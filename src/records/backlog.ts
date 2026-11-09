@@ -40,6 +40,12 @@ export type Task = {
     blocks?: string;
     /** When the task was last held; the Needs-you queue's age. */
     heldAt?: string;
+    /**
+     * `task hold --reversible`: the recommended option is safe to undo, so an installation may apply it to a hold left
+     * unanswered past its own timeout (with `task answer`); toli only records the mark. Never set for push, merge,
+     * main, MR, tag, release, destructive, security or money holds (`irreversibleTopic` refuses them).
+     */
+    reversible?: boolean;
     /** When the digest last re-surfaced this hold as stale (once per hold). */
     staleSurfacedAt?: string;
     answer?: string;
@@ -196,11 +202,27 @@ export function matchOption(options: HoldOption[], value: string): HoldOption | 
 }
 
 /**
- * `task hold <id> --question "..." [--option "<choice> => <then>"]... [--recommend <n|choice|text>] [--blocks "..."]`:
- * put the task in the Needs-you queue. Re-holding replaces every hold field.
+ * Words that make a hold never auto-applied, whatever the caller says: push, merge, main, MR/PR, tag, release,
+ * destructive or irreversible steps, security, money. Returns the first word found, else undefined.
+ */
+const IRREVERSIBLE_WORDS =
+    /\b(push(?:es|ed|ing)?|merg(?:e|es|ed|ing)|main|master|MRs?|PRs?|merge requests?|pull requests?|tags?|releases?|deploy(?:s|ed|ing|ment)?|delet(?:e|es|ed|ing)|drop(?:s|ped|ping)?|destroy(?:s|ed|ing)?|destructive|irreversible|force|wipe|reset|rm|security|secrets?|credentials?|passwords?|tokens?|permissions?|auth|money|payments?|billing|cost|price|pricing)\b/i;
+
+export function irreversibleTopic(texts: (string | undefined)[]): string | undefined {
+    for (const text of texts) {
+        const match = text === undefined ? null : IRREVERSIBLE_WORDS.exec(text);
+        if (match) return match[0];
+    }
+    return undefined;
+}
+
+/**
+ * `task hold <id> --question "..." [--option "<choice> => <then>"]... [--recommend <n|choice|text>] [--blocks "..."]
+ * [--reversible]`: put the task in the Needs-you queue. Re-holding replaces every hold field. `--reversible` needs a
+ * recommendation and refuses holds about push, merge, main, MR, tag, release, destructive, security or money steps.
  */
 function hold(argv: string[]): void {
-    const args = new Args(argv, { values: ["question", "option", "recommend", "blocks"] });
+    const args = new Args(argv, { values: ["question", "option", "recommend", "blocks"], booleans: ["reversible"] });
     args.maxPositional(1);
     const question = args.str("question")?.trim();
     if (!question) throw new ToliError('hold needs --question "..."');
@@ -219,6 +241,20 @@ function hold(argv: string[]): void {
         }
     }
     const blocks = args.str("blocks")?.trim();
+    const reversible = args.bool("reversible");
+    if (reversible) {
+        if (recommend === undefined)
+            throw new ToliError("--reversible needs --recommend (the option applied after the timeout)");
+        const topic = irreversibleTopic([
+            question,
+            blocks,
+            ...options.flatMap((option) => [option.choice, option.outcome]),
+        ]);
+        if (topic !== undefined)
+            throw new ToliError(
+                `--reversible refused: the hold mentions "${topic}" (push, merge, main, MR, tag, release, destructive, security and money holds always wait for the user)`,
+            );
+    }
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status === "done" || entry.status === "dropped")
             throw new ToliError(`${entry.id} is ${entry.status}`);
@@ -231,6 +267,8 @@ function hold(argv: string[]): void {
         else delete entry.recommend;
         if (blocks) entry.blocks = blocks;
         else delete entry.blocks;
+        if (reversible) entry.reversible = true;
+        else delete entry.reversible;
         delete entry.staleSurfacedAt;
         delete entry.answer;
     });
