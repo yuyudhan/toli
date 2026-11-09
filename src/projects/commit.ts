@@ -357,8 +357,15 @@ export function commitCommand(argv: string[]): void {
         allowRevert: args.all("allow-revert"),
     });
     out(committed.sha);
-    // toli's own checkout: the live session runs the installed runtime, so move it to the new commit.
+    // toli's own checkout: the live session runs the installed runtime, so move it to the new commit. Not after a
+    // merge: the merged code has not passed `just check` here yet, so the runtime waits for `bin/toli self sync`.
     if (samePath(dir, paths.root()) && activeRuntime(dir) !== null) {
+        if (merge !== undefined) {
+            warn(
+                "toli: merged, but the live runtime stays on the previous commit until the merge passes its check: run just check, then bin/toli self sync",
+            );
+            return;
+        }
         try {
             syncRuntime(dir);
         } catch (error) {

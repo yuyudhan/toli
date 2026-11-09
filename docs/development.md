@@ -61,7 +61,9 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    files out into the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
 
 For toli, it then refreshes the installed runtime (below), so the live session runs the new commit from the next
-`bin/toli` call.
+`bin/toli` call. A `--merge` commit does not: the merged code has not passed `just check` in this checkout yet, so
+the runtime stays on the previous commit and the commit says so. Run `just check` on the merge, then
+`bin/toli self sync`.
 
 ## The live session runs an installed runtime
 
@@ -81,9 +83,10 @@ bin/toli self status   # which code bin/toli runs: the runtime (current or behin
 - `self sync` runs the new snapshot once (`self status --json`, which loads every command module) and switches only
   when it loads and serves this checkout; otherwise it refuses with the error and the live session keeps the previous
   snapshot. The last three snapshots are kept, since running processes may still use the previous one.
-- `bin/toli commit toli` and `bin/toli upgrade` refresh the runtime after they move HEAD; after a plain `git pull`
-  or `bin/toli sync`, run `bin/toli self sync`. Deleting `state/runtime` goes back to running the working tree;
-  `bin/toli doctor` warns when the runtime is behind HEAD or its snapshot is gone.
+- `bin/toli commit toli` (but a `--merge`, which waits for `just check` and then `bin/toli self sync`) and
+  `bin/toli upgrade` refresh the runtime after they move HEAD; after a plain `git pull` or `bin/toli sync`, run
+  `bin/toli self sync`. Deleting `state/runtime` goes back to running the working tree; `bin/toli doctor` warns when
+  the runtime is behind HEAD or its snapshot is gone.
 - `TOLI_DEV=1 bin/toli ...` runs the working tree, to try a change before it is committed. The tests set `TOLI_ROOT`,
   and `just verify`'s smoke runs set `TOLI_DEV=1`, so both always exercise the working tree.
 - The launcher (`bin/toli`) imports nothing from `src/`, so a broken `src/` file cannot break it. The extension

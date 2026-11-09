@@ -21,10 +21,13 @@ never asks first.
 
 ## When it runs
 
-- Before every jawan starts (`bin/toli spawn`, queued runs, automatic continuations) and before every `bin/toli exec`.
-  It runs inline and does not wait on busy builds. If that leaves the disk under the floor, it starts a background
-  `bin/toli disk keep --wait 30`, and the run starts anyway.
-- Every minute from the tick (`bin/toli schedule install`), the same way.
+- Before every jawan starts (`bin/toli spawn`, queued runs a finishing run starts, automatic continuations) and
+  before every `bin/toli exec`. It runs inline and does not wait on busy builds. If that leaves the disk under the
+  floor, it starts a background `bin/toli disk keep --wait 30`, and the run starts anyway.
+- Every minute from the tick (`bin/toli schedule install`), detached: the tick only reads free disk and, under the
+  floor, starts that background keeper to do all of it (every step below, the last resort included), then goes on.
+  The tick's own queue drain runs no keeper. A slow keeper (on an I/O-starved disk one run can take an hour) so never
+  holds up a tick. Nothing starts while a keeper runs or a live pause holds it; in a dry run nothing starts.
 - By hand, with `bin/toli disk keep`. `--dry-run` (or `TOLI_DRY_RUN=1`) lists what would go and counts each folder's
   size as freed. `--floor` overrides the floor and is not capped (it is the caller's choice), so a dry run with a high
   floor shows the whole plan.

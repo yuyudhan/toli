@@ -18,7 +18,8 @@
 //      browser cache. All of it rebuilds itself; a build cut off fails once and compiles again. Between the floor and
 //      the emergency level only idle output goes, so a disk a little under its floor never cuts a build off.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
-// touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
+// touched. Every action goes to logs/disk.log. It runs inline before every jawan start; the minute tick starts it
+// detached (disk-state.ts keepDiskDetached), so a keeper slowed by a starved disk never holds the tick up.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
 // state/disk-keep.pause; the keeper deletes nothing while that pid is alive and the file was touched within 2 h (a
 // longer job touches it again). It ignores the file once the pid is dead, and drops it, logged once, once it is older.
@@ -27,7 +28,6 @@
 // lock it cannot write is done without), no failed write stops it, and when the keeper fails anyway the fallback
 // sweeps stale artifacts out of every target, writing nothing first.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { cpus } from "node:os";
 import { dirname } from "node:path";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
@@ -55,18 +55,13 @@ import {
     GIB,
     gb,
     KEEPER_LOCK,
+    keepDiskDetached,
+    machineFloor,
     PAUSE_EXPIRY_MS,
     releaseKeeper,
     startBackgroundKeeper,
 } from "./disk-state.ts";
-import {
-    capacityFor,
-    diskEmergencyGB,
-    diskKeepFloor,
-    diskSweepStaleMinutes,
-    measureDisk,
-    measureVolume,
-} from "./resources.ts";
+import { diskEmergencyGB, diskSweepStaleMinutes, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep, sweepLine, sweepStaleArtifacts } from "./stale-sweep.ts";
 
 export type KeepOptions = {
@@ -123,10 +118,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
     if (typeof volume === "string") throw new ToliError(`cannot read free disk: ${volume}`);
     const freeBeforeGB = volume.freeGB;
     // An explicit floor is the caller's choice; the configured one is capped so a small disk is never emptied.
-    const floor =
-        options.floorGB === undefined
-            ? diskKeepFloor(capacityFor(machine, Math.max(1, cpus().length)).diskKeepGB, volume.totalGB)
-            : { floorGB: options.floorGB };
+    const floor = options.floorGB === undefined ? machineFloor(machine, volume.totalGB) : { floorGB: options.floorGB };
     const floorGB = floor.floorGB;
     const report: KeepReport = {
         floorGB,
@@ -343,10 +335,12 @@ function forceDelete(path: string): string | null {
 }
 
 /**
- * Before work starts (each jawan launch, each tick): free disk inline without waiting on busy builds, then leave a
- * background keeper waiting for them if that was not enough. Never throws: disk never stops work.
+ * Before work starts (each jawan launch): free disk inline without waiting on busy builds, then leave a background
+ * keeper waiting for them if that was not enough. `detached` (the minute tick) only starts that background keeper,
+ * to do all of it. Never throws: disk never stops work.
  */
-export function keepDiskBeforeWork(): string | null {
+export function keepDiskBeforeWork(mode: "inline" | "detached" = "inline"): string | null {
+    if (mode === "detached") return keepDiskDetached(envDryRun());
     let report: KeepReport;
     try {
         report = keepDisk({ lockWaitMs: 0 });

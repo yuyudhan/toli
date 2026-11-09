@@ -242,9 +242,12 @@ export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun
 
 export type DrainResult = { started: JawanRun[]; failed: { run: JawanRun; error: string }[] };
 
-/** Start queued runs, oldest first, while jawan slots are free. A run that cannot start is recorded failed. */
-export function startQueued(): DrainResult {
-    keepDiskBeforeWork();
+/**
+ * Start queued runs, oldest first, while jawan slots are free. A run that cannot start is recorded failed.
+ * `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached).
+ */
+export function startQueued(options: { diskKept?: boolean } = {}): DrainResult {
+    if (options.diskKept !== true) keepDiskBeforeWork();
     return withLock(paths.lock(SLOTS_LOCK), () => {
         const result: DrainResult = { started: [], failed: [] };
         const queued = listRuns()

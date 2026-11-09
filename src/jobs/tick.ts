@@ -193,12 +193,13 @@ export async function tick(): Promise<void> {
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
     for (const error of outbox.errors) log(`outbox: pending ${error}`);
     for (const note of failStaleRuns()) log(note);
-    // Low disk never stops work: free build output first (src/fleet/disk.ts), every minute, before anything starts.
-    const disk = keepDiskBeforeWork();
+    // Low disk never stops work: under the floor the tick starts the disk keeper detached (src/fleet/disk.ts) and goes
+    // on, so a keeper slowed by a starved disk never holds up a tick. The queue drain below leaves the disk to it.
+    const disk = keepDiskBeforeWork("detached");
     if (disk) log(disk);
     // Queued jawan runs start as slots free; the finishing run's supervisor does this too, this catches the rest.
     try {
-        for (const note of drainQueue()) log(note);
+        for (const note of drainQueue({ diskKept: true })) log(note);
     } catch (error) {
         log(`queued jawan runs not started: ${error instanceof Error ? error.message : String(error)}`);
     }

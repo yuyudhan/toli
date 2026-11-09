@@ -69,6 +69,14 @@ one. See docs/releasing.md.
   with them is resumed instead of recorded done.
 - A killed jawan whose shell harness exits 128 + n (`exit 143`) is recorded as killed by that signal (SIGTERM), as a
   harness that dies by the signal itself is.
+- `bin/toli commit toli --merge <ref>` no longer moves the live runtime to the merge: the merged code has not passed
+  `just check` yet, so the runtime stays on the previous commit and the commit says to run `just check`, then
+  `bin/toli self sync`. Before, a merge put a machine's live session on code whose check had not run. Other commits
+  still refresh the runtime themselves.
+- The minute tick never waits on the disk keeper: under the floor it only starts the background keeper
+  (`bin/toli disk keep --wait 30`, detached, the same tiers and emergency rule) and goes on, and the tick's queue
+  drain runs no keeper of its own. Before, the tick ran the keeper inline, and on an I/O-starved disk one run held
+  the tick up for about an hour. Jawan starts still run it inline first.
 
 ## v0.3.1 - 2026-11-09
 

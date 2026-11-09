@@ -1,5 +1,14 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { appendFileSync, cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+    appendFileSync,
+    cpSync,
+    existsSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runtimeCommand } from "../src/release/runtime.ts";
@@ -104,6 +113,34 @@ describe("installed runtime", () => {
         const status = live.toli(["self", "status", "--json"]);
         expect(status.code).toBe(0);
         expect(JSON.parse(status.stdout)).toMatchObject({ code: live.dir, state: "missing" });
+    });
+
+    test("a merge commit leaves the runtime on the previous commit until self sync runs after the check", () => {
+        const live = checkout();
+        expect(live.toli(["self", "sync"]).code).toBe(0);
+        const pointer = join(live.dir, "state", "runtime");
+        const before = readFileSync(pointer, "utf8");
+        live.git(["switch", "--quiet", "-c", "side"]);
+        writeFileSync(join(live.dir, "side.txt"), "side\n");
+        live.git(["add", "side.txt"]);
+        live.git(["commit", "--quiet", "-m", "side"]);
+        live.git(["switch", "--quiet", "develop"]);
+
+        const merged = live.toli(["commit", "toli", "--merge", "side", "-m", "merge side"]);
+        expect(merged.code).toBe(0);
+        expect(merged.stderr).toContain("the live runtime stays on the previous commit until the merge passes");
+        expect(merged.stderr).toContain("run just check, then bin/toli self sync");
+        expect(readFileSync(pointer, "utf8")).toBe(before);
+        expect(JSON.parse(live.toli(["self", "status", "--json"]).stdout).state).toBe("stale");
+
+        expect(live.toli(["self", "sync"]).code).toBe(0);
+        expect(JSON.parse(live.toli(["self", "status", "--json"]).stdout).state).toBe("current");
+
+        // An ordinary commit still refreshes the runtime itself: its committer ran the check first.
+        writeFileSync(join(live.dir, "plain.txt"), "plain\n");
+        const plain = live.toli(["commit", "toli", "-m", "plain", "--", "plain.txt"]);
+        expect(plain.code).toBe(0);
+        expect(JSON.parse(live.toli(["self", "status", "--json"]).stdout).state).toBe("current");
     });
 
     test("status without a runtime names the working tree (in-process)", () => {

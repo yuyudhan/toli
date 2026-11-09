@@ -1,12 +1,15 @@
 // The disk keeper's own files and processes (src/fleet/disk.ts): logs/disk.log, its lock state/disk-keep.lock, the
-// pause marker state/disk-keep.pause, and the background keeper. Each is handled so that a full disk never stops the
-// keeper: log lines wait in memory until it has freed something, a lock it cannot write is done without, and no
-// failed write throws.
+// pause marker state/disk-keep.pause, and the background keeper, which the minute tick leaves all of the keeping to.
+// Each is handled so that a full disk never stops the keeper: log lines wait in memory until it has freed something,
+// a lock it cannot write is done without, and no failed write throws.
 import { spawn as spawnChild } from "node:child_process";
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { dirname, resolve } from "node:path";
+import { loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, pidAlive } from "../core/util.ts";
+import { capacityFor, diskKeepFloor, measureVolume } from "./resources.ts";
 
 export const KEEPER_LOCK = "disk-keep";
 /** How long the background keeper waits for busy builds to pause before it gives up on a target (tier 5). */
@@ -19,6 +22,11 @@ export const gb = (value: number): string => `${value.toFixed(1)} GB`;
 export const GIB = 1024 ** 3;
 
 export const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** The machine's floor on a volume of `totalGB`: capacity.diskKeepGB, capped by diskKeepFloor. */
+export function machineFloor(machine: Machine, totalGB: number): { floorGB: number; note?: string } {
+    return diskKeepFloor(capacityFor(machine, Math.max(1, cpus().length)).diskKeepGB, totalGB);
+}
 
 /** How the keeper lock went: claimed for this pid, held by a live keeper, or not writable (a full disk). */
 export type Claim = { kind: "claimed" } | { kind: "held"; pid: number } | { kind: "unwritable"; reason: string };
@@ -69,6 +77,16 @@ export function releaseKeeper(): void {
         if (readFileSync(file, "utf8").trim() === String(process.pid)) rmSync(file, { force: true });
     } catch {
         // Already gone.
+    }
+}
+
+/** The live pid in the keeper lock, or null when no keeper runs (no lock, an unreadable one, a dead pid). */
+function keeperHolder(): number | null {
+    try {
+        const holder = Number(readFileSync(paths.lock(KEEPER_LOCK), "utf8").trim());
+        return Number.isInteger(holder) && holder > 0 && pidAlive(holder) ? holder : null;
+    } catch {
+        return null;
     }
 }
 
@@ -179,4 +197,32 @@ export function startBackgroundKeeper(): void {
     } finally {
         if (log !== "ignore") closeSync(log);
     }
+}
+
+/**
+ * The minute tick's keeper: it only reads free disk (one `df`) and, under the floor, starts the background keeper,
+ * which runs every tier (the last resort included) with the usual rules. The tick never waits on a deletion, which on
+ * an I/O-starved disk can take an hour. Nothing starts while a keeper runs or a pause holds it; when free disk cannot
+ * be read the background keeper starts anyway (it falls back to sweeping). A dry run starts nothing. Never throws.
+ */
+export function keepDiskDetached(dryRun: boolean): string | null {
+    let why: string;
+    try {
+        const volume = measureVolume(paths.root());
+        if (typeof volume === "string") why = `cannot read free disk (${volume})`;
+        else {
+            const { floorGB } = machineFloor(loadMachine(), volume.totalGB);
+            if (volume.freeGB >= floorGB || keeperHolder() !== null || diskPause() !== null) return null;
+            why = `free ${gb(volume.freeGB)} < floor ${gb(floorGB)}`;
+        }
+    } catch (error) {
+        why = describe(error);
+    }
+    if (dryRun) return `disk keeper: ${why}: would start in the background (dry run)`;
+    try {
+        startBackgroundKeeper();
+    } catch (error) {
+        return `disk keeper: ${why}; background keeper not started: ${describe(error)}`;
+    }
+    return `disk keeper: ${why}: started in the background, so the tick does not wait on it (logs/disk.log)`;
 }

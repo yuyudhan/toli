@@ -193,7 +193,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   waiting while all are busy; jawans' cargo goes through it on its own ([fleet.md](fleet.md#heavy-build-slots)).
 - `disk keep`: free rebuildable build output, oldest first, when the disk is under its floor (`capacity.diskKeepGB`,
   capped at 15% of the disk) and until it is back there; still under it after the normal steps, every `target/` goes,
-  in use or not. It also runs before every jawan start and every tick, so low disk never stops work; a live pid in
+  in use or not. It also runs before every jawan start, and every tick starts it detached (the tick never waits on
+  it), so low disk never stops work; a live pid in
   `state/disk-keep.pause` pauses it for up to 2 hours after the file was last written ([disk.md](disk.md)).
 - `remote` runs a prompt on another machine; `exec` is what it runs there (headless omp, up to an hour).
 
@@ -207,5 +208,5 @@ Details: [fleet.md](fleet.md).
   `just check` ([development.md](development.md)); there are no worktrees.
 - `self sync` installs the checkout's HEAD as the runtime the live session runs (a snapshot under `~/.toli/runtime/`,
   named by `state/runtime`), only after the snapshot loads; `commit toli`, `sync` and `upgrade` do it themselves when
-  a runtime is installed. `self status` says which code `bin/toli` runs
-  ([development.md](development.md#the-live-session-runs-an-installed-runtime)).
+  a runtime is installed, except `commit toli --merge`: run `just check` on the merge, then `self sync`.
+  `self status` says which code `bin/toli` runs ([development.md](development.md#the-live-session-runs-an-installed-runtime)).
