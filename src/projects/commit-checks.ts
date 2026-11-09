@@ -2,7 +2,7 @@
 // the project's commit-msg hook.
 import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { git, gitOk } from "../core/git.ts";
 import { type RunResult, run, ToliError } from "../core/util.ts";
 
@@ -178,6 +178,33 @@ export function checkResolved(attempt: Attempt, conflicts: string[], named: (fil
                 `refusing: ${file} still has a merge conflict marker ${marker[1]}; finish resolving it`,
             );
     }
+}
+
+/**
+ * The named paths that match nothing in the working tree or the private index, which `git add` cannot stage. Each is
+ * already absent from the merge result in the private index, so leaving it unstaged records it as deleted; that holds
+ * only for a path the merge conflicts on or changes (resolved by deleting it). Any other such path is refused.
+ */
+export function absentPaths(
+    attempt: Attempt,
+    named: string[],
+    merge: { ref: string; conflicts: string[]; files: string[] } | null,
+): string[] {
+    const absent = named.filter(
+        (file) =>
+            !existsSync(resolve(attempt.dir, file)) &&
+            attempt.gitOk(["ls-files", "--cached", "--others", "--", file]) === "",
+    );
+    const unrelated = absent.filter(
+        (file) => merge === null || (!merge.conflicts.includes(file) && !merge.files.includes(file)),
+    );
+    if (unrelated.length > 0)
+        throw new ToliError(
+            `refusing: ${unrelated.join(", ")} not in the working tree or the commit` +
+                (merge === null ? "" : `, and not among the paths merging ${merge.ref} conflicts on or changes`) +
+                "; nothing was committed. Check the path",
+        );
+    return absent;
 }
 
 /** A lock file the package manager regenerates: checked by `checkLockFiles`, never merged by hand. */
