@@ -128,6 +128,23 @@ describe("bin/toli commit (R23 safe commits)", () => {
         expect(safeCommit({ dir, paths: ["a.txt"], message: "Third" }).files).toEqual(["a.txt"]);
     });
 
+    test("adding back elsewhere a line a recent commit removed is not a revert; restoring it in place is", () => {
+        const fields = (...names: string[]) =>
+            `fn default() -> Self {\n    Self {\n${names.map((name) => `        ${name}: true,\n`).join("")}    }\n}\n`;
+        const dir = repo({ "config.rs": fields("apps", "files", "calc") });
+        // The recent commit drops `files` and adds fields after `calc`; mine only adds `files` back after those
+        // (quickhop d8f9732 over 730f7dd).
+        const recent = otherJawan(dir, "config.rs", fields("apps", "calc", "emoji", "scripts"));
+        writeFileSync(join(dir, "config.rs"), fields("apps", "calc", "emoji", "scripts", "files"));
+        expect(safeCommit({ dir, paths: ["config.rs"], message: "Files provider" }).parent).toBe(recent);
+        // Restoring a recently removed line where it was is still refused.
+        const dropped = otherJawan(dir, "config.rs", fields("apps", "calc", "emoji", "files"));
+        writeFileSync(join(dir, "config.rs"), fields("apps", "calc", "emoji", "scripts", "files"));
+        expect(() => safeCommit({ dir, paths: ["config.rs"], message: "Mine" })).toThrow(
+            `would revert config.rs lines from ${dropped.slice(0, 7)}`,
+        );
+    });
+
     test("--merge: what the merged ref brings is never a revert; edits on top still are", () => {
         const stale = "fn main() {\n    run();\n}\n";
         const dir = repo({ "main.rs": stale });
@@ -376,8 +393,8 @@ describe("bin/toli commit (R23 safe commits)", () => {
             "+added",
         ].join("\n");
         expect(parseHunks(diff)).toEqual([
-            { file: "x", removed: ["old"], added: ["new"] },
-            { file: "x", removed: [], added: ["added"] },
+            { file: "x", removed: ["old"], added: ["new"], oldStart: 1, newStart: 1 },
+            { file: "x", removed: [], added: ["added"], oldStart: 5, newStart: 6 },
         ]);
     });
 });

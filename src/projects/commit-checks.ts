@@ -14,7 +14,13 @@ const LOCK_CHECK_TIMEOUT_MS = 300_000;
 const HOOK_TIMEOUT_MS = 300_000;
 const TAIL_LINES = 20;
 
-export type Hunk = { file: string; removed: string[]; added: string[] };
+/**
+ * One `-U0` hunk: its removed and added lines, and where it starts on each side. A side with no lines (a pure
+ * insertion's old side, a pure removal's new side) starts at the line the gap follows (0: the top of the file).
+ */
+export type Hunk = { file: string; removed: string[]; added: string[]; oldStart: number; newStart: number };
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 function tail(text: string): string {
     return text.trimEnd().split("\n").slice(-TAIL_LINES).join("\n");
@@ -39,7 +45,14 @@ export function parseHunks(diff: string): Hunk[] {
             continue;
         }
         if (line.startsWith("@@")) {
-            current = { file, removed: [], added: [] };
+            const header = HUNK_HEADER.exec(line);
+            current = {
+                file,
+                removed: [],
+                added: [],
+                oldStart: Number(header?.[1] ?? 0),
+                newStart: Number(header?.[2] ?? 0),
+            };
             hunks.push(current);
         } else if (current !== null && line.startsWith("-")) current.removed.push(line.slice(1));
         else if (current !== null && line.startsWith("+")) current.added.push(line.slice(1));
@@ -47,12 +60,56 @@ export function parseHunks(diff: string): Hunk[] {
     return hunks;
 }
 
-/** Whether `ours` undoes `theirs` exactly: it removes what theirs added and adds back what theirs removed. */
-function reverts(ours: Hunk, theirs: Hunk): boolean {
+/** The lines of `file` at `rev` (a commit or tree), empty when it has no such file; cached per rev and file. */
+type Lines = (rev: string, file: string) => string[];
+
+function fileLines(dir: string): Lines {
+    const cache = new Map<string, string[]>();
+    return (rev, file) => {
+        const key = `${rev}:${file}`;
+        let lines = cache.get(key);
+        if (lines === undefined) {
+            const shown = git(dir, ["cat-file", "blob", key]);
+            lines = shown.code === 0 ? shown.stdout.split("\n") : [];
+            if (lines.at(-1) === "") lines.pop();
+            cache.set(key, lines);
+        }
+        return lines;
+    };
+}
+
+/** The two lines around the gap after line `at` (null past either end of the file). */
+function around(lines: string[], at: number): [string | null, string | null] {
+    return [at >= 1 ? (lines[at - 1] ?? null) : null, lines[at] ?? null];
+}
+
+/** The revisions of our diff and theirs, before and after (null before: their commit is a root). */
+type Sides = { ours: [string, string]; theirs: [string | null, string] };
+
+/**
+ * Whether `ours` undoes `theirs` exactly: it removes what theirs added and adds back what theirs removed. A pure
+ * insertion or removal undoes theirs only in the same place: the same lines border the gap the block leaves, on
+ * our side without it and theirs. Adding a line a recent commit removed elsewhere in the file is a new change.
+ */
+function reverts(ours: Hunk, theirs: Hunk, lines: Lines, sides: Sides): boolean {
     if (ours.file !== theirs.file) return false;
     const undone = [...theirs.added, ...theirs.removed].join("").replace(/\s/g, "");
     if (undone.length < REVERT_MIN_CHARS) return false;
-    return ours.removed.join("\n") === theirs.added.join("\n") && ours.added.join("\n") === theirs.removed.join("\n");
+    if (ours.removed.join("\n") !== theirs.added.join("\n") || ours.added.join("\n") !== theirs.removed.join("\n"))
+        return false;
+    if (ours.removed.length > 0 && ours.added.length > 0) return true;
+    // Pure insertion of ours: the gap is in our parent and their commit; pure removal: our tree and their base.
+    const inserting = ours.removed.length === 0;
+    const theirRev = inserting ? sides.theirs[1] : sides.theirs[0];
+    const ourGap = around(
+        lines(inserting ? sides.ours[0] : sides.ours[1], ours.file),
+        inserting ? ours.oldStart : ours.newStart,
+    );
+    const theirGap = around(
+        theirRev === null ? [] : lines(theirRev, theirs.file),
+        inserting ? theirs.newStart : theirs.oldStart,
+    );
+    return ourGap[0] === theirGap[0] && ourGap[1] === theirGap[1];
 }
 
 /** One commit attempt's private temporary index (GIT_INDEX_FILE), built and read without the shared one. */
@@ -290,25 +347,28 @@ export function checkReverts(
     const recent = gitOk(dir, ["log", `-${REVERT_WINDOW}`, "--format=%H", parent, "--", ...files])
         .split("\n")
         .filter(Boolean);
+    const lines = fileLines(dir);
     for (const commit of recent) {
         if (allowed.some((prefix) => commit.startsWith(prefix))) continue;
-        const base = git(dir, ["rev-parse", "--verify", "--quiet", `${commit}^1`]);
+        const found = git(dir, ["rev-parse", "--verify", "--quiet", `${commit}^1`]);
+        const base = found.code === 0 ? found.stdout.trim() : null;
         const theirs = parseHunks(
-            base.code === 0
-                ? gitOk(dir, [
+            base === null
+                ? gitOk(dir, ["show", "-U0", "--no-color", "--no-ext-diff", "--format=", commit, "--", ...files])
+                : gitOk(dir, [
                       "diff",
                       "-U0",
                       "--no-color",
                       "--no-ext-diff",
                       "--no-renames",
-                      base.stdout.trim(),
+                      base,
                       commit,
                       "--",
                       ...files,
-                  ])
-                : gitOk(dir, ["show", "-U0", "--no-color", "--no-ext-diff", "--format=", commit, "--", ...files]),
+                  ]),
         );
-        const hit = ours.find((hunk) => theirs.some((other) => reverts(hunk, other)));
+        const sides = { ours: [parent, tree], theirs: [base, commit] } satisfies Sides;
+        const hit = ours.find((hunk) => theirs.some((other) => reverts(hunk, other, lines, sides)));
         if (hit === undefined) continue;
         const subject = gitOk(dir, ["log", "-1", "--format=%h %s", commit]);
         throw new ToliError(

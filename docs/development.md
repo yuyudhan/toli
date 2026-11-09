@@ -33,8 +33,10 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    error, a `[[package]]` the parser dropped; for a `Cargo.lock` also `cargo metadata --locked`, run in a copy of the
    staged tree, so the crates a merge adds count); or exactly undoes a hunk of one of the last 20 commits that touched
    those files, which is what a stale copy of a file looks like (`--allow-revert <sha>` when undoing that commit is
-   the point). With `--merge` only the changes made on top of the merge result are checked: what the merged ref itself
-   brings is never a revert, including the ref's own hunks a `--resolved` conflict keeps as they are.
+   the point). A pure insertion or removal counts only in the same place (the same lines border it), so adding back
+   elsewhere a line a recent commit removed is not a revert. With `--merge` only the changes made on top of the merge
+   result are checked: what the merged ref itself brings is never a revert, including the ref's own hunks a
+   `--resolved` conflict keeps as they are.
 3. It writes the commit with `git commit-tree` on the tip it read and moves the branch with
    `git update-ref <branch> <new> <old>`, which fails if another commit landed meanwhile. It then rebuilds everything
    once from the new tip; a second move is a refusal ("run the same commit again").
