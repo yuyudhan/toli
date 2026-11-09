@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type BacklogFile, loadBacklog, matchOption, taskCommand } from "../src/records/backlog.ts";
+import { type BacklogFile, irreversibleTopic, loadBacklog, matchOption, taskCommand } from "../src/records/backlog.ts";
 import { commandIn, inProcess, type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type TaskJson = { id: string; status: string; question?: string; answer?: string; notes: string[]; startedAt?: string };
@@ -195,6 +195,67 @@ describe("task commands in process", () => {
         const decisions = readFileSync(join(box.root, "data", "projects", "alpha", "decisions.md"), "utf8");
         expect(decisions).toContain("- Q: go?\n- Recommended: wait for Monday\n- A: later\n");
         expect(decisions).not.toContain("Options:");
+    });
+
+    test("--reversible marks the hold, needs a recommendation, and a re-hold without it clears the mark", () => {
+        const box = project();
+        const task = commandIn(box.root, taskCommand);
+        task(["add", "alpha", "One"]);
+        const colour = [
+            "--question",
+            "button colour?",
+            "--option",
+            "blue => matches the theme",
+            "--option",
+            "grey => quieter",
+        ];
+        expect(() => task(["hold", "T1", ...colour, "--reversible"])).toThrow("--reversible needs --recommend");
+        task(["hold", "T1", ...colour, "--recommend", "1", "--reversible"]);
+        inProcess(box.root, () => expect(loadBacklog().tasks[0]).toMatchObject({ status: "held", reversible: true }));
+        expect(box.ok(["needs"])).toContain("reversible: the recommendation applies if it stays unanswered");
+        task(["hold", "T1", ...colour, "--recommend", "1"]);
+        inProcess(box.root, () => expect(loadBacklog().tasks[0]?.reversible).toBeUndefined());
+    });
+
+    test("--reversible is refused for push, merge, main, MR, tag, release, destructive, security and money holds", () => {
+        const box = project();
+        const task = commandIn(box.root, taskCommand);
+        task(["add", "alpha", "One"]);
+        const questions = [
+            "push now?",
+            "merge it into main?",
+            "open the MR?",
+            "tag v1?",
+            "cut the release?",
+            "delete the table?",
+            "rotate the token?",
+            "raise the price?",
+        ];
+        for (const question of questions)
+            expect(() =>
+                task([
+                    "hold",
+                    "T1",
+                    "--question",
+                    question,
+                    "--option",
+                    "a => b",
+                    "--option",
+                    "c => d",
+                    "--recommend",
+                    "1",
+                    "--reversible",
+                ]),
+            ).toThrow("--reversible refused");
+        inProcess(box.root, () => expect(loadBacklog().tasks[0]).toMatchObject({ status: "queued" }));
+    });
+});
+
+describe("irreversibleTopic", () => {
+    test("names the first irreversible word, whole words only", () => {
+        expect(irreversibleTopic(["Push the branch?"])).toBe("Push");
+        expect(irreversibleTopic([undefined, "two options", "drop the column"])).toBe("drop");
+        expect(irreversibleTopic(["the dropdown label", "domain wording", "pushy copy"])).toBeUndefined();
     });
 });
 

@@ -19,6 +19,8 @@ export type NeedItem = {
     options: HoldOption[];
     recommend: string | null;
     blocks: string | null;
+    /** Held with `--reversible`: its recommendation may be applied when it stays unanswered. */
+    reversible: boolean;
     heldAt: string;
     ageDays: number;
     /** Unanswered for at least the stale threshold. */
@@ -59,6 +61,7 @@ function needItem(task: Task, at: Date, days: number): NeedItem {
         options: task.options ?? [],
         recommend: task.recommend ?? null,
         blocks: task.blocks ?? null,
+        reversible: task.reversible === true,
         heldAt,
         ageDays,
         stale: ageDays >= days,
@@ -113,6 +116,7 @@ export function takeStaleHolds(needs: Needs): Set<string> {
 function itemLines(item: NeedItem, resurface: ReadonlySet<string>): string[] {
     const facts = [`held ${item.ageDays}d`];
     if (item.blocks !== null) facts.push(`blocks: ${item.blocks}`);
+    if (item.reversible) facts.push("reversible: the recommendation applies if it stays unanswered");
     if (item.question === null)
         return [
             `    ${item.id} ${item.title} (${facts.join("; ")})`,

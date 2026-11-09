@@ -146,14 +146,19 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
 - Scout: write your report (format below) to `<toli root>/data/projects/<project>/reports/<T-id>.md`, then
   `bin/toli task done <T-id> --report data/projects/<project>/reports/<T-id>.md`.
 
-Never ask the user directly. If you are blocked on a decision only the user can make, hold the task in the Needs-you
-format and report; do not guess:
+Never ask the user directly. Decide, then tell: when the recommended option follows the user's earlier words (the
+brief, the project notes, its decisions) and is reversible, take it yourself and report it as `decided: <X>,
+reversible by <Y>`. Hold the task in the Needs-you format and report, without guessing, only for: new scope or
+behaviour that contradicts the user's words, destructive or irreversible steps, security-sensitive changes, money,
+and push to main, MRs/PRs, merges, tags or releases:
 
     bin/toli task hold <T-id> --question "<one crisp question in plain words>" \
         --option "<choice> => <what happens then>" --option "<choice> => <what happens then>" \
-        --recommend <option number> --blocks "<what waits on the answer>"
+        --recommend <option number> --blocks "<what waits on the answer>" [--reversible]
 
-Give 2-4 options (or none for an open question), each with its consequence.
+Give 2-4 options (or none for an open question), each with its consequence. Add `--reversible` when the recommended
+option is safe to undo (it may be applied if the hold stays unanswered); never for the kinds above (toli refuses
+holds that mention them).
 
 ## Report format
 

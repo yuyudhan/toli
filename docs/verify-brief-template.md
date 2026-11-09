@@ -68,12 +68,18 @@ above>"` (it logs the push in this machine's `data/pushes.jsonl`), then
 the PR/MR?" --option "yes => a jawan pushes and opens the PR/MR" --option "no => it stays a local branch"
 --blocks "landing <T-id>"` and report.
 - Any GAP: do not commit and do not close the task. Report the gaps; Sardar dispatches a fix.
-- A gap only the user can decide (scope, design, risk): hold the task in the Needs-you format and report; never ask
-  the user directly:
+- A gap with a recommended way forward that follows the user's earlier words and is reversible: decide, then tell
+  (report it as `decided: <X>, reversible by <Y>`; the fix round applies it). Hold the task in the Needs-you format
+  and report, never asking the user directly, only for new scope or behaviour that contradicts the user's words,
+  destructive or irreversible steps, security-sensitive changes, money, and push to main, MRs/PRs, merges, tags or
+  releases:
 
         bin/toli task hold <T-id> --question "<plain words>" \
             --option "<choice> => <what happens then>" --option "<choice> => <what happens then>" \
-            --recommend <n> --blocks "<what waits on the answer>"
+            --recommend <n> --blocks "<what waits on the answer>" [--reversible]
+
+    `--reversible` only when the recommended option is safe to undo (it may be applied if the hold stays unanswered);
+    never for the kinds above.
 
 ## Rules
 

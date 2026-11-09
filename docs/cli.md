@@ -70,7 +70,7 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
     task list [--json] [--status queued|active|held|done|dropped]
     task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
-    task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."]
+    task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
     task answer <id> "<answer>" | drop <id>
     needs [--json]
 
@@ -80,7 +80,9 @@ records your reply verbatim in the project's `decisions.md` and prints `unblocke
 ([how-it-works.md](how-it-works.md#a-request-start-to-finish)). `needs` is the Needs-you queue: every held task,
 grouped by project, blocking and oldest first, with a one-line reply hint each; the digest opens with the same list,
 flags holds with no question, and re-surfaces a hold unanswered for `needs.staleDays` days (`config/machine.json`,
-default 7) once.
+default 7) once. `hold --reversible` marks a hold whose recommended option is safe to undo, so an installation may
+apply it when the hold stays unanswered past its own timeout (recorded with `task answer`); it needs `--recommend`
+and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a destructive step, security or money.
 
 ### Landing work
 
