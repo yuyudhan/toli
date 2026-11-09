@@ -11,12 +11,29 @@ const HARNESS_NOISE: readonly RegExp[] = [/^Warning: /, /^Working\.\.\.$/, /^\[t
 /** How long before its limit a jawan is asked to have written its report. */
 export const REPORT_MARGIN_MINUTES = 10;
 
-/** Whether the run's output holds anything beyond harness warnings: a final answer, i.e. a report. */
-export function hasReport(output: string): boolean {
+/**
+ * Lines a harness prints when the API or the harness itself failed, never the jawan's answer: omp's `Error: 429
+ * rate_limit_error`, Claude Code's `API Error: 500 ...` and `Claude AI usage limit reached|<epoch>`.
+ */
+const HARNESS_ERROR = /^(?:API )?Error:|^(?:Claude AI )?usage limit reached/i;
+
+/** The run's output lines past blanks and harness warnings. */
+function answerLines(output: string): string[] {
     return output
         .split("\n")
         .map((line) => line.trim())
-        .some((line) => line !== "" && !HARNESS_NOISE.some((noise) => noise.test(line)));
+        .filter((line) => line !== "" && !HARNESS_NOISE.some((noise) => noise.test(line)));
+}
+
+/** Whether the run's output holds anything beyond harness warnings and errors: a final answer, i.e. a report. */
+export function hasReport(output: string): boolean {
+    return answerLines(output).some((line) => !HARNESS_ERROR.test(line));
+}
+
+/** Whether the run's only output past harness warnings is harness errors: it failed, whatever its exit code. */
+export function onlyHarnessErrors(output: string): boolean {
+    const text = answerLines(output);
+    return text.length > 0 && text.every((line) => HARNESS_ERROR.test(line));
 }
 
 /**

@@ -51,6 +51,11 @@ one. See docs/releasing.md.
 - A jawan run whose harness already exited is never stopped as stalled: a supervisor starved by a busy machine
   could probe the finished process before handling its exit and record it stalled (or done, its error counted as a
   report) instead of retrying a rate limit or reporting its failure.
+- A harness or API error line (`Error: 429 rate_limit_error`, `API Error: 500 ...`, `usage limit reached`) never
+  counts as a jawan's report: a run that printed only such errors ends failed even on exit 0, and one that stalled
+  with them is resumed instead of recorded done.
+- A killed jawan whose shell harness exits 128 + n (`exit 143`) is recorded as killed by that signal (SIGTERM), as a
+  harness that dies by the signal itself is.
 
 ## v0.3.1 - 2026-11-09
 
