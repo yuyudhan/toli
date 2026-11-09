@@ -10,17 +10,44 @@ export type CapacityConfig = {
     maxRuns?: number;
     maxLoadPerCpu?: number;
     minMemAvailableMB?: number;
-    /** Free disk (GB) the disk keeper holds: below it, rebuildable build output goes (src/fleet/disk.ts; default 60). */
+    /**
+     * Free disk (GB) the disk keeper holds: below it, rebuildable build output goes (src/fleet/disk.ts; default 60).
+     * Capped at 15% of the volume's size.
+     */
     diskKeepGB?: number;
     /**
      * Minutes without use after which the disk keeper sweeps an artifact out of a cargo target a build holds
      * (src/fleet/stale-sweep.ts; default 180).
      */
     diskSweepStaleMinutes?: number;
-    /** Parallel compile jobs per cargo run (`CARGO_BUILD_JOBS` for jawans, mirrored in ~/.cargo/config.toml). */
+    /**
+     * Extra build tools (beside cargo, rustc, just, ...) whose process keeps a target in use for the disk keeper,
+     * e.g. a project's build queue: each entry is a program name (`my-queue`, also matching `my-queue.ts`) or words
+     * the command line holds in a row (`my-tool queue`) (src/fleet/disk-scan.ts; default none).
+     */
+    diskBuildTools?: string[];
+    /**
+     * Parallel compile jobs per cargo run (`CARGO_BUILD_JOBS` inside a build slot and for jawans, mirrored in
+     * ~/.cargo/config.toml; default the cores split evenly over the build slots).
+     */
     cargoJobs?: number;
-    /** Automatic continuations per task chain when a jawan run hits its time limit without a report (default 3). */
+    /** Heavy cargo builds that may run at once; the rest wait for a slot (src/fleet/build-slots.ts; default cpus / 6). */
+    buildSlots?: number;
+    /**
+     * Resumes of the same session per run chain when a jawan run stalls or hits an explicit `--max-time` without a
+     * report (default 3; 0 turns resuming off).
+     */
     autoResume?: number;
+    /**
+     * Minutes a jawan run may show no progress (no output, session activity, file change or CPU use) before toli
+     * stops and resumes it; runs have no wall-clock limit unless given `--max-time` (src/jawans/progress.ts; default 30).
+     */
+    stallMinutes?: number;
+    /**
+     * Minutes a gate (`bin/toli gate run`) may go without new log output before it is stopped as stalled; a gate
+     * that keeps printing has no time limit (src/forge/gate.ts; default 30).
+     */
+    gateStallMinutes?: number;
 };
 
 /** Retention for `bin/toli prune`, in days unless named otherwise; any field left out uses its default. */

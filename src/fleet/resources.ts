@@ -8,20 +8,40 @@ import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writeJsonAtomic } from "../core/util.ts";
 import { type ModelTotal, modelTotalsToday } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
+import { busyBuildSlots } from "./build-slots.ts";
 
-/** The machine's load thresholds; `autoResume` and `diskSweepStaleMinutes` are not ones (see their readers below). */
-export type Capacity = Required<Omit<CapacityConfig, "autoResume" | "diskSweepStaleMinutes">>;
+/**
+ * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskSweepStaleMinutes`, `diskBuildTools` and
+ * `gateStallMinutes` are not ones (see their readers below and in src/forge/gate.ts).
+ */
+export type Capacity = Required<
+    Omit<
+        CapacityConfig,
+        "autoResume" | "stallMinutes" | "diskSweepStaleMinutes" | "diskBuildTools" | "gateStallMinutes"
+    >
+>;
 
 const DEFAULT_AUTO_RESUME = 3;
+/** Default minutes without progress after which a jawan run counts as stalled. */
+export const DEFAULT_STALL_MINUTES = 30;
 /** Default age (minutes without use) past which the disk keeper sweeps an artifact out of a busy cargo target. */
 export const DEFAULT_DISK_SWEEP_STALE_MINUTES = 180;
 
-/** `capacity.autoResume`: continuations per chain of time-limited runs (0 turns auto-resume off). */
+/** `capacity.autoResume`: resumes per run chain of stalled, limited or rate-limited runs (0 turns resuming off). */
 export function autoResumeLimit(machine: Machine): number {
     const raw = machine.capacity?.autoResume;
     if (raw === undefined) return DEFAULT_AUTO_RESUME;
     if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0)
         throw new ToliError("config/machine.json capacity.autoResume must be a non-negative whole number");
+    return raw;
+}
+
+/** `capacity.stallMinutes`: minutes without progress after which a jawan run is stopped and resumed. */
+export function stallMinutes(machine: Machine): number {
+    const raw = machine.capacity?.stallMinutes;
+    if (raw === undefined) return DEFAULT_STALL_MINUTES;
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0)
+        throw new ToliError("config/machine.json capacity.stallMinutes must be a positive number");
     return raw;
 }
 
@@ -31,6 +51,15 @@ export function diskSweepStaleMinutes(machine: Machine): number {
     if (raw === undefined) return DEFAULT_DISK_SWEEP_STALE_MINUTES;
     if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0)
         throw new ToliError("config/machine.json capacity.diskSweepStaleMinutes must be a positive number");
+    return raw;
+}
+
+/** `capacity.diskBuildTools`: the machine's own build tools whose process keeps a target in use (none by default). */
+export function diskBuildTools(machine: Machine): string[] {
+    const raw: unknown = machine.capacity?.diskBuildTools;
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw) || !raw.every((tool) => typeof tool === "string" && tool.trim() !== ""))
+        throw new ToliError("config/machine.json capacity.diskBuildTools must be a list of non-empty strings");
     return raw;
 }
 
@@ -53,6 +82,9 @@ export type Resources = {
     at: string;
     /** Today's jawan runs per harness and model; absent from machines on an older toli. */
     models?: ModelTotal[];
+    /** Heavy-build slots (src/fleet/build-slots.ts) and how many are held now; absent from machines on an older toli. */
+    buildSlots?: number;
+    buildSlotsBusy?: number;
 };
 
 /** A unit of work counted as load on this machine: `state/runs/<runId>.json`. */
@@ -109,11 +141,19 @@ export function parseLoadavg(text: string): { load1: number; load5: number } | n
 
 /** Free space (GB, one decimal) on the filesystem holding `dir`, from POSIX `df -Pk`; null when unreadable. */
 export function parseDf(text: string): number | null {
+    return parseDfVolume(text)?.freeGB ?? null;
+}
+
+/** Free and total size (GB, one decimal, rounded down) of the filesystem in `df -Pk` output; null when unreadable. */
+export function parseDfVolume(text: string): { freeGB: number; totalGB: number } | null {
     const lines = text.trim().split("\n");
     const columns = (lines.at(-1) ?? "").trim().split(/\s+/);
     if (lines.length < 2 || columns.length < 4) return null;
+    const totalKB = Number(columns[1]);
     const availableKB = Number(columns[3]);
-    return Number.isFinite(availableKB) ? Math.floor((availableKB / (1024 * 1024)) * 10) / 10 : null;
+    if (!Number.isFinite(totalKB) || !Number.isFinite(availableKB)) return null;
+    const toGB = (kb: number): number => Math.floor((kb / (1024 * 1024)) * 10) / 10;
+    return { freeGB: toGB(availableKB), totalGB: toGB(totalKB) };
 }
 
 /** Linux's /proc; `TOLI_PROC_DIR` overrides it for tests. */
@@ -144,12 +184,35 @@ function measureLoad(): { load1: number; load5: number } {
 
 /** Free GB on the filesystem holding `dir`, or why it could not be read. */
 export function measureDisk(dir: string): number | string {
+    const volume = measureVolume(dir);
+    return typeof volume === "string" ? volume : volume.freeGB;
+}
+
+/** Free and total GB of the filesystem holding `dir`, or why they could not be read. */
+export function measureVolume(dir: string): { freeGB: number; totalGB: number } | string {
     const result = run(["df", "-Pk", dir], { timeoutMs: 10_000 });
     if (result.code !== 0) return `df exited ${result.code}`;
-    return parseDf(result.stdout) ?? "df output not understood";
+    return parseDfVolume(result.stdout) ?? "df output not understood";
 }
 
 const DEFAULT_CAPACITY = { maxLoadPerCpu: 0.8, minMemAvailableMB: 2048, diskKeepGB: 60 } as const;
+
+/** The share of the volume's size the disk keeper's floor never goes above, so a small disk is never emptied. */
+export const DISK_FLOOR_SHARE = 0.15;
+
+/**
+ * The disk keeper's floor: capacity.diskKeepGB, capped at 15% of the volume's size (GB, one decimal, rounded down).
+ * `note` says why when the cap applies.
+ */
+export function diskKeepFloor(configuredGB: number, totalGB: number): { floorGB: number; note?: string } {
+    const capGB = Math.floor(totalGB * DISK_FLOOR_SHARE * 10) / 10;
+    if (configuredGB <= capGB) return { floorGB: configuredGB };
+    const share = `${Math.round(DISK_FLOOR_SHARE * 100)}%`;
+    return {
+        floorGB: capGB,
+        note: `${share} of ${totalGB.toFixed(1)} GB disk; capacity.diskKeepGB ${configuredGB} is above it`,
+    };
+}
 
 /** Thresholds from `config/machine.json` `capacity`, defaults for anything unset. */
 export function capacityFor(machine: Machine, cpuCount: number): Capacity {
@@ -162,7 +225,12 @@ export function capacityFor(machine: Machine, cpuCount: number): Capacity {
         }
         return raw;
     };
-    const cargoJobs = value("cargoJobs", Math.max(1, Math.floor(cpuCount / 2)));
+    // One heavy-build slot per six cores, each compiling with its even share of the cores, so all slots busy ≈ cores.
+    const buildSlots = value("buildSlots", Math.max(1, Math.floor(cpuCount / 6)));
+    if (!Number.isInteger(buildSlots) || buildSlots < 1) {
+        throw new ToliError("config/machine.json capacity.buildSlots must be a positive integer");
+    }
+    const cargoJobs = value("cargoJobs", Math.max(1, Math.floor(cpuCount / buildSlots)));
     if (!Number.isInteger(cargoJobs) || cargoJobs < 1) {
         throw new ToliError("config/machine.json capacity.cargoJobs must be a positive integer");
     }
@@ -172,6 +240,7 @@ export function capacityFor(machine: Machine, cpuCount: number): Capacity {
         minMemAvailableMB: value("minMemAvailableMB", DEFAULT_CAPACITY.minMemAvailableMB),
         diskKeepGB: value("diskKeepGB", DEFAULT_CAPACITY.diskKeepGB),
         cargoJobs,
+        buildSlots,
     };
 }
 
@@ -240,6 +309,8 @@ export function localResources(): Resources {
         memTotalMB: typeof memory === "string" ? 0 : memory.totalMB,
         maxRuns: capacity.maxRuns,
         maxLoadPerCpu: capacity.maxLoadPerCpu,
+        buildSlots: capacity.buildSlots,
+        buildSlotsBusy: busyBuildSlots(capacity.buildSlots),
         projects: loadProjects()
             .map((project) => project.name)
             .filter((name) => isGitRepo(paths.projectDir(name))),
@@ -292,6 +363,7 @@ export function availabilityLine(entry: FleetEntry): string {
         `mem ${r.memAvailableMB}/${r.memTotalMB} MB free`,
         `disk ${r.diskFreeGB} GB free`,
         `runs ${r.activeRuns}/${r.maxRuns}`,
+        ...(r.buildSlots === undefined ? [] : [`builds ${r.buildSlotsBusy ?? 0}/${r.buildSlots}`]),
         `projects ${r.projects.length === 0 ? "none" : r.projects.join(",")}`,
     ].join(", ");
     return `${name}: ${state} (${detail})`;
