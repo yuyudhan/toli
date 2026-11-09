@@ -100,20 +100,33 @@ export function writeTextAtomic(path: string, text: string): void {
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 10_000;
 
-/** Serialize read-modify-write cycles across concurrent toli processes (e.g. overlapping cron ticks). */
+/**
+ * Serialize read-modify-write cycles across concurrent toli processes (e.g. overlapping cron ticks). The lock file
+ * holds its holder's pid: a lock whose holder is gone (a caller SIGKILLed inside `fn`, as a dropped ssh session or a
+ * killed jawan does) is taken over at once; one without a readable pid only after LOCK_STALE_MS.
+ */
 export function withLock<T>(lockPath: string, fn: () => T): T {
     mkdirSync(dirname(lockPath), { recursive: true });
     const deadline = Date.now() + LOCK_WAIT_MS;
     for (;;) {
         try {
-            closeSync(openSync(lockPath, "wx"));
+            const fd = openSync(lockPath, "wx");
+            try {
+                writeSync(fd, String(process.pid));
+            } catch {
+                // A full disk: the lock still holds, only without a pid (then the LOCK_STALE_MS rule applies).
+            } finally {
+                closeSync(fd);
+            }
             break;
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
             try {
-                if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) rmSync(lockPath, { force: true });
+                const holder = Number(readFileSync(lockPath, "utf8").trim());
+                const dead = holder > 0 && !pidAlive(holder);
+                if (dead || Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) rmSync(lockPath, { force: true });
             } catch {
-                // The holder released the lock between our open and stat; retry.
+                // The holder released the lock between our open and read; retry.
             }
             if (Date.now() > deadline) throw new ToliError(`timed out waiting for lock ${lockPath}`);
             Bun.sleepSync(25);
