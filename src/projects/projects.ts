@@ -120,6 +120,17 @@ export function parseMode(value: string | undefined): Mode | undefined {
     return value as Mode;
 }
 
+/**
+ * `toli` names toli's own checkout when no registered project has that name: its git root, else null (a registered
+ * project). Throws when the toli root is not a git checkout.
+ */
+export function toliSelfCheckout(name: string): string | null {
+    if (name !== "toli" || loadProjects().some((project) => project.name === "toli")) return null;
+    const root = paths.root();
+    if (!isGitRepo(root)) throw new ToliError(`${root} is not a git checkout`);
+    return root;
+}
+
 /** The local clone of a registered project. */
 export function projectCloneDir(name: string): string {
     findProject(name);

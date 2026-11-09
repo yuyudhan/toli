@@ -135,6 +135,19 @@ describe("push log", () => {
         expect(box.toli(["push-log", "nope"]).stderr).toContain("usage: toli push-log add|list");
     });
 
+    test("push-log add toli records a push of toli's own checkout", () => {
+        const { box } = mini();
+        const origin = join(box.root, ".toli-origin.git");
+        box.git(box.root, ["init", "--bare", "--initial-branch=main", origin]);
+        box.git(box.root, ["init", "--initial-branch=main"]);
+        box.git(box.root, ["commit", "--allow-empty", "-m", "toli"]);
+        box.git(box.root, ["remote", "add", "origin", origin]);
+        box.git(box.root, ["push", "--no-verify", "origin", "main"]);
+        const head = box.git(box.root, ["rev-parse", "HEAD"]);
+        box.ok(["push-log", "add", "toli", "--by", "mac", "--word", "yes"], { now: AT });
+        expect(pushes(box)[0]).toMatchObject({ project: "toli", branch: "main", new: head, by: "mac", word: "yes" });
+    });
+
     test("an empty log reads as empty and a torn line is skipped", () => {
         const { box } = mini();
         expect(box.ok(["push-log", "list"])).toBe("push log: empty");
