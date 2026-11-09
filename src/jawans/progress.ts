@@ -8,6 +8,15 @@ import { run } from "../core/util.ts";
 
 /** CPU seconds a run's process tree must burn since the last progress to count as progress by itself. */
 export const CPU_PROGRESS_SECONDS = 10;
+
+/**
+ * CPU_PROGRESS_SECONDS in run time: a run minute of `minuteMs` (60 s, shortened by TOLI_RUN_MINUTE_MS in tests)
+ * scales it, so a shortened stall window asks for the same share of a core as a real one.
+ */
+export function cpuProgressSeconds(minuteMs: number): number {
+    return (CPU_PROGRESS_SECONDS * minuteMs) / 60_000;
+}
+
 /** Deepest directory level under a session dir that is checked for changes (subagent sessions sit below it). */
 const SESSION_DEPTH = 4;
 const PROBE_TIMEOUT_MS = 20_000;
@@ -126,9 +135,11 @@ export class StallWatch {
     private cpuAtProgress = 0;
     private lastProgressMs: number;
 
+    /** `cpuSeconds`: CPU the tree must burn since the last progress to count as progress by itself. */
     constructor(
         private readonly stallMs: number,
         startMs: number,
+        private readonly cpuSeconds: number,
     ) {
         this.lastProgressMs = startMs;
     }
@@ -136,7 +147,7 @@ export class StallWatch {
     /** Feed one probe taken at `atMs`; true once nothing moved for the stall time. */
     observe(probe: Probe, atMs: number): boolean {
         const cpuMoved =
-            probe.cpuSeconds - this.cpuAtProgress >= CPU_PROGRESS_SECONDS || probe.cpuSeconds < this.cpuAtProgress;
+            probe.cpuSeconds - this.cpuAtProgress >= this.cpuSeconds || probe.cpuSeconds < this.cpuAtProgress;
         if (this.marks === null || probe.marks !== this.marks || cpuMoved) {
             this.marks = probe.marks;
             this.cpuAtProgress = probe.cpuSeconds;
@@ -153,12 +164,19 @@ export function probeIntervalMs(stallMs: number): number {
 }
 
 /**
- * Probe `sources()` until stopped; calls `onStall` once when the run made no progress for `stallMs`. Returns the stop
- * function. `sources` is read on every probe, so a pid learned after the start is picked up. A run whose root process
- * already exited is never stalled: it ended on its own, and the caller stops the watch once it handles the exit.
+ * Probe `sources()` until stopped; calls `onStall` once when the run made no progress for `stallMinutes` run minutes
+ * of `minuteMs`. Returns the stop function. `sources` is read on every probe, so a pid learned after the start is
+ * picked up. A run whose root process already exited is never stalled: it ended on its own, and the caller stops the
+ * watch once it handles the exit.
  */
-export function watchStall(sources: () => ProgressSources, stallMs: number, onStall: () => void): () => void {
-    const watch = new StallWatch(stallMs, Date.now());
+export function watchStall(
+    sources: () => ProgressSources,
+    stallMinutes: number,
+    minuteMs: number,
+    onStall: () => void,
+): () => void {
+    const stallMs = stallMinutes * minuteMs;
+    const watch = new StallWatch(stallMs, Date.now(), cpuProgressSeconds(minuteMs));
     let fired = false;
     const timer = setInterval(() => {
         if (fired) return;

@@ -170,7 +170,8 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
               );
     const stopWatch = watchStall(
         () => ({ pid: childPid, logPath: run.logPath, sessionDir: run.sessionDir ?? null, cwd: run.cwd }),
-        (run.stallMinutes ?? DEFAULT_STALL_MINUTES) * minuteMs,
+        run.stallMinutes ?? DEFAULT_STALL_MINUTES,
+        minuteMs,
         () => {
             stalled = true;
             writeSync(logFd, `\n[toli] ${stallText(run.stallMinutes ?? DEFAULT_STALL_MINUTES)}: stopping the run\n`);

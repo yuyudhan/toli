@@ -219,8 +219,8 @@ async function runGateProcess(file: string): Promise<void> {
     if (record === null) throw new ToliError(`gate record ${file} is gone`);
     // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
     process.on("SIGHUP", () => {});
-    const stallMs = record.stallMinutes * runMinuteMs();
-    const pollMs = Math.max(50, Math.min(1000, stallMs / 10));
+    const minuteMs = runMinuteMs();
+    const pollMs = Math.max(50, Math.min(1000, (record.stallMinutes * minuteMs) / 10));
     const logFd = openSync(record.log, "a");
     let child: ChildProcess;
     try {
@@ -261,7 +261,8 @@ async function runGateProcess(file: string): Promise<void> {
     }, pollMs);
     const stopWatch = watchStall(
         () => ({ pid: child.pid ?? null, logPath: record.log, sessionDir: null, cwd: record.dir }),
-        stallMs,
+        record.stallMinutes,
+        minuteMs,
         () => {
             const reason = `no new output, file change or CPU use for ${record.stallMinutes} minutes; stopped it`;
             logDecision(record, "stall", `${record.recipe} at ${short(record.sha)}: ${reason}`);

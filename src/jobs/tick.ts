@@ -66,7 +66,8 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
             let pid: number | null = null;
             const stopWatch = watchStall(
                 () => ({ pid, logPath: null, sessionDir, cwd: paths.root() }),
-                stall * runMinuteMs(),
+                stall,
+                runMinuteMs(),
                 () => {
                     stalled = true;
                     if (pid !== null && pidAlive(pid)) process.kill(pid, "SIGTERM");

@@ -172,7 +172,7 @@ describe("stall detection", () => {
     });
 
     test("a run is stalled only after nothing moved for the whole stall time", () => {
-        const watch = new StallWatch(1000, 0);
+        const watch = new StallWatch(1000, 0, CPU_PROGRESS_SECONDS);
         expect(watch.observe({ marks: "a", cpuSeconds: 0 }, 0)).toBe(false);
         expect(watch.observe({ marks: "a", cpuSeconds: 0 }, 900)).toBe(false);
         // New output resets the clock.

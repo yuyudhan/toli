@@ -144,7 +144,8 @@ export async function execCommand(argv: string[]): Promise<number> {
         let stalled = false;
         const stopWatch = watchStall(
             () => ({ pid, logPath: jawan.logPath, sessionDir, cwd: paths.root() }),
-            stall * runMinuteMs(),
+            stall,
+            runMinuteMs(),
             () => {
                 stalled = true;
                 warn(`exec: ${stallText(stall)}; stopping omp`);
