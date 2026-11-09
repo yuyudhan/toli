@@ -1,0 +1,5 @@
+# toli's omp settings, read as project settings by omp sessions in toli's root (the lead, `bin/toli exec`, scheduled
+# jobs) and passed with `--config` to headless jawans working in project clones (src/harness/harness.ts).
+task:
+    # No per-subagent request budget: a jawan is never told to wrap up or force-stopped at a request count.
+    softRequestBudget: 0

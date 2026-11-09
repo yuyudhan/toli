@@ -31,12 +31,22 @@ import {
 import { findProject } from "../projects/projects.ts";
 import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
 import { loadBacklog } from "../records/backlog.ts";
+import { continueRun } from "./continue.ts";
 import { jawanSlots, startOrQueue } from "./launch.ts";
-import { activeRuns, type JawanRun, killRun, listRuns, loadRun, modelText, runLine, updateRun } from "./runs.ts";
+import {
+    ACTIVE,
+    activeRuns,
+    type JawanRun,
+    killRun,
+    listRuns,
+    loadRun,
+    modelText,
+    runLine,
+    updateRun,
+} from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
-const DEFAULT_MAX_MINUTES = 120;
 
 export type SpawnOptions = {
     harness?: Harness | undefined;
@@ -163,7 +173,7 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
             tier: resolved.choice.tier,
             modelSource: resolved.choice.source,
             cwd: resolved.cwd,
-            maxMinutes: options.maxMinutes ?? DEFAULT_MAX_MINUTES,
+            maxMinutes: options.maxMinutes ?? null,
             baseBrief: resolved.brief,
             extra: "",
             ...(replaced.length === 0 ? {} : { replaces: replaced }),
@@ -242,6 +252,42 @@ export function runsCommand(argv: string[]): void {
         return;
     }
     for (const run of runs) out(runLine(run));
+}
+
+/**
+ * `toli resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]`: the lead continues a finished run.
+ * An omp run's session is resumed (`omp --resume`) with a short continue prompt plus the note; other harnesses get a
+ * fresh run of the brief with a RESUME section. Refuses a run that is still active or already continued.
+ */
+export function resumeCommand(argv: string[]): void {
+    const args = new Args(argv, { booleans: ["json", "now"], values: ["note", "max-time"] });
+    args.maxPositional(1);
+    listRuns();
+    const run = loadRun(args.pos(0, "run id"));
+    if (ACTIVE.includes(run.status)) throw new ToliError(`refusing: ${run.id} is still ${run.status}`);
+    if (run.resumedBy !== undefined) {
+        const next = loadRun(run.resumedBy);
+        throw new ToliError(
+            `refusing: ${run.id} was already continued by ${next.id} (${next.status}); resume that run instead`,
+        );
+    }
+    const maxTime = args.str("max-time");
+    const next = continueRun(run, {
+        reason: "lead",
+        stopped: `ended ${run.status}${run.error === null ? "" : ` (${run.error})`}`,
+        cap: null,
+        now: args.bool("now"),
+        note: args.str("note"),
+        ...(maxTime === undefined ? {} : { maxMinutes: parseMinutes(maxTime) ?? null }),
+    });
+    if (args.bool("json")) {
+        printJson(next);
+        return;
+    }
+    const how = next.resumeSession === undefined ? "as a fresh run with a RESUME section" : "in the same session";
+    out(
+        `${next.status === "queued" ? "queued" : "resumed"} ${run.id} ${how} as ${next.id}; log ${relative(paths.root(), next.logPath)}`,
+    );
 }
 
 /** `toli run status|log|kill <id>` and the internal `run supervise <id>`. */

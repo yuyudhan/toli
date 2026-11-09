@@ -1,8 +1,12 @@
-// Pure helpers for a jawan run's time limit: the Deadline section every spawned brief gets at launch, whether a
-// finished run hit its limit without a report, and the RESUME section of the automatic continuation that follows.
+// Pure helpers for how a jawan run stops and continues: the Deadline section a brief gets when its run has an explicit
+// `--max-time`, whether a finished run stopped without a report, and what its continuation is told: the prompt that
+// resumes the same omp session, or the RESUME section of a fresh run on harnesses toli cannot resume.
 
-/** Lines harnesses print around a run that are not the jawan's answer (omp: MCP warnings and its spinner). */
-const HARNESS_NOISE: readonly RegExp[] = [/^Warning: /, /^Working\.\.\.$/];
+/**
+ * Lines around a run that are not the jawan's answer: omp's MCP warnings and spinner, and toli's own `[toli]` notes
+ * (a stall, a limit retry) that the supervisor writes into the log.
+ */
+const HARNESS_NOISE: readonly RegExp[] = [/^Warning: /, /^Working\.\.\.$/, /^\[toli\] /];
 
 /** How long before its limit a jawan is asked to have written its report. */
 export const REPORT_MARGIN_MINUTES = 10;
@@ -46,7 +50,7 @@ export function deadlineSection(startedAt: Date, maxMinutes: number, minuteMs: n
         "",
         `This run started at ${clockText(startedAt)} and is stopped at its ${maxMinutes}-minute time limit, at ${clockText(limit)}.`,
         `Write your report (the brief's Report section, also as your final message) by ${clockText(reportBy)}, ${margin} minutes before the limit, even if the work is not finished: what is done, what is left, and what is uncommitted.`,
-        "A run stopped by its limit without a report is continued by a new run, which costs a whole new start.",
+        "A run stopped by its limit without a report is resumed, which costs a restart of its session.",
         "",
     ].join("\n");
 }
@@ -54,24 +58,49 @@ export function deadlineSection(startedAt: Date, maxMinutes: number, minuteMs: n
 export type ResumeFacts = {
     /** The continuation's place in the chain, 1 for the first. */
     number: number;
-    /** Most continuations a chain may get (config/machine.json capacity.autoResume). */
-    cap: number;
+    /** Most automatic continuations a chain may get (config/machine.json capacity.autoResume); null for the lead's. */
+    cap: number | null;
     previousRun: string;
-    maxMinutes: number;
+    /** How the previous run stopped: `hit its 180-minute time limit`, `stalled: no progress for 30 minutes (...)`. */
+    stopped: string;
     cwd: string;
     previousLog: string;
 };
 
-/** The section a continuation's brief gets after the original brief. */
+function placeText(facts: ResumeFacts): string {
+    return facts.cap === null
+        ? `This continuation ${facts.number} was started by the lead.`
+        : `This is automatic continuation ${facts.number} of at most ${facts.cap}.`;
+}
+
+/** The section a fresh continuation's brief gets after the original brief (harnesses whose session is not resumed). */
 export function resumeSection(facts: ResumeFacts): string {
     return [
         "",
         `## RESUME (auto, ${facts.number})`,
         "",
-        `The previous run of this brief (${facts.previousRun}) hit its ${facts.maxMinutes}-minute time limit without writing a report. This is automatic continuation ${facts.number} of at most ${facts.cap}.`,
+        `The previous run of this brief (${facts.previousRun}) ${facts.stopped} without writing a report. ${placeText(facts)}`,
         `- Its edits are uncommitted in the working tree, ${facts.cwd}: start with \`git status\` and \`git diff\`, keep the finished work, and do not redo or revert it.`,
         `- Its log: ${facts.previousLog}`,
-        "- Continue from there to the brief's Stop when, and write the report before your own limit (Deadline below).",
+        "- Continue from there to the brief's Stop when, and end with the brief's report as your final message.",
+        "",
+    ].join("\n");
+}
+
+/**
+ * The prompt that resumes the same omp session: the session already holds the brief and all the work so far, so it
+ * only says why it stopped and to carry on. It starts with the brief header, so the resumed session stays a jawan.
+ */
+export function continuePrompt(facts: ResumeFacts, note?: string): string {
+    return [
+        "TOLI_BRIEF v1",
+        `## RESUME (${facts.cap === null ? "lead" : "auto"}, ${facts.number})`,
+        "",
+        `Your run ${facts.previousRun} ${facts.stopped} before you wrote your report. ${placeText(facts)} This is the same session: everything above is still your work.`,
+        `- Continue from where you stopped; do not redo finished work (\`git status\` and \`git diff\` in ${facts.cwd} show what is uncommitted).`,
+        "- Background jobs, builds or subagents you started may have ended with the stop: check them before waiting on them.",
+        "- Commit as you go, then finish the brief's goal and end with its report as your final message.",
+        ...(note === undefined || note.trim() === "" ? [] : ["", note.trim()]),
         "",
     ].join("\n");
 }

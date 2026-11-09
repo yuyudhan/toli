@@ -2,8 +2,10 @@
 // the run as load (state/runs/<runId>.json), runs the harness's headless command in the jawan's cwd with
 // TOLI_ROLE=jawan (its own process group, output streamed to output.log), records the outcome, and posts it to the
 // inbox, from where `bin/toli wake` (omp extension tick, Claude Code UserPromptSubmit hook) brings it into the lead's
-// chat. A run stopped by its time limit without a report is continued automatically (up to capacity.autoResume per
-// chain), and the freed slot starts the oldest queued run.
+// chat. A run has no wall-clock limit unless given `--max-time`; one that stalls (no progress for
+// capacity.stallMinutes, src/jawans/progress.ts), hits its explicit limit without a report, or stops on a rate/usage
+// limit is resumed: the same omp session continues (`omp --resume`), up to capacity.autoResume times per chain. The
+// freed slot starts the oldest queued run.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { availableParallelism } from "node:os";
@@ -11,18 +13,20 @@ import { relative } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, warn } from "../core/util.ts";
-import { autoResumeLimit, capacityFor, registerRun, removeRun } from "../fleet/resources.ts";
+import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../fleet/resources.ts";
 import { harnessConfig, headlessCommand } from "../harness/harness.ts";
 import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.ts";
-import { deliverOutbox, queueOutbox } from "../jobs/outbox.ts";
-import { addInboxItem } from "../records/inbox.ts";
+import { autoResume, notify } from "./continue.ts";
 import { jawanEnv } from "./env.ts";
-import { baseBriefOf, startOrQueue, startQueued } from "./launch.ts";
-import { deadlineSection, hasReport, resumeSection, usedTimeLimit } from "./limits.ts";
+import { startQueued } from "./launch.ts";
+import { deadlineSection, hasReport, usedTimeLimit } from "./limits.ts";
+import { stallText, watchStall } from "./progress.ts";
 import { type JawanRun, killGroup, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
 
 /** Grace after the harness's own time limit before the supervisor kills the process group. */
 export const KILL_GRACE_MINUTES = 10;
+/** After stopping a stalled run with SIGTERM, how long before its process group gets SIGKILL. */
+const STALL_KILL_GRACE_MS = 30_000;
 const OUTPUT_TAIL = 4000;
 
 function tail(path: string, limit: number): string {
@@ -56,7 +60,9 @@ export function outcomeMessage(run: JawanRun, output: string): { title: string; 
         `- status: ${run.status}${exit}${run.error === null ? "" : `: ${run.error}`}`,
         ...(run.resumeOf === undefined
             ? []
-            : [`- continues: ${run.resumeOf} (automatic continuation ${run.resumeCount ?? 1})`]),
+            : [
+                  `- continues: ${run.resumeOf} (continuation ${run.resumeCount ?? 1}${run.resumeReason === undefined ? "" : `, ${run.resumeReason}`}${run.resumeSession === undefined ? ", fresh run" : ", same session resumed"})`,
+              ]),
         ...(run.resumedBy === undefined
             ? []
             : [`- continued by: ${run.resumedBy} (started automatically, or queued for a free slot)`]),
@@ -75,75 +81,11 @@ export function outcomeMessage(run: JawanRun, output: string): { title: string; 
     return { title, body: lines.join("\n") };
 }
 
-/** Post one item to this machine's inbox and, on a worker, forward it to the coordinator. Returns the inbox path. */
-function notify(machine: Machine, title: string, body: string, outboxId: string): string {
-    const inbox = addInboxItem(machine.name, title, body);
-    if (machine.role === "worker") {
-        queueOutbox(machine, title, body, outboxId);
-        for (const error of deliverOutbox(machine).errors) warn(`outbox: ${error}`);
-    }
-    return inbox;
-}
-
 function postOutcome(machine: Machine, run: JawanRun): void {
     const { title, body } = outcomeMessage(run, tail(run.logPath, OUTPUT_TAIL));
     const inbox = notify(machine, title, body, run.id);
     updateRun(run.id, (record) => {
         record.inbox = inbox;
-    });
-}
-
-/**
- * Continue a run stopped by its time limit without a report: same brief, task, project, cwd, harness, model and limit,
- * plus a RESUME section; queued like any spawn when every slot is busy. Past capacity.autoResume continuations in the
- * chain, an inbox item says the chain stopped instead.
- */
-function autoResume(machine: Machine, run: JawanRun): JawanRun {
-    const cap = autoResumeLimit(machine);
-    const number = (run.resumeCount ?? 0) + 1;
-    if (number > cap) {
-        const where = [run.task, run.project === null ? null : `(${run.project})`].filter(Boolean).join(" ");
-        const body = [
-            `- run: ${run.id}${where === "" ? "" : ` ${where}`}`,
-            `- log: ${relative(paths.root(), run.logPath)}`,
-            `- brief: ${relative(paths.root(), run.briefPath)}`,
-            "",
-            cap === 0
-                ? "It hit its time limit without a report, and auto-resume is off (config/machine.json capacity.autoResume is 0)."
-                : `It hit its time limit without a report after ${cap} automatic continuations (config/machine.json capacity.autoResume), so no further run was started.`,
-            `Its edits are uncommitted in ${run.cwd}. Look at the work, then relaunch with a narrower brief or a longer --max-time, or finish it by hand.`,
-        ].join("\n");
-        const title = `jawan ${run.id} not resumed: auto-resume limit reached${where === "" ? "" : ` for ${where}`}`;
-        notify(machine, title, body, `${run.id}-resume-cap`);
-        return run;
-    }
-    const next = startOrQueue(
-        {
-            harness: run.harness,
-            task: run.task,
-            project: run.project,
-            work: run.work,
-            model: run.model,
-            tier: run.tier ?? null,
-            modelSource: run.modelSource ?? "harness default",
-            cwd: run.cwd,
-            maxMinutes: run.maxMinutes,
-            baseBrief: baseBriefOf(run),
-            extra: resumeSection({
-                number,
-                cap,
-                previousRun: run.id,
-                maxMinutes: run.maxMinutes,
-                cwd: run.cwd,
-                previousLog: run.logPath,
-            }),
-            resumeOf: run.id,
-            resumeCount: number,
-        },
-        { now: false },
-    );
-    return updateRun(run.id, (record) => {
-        record.resumedBy = next.id;
     });
 }
 
@@ -160,14 +102,15 @@ export function drainQueue(): string[] {
 
 type ChildExit = { code: number | null; signal: string | null; error: string | null };
 
-type Attempt = { exit: ChildExit; timedOut: boolean; elapsedMs: number; output: string };
+type Attempt = { exit: ChildExit; timedOut: boolean; stalled: boolean; elapsedMs: number; output: string };
 
 /** How often a supervisor waiting out a limit checks whether the run was killed meanwhile. */
 const WAIT_POLL_MS = 5000;
 
 /**
- * Run the harness once for the run as recorded now (its model, its brief) and wait for it. The supervisor kills the
- * process group `KILL_GRACE_MINUTES` past the run's limit. `output` is this attempt's part of the log only.
+ * Run the harness once for the run as recorded now (its model, its brief or resume prompt, its session) and wait for
+ * it. The process group is killed when the run stalls (no progress for its stallMinutes, src/jawans/progress.ts) or,
+ * only with an explicit `--max-time`, `KILL_GRACE_MINUTES` past that limit. `output` is this attempt's part of the log.
  */
 async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, minuteMs: number): Promise<Attempt> {
     const run = loadRun(id);
@@ -177,6 +120,7 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
         root: paths.root(),
         model: run.model ?? undefined,
         maxMinutes: run.maxMinutes,
+        ...(run.sessionDir === undefined ? {} : { session: { dir: run.sessionDir, resume: run.resumeSession } }),
     });
     const [program, ...programArgs] = command.argv;
     if (program === undefined) throw new ToliError("empty harness command");
@@ -199,18 +143,36 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
             record.pid = childPid;
         });
     let timedOut = false;
-    const timer = setTimeout(
+    let stalled = false;
+    const timer =
+        run.maxMinutes === null
+            ? undefined
+            : setTimeout(
+                  () => {
+                      timedOut = true;
+                      if (childPid !== null) killGroup(childPid, "SIGTERM");
+                  },
+                  (run.maxMinutes + KILL_GRACE_MINUTES) * minuteMs,
+              );
+    const stopWatch = watchStall(
+        () => ({ pid: childPid, logPath: run.logPath, sessionDir: run.sessionDir ?? null, cwd: run.cwd }),
+        (run.stallMinutes ?? DEFAULT_STALL_MINUTES) * minuteMs,
         () => {
-            timedOut = true;
-            if (childPid !== null) killGroup(childPid, "SIGTERM");
+            stalled = true;
+            writeSync(logFd, `\n[toli] ${stallText(run.stallMinutes ?? DEFAULT_STALL_MINUTES)}: stopping the run\n`);
+            if (childPid === null) return;
+            killGroup(childPid, "SIGTERM");
+            setTimeout(() => {
+                if (child.exitCode === null && child.signalCode === null) killGroup(childPid, "SIGKILL");
+            }, STALL_KILL_GRACE_MS).unref();
         },
-        (run.maxMinutes + KILL_GRACE_MINUTES) * minuteMs,
     );
     const exit = await exited;
     clearTimeout(timer);
+    stopWatch();
     const elapsedMs = Date.now() - launchedAt;
     const output = existsSync(run.logPath) ? readFileSync(run.logPath).subarray(offset).toString("utf8") : "";
-    return { exit, timedOut, elapsedMs, output };
+    return { exit, timedOut, stalled, elapsedMs, output };
 }
 
 /** Wait `minutes` run-minutes, returning false early when the run is killed meanwhile. */
@@ -224,7 +186,8 @@ async function waitUnlessKilled(id: string, minutes: number, minuteMs: number): 
 }
 
 /** The brief with its Deadline section replaced by one starting now, for the retry after a limit. */
-function refreshDeadline(briefPath: string, maxMinutes: number, minuteMs: number): void {
+function refreshDeadline(briefPath: string, maxMinutes: number | null, minuteMs: number): void {
+    if (maxMinutes === null) return;
     const brief = readFileSync(briefPath, "utf8");
     const cut = brief.indexOf("\n## Deadline (auto)");
     const base = cut === -1 ? brief : brief.slice(0, cut);
@@ -244,7 +207,7 @@ async function retryAfterLimit(
     minuteMs: number,
 ): Promise<Attempt | null> {
     const run = loadRun(id);
-    if (run.status === "killed" || first.timedOut || first.exit.error !== null) return null;
+    if (run.status === "killed" || first.timedOut || first.stalled || first.exit.error !== null) return null;
     if (!hitLimit(first.output, first.exit.code)) return null;
     const at = now();
     const plan = limitPlan(
@@ -325,6 +288,7 @@ export async function superviseRun(id: string): Promise<void> {
         const result = last.exit;
         const timedOut = last.timedOut;
         const output = existsSync(initial.logPath) ? readFileSync(initial.logPath, "utf8") : "";
+        const reported = hasReport(output);
         const usage = parseUsage(last.output);
         let finished = updateRun(id, (run) => {
             run.exitCode = result.code;
@@ -332,24 +296,37 @@ export async function superviseRun(id: string): Promise<void> {
             run.endedAt = now().toISOString();
             if (usage !== null) run.usage = usage;
             if (run.status === "killed") return;
+            if (result.error === null && last.stalled && !reported) {
+                run.status = "stalled";
+                run.error = `stopped: ${stallText(run.stallMinutes ?? DEFAULT_STALL_MINUTES)}, without a report`;
+                return;
+            }
             if (
                 result.error === null &&
+                run.maxMinutes !== null &&
                 usedTimeLimit(last.elapsedMs, run.maxMinutes, minuteMs, timedOut) &&
-                !hasReport(output)
+                !reported
             ) {
                 run.status = "time-limit";
                 run.error = `stopped by its ${run.maxMinutes}-minute time limit without a report`;
                 return;
             }
-            run.status = result.code === 0 && !timedOut ? "done" : "failed";
+            // A run that reported and then stalled (waiting on nothing) delivered its work.
+            run.status = (result.code === 0 && !timedOut) || (last.stalled && reported) ? "done" : "failed";
             if (result.error !== null) run.error = result.error;
-            else if (timedOut) run.error = `timed out after ${run.maxMinutes + KILL_GRACE_MINUTES} minutes`;
+            else if (timedOut) run.error = `timed out after ${(run.maxMinutes ?? 0) + KILL_GRACE_MINUTES} minutes`;
             else if (run.status === "failed" && hitLimit(last.output, result.code))
                 run.error = "stopped on a rate/usage limit";
         });
-        if (finished.status === "time-limit") {
+        const stopped =
+            finished.status === "stalled"
+                ? { reason: "stalled", text: `stalled (${stallText(finished.stallMinutes ?? DEFAULT_STALL_MINUTES)})` }
+                : finished.status === "time-limit"
+                  ? { reason: "time-limit", text: `hit its ${finished.maxMinutes}-minute time limit` }
+                  : null;
+        if (stopped !== null) {
             try {
-                finished = autoResume(machine, finished);
+                finished = autoResume(machine, finished, stopped.reason, stopped.text);
             } catch (error) {
                 warn(`auto-resume of ${id} failed: ${error instanceof Error ? error.message : String(error)}`);
             }

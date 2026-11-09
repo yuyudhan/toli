@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { deadlineSection, hasReport, resumeSection, usedTimeLimit } from "../src/jawans/limits.ts";
+import { continuePrompt, deadlineSection, hasReport, resumeSection, usedTimeLimit } from "../src/jawans/limits.ts";
+import { CPU_PROGRESS_SECONDS, parseCpuTime, StallWatch, treeCpuSeconds } from "../src/jawans/progress.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Run = {
@@ -17,11 +18,35 @@ type Run = {
     resumeOf?: string;
     resumeCount?: number;
     resumedBy?: string;
+    resumeReason?: string;
+    resumeSession?: string;
+    sessionDir?: string;
+    maxMinutes: number | null;
+    command: string;
 };
 
 /** One limit minute lasts a second, so a `--max-time 1` run reaches its limit after one second. */
 const FAST = { TOLI_RUN_MINUTE_MS: "1000" };
 const NOISE = 'echo "Warning: MCP server \\"atlassian\\" failed to connect: HTTP 401"; echo "Working..."';
+
+/**
+ * An omp stand-in that logs its argv. A fresh run writes a session file into its `--session-dir` and then hangs with no
+ * output, CPU or file change (a stall); a run given `--resume <file>` appends to that file and reports.
+ */
+function sessionOmp(argvLog: string): string {
+    return [
+        'dir=""; resume=""; prev=""',
+        'for arg in "$@"; do',
+        '    case "$prev" in --session-dir) dir="$arg" ;; --resume) resume="$arg" ;; esac',
+        '    prev="$arg"',
+        "done",
+        `printf '%s\\n---\\n' "$*" >> "${argvLog}"`,
+        'if [ -n "$resume" ]; then echo "{}" >> "$resume"; echo "Malik, the work is done and committed as abc123."; exit 0; fi',
+        'echo "{}" > "$dir/s1.jsonl"',
+        NOISE,
+        "exec sleep 30",
+    ].join("\n");
+}
 
 function coordinator(capacity: Record<string, number>): Sandbox {
     const box = sandbox();
@@ -100,7 +125,7 @@ describe("time limits", () => {
             number: 2,
             cap: 3,
             previousRun: "j-1",
-            maxMinutes: 180,
+            stopped: "hit its 180-minute time limit",
             cwd: "/w/kalki",
             previousLog: "/t/runs/j-1/output.log",
         });
@@ -109,6 +134,114 @@ describe("time limits", () => {
         expect(section).toContain("continuation 2 of at most 3");
         expect(section).toContain("uncommitted in the working tree, /w/kalki");
         expect(section).toContain("Its log: /t/runs/j-1/output.log");
+    });
+});
+
+describe("stall detection", () => {
+    test("ps CPU times parse on Linux and macOS, summed over the process tree", () => {
+        expect(parseCpuTime("00:01:05")).toBe(65);
+        expect(parseCpuTime("1-00:00:01")).toBe(86_401);
+        expect(parseCpuTime("0:02.50")).toBe(2.5);
+        expect(parseCpuTime("garbage")).toBeNull();
+        const ps = ["  10     1 0:10.00", "  11    10 0:05.00", "  12    11 1:00.00", "  13     1 9:00.00"].join("\n");
+        expect(treeCpuSeconds(ps, 10)).toBe(75);
+    });
+
+    test("a run is stalled only after nothing moved for the whole stall time", () => {
+        const watch = new StallWatch(1000, 0);
+        expect(watch.observe({ marks: "a", cpuSeconds: 0 }, 0)).toBe(false);
+        expect(watch.observe({ marks: "a", cpuSeconds: 0 }, 900)).toBe(false);
+        // New output resets the clock.
+        expect(watch.observe({ marks: "b", cpuSeconds: 0 }, 950)).toBe(false);
+        expect(watch.observe({ marks: "b", cpuSeconds: 1 }, 1900)).toBe(false);
+        // Busy CPU (a build the run waits on) is progress; a trickle of idle CPU is not.
+        expect(watch.observe({ marks: "b", cpuSeconds: CPU_PROGRESS_SECONDS + 1 }, 2800)).toBe(false);
+        expect(watch.observe({ marks: "b", cpuSeconds: CPU_PROGRESS_SECONDS + 2 }, 3700)).toBe(false);
+        expect(watch.observe({ marks: "b", cpuSeconds: CPU_PROGRESS_SECONDS + 2 }, 3800)).toBe(true);
+    });
+
+    test("a spawned run has no wall-clock limit by default and keeps its omp session in its run dir", () => {
+        const box = coordinator({ maxRuns: 2 });
+        box.stub("omp", 'echo "Malik, done."');
+        const run = spawnJson(box, ["--harness", "omp", "--brief", brief(box, "x"), "--cwd", box.root]);
+        expect(run.maxMinutes).toBeNull();
+        expect(run.command).not.toContain("--max-time");
+        expect(run.command).toContain(`--session-dir ${run.sessionDir}`);
+        expect(readFileSync(run.briefPath, "utf8")).not.toContain("## Deadline (auto)");
+    });
+
+    test("a run that stops making progress is stopped and resumed in its own omp session", async () => {
+        const box = coordinator({ maxRuns: 2, stallMinutes: 1 });
+        withProject(box, "alpha");
+        box.ok(["task", "add", "alpha", "long work", "--shape", "scout"]);
+        const argvLog = join(box.root, ".argv");
+        box.stub("omp", sessionOmp(argvLog));
+        const first = spawnJson(box, ["--harness", "omp", "--task", "T1", "--brief", brief(box, "build it")]);
+        const all = await waitForRuns(box, (list) => list.length === 2 && list.every((run) => run.inbox !== null));
+        const [second, stalled] = all as [Run, Run];
+        expect(stalled.id).toBe(first.id);
+        expect(stalled.status).toBe("stalled");
+        expect(stalled.error).toContain("no progress for 1 minutes");
+        expect(stalled.resumedBy).toBe(second.id);
+        expect(second.status).toBe("done");
+        expect(second.resumeOf).toBe(first.id);
+        expect(second.resumeReason).toBe("stalled");
+        expect(second.sessionDir).toBe(first.sessionDir);
+        expect(second.resumeSession).toBe(join(first.sessionDir ?? "", "s1.jsonl"));
+        const calls = readFileSync(argvLog, "utf8").split("\n---\n");
+        expect(calls[1]).toContain(`--session-dir ${first.sessionDir} --resume ${second.resumeSession}`);
+        expect(calls[1]).toContain("TOLI_BRIEF v1\n## RESUME (auto, 1)");
+        expect(calls[1]).not.toContain("build it");
+        expect(readFileSync(second.resumeSession ?? "", "utf8")).toBe("{}\n{}\n");
+        const backlog = JSON.parse(readFileSync(join(box.root, "data", "backlog.json"), "utf8")) as {
+            tasks: { id: string; notes: string[] }[];
+        };
+        const notes = backlog.tasks.find((entry) => entry.id === "T1")?.notes ?? [];
+        expect(notes.some((note) => note.includes(`resumed in the same session as ${second.id}`))).toBe(true);
+    }, 60_000);
+
+    test("the lead resumes a finished run's session with `bin/toli resume`, adding its note", async () => {
+        const box = coordinator({ maxRuns: 2 });
+        const argvLog = join(box.root, ".argv");
+        box.stub(
+            "omp",
+            [
+                'dir=""; prev=""',
+                'for arg in "$@"; do [ "$prev" = "--session-dir" ] && dir="$arg"; prev="$arg"; done',
+                `printf '%s\\n---\\n' "$*" >> "${argvLog}"`,
+                'echo "{}" >> "$dir/s1.jsonl"',
+                'echo "Malik, done."',
+            ].join("\n"),
+        );
+        const first = spawnJson(box, ["--harness", "omp", "--brief", brief(box, "x"), "--cwd", box.root]);
+        await waitForRuns(box, (list) => list.every((run) => run.inbox !== null));
+        const next = JSON.parse(
+            box.ok(["resume", first.id, "--note", "Also update the docs.", "--json"], { env: FAST }),
+        ) as Run;
+        expect(next.resumeOf).toBe(first.id);
+        expect(next.resumeReason).toBe("lead");
+        expect(next.resumeSession).toBe(join(first.sessionDir ?? "", "s1.jsonl"));
+        const prompt = readFileSync(next.briefPath, "utf8");
+        expect(prompt).toStartWith("TOLI_BRIEF v1\n## RESUME (lead, 1)");
+        expect(prompt).toContain("Also update the docs.");
+        await waitForRuns(box, (list) => list.length === 2 && list.every((run) => run.inbox !== null));
+        expect(readFileSync(argvLog, "utf8")).toContain(`--resume ${next.resumeSession}`);
+        expect(box.toli(["resume", first.id]).stderr).toContain(`already continued by ${next.id}`);
+    }, 60_000);
+
+    test("the continue prompt keeps the jawan header and names why the run stopped", () => {
+        const prompt = continuePrompt({
+            number: 2,
+            cap: 3,
+            previousRun: "j-1",
+            stopped: "stalled (no progress for 30 minutes)",
+            cwd: "/w/p",
+            previousLog: "/t/j-1/output.log",
+        });
+        expect(prompt.split("\n")[0]).toBe("TOLI_BRIEF v1");
+        expect(prompt).toContain("Your run j-1 stalled (no progress for 30 minutes) before you wrote your report.");
+        expect(prompt).toContain("automatic continuation 2 of at most 3");
+        expect(hasReport("[toli] no progress for 30 minutes: stopping the run\n")).toBe(false);
     });
 });
 

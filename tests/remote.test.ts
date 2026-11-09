@@ -29,7 +29,8 @@ describe("remote and exec model tiers", () => {
             env: { ...ENV, TOLI_EXEC_WORK: "verify" },
             stdin: "check\n",
         });
-        expect(output).toContain("--max-time 180m --model m2-opus check");
+        expect(output).toContain("--model m2-opus check");
+        expect(output).not.toContain("--max-time");
         // The prompt's Tier: line beats the work type.
         expect(box.ok(["exec", "--from", "m1"], { env: ENV, stdin: "Tier: light\ncheck\n" })).toContain(
             "--model claude-haiku-5-5",
@@ -64,4 +65,36 @@ echo "$*"`,
         expect([run?.model, run?.tier]).toEqual(["claude-sonnet-5-5", "standard"]);
         expect(run?.fallback).toMatchObject({ from: "claude-opus-5-5", to: "claude-sonnet-5-5" });
     });
+
+    test("exec that stops making progress is stopped and resumes its own omp session", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        const machinePath = join(box.root, "config", "machine.json");
+        const machine = JSON.parse(readFileSync(machinePath, "utf8"));
+        writeFileSync(machinePath, JSON.stringify({ ...machine, capacity: { ...machine.capacity, stallMinutes: 1 } }));
+        box.stub(
+            "omp",
+            [
+                'dir=""; resume=""; prev=""',
+                'for arg in "$@"; do',
+                '    case "$prev" in --session-dir) dir="$arg" ;; --resume) resume="$arg" ;; esac',
+                '    prev="$arg"',
+                "done",
+                'if [ -n "$resume" ]; then echo "resumed $resume: done, committed abc123."; exit 0; fi',
+                'echo "{}" > "$dir/s1.jsonl"',
+                "exec sleep 30",
+            ].join("\n"),
+        );
+        const output = box.ok(["exec", "--from", "m1"], { env: { ...ENV, TOLI_RUN_MINUTE_MS: "1000" }, stdin: "w\n" });
+        expect(output).toMatch(/resumed \S+s1\.jsonl: done/);
+        const [run] = JSON.parse(box.ok(["runs", "--json"])) as {
+            status: string;
+            resumeCount: number;
+            resumeReason: string;
+            resumeSession: string;
+        }[];
+        expect(run?.status).toBe("done");
+        expect(run?.resumeCount).toBe(1);
+        expect(run?.resumeReason).toBe("stalled");
+        expect(run?.resumeSession).toEndWith("s1.jsonl");
+    }, 60_000);
 });

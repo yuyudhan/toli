@@ -1,16 +1,19 @@
 import { out, ToliError, warn } from "./core/util.ts";
+import { buildSlotCommand } from "./fleet/build-slots.ts";
 import { diskCommand } from "./fleet/disk.ts";
+import { execCommand } from "./fleet/exec.ts";
 import { initCommand, syncCommand } from "./fleet/fleet.ts";
 import { fleetCommand, pickCommand } from "./fleet/pick.ts";
-import { execCommand, remoteCommand } from "./fleet/remote.ts";
+import { remoteCommand } from "./fleet/remote.ts";
 import { resourcesCommand } from "./fleet/resources.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge/forge.ts";
+import { gateCommand } from "./forge/gate.ts";
 import { guidanceCommand } from "./harness/guidance.ts";
 import { hookCommand } from "./harness/hooks.ts";
 import { sessionCommand } from "./harness/session.ts";
 import { harnessCommand } from "./harness/sync.ts";
 import { helperCommand } from "./helpers/helpers.ts";
-import { runCommand, runsCommand, spawnCommand } from "./jawans/spawn.ts";
+import { resumeCommand, runCommand, runsCommand, spawnCommand } from "./jawans/spawn.ts";
 import { scheduleCommand } from "./jobs/schedule.ts";
 import { jobCommand } from "./jobs/tick.ts";
 import { branchCommand, commitCommand } from "./projects/commit.ts";
@@ -57,7 +60,9 @@ const USAGE = `usage: bin/toli <command> [args]
   workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
   self sync [--json] | status [--json]
   forge <project> [--json]
-  push <project> [--task T<n>] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+  push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+  gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
+  gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json]
   push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
   push-log list [--json]
   pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
@@ -76,6 +81,7 @@ const USAGE = `usage: bin/toli <command> [args]
   migrate [--dry-run] [--json]
   sync [--all]
   resources [--json]
+  build-slot -- <command...>
   disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]
   fleet status [--json]
   pick [--project <name>] [--json]
@@ -86,6 +92,7 @@ const USAGE = `usage: bin/toli <command> [args]
         [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
         [--now] [--replace] [--dry-run] [--json]
   runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
+  resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
   harness sync [--check] [--json] | status [--json]
   hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
   guidance
@@ -136,6 +143,8 @@ export async function main(argv: string[]): Promise<number> {
             case "push":
                 await pushCommand(rest);
                 return 0;
+            case "gate":
+                return await gateCommand(rest);
             case "push-log":
                 pushLogCommand(rest);
                 return 0;
@@ -167,6 +176,8 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "sync":
                 return await syncCommand(rest);
+            case "build-slot":
+                return await buildSlotCommand(rest);
             case "resources":
                 resourcesCommand(rest);
                 return 0;
@@ -187,6 +198,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "spawn":
                 spawnCommand(rest);
+                return 0;
+            case "resume":
+                resumeCommand(rest);
                 return 0;
             case "runs":
                 runsCommand(rest);

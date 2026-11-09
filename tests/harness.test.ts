@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { GENERIC_NAMES, guidanceRules, leadGuidance } from "../src/harness/guidance.ts";
-import { HARNESSES, headlessCommand, headlessOmpArgs } from "../src/harness/harness.ts";
+import { HARNESSES, headlessCommand } from "../src/harness/harness.ts";
 import { claudeAction, guardDecision, ompAction } from "../src/harness/lead-guard.ts";
+import { headlessOmpArgs } from "../src/harness/omp-args.ts";
 import { shimItems, syncShims } from "../src/harness/sync.ts";
 import { sandbox, tempDir } from "./helpers.ts";
 
@@ -108,6 +109,23 @@ describe("headless commands", () => {
             "do it",
         ]);
         expect(headlessCommand("omp", INPUT).argv).toContain("--wait-async");
+    });
+
+    test("omp runs have no --max-time unless asked, keep their session, and load toli's overlay outside its root", () => {
+        const root = resolve(import.meta.dir, "..");
+        const argv = headlessCommand("omp", {
+            ...INPUT,
+            root,
+            maxMinutes: null,
+            session: { dir: "/s", resume: "/s/a.jsonl" },
+        }).argv;
+        expect(argv).not.toContain("--max-time");
+        expect(argv.join(" ")).toContain(
+            `--config ${join(root, ".omp", "config.yml")} --session-dir /s --resume /s/a.jsonl`,
+        );
+        // In toli's root omp reads the overlay as project settings itself.
+        expect(headlessOmpArgs("p", root, null)).not.toContain("--config");
+        expect(readFileSync(join(root, ".omp", "config.yml"), "utf8")).toContain("softRequestBudget: 0");
     });
 });
 

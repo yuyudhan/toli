@@ -7,10 +7,11 @@ import type { Harness, WorkType } from "../harness/harness.ts";
 import { type FallbackRecord, type ModelSource, type Tier, type Usage, usageText } from "../harness/models.ts";
 
 /**
- * `queued`: waiting for a free jawan slot (config/machine.json capacity.maxRuns). `time-limit`: stopped by its time
- * limit without a report (src/jawans/limits.ts), which starts an automatic continuation.
+ * `queued`: waiting for a free jawan slot (config/machine.json capacity.maxRuns). `time-limit`: stopped by its explicit
+ * `--max-time` without a report (src/jawans/limits.ts). `stalled`: stopped after no progress for capacity.stallMinutes
+ * (src/jawans/progress.ts). Both are resumed in the same session (src/jawans/supervise.ts).
  */
-export type RunStatus = "queued" | "starting" | "running" | "done" | "failed" | "killed" | "time-limit";
+export type RunStatus = "queued" | "starting" | "running" | "done" | "failed" | "killed" | "time-limit" | "stalled";
 
 export type JawanRun = {
     id: string;
@@ -33,7 +34,13 @@ export type JawanRun = {
     logPath: string;
     /** The harness command with the brief elided, for humans. */
     command: string;
-    maxMinutes: number;
+    /** Wall-clock limit in minutes, only when asked for (`--max-time`); null runs until done or stalled. */
+    maxMinutes: number | null;
+    /** Minutes without progress after which the run is stopped as stalled (capacity.stallMinutes at its start). */
+    stallMinutes?: number;
+    /** omp: the session dir every run of the chain shares (`--session-dir`), and the session file this run resumed. */
+    sessionDir?: string;
+    resumeSession?: string;
     status: RunStatus;
     supervisorPid: number | null;
     pid: number | null;
@@ -46,10 +53,12 @@ export type JawanRun = {
     error: string | null;
     /** When the run was queued for a free slot; absent when it started at once. */
     queuedAt?: string;
-    /** Auto-resume chain: the run this one continues, and its place in the chain (1 for the first continuation). */
+    /** Resume chain: the run this one continues, and its place in the chain (1 for the first continuation). */
     resumeOf?: string;
     resumeCount?: number;
-    /** The continuation started (or queued) because this run hit its time limit without a report. */
+    /** Why this run continues the previous one: `stalled`, `time-limit`, `rate/usage limit`, `lead` (`toli resume`). */
+    resumeReason?: string;
+    /** The continuation started (or queued) because this run stopped without a report, or the lead resumed it. */
     resumedBy?: string;
     /** `spawn --replace`: the live runs of the same task this one superseded, and the run that superseded this one. */
     replaces?: string[];
