@@ -65,7 +65,7 @@ bitbucket.org login in the git credential helper. `bin/toli doctor` and `bin/tol
 
     bin/toli forge <project> [--json]                  # forge, host, repo path, CLI/credential readiness
     bin/toli branch <project> <branch>                 # create a new work branch in the clone and switch to it
-    bin/toli push <project> [--task T<n>] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+    bin/toli push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
                                                        # git push -u origin <current branch>; never forced; logged in
                                                        # data/pushes.jsonl, shown in bin/toli digest
     bin/toli push-log add <project> [--by <machine>] [--for T<n>] [--word "..."]   # log a raw git push made here
@@ -77,6 +77,57 @@ bitbucket.org login in the git credential helper. `bin/toli doctor` and `bin/tol
 
 `push` refuses a detached HEAD. `pr create` refuses until the current branch is on origin and contains local HEAD,
 then prints the PR/MR URL. `--task` runs the command in the task's workspace.
+
+## Gates: long checks run once per commit
+
+A gate is a project's long verification command, such as `just verify all`, that must pass before a push. It can
+take hours, so toli runs it at most once per commit:
+
+    bin/toli gate run <project> [--task T<n>] --recipe "just verify all" [--stall <minutes>] [--json]
+    bin/toli gate check <project> [--task T<n>] [--sha <commit>] --recipe "just verify all" [--json]
+    bin/toli gate status <project> [--json]
+    bin/toli push <project> --gate "just verify all"
+
+- `gate run` works in the same checkout as `push` and keys the result on its HEAD commit and the exact recipe text.
+  The record and the full output live in `state/gates/<project>/`; every decision (skip, attach, start, stall,
+  outcome) is also one line in `logs/gates.log`.
+- Already passed at this commit: it says so (`already passed at <sha> ...; skipping the re-run`) and exits 0
+  without running. A failed, stalled or killed gate is never reused: the next `gate run` runs it again.
+- Already running at this commit (another jawan or hook started it): it waits for that run and exits with its result.
+  It never starts a second copy.
+- Otherwise it starts the gate in a background runner of its own, then waits for it. The runner outlives whoever
+  started it: a jawan ending, a hook being killed, Ctrl-C or a dropped ssh session leave the gate running, and the
+  next `gate run` (or `gate check`) picks up its result.
+- A gate has no time limit. It is stopped only when it prints nothing for `--stall` minutes (default
+  `capacity.gateStallMinutes` in `config/machine.json`, 30 when unset); it is then recorded `stalled` with the reason.
+  A gate that keeps printing runs as long as it needs.
+- A checkout that is not exactly its commit (changed tracked files, or untracked files that are not ignored) is
+  refused: the result would not belong to any commit. A pass also counts only if the checkout is still exactly that
+  commit when the gate ends; if HEAD moved or files changed while it ran, it is recorded `failed` with the reason.
+- `push --gate "<recipe>"` runs the gate this way first and pushes only if it passed at HEAD. The push's hooks see
+  `TOLI_GATE_SHA` and `TOLI_GATE_RECIPE`.
+
+A project whose own pre-push hook runs the same long check can skip it when toli already passed it on that commit.
+Put this at the top of the hook, before the check (`project` is the project's toli name, `toli` the path to toli's
+`bin/toli`):
+
+```sh
+toli=/path/to/toli/bin/toli
+if [ -x "$toli" ] && "$toli" gate check <project> --recipe "just verify all" >/dev/null 2>&1; then
+    echo "pre-push: just verify all already passed on this commit (bin/toli gate); skipping it"
+    exit 0
+fi
+```
+
+Use `gate check`, not the `TOLI_GATE_*` variables alone, to decide: the check reads the recorded result for the
+commit itself.
+
+toli's own pre-push hook (`.githooks/pre-push`) works this way for `bun run check`: a pushed commit that already
+passed is not checked again, and a checkout that is exactly the pushed commit runs the checks as a gate, so the
+result is kept for that commit. Any other checkout (other agents' uncommitted work, or a pushed commit other than
+HEAD) gets the checks on its working tree, as before, after the hook lists how it differs; that result is not
+recorded, since it is not the pushed commit's. Exact-commit testing happens only when the checkout is clean or the
+commit already passed, because no copy of the code is made.
 
 ## The no-mistakes gate
 

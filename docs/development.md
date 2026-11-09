@@ -151,7 +151,10 @@ gitleaks itself, and `just check` runs the formatters, lint and guards before it
   `git stash push --keep-index` first for a partial commit), then the guards over the staged files.
 - **commit-msg**: subject of at most 72 characters with no trailing period, a blank line before the body, and no AI
   co-author or Generated-by trailers.
-- **pre-push**: gitleaks over the pushed commits, then `bun run check`.
+- **pre-push**: gitleaks over the pushed commits, then `bun run check`
+  ([delivery.md](delivery.md#gates-long-checks-run-once-per-commit)): skipped when the pushed commit already passed
+  as a `bin/toli gate`; run as that gate (and recorded) when the checkout is exactly the pushed commit; otherwise run
+  on the working tree as before, after listing up to 20 files that differ, and not recorded.
 
 CI (`.github/workflows/ci.yml`) runs on pushes and pull requests to `main` and `develop`, on `ubuntu-latest` and
 `macos-latest`. Each runner installs the pinned, checksum-verified shfmt, shellcheck, actionlint, just, and gitleaks
@@ -169,6 +172,7 @@ select a platform, scheduler, unit directories and `/proc` fixtures on any host.
 Tracked (shared by all machines):
 
     bin/toli                     CLI launcher: runs the installed runtime when there is one, else src/main.ts
+    bin/shims/cargo              cargo shim first on jawans' PATH: heavy cargo commands wait for a build slot
     src/main.ts                  the command router: maps each `bin/toli` command to its area
     src/core/                    shared plumbing: args, config, paths, persona, git, cron, util (output, errors,
                                  JSON files, locks, processes)
@@ -180,7 +184,7 @@ Tracked (shared by all machines):
                                  guidance, live session, CLI health for the extension
     src/projects/                project registry, link, set, setup, workspace strategy and worktrees, safe commit
     src/forge/                   forges, push and PR/MR: GitHub/GitLab CLIs, Bitbucket API
-    src/fleet/                   machines: fleet status, resources, pick
+    src/fleet/                   machines: fleet status, resources, pick, heavy-build slots
     src/helpers/                 helper registry, local helpers, OS units
     src/setup/                   setup checklist and notice, doctor
     src/release/                 versions and CHANGELOG (release), upgrade, update check, installed runtime (runtime)

@@ -19,6 +19,7 @@ import {
     type PrStatus,
     type PrSummary,
 } from "./cli.ts";
+import { runGate } from "./gate.ts";
 
 /** `--task T<n>`: the project command acts on that task's workspace (its worktree or task branch). */
 const TASK_FLAG = "task";
@@ -208,21 +209,39 @@ function requireBranch(dir: string, action: string): string {
  * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Runs in
  * the task's workspace with `--task` (or from inside a task worktree), else in the project clone. A push that moved
  * origin's branch is recorded in this machine's push log (src/records/push-log.ts), attributed with `--by`/`--for`/
- * `--word` (or the issuing machine and task `bin/toli exec` put in the environment).
+ * `--word` (or the issuing machine and task `bin/toli exec` put in the environment). With `--gate "<recipe>"` the
+ * gate runs first (cached per commit, src/forge/gate.ts) and the push happens only once it passed at HEAD; the push's
+ * hooks get TOLI_GATE_SHA and TOLI_GATE_RECIPE.
  */
 export async function pushCommand(argv: string[]): Promise<void> {
-    const args = new Args(argv, { values: [TASK_FLAG, "by", "for", "word"] });
+    const args = new Args(argv, { values: [TASK_FLAG, "by", "for", "word", "gate"] });
     args.maxPositional(1);
     const project = args.pos(0, "project");
     const { dir, task } = workDir(project, args.str(TASK_FLAG));
     const attribution = pushAttribution(args, task?.id);
     const branch = requireBranch(dir, "push");
     const ref = `refs/heads/${branch}`;
+    const recipe = args.str("gate");
+    const gateEnv: Record<string, string> = {};
+    if (recipe !== undefined) {
+        const gate = await runGate({ project, dir, recipe, json: false });
+        if (gate.status !== "passed")
+            throw new ToliError(
+                `refusing to push: gate ${recipe} ${gate.status} at ${gate.sha.slice(0, 12)}${gate.reason === undefined ? "" : ` (${gate.reason})`}, log ${gate.log}`,
+            );
+        const head = gitOk(dir, ["rev-parse", "HEAD"]);
+        if (head !== gate.sha)
+            throw new ToliError(
+                `refusing to push: HEAD moved to ${head.slice(0, 12)} while the gate ran on ${gate.sha.slice(0, 12)}; run the push again`,
+            );
+        gateEnv.TOLI_GATE_SHA = gate.sha;
+        gateEnv.TOLI_GATE_RECIPE = recipe;
+    }
     const before = git(dir, ["ls-remote", "origin", ref]);
     if (before.code !== 0)
         throw new ToliError(`git ls-remote origin failed: ${(before.stderr || before.stdout).trim()}`);
     const old = before.stdout.trim().split(/\s+/)[0] || null;
-    const code = await runInherit(["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`]);
+    const code = await runInherit(["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`], { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push -u origin ${branch} failed (exit ${code})`);
     const pushed = gitOk(dir, ["rev-parse", ref]);
     if (pushed === old) {
