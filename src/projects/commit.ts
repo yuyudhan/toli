@@ -9,7 +9,8 @@
 // `--merge <ref>` starts the private index from the clean `git merge-tree` result instead and adds `<ref>` as second
 // parent; the files the merge brought are then checked out into the shared index and working tree. A conflicted merge
 // is refused unless `--resolved`: then the named working-tree files replace merge-tree's conflicted ones, every
-// conflicted path must be named and marker-free, and the usual checks run on the result.
+// conflicted path must be named and marker-free, and the usual checks run on the result. A named path the merge
+// conflicts on or changes that is in neither the working tree nor the merge result is resolved by deleting it.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Args } from "../core/args.ts";
@@ -21,6 +22,7 @@ import { DEVELOP_BRANCH } from "../release/release.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
 import {
     Attempt,
+    absentPaths,
     checkLockFiles,
     checkResolved,
     checkReverts,
@@ -72,7 +74,7 @@ export type Committed = {
 };
 
 /** `conflicts`: the paths `git merge-tree` could not merge; `tree` holds them with conflict markers. */
-type Merge = { commit: string; tree: string; files: string[]; conflicts: string[] };
+type Merge = { ref: string; commit: string; tree: string; files: string[]; conflicts: string[] };
 
 /**
  * The merge of `ref` into `parent` (`git merge-tree --write-tree`, which touches neither index nor working tree).
@@ -119,7 +121,7 @@ function cleanMerge(dir: string, parent: string, ref: string, resolved: boolean)
                 .map((line) => line.slice(3))
                 .join(", ")}; commit or move them first`,
         );
-    return { commit, tree, files, conflicts };
+    return { ref, commit, tree, files, conflicts };
 }
 
 /** Test seam: runs after the commit object is written and before the branch moves. */
@@ -139,7 +141,9 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
     const attempt = new Attempt(dir);
     try {
         attempt.gitOk(["read-tree", start]);
-        if (request.paths.length > 0) attempt.gitOk(["add", "--all", "--", ...request.paths]);
+        const deleted = absentPaths(attempt, request.paths, merge);
+        const added = request.paths.filter((file) => !deleted.includes(file));
+        if (added.length > 0) attempt.gitOk(["add", "--all", "--", ...added]);
         const fromPatch = request.patch === undefined ? [] : patchFiles(attempt, request.patch);
         if (request.patch !== undefined) attempt.gitOk(["apply", "--cached", "-"], request.patch);
         const tree = attempt.gitOk(["write-tree"]);
@@ -173,7 +177,7 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
                           .split("\n")
                           .filter(Boolean),
             );
-            checkResolved(attempt, conflicts, (file) => named.has(file) || listed.has(file));
+            checkResolved(attempt, conflicts, (file) => named.has(file) || listed.has(file) || deleted.includes(file));
         }
         scanLeaks(attempt);
         checkLockFiles(attempt, files);
@@ -211,7 +215,9 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
             parent,
         ]);
         if (moved.code !== 0) return null;
-        return { sha, branch, parent, files, merged: merge?.files ?? [], attempts: attemptNo };
+        // A path the merge touches that ends as in `parent` (a conflict resolved by deleting it) has nothing to check out.
+        const merged = merge?.files.filter((file) => files.includes(file)) ?? [];
+        return { sha, branch, parent, files, merged, attempts: attemptNo };
     } finally {
         attempt.dispose();
     }
