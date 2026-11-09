@@ -46,7 +46,7 @@ It stops as soon as free space reaches the floor plus 20 GB. Steps 1 to 5 spare 
    project) and no process has its working directory inside it. The wipe still takes cargo's locks and checks
    that no process uses the target (see 5), so a build or test started from elsewhere is never cut off. Oldest first.
 2. `node_modules/` and `dist/` of those idle checkouts, unless a process holds a file in them open. A project main
-   clone's `node_modules/` is never deleted: builds run there between jobs (the kalki queue's builder) and do not
+   clone's `node_modules/` is never deleted: builds run there between jobs (a project's build queue) and do not
    reinstall dependencies on their own, while cargo rebuilds a wiped `target/` by itself.
 3. Docker: `docker builder prune -af`, then `docker image prune -af`. It never touches volumes or containers.
 4. sccache: when its local cache is over its own cap, the oldest entries until it is back under the cap. A missing

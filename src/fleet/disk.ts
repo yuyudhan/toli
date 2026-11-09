@@ -3,7 +3,7 @@
 // first, until free space is the floor plus 20 GB:
 //   1. whole `target/` folders of project checkouts nothing uses (no running jawan, no process working there);
 //   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/`: builds run
-//      there between jobs (the kalki queue's builder) and cannot reinstall dependencies themselves, while cargo
+//      there between jobs (a project's build queue) and cannot reinstall dependencies themselves, while cargo
 //      rebuilds a wiped `target/` on its own (that wipe matches the cargo-sweep helper's: under cargo's locks, only
 //      while no jawan of the project runs);
 //   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune -af`; never volumes);
