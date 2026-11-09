@@ -26,6 +26,13 @@ one. See docs/releasing.md.
 - `bin/toli commit` runs the project's `commit-msg` hook (`core.hooksPath` honoured) on toli's private index and
   refuses the commit when it rejects the message; a message the hook edits is committed as edited. Commits no longer
   skip message rules such as VelocityFSS's `Quality-change:` line. Pre-commit hooks stay skipped.
+- `bin/toli commit --merge` takes a named, regenerated Cargo.lock or bun.lock when the clean merge leaves the lock
+  stale (each side's text merged but missed entries both sides need); the named lock still goes through the lock
+  checks (T650).
+- `bin/toli commit --merge --resolved` accepts a conflict resolved by deletion (e.g. a rename/rename source): such a
+  path is left deleted in the private index; any other absent path is refused with a clear message.
+- The revert guard counts a pure addition as a revert only when it restores a removed line in the same place; adding
+  that line back elsewhere is a new change.
 
 ## v0.3.0 - 2026-11-06
 
