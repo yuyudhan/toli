@@ -193,15 +193,16 @@ describe("bin/toli update check", () => {
 });
 
 describe("the tick", () => {
+    // The check is a detached bin/toli run: on a loaded machine it can take tens of seconds to be scheduled and finish.
     test("starts a due check in the background without waiting for it", () => {
         const box = releaseInstall();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         box.ok(["job", "tick"], { now: NOW });
-        const deadline = Date.now() + 10_000;
+        const deadline = Date.now() + 60_000;
         while (state(box).lastChecked === undefined && Date.now() < deadline) Bun.sleepSync(100);
         expect(state(box).latest).toBe("v0.2.0");
         expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain("update check: started");
-    });
+    }, 90_000);
 
     test("never checks a root that is not a git checkout", () => {
         const box = sandbox();

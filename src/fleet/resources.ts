@@ -214,6 +214,14 @@ export function diskKeepFloor(configuredGB: number, totalGB: number): { floorGB:
     };
 }
 
+/**
+ * The free disk under which the keeper also deletes build output in use (its last resort): max(5 GB, 3% of the
+ * volume, GB to one decimal rounded down), never above the floor. Between the floor and it only idle output goes.
+ */
+export function diskEmergencyGB(floorGB: number, totalGB: number): number {
+    return Math.min(floorGB, Math.max(5, Math.floor(totalGB * 0.03 * 10) / 10));
+}
+
 /** Thresholds from `config/machine.json` `capacity`, defaults for anything unset. */
 export function capacityFor(machine: Machine, cpuCount: number): Capacity {
     const configured = machine.capacity ?? {};
