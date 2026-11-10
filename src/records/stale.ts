@@ -24,8 +24,20 @@ export function staleTaskMinutes(): number {
     return raw;
 }
 
-/** One finished `bin/toli remote` run, read from its record in data/projects/<p>/runs or data/remote. */
-export type RemoteRunRecord = { path: string; task: string; finishedAt: string; lastLine: string | null };
+/**
+ * One finished `bin/toli remote` run, read from its record in data/projects/<p>/runs or data/remote. `runId`: the
+ * jawan run `exec` recorded on the target (`exec: recorded as run <id>` in the output), when it got that far.
+ */
+export type RemoteRunRecord = {
+    path: string;
+    task: string;
+    runId: string | null;
+    finishedAt: string;
+    lastLine: string | null;
+};
+
+/** A `bin/toli spawn`/`exec` run id: `j-<yyyymmdd>-<hhmmss>-<4 hex>`. */
+const RUN_ID = /\bj-\d{8}-\d{6}-[0-9a-f]{4}\b/;
 
 /** An answer recorded after the stale task's run ended that it may be waiting on. */
 export type StaleAnswer = { id: string; answer: string; at: string };
@@ -71,7 +83,8 @@ export function parseRemoteRecord(path: string, text: string): RemoteRunRecord |
     const task = /^- task: (T\d+)$/im.exec(header)?.[1] ?? /^#\s*Task\s+(T\d+)\b/m.exec(prompt)?.[1];
     if (task === undefined) return null;
     const output = outputStart < 0 ? "" : text.slice(outputStart + "\n## Output\n".length);
-    return { path, task: task.toUpperCase(), finishedAt, lastLine: lastLineOf(output) };
+    const runId = new RegExp(`^exec: recorded as run (${RUN_ID.source})`, "m").exec(output)?.[1] ?? null;
+    return { path, task: task.toUpperCase(), runId, finishedAt, lastLine: lastLineOf(output) };
 }
 
 /** Every remote run record modified at or after `sinceMs` (epoch milliseconds) that names a task. */
@@ -156,8 +169,16 @@ export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
                     evidence: relative(paths.root(), run.inbox ?? paths.jawanRecord(run.id)),
                 };
         } else {
+            // An agent naming its run on the target (`remote:<machine>:j-...`) is ended only by that run's record: an
+            // earlier, killed dispatch of the same task finishing after the new one was recorded says nothing about it.
+            const agentRun = RUN_ID.exec(task.agent)?.[0];
             const record = input.records
-                .filter((entry) => entry.task === task.id && entry.finishedAt > dispatched)
+                .filter(
+                    (entry) =>
+                        entry.task === task.id &&
+                        entry.finishedAt > dispatched &&
+                        (agentRun === undefined || entry.runId === agentRun),
+                )
                 .sort((a, b) => a.finishedAt.localeCompare(b.finishedAt))
                 .at(-1);
             // A harness agent id with no finished run record may still be working; toli cannot tell.

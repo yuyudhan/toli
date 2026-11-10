@@ -28,19 +28,29 @@ function inbox(box: Sandbox): string[] {
         : [];
 }
 
-/** A `bin/toli remote` record from before `- task:`: the task is named only by the brief's heading. */
-function legacyRemoteRecord(box: Sandbox, task: string, finished: string, lastLine: string): void {
+/**
+ * A `bin/toli remote` record from before `- task:`: the task is named only by the brief's heading. `output` lines come
+ * before `lastLine`; `started` also names the file.
+ */
+function legacyRemoteRecord(
+    box: Sandbox,
+    task: string,
+    finished: string,
+    lastLine: string,
+    output: string[] = ["merged 3 branches"],
+    started: string = START,
+): void {
     const dir = join(box.root, "data", "projects", "alpha", "runs");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
-        join(dir, "2026-03-04T08-00-00-000Z-m2.md"),
+        join(dir, `${started.replace(/[:.]/g, "-")}-m2.md`),
         [
             "# remote m2",
             "",
             "- from: m1",
             "- to: m2 (host2:/srv/toli)",
             "- project: alpha",
-            `- started: ${START}`,
+            `- started: ${started}`,
             `- finished: ${finished}`,
             "- exit: 0",
             "",
@@ -51,12 +61,38 @@ function legacyRemoteRecord(box: Sandbox, task: string, finished: string, lastLi
             "",
             "## Output",
             "",
-            "merged 3 branches",
+            ...output,
             lastLine,
             "",
         ].join("\n"),
     );
 }
+
+describe("a remote agent naming its run on the target", () => {
+    test("an earlier killed dispatch's record never makes it stale; only its own run's record does", () => {
+        const box = coordinator();
+        box.stub("omp", "true");
+        box.ok(["task", "add", "alpha", "slice"]);
+        box.ok(["task", "start", "T1", "--agent", "remote:m2:j-20260304-080130-3049"], { now: "2026-03-04T08:01:30Z" });
+        // The first dispatch (run c7c9) was killed and its record written after the second dispatch was recorded.
+        legacyRemoteRecord(box, "T1", "2026-03-04T08:02:00.000Z", "[Stopped by SIGTERM]", [
+            "--- stderr ---",
+            "exec: recorded as run j-20260304-080000-c7c9 on m2 (from m1), omp x (deep)",
+        ]);
+        expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).not.toContain("T1 (alpha) is active");
+        legacyRemoteRecord(
+            box,
+            "T1",
+            "2026-03-04T08:40:00.000Z",
+            "done: committed abc1234",
+            ["--- stderr ---", "exec: recorded as run j-20260304-080130-3049 on m2 (from m1), omp x (deep)"],
+            "2026-03-04T08:01:29.000Z",
+        );
+        expect(next(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" }))[0]).toStartWith(
+            '  - T1 (alpha) is active but its run remote:m2:j-20260304-080130-3049 ended 20m ago (data/projects/alpha/runs/2026-03-04T08-01-29-000Z-m2.md); last report line: "done: committed abc1234"',
+        );
+    });
+});
 
 describe("active tasks with no live run", () => {
     test("a remote run that ended is named at the top of Next after the grace minutes, with its last line and the answer since", () => {
