@@ -146,7 +146,9 @@ describe("the bin/toli launcher", () => {
     test("appends the bun it found to PATH, keeping the caller's order first", () => {
         const box = sandbox();
         // Line 2 of bin/toli is the shell prelude; under it, a script that prints the PATH bun was started with.
-        const prelude = readFileSync(join(import.meta.dir, "..", "bin", "toli"), "utf8").split("\n").slice(0, 2);
+        const prelude = readFileSync(join(import.meta.dir, "..", "bin", "toli"), "utf8")
+            .split("\n")
+            .slice(0, 2);
         const script = join(box.root, "launcher");
         writeFileSync(script, `${[...prelude, "console.log(process.env.PATH);"].join("\n")}\n`);
         const home = join(box.root, "home");
