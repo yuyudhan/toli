@@ -6,6 +6,8 @@ import {
     classifyCommit,
     compareVersions,
     dateChangelogSection,
+    githubReleaseArgs,
+    githubRepo,
     latestTag,
     nextVersion,
     parseVersion,
@@ -20,6 +22,35 @@ function version(text: string) {
     if (parsed === null) throw new Error(`bad test version ${text}`);
     return parsed;
 }
+
+describe("the GitHub Release step (T902)", () => {
+    test("reads owner/name from https and ssh GitHub remotes only", () => {
+        expect(githubRepo("https://github.com/yuyudhan/toli.git")).toBe("yuyudhan/toli");
+        expect(githubRepo("https://github.com/yuyudhan/toli")).toBe("yuyudhan/toli");
+        expect(githubRepo("git@github.com:yuyudhan/toli.git")).toBe("yuyudhan/toli");
+        expect(githubRepo("ssh://git@github.com/yuyudhan/toli.git")).toBe("yuyudhan/toli");
+        expect(githubRepo("https://gitlab.com/yuyudhan/toli.git")).toBeNull();
+        expect(githubRepo("/tmp/toli.git")).toBeNull();
+    });
+
+    test("publishes a pushed release tag as Latest and a pre-release never as Latest", () => {
+        expect(githubReleaseArgs("o/n", "v0.4.1", "/tmp/notes.md")).toEqual([
+            "gh",
+            "release",
+            "create",
+            "v0.4.1",
+            "--repo",
+            "o/n",
+            "--verify-tag",
+            "--title",
+            "v0.4.1",
+            "--notes-file",
+            "/tmp/notes.md",
+            "--latest",
+        ]);
+        expect(githubReleaseArgs("o/n", "v1.0.0-rc.1", "f").slice(-2)).toEqual(["--prerelease", "--latest=false"]);
+    });
+});
 
 describe("semver tags", () => {
     test("parses with or without v and rejects non-semver", () => {

@@ -36,8 +36,13 @@ the owner's word for that release, and pushing needs a second, explicit yes at t
 5. Commits `Release vX.Y.Z` on `develop`, merges `develop` into `main` (a fast-forward: `main` never gets commits of
    its own), and creates the annotated tag `vX.Y.Z` on that commit, whose message is the section.
 6. Asks `Push main, develop and vX.Y.Z to origin (<url>)? [y/N]` and pushes all three atomically only on `y`.
-   Otherwise it prints the push command to run later.
+   Otherwise it prints the push command to run later, and the `gh release create` command to run after it.
 7. Refreshes this machine's installed runtime (`bin/toli self sync`), so the live session runs the release commit.
+8. After a push to a GitHub remote, publishes the GitHub Release: `gh release create vX.Y.Z --repo <owner/name>
+--verify-tag --title vX.Y.Z --notes-file <notes> --latest` (a pre-release gets `--prerelease --latest=false`
+   instead), whose notes are the tag's message (`toli vX.Y.Z` and the CHANGELOG section). `--verify-tag` makes gh
+   refuse rather than create a tag of its own. Needs `gh` logged in with push access to the repository; when it
+   fails, the tag is already pushed and the same `gh release create` command finishes the release.
 
 `--dry-run` clones `develop` into a temporary directory (with `main` from this repository), runs `bun install`, and
 does steps 1-5 there (the verify run included), prints the release commit and tag, and removes the clone. It never

@@ -286,3 +286,34 @@ export function changelogBetween(text: string, from: string | null, to: string):
     if (current) kept.push(current.join("\n").trimEnd());
     return kept.join("\n\n");
 }
+
+/** `owner/name` of a GitHub remote URL (https, `git@github.com:` or `ssh://git@github.com/` form); else null. */
+export function githubRepo(url: string): string | null {
+    const match = /^(?:https:\/\/|ssh:\/\/git@|git@)github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(
+        url.trim(),
+    );
+    return match ? `${match[1]}/${match[2]}` : null;
+}
+
+/**
+ * The `gh release create` argv that publishes the GitHub Release for the pushed tag `tag` of `repo`, with the notes in
+ * `notesFile` (the tag's message: the CHANGELOG section). `--verify-tag` refuses to create a tag gh would otherwise make
+ * itself; a release is marked Latest, a pre-release never is.
+ */
+export function githubReleaseArgs(repo: string, tag: string, notesFile: string): string[] {
+    const prerelease = (parseVersion(tag)?.prerelease ?? null) !== null;
+    return [
+        "gh",
+        "release",
+        "create",
+        tag,
+        "--repo",
+        repo,
+        "--verify-tag",
+        "--title",
+        tag,
+        "--notes-file",
+        notesFile,
+        ...(prerelease ? ["--prerelease", "--latest=false"] : ["--latest"]),
+    ];
+}

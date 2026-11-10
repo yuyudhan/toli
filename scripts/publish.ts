@@ -10,6 +10,8 @@
 //      own), and create the annotated tag vX.Y.Z on that commit.
 //   5. Ask "Push main, develop and vX.Y.Z to <remote>? [y/N]"; push (atomically) only on y.
 //   6. Refresh this machine's installed runtime (`bin/toli self sync`) so the live session runs the release commit.
+//   7. After a push to a GitHub remote, publish the GitHub Release: `gh release create vX.Y.Z --verify-tag --latest`
+//      (a pre-release: `--prerelease`), titled with the tag and with the tag's message (its CHANGELOG section) as notes.
 //
 // The first release tags the version CHANGELOG.md was seeded with: `just release v0.1.0` when package.json is
 // already 0.1.0, the section exists, and no tag does (nothing to bump; the tag goes on HEAD).
@@ -27,6 +29,8 @@ import {
     compareVersions,
     DEVELOP_BRANCH,
     dateChangelogSection,
+    githubReleaseArgs,
+    githubRepo,
     latestTag,
     nextVersion,
     parseVersion,
@@ -193,8 +197,9 @@ function cutRelease(root: string, request: string): string {
     return tag;
 }
 
-function pushPrompt(root: string, remote: string, tag: string): void {
-    const url = Bun.spawnSync(["git", "remote", "get-url", remote], { cwd: root }).stdout.toString().trim();
+/** Step 5; returns whether the refs were pushed. */
+function pushPrompt(root: string, remote: string, tag: string): boolean {
+    const url = remoteUrl(root, remote);
     const where = url === "" ? remote : `${remote} (${url})`;
     const refs = [RELEASE_BRANCH, DEVELOP_BRANCH, tag];
     const answer = prompt(`Push ${RELEASE_BRANCH}, ${DEVELOP_BRANCH} and ${tag} to ${where}? [y/N]`);
@@ -209,8 +214,38 @@ function pushPrompt(root: string, remote: string, tag: string): void {
             `refs/tags/${tag}`,
         ]);
         say(`release: pushed ${refs.join(", ")} to ${remote}`);
-    } else {
-        say(`release: not pushed. When ready: git push --atomic ${remote} ${refs.join(" ")}`);
+        return true;
+    }
+    say(`release: not pushed. When ready: git push --atomic ${remote} ${refs.join(" ")}`);
+    const repo = githubRepo(url);
+    if (repo !== null)
+        say(
+            `release: then publish it: ${githubReleaseArgs(repo, tag, "<notes file>").join(" ")} (notes: the tag message)`,
+        );
+    return false;
+}
+
+function remoteUrl(root: string, remote: string): string {
+    return Bun.spawnSync(["git", "remote", "get-url", remote], { cwd: root }).stdout.toString().trim();
+}
+
+/** Step 7: the GitHub Release for the pushed tag, its notes the tag's message (the CHANGELOG section). */
+function publishGithubRelease(root: string, remote: string, tag: string): void {
+    const repo = githubRepo(remoteUrl(root, remote));
+    if (repo === null) {
+        say(`release: ${remote} is not a GitHub repository; no GitHub Release to publish`);
+        return;
+    }
+    const notes = capture(root, ["git", "for-each-ref", `refs/tags/${tag}`, "--format=%(contents)"]);
+    if (notes === "") throw new ReleaseError(`tag ${tag} has no message to publish as release notes`);
+    const dir = mkdtempSync(join(tmpdir(), "toli-release-notes-"));
+    try {
+        const file = join(dir, "notes.md");
+        writeFileSync(file, `${notes}\n`);
+        stream(root, githubReleaseArgs(repo, tag, file));
+        say(`release: published https://github.com/${repo}/releases/tag/${tag}`);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
     }
 }
 
@@ -234,7 +269,7 @@ function dryRun(request: string, remote: string): void {
         say("");
         say(
             `release: dry run done. A real run would now ask: Push ${RELEASE_BRANCH}, ${DEVELOP_BRANCH} and ${tag} ` +
-                `to ${remote}? [y/N]`,
+                `to ${remote}? [y/N], then publish the GitHub Release ${tag}`,
         );
         say("release: nothing was pushed; this repository is unchanged");
     } finally {
@@ -251,8 +286,9 @@ try {
         dryRun(request, remote);
     } else {
         const tag = cutRelease(ROOT, request);
-        pushPrompt(ROOT, remote, tag);
+        const pushed = pushPrompt(ROOT, remote, tag);
         stream(ROOT, [process.execPath, join(ROOT, "bin", "toli"), "self", "sync"]);
+        if (pushed) publishGithubRelease(ROOT, remote, tag);
     }
 } catch (error) {
     if (!(error instanceof ReleaseError || error instanceof ToliError)) throw error;
