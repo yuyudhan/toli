@@ -209,7 +209,8 @@ function projectLine(project: ProjectDigest): string {
 
 function taskLine(task: Task): string {
     const agent = task.status === "active" && task.agent ? ` [jawan ${task.agent}]` : "";
-    return `  ${task.id} ${task.project}: ${task.title}${agent}`;
+    const pinned = task.pinned === undefined ? "" : " [pinned here]";
+    return `  ${task.id} ${task.project}: ${task.title}${agent}${pinned}`;
 }
 
 /**

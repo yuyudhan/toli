@@ -150,10 +150,10 @@ function recordSent(sent: BalanceSent): void {
     });
 }
 
-/** The delegate command for each of this machine's queued tasks, with its brief when it has one. */
+/** The delegate command for each of this machine's queued tasks that is not pinned here, with its brief when it has one. */
 function delegateLines(target: string): string[] {
     return loadBacklog()
-        .tasks.filter((task) => task.status === "queued")
+        .tasks.filter((task) => task.status === "queued" && task.pinned === undefined)
         .map((task) => {
             const brief = briefPath(task.project, task.id);
             return [

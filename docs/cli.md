@@ -74,6 +74,7 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
     task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
     task wait <id> --on "<what it waits on>"
+    task pin <id> [--reason "..."] | unpin <id>
     task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
     task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
     task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..."

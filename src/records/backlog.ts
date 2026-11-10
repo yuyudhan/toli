@@ -29,6 +29,7 @@ import {
     matchOption,
     parseOption,
 } from "./hold-options.ts";
+import { pinTaskCommand } from "./pin.ts";
 import { briefPath } from "./stale.ts";
 
 /** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
@@ -80,6 +81,8 @@ export type Task = {
      * jawan, holding, finishing or dropping the task clears it.
      */
     waitingOn?: string;
+    /** `task pin`: stays on this machine, never offered to another by the queue balancer; the reason ("" if none). */
+    pinned?: string;
     workspace?: TaskWorkspace;
     createdAt: string;
     updatedAt: string;
@@ -131,6 +134,7 @@ function describe(task: Task): string {
     const extras: string[] = [];
     if (task.status === "held" && task.question) extras.push(`question: ${task.question}`);
     if (task.agent) extras.push(`agent: ${task.agent}`);
+    if (task.pinned !== undefined) extras.push(task.pinned === "" ? "pinned" : `pinned: ${task.pinned}`);
     if (task.commit) extras.push(`commit: ${task.commit}`);
     if (task.report) extras.push(`report: ${task.report}`);
     if (task.delegatedBy)
@@ -365,7 +369,7 @@ function drop(argv: string[]): void {
 /** Run one `task` subcommand; only `list --fleet` returns a promise (callers await it), so the rest throw synchronously. */
 export function taskCommand(argv: string[]): Promise<void> | undefined {
     const [sub, ...rest] = argv;
-    if (sub !== undefined && (routeToOwner(sub, rest) || delegationTaskCommand(sub, rest))) return;
+    if (sub !== undefined && [routeToOwner, delegationTaskCommand, pinTaskCommand].some((fn) => fn(sub, rest))) return;
     switch (sub) {
         case "add":
             add(rest);
@@ -391,6 +395,6 @@ export function taskCommand(argv: string[]): Promise<void> | undefined {
             drop(rest);
             break;
         default:
-            throw new ToliError("usage: toli task add|list|start|wait|done|hold|answer|drop|link|escalate");
+            throw new ToliError("usage: toli task add|list|start|wait|done|hold|answer|drop|pin|unpin|link|escalate");
     }
 }

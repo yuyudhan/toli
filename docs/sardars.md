@@ -155,6 +155,11 @@ period. Thresholds live in `config/machine.json`:
 { "lead": { "balanceMinutes": 30, "balanceGap": 3 } }
 ```
 
+A task that must stay on this machine (it needs code or state only this clone has) is pinned:
+`bin/toli task pin T<n> [--reason "..."]` (`task unpin T<n>` releases it). A pinned task still counts toward the queue
+depth but is never listed in an offer; when every queued task is pinned, no offer is posted. `task list` and the
+digest show the pin.
+
 ## Jawans report to their own lead
 
 A jawan started by `bin/toli spawn` posts its outcome to its own machine's inbox only, and so does the low-disk alert
