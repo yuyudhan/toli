@@ -170,7 +170,8 @@ describe("gate", () => {
         const ok = box.ok(["gate", "run", "app", "--recipe", steady, "--stall", "1"], { env: FAST });
         expect(ok).toContain("passed");
         commitFile(box, dir, "a.txt");
-        const silent = recipe(box, "silent", "echo started; sleep 30; echo never");
+        // `&&`: a shell signalled with its group can still run the next line once sleep died (macOS sh, under load).
+        const silent = recipe(box, "silent", "echo started; sleep 30 && echo never");
         const started = Date.now();
         const stalled = box.toli(["gate", "run", "app", "--recipe", silent, "--stall", "1"], { env: FAST });
         expect(Date.now() - started).toBeLessThan(20_000);
@@ -185,21 +186,25 @@ describe("gate", () => {
 
     test("a silent gate whose processes burn CPU outlives the stall limit; an idle silent one is still stopped", () => {
         const { box, dir } = setup();
+        // The default stall limit (30 minutes, the CPU rule's 10 seconds about 0.6% of a core) squeezed into three
+        // seconds: a 100 ms minute. A one-minute limit would ask a sixth of a core, which a loaded machine can deny.
+        const minutes = { TOLI_RUN_MINUTE_MS: "100" };
         // Seven seconds of silent CPU from one process (a build linking quietly), over twice the three-second limit.
         const burn = `"${process.execPath}" -e 'const end = Date.now() + 7000; while (Date.now() < end) {}'`;
         const busy = recipe(box, "busy", `${burn}; echo linked`);
-        const ok = box.toli(["gate", "run", "app", "--recipe", busy, "--stall", "1"], { env: FAST });
+        const ok = box.toli(["gate", "run", "app", "--recipe", busy, "--stall", "30"], { env: minutes });
+        // The whole record on a mismatch: its status, reason and timestamps say how the run ended.
+        expect(records(box).find((entry) => entry.recipe === busy)).toMatchObject({ status: "passed", exitCode: 0 });
         expect(ok.stderr).not.toContain("stalled");
         expect(ok.code).toBe(0);
-        expect(records(box).find((entry) => entry.recipe === busy)?.status).toBe("passed");
         commitFile(box, dir, "a.txt");
-        const idle = recipe(box, "idle", "sleep 30; echo never");
+        const idle = recipe(box, "idle", "sleep 30 && echo never");
         const started = Date.now();
-        const stalled = box.toli(["gate", "run", "app", "--recipe", idle, "--stall", "1"], { env: FAST });
+        const stalled = box.toli(["gate", "run", "app", "--recipe", idle, "--stall", "30"], { env: minutes });
+        const record = records(box).find((entry) => entry.recipe === idle);
+        expect({ record, ms: Date.now() - started }).toMatchObject({ record: { status: "stalled" } });
         expect(Date.now() - started).toBeLessThan(20_000);
         expect(stalled.code).toBe(1);
-        const record = records(box).find((entry) => entry.recipe === idle);
-        expect(record?.status).toBe("stalled");
         expect(record?.reason).toContain("CPU use");
         expect(readFileSync(record?.log ?? "", "utf8")).not.toContain("never");
     });
