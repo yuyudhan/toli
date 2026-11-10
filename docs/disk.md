@@ -45,13 +45,18 @@ pid to `state/disk-keep.pause`, optionally followed by a short reason, and remov
     ...                                              # the long job
     rm -f "$pause"
 
-While that pid is alive the keeper deletes nothing (`bin/toli disk keep` says `paused by pid N (reason)`). Once the
-pid is dead the file is stale and ignored, so a job killed before its cleanup never blocks the keeper for good. A
-pause also expires 2 hours after the file was last written (its modification time), even while the pid lives: a
-job that hangs, or forgets its cleanup while its shell lives on, cannot turn cleaning off for good. The keeper then
-removes the file and logs once `pause by pid N expired after 2 h; cleaning resumed`. A job that runs longer than 2
-hours touches the file again before then (`touch "$pause"`, say once an hour) to keep its pause. Use this file,
-never `state/disk-keep.lock`: the lock belongs to the keeper itself.
+While that pid is alive the keeper deletes nothing (`bin/toli disk keep` says `paused by pid N (reason)`), as long as
+free space is at or over the emergency level (max(5 GB, 3% of the disk), at most the floor). Under it a full disk
+fails the paused job's builds anyway, so the keeper runs despite the pause: it sweeps every `target/` of artifacts
+unused for `capacity.diskSweepStaleMinutes`, then, still under, deletes whole `target/` folders, oldest first, until
+free space is back over the emergency level, and logs `paused by pid N (reason), but free X GB is under the emergency
+level Y GB: running anyway; a build cut off fails and its owner retries it`. Nothing else is touched under a pause
+(no `node_modules/`, `dist/`, Docker or sccache). Once the pid is dead the file is stale and ignored, so a job killed
+before its cleanup never blocks the keeper for good. A pause also expires 2 hours after the file was last written
+(its modification time), even while the pid lives: a job that hangs, or forgets its cleanup while its shell lives on,
+cannot turn cleaning off for good. The keeper then removes the file and logs once `pause by pid N expired after 2 h;
+cleaning resumed`. A job that runs longer than 2 hours touches the file again before then (`touch "$pause"`, say
+once an hour) to keep its pause. Use this file, never `state/disk-keep.lock`: the lock belongs to the keeper itself.
 
 ## What it deletes, in order
 

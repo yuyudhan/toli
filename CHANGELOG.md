@@ -8,6 +8,11 @@ one. See docs/releasing.md.
 
 ### Changed
 
+- A live `state/disk-keep.pause` no longer holds the disk keeper off under its emergency level (max(5 GB, 3% of the
+  disk)): it sweeps stale artifacts out of every `target/`, then deletes whole `target/` folders, oldest first, until
+  free space is back over that level; the paused build fails once and its owner runs it again. The minute tick starts
+  the background keeper in that case too. A machine whose long build held the pause back to back sat at 0 GB free.
+
 - Jawan runs have no wall-clock limit by default (`bin/toli spawn`, `bin/toli remote`/`exec`, scheduled headless
   jobs): they work until done. `--max-time` stays as an explicit opt-in. A run counts as stuck only when it shows no
   progress for `capacity.stallMinutes` (default 30): no output, no omp session activity (messages, tool calls), no

@@ -195,8 +195,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 - `disk keep`: free rebuildable build output, oldest first, when the disk is under its floor (`capacity.diskKeepGB`,
   capped at 15% of the disk) and until it is back there; still under it after the normal steps, every `target/` goes,
   in use or not. It also runs before every jawan start, and every tick starts it detached (the tick never waits on
-  it), so low disk never stops work; a live pid in
-  `state/disk-keep.pause` pauses it for up to 2 hours after the file was last written ([disk.md](disk.md)).
+  it), so low disk never stops work; a live pid in `state/disk-keep.pause` pauses it for up to 2 hours after the file
+  was last written, except under the emergency level ([disk.md](disk.md)).
 - `remote` runs a prompt on another machine; `exec` is what it runs there (headless omp, up to an hour).
 
 Details: [fleet.md](fleet.md).
