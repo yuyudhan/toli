@@ -76,6 +76,18 @@ export function activeRuntime(checkout: string = paths.root()): string | null {
     return dir === "" ? null : dir;
 }
 
+/**
+ * True when this process runs from an installed snapshot (`code` holds the runtime marker) and `self sync` has since
+ * pointed the checkout at a different one. A working-tree process (TOLI_DEV, the tests) and a pointer to a deleted
+ * snapshot are never superseded: there is nothing newer to load.
+ */
+export function runtimeSuperseded(code: string = codeRoot(), checkout: string = paths.root()): boolean {
+    if (!existsSync(join(code, RUNTIME_MARKER))) return false;
+    const active = activeRuntime(checkout);
+    if (active === null || !existsSync(active)) return false;
+    return realpathSync(active) !== realpathSync(code);
+}
+
 function markerCommit(dir: string): string | null {
     const marker = join(dir, RUNTIME_MARKER);
     if (!existsSync(marker)) return null;

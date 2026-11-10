@@ -25,6 +25,14 @@ a launchd agent (`com.toli.lead`, KeepAlive) on macOS, a systemd user service (`
 `Restart=always`, needs `loginctl enable-linger`) on Linux, or a per-minute crontab line running `lead run --once`
 where neither works. No terminal multiplexer is involved.
 
+`bin/toli lead install` never trades a running agent for an unloaded one. launchd loads a user agent only from the
+user's login session: from a background launchd job (such as a jawan's) it can boot an agent out but cannot load one
+again (`Bootstrap failed: 125`). So it first probes `launchctl print gui/<uid>`, and from a session that fails it
+changes nothing and tells you to run it from a Terminal in your login session. When the plist on disk already is the
+one it would write and the agent is loaded, it restarts the agent in place (`launchctl kickstart -k`). Otherwise it
+boots the agent out and bootstraps the new plist; when that bootstrap fails it writes the previous plist back and loads
+it again, and reports both errors if that fails too. The tick and helper installs share the probe and the restore.
+
 Every 15 seconds the service makes one pass:
 
 1. When an interactive lead session is live on this machine (`state/session.json`, registered by the omp extension,
@@ -37,6 +45,11 @@ Every 15 seconds the service makes one pass:
 3. A turn that fails keeps its wake text in `state/lead/pending.md`; the next pass sends it again with any newer
    items. The last turn's output is in `logs/lead.log`.
 4. Every `lead.balanceMinutes` (default 30) it compares queues across the fleet (below) and posts an offer or an ask.
+
+The loop imports its code once, so it runs the runtime it started on (`bin/toli self sync`, docs/releasing.md). After
+each pass it checks `state/runtime`: when a newer runtime is installed it logs that and exits 0, and launchd
+(KeepAlive) or systemd (`Restart=always`) starts it again on the new one. The per-minute crontab form starts afresh
+every run. A `lead run` on the working tree (`TOLI_DEV=1`) has no snapshot and never exits for this.
 
 Because the conversation is resumed, not restarted, it remembers every earlier turn, whoever drove it.
 
@@ -166,6 +179,11 @@ period. Thresholds live in `config/machine.json`:
 ```json
 { "lead": { "balanceMinutes": 30, "balanceGap": 3 } }
 ```
+
+A task that must stay on this machine (it needs code or state only this clone has) is pinned:
+`bin/toli task pin T<n> [--reason "..."]` (`task unpin T<n>` releases it). A pinned task still counts toward the queue
+depth but is never listed in an offer; when every queued task is pinned, no offer is posted. `task list` and the
+digest show the pin.
 
 ## Jawans report to their own lead
 

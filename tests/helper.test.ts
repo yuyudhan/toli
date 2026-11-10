@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseCron } from "../src/core/cron.ts";
 import { type Helper, parseDuration, parseHelpers } from "../src/helpers/registry.ts";
 import { cronToCalendar, cronToOnCalendar, everyToCron } from "../src/helpers/units.ts";
-import { type Sandbox, sandbox } from "./helpers.ts";
+import { type Sandbox, sandbox, withLaunchctl } from "./helpers.ts";
 
 type Entry = Record<string, unknown>;
 
@@ -32,26 +32,6 @@ const sweep: Entry = {
 };
 const daemon: Entry = { name: "daemon", exec: "local/scripts/daemon", schedule: { always: true } };
 const nightly: Entry = { name: "nightly", exec: "local/scripts/nightly", schedule: { cron: "30 2 * * 1-5" } };
-
-/**
- * A stateful fake `launchctl`: bootstrap marks a label loaded (failing when it already is, like the real one),
- * bootout unloads it, print succeeds only while loaded. Every call is appended to .launchctl/log.
- */
-function fakeLaunchctl(box: Sandbox): string {
-    const state = join(box.root, ".launchctl");
-    mkdirSync(state, { recursive: true });
-    box.stub(
-        "launchctl",
-        `state="${state}"; echo "$*" >> "$state/log"
-case "$1" in
-    print) label="\${2##*/}"; [ -f "$state/$label" ] || exit 113; printf 'state = running\\npid = 4242\\nlast exit code = 0\\n' ;;
-    bootstrap) label="$(basename "$3" .plist)"; [ -f "$state/$label" ] && { echo "already loaded" >&2; exit 5; }; touch "$state/$label" ;;
-    bootout) label="\${2##*/}"; [ -f "$state/$label" ] || exit 3; rm -f "$state/$label" ;;
-    *) exit 2 ;;
-esac`,
-    );
-    return state;
-}
 
 function launchdEnv(box: Sandbox): Record<string, string> {
     return { TOLI_DRY_RUN: "0", TOLI_PLATFORM: "darwin", TOLI_LAUNCH_AGENTS_DIR: join(box.root, "agents") };
@@ -251,7 +231,7 @@ describe("rendering (dry run)", () => {
 describe("install and uninstall", () => {
     test("launchd: install is idempotent, status reports it, uninstall twice is safe", () => {
         const box = withHelpers([sweep]);
-        const state = fakeLaunchctl(box);
+        const launchctl = withLaunchctl(box);
         const env = launchdEnv(box);
         const plist = join(box.root, "agents", "com.toli.helper.sweep.plist");
         expect(box.ok(["helper", "install", "sweep"], { env })).toContain(
@@ -259,10 +239,10 @@ describe("install and uninstall", () => {
         );
         box.ok(["helper", "install", "sweep"], { env });
         expect(existsSync(plist)).toBe(true);
-        expect(existsSync(join(state, "com.toli.helper.sweep"))).toBe(true);
-        const log = readFileSync(join(state, "log"), "utf8");
-        expect(log.match(/^bootstrap /gm)).toHaveLength(2);
-        expect(log.match(/^bootout /gm)).toHaveLength(1);
+        expect(launchctl.loaded("com.toli.helper.sweep")).toBe(true);
+        const calls = launchctl.calls();
+        expect(calls.filter((call) => call.startsWith("bootstrap "))).toHaveLength(2);
+        expect(calls.filter((call) => call.startsWith("bootout "))).toHaveLength(1);
         const [status] = JSON.parse(box.ok(["helper", "status", "--json"], { env })) as Entry[];
         expect(status).toMatchObject({
             name: "sweep",
@@ -280,7 +260,7 @@ describe("install and uninstall", () => {
 
     test("launchd: an installed helper dropped from helpers.json shows as unregistered; uninstall --all removes it", () => {
         const box = withHelpers([sweep]);
-        fakeLaunchctl(box);
+        withLaunchctl(box);
         const env = launchdEnv(box);
         box.ok(["helper", "install", "--all"], { env });
         writeFileSync(join(box.root, "local", "helpers.json"), '{"helpers": []}');
@@ -294,7 +274,7 @@ describe("install and uninstall", () => {
             { ...sweep, enabled: false },
             { ...daemon, platforms: ["linux"] },
         ]);
-        fakeLaunchctl(box);
+        withLaunchctl(box);
         const env = launchdEnv(box);
         expect(box.toli(["helper", "install", "sweep"], { env }).stderr).toContain("disabled");
         expect(box.toli(["helper", "install", "daemon"], { env }).stderr).toContain("is for linux, not darwin");

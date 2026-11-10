@@ -5,7 +5,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
-import { paths } from "../core/paths.ts";
+import { codeRoot, paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
 import { leadGuidance } from "../harness/guidance.ts";
@@ -13,6 +13,7 @@ import { headlessOmpFlags } from "../harness/omp-args.ts";
 import { liveSession } from "../harness/session.ts";
 import { sessionFile } from "../jawans/launch.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
+import { runtimeSuperseded } from "../release/runtime.ts";
 import { fullCommand } from "./full.ts";
 import { installLeadService, leadStatus, printStatus, uninstallLeadService } from "./lead-service.ts";
 import { attachPidLocked, type LeadAttach, type LeadState, leadLock, readLeadState, turnPid } from "./lead-state.ts";
@@ -186,12 +187,21 @@ function pollMs(): number {
     return value;
 }
 
-/** `lead run [--once]`: the service loop, one pass every poll interval; `--once` makes one pass (the crontab form). */
+/**
+ * `lead run [--once]`: the service loop, one pass every poll interval; `--once` makes one pass (the crontab form).
+ * The loop imported its code once, so after a pass that saw `self sync` install a newer runtime it exits cleanly and
+ * the service manager (launchd KeepAlive, systemd Restart=always) starts it again on that runtime.
+ */
 async function serve(once: boolean): Promise<number> {
     const interval = pollMs();
+    if (!once) out(`${now().toISOString()} lead service started on ${codeRoot()}`);
     for (;;) {
         await leadPass();
         if (once) return 0;
+        if (runtimeSuperseded()) {
+            logLine("a newer runtime is installed: exiting so the service restarts on it");
+            return 0;
+        }
         await Bun.sleep(interval);
     }
 }

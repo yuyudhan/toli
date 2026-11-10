@@ -109,12 +109,23 @@ export function installLeadService(): void {
         if (dryRun()) {
             out(`# dry run: would write ${target}`);
             out(plist);
-            out(`# would run: launchctl bootout ${guiDomain()}/${LEAD_LABEL} (if loaded)`);
-            out(`# would run: launchctl bootstrap ${guiDomain()} ${target}`);
+            out(
+                `# would run: launchctl kickstart -k ${guiDomain()}/${LEAD_LABEL} (loaded, and ${target} already is this plist)`,
+            );
+            out(
+                `# otherwise: launchctl bootout ${guiDomain()}/${LEAD_LABEL} (if loaded), then launchctl bootstrap ${guiDomain()} ${target}`,
+            );
+            out(
+                "# from a session launchd cannot bootstrap into (no login session), nothing is touched; a failed bootstrap puts the old plist back",
+            );
             return;
         }
-        loadLaunchAgent(LEAD_LABEL, target, plist);
-        out(`installed and loaded ${target}: the lead service runs now and at every login`);
+        const action = loadLaunchAgent(LEAD_LABEL, target, plist, { restartUnchanged: true });
+        out(
+            action === "restarted"
+                ? `${target} is unchanged and ${LEAD_LABEL} is loaded: restarted it in place (launchctl kickstart -k)`
+                : `installed and loaded ${target}: the lead service runs now and at every login`,
+        );
         return;
     }
     if (scheduler === "systemd") {

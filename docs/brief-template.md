@@ -123,6 +123,8 @@ recompiles, dashboard hot-reloads); never stop, restart or rebuild it from scrat
 
 - Read the project's own AGENTS.md / CLAUDE.md (and any nested ones for files you touch) before editing, and follow
   them.
+- Never kill a process you did not start (no `kill` by port, no `pkill`); on a port clash pick another free port or
+  report.
 - There is no time limit: work until the Goal's Stop when holds. Commit as you go (when the Landing section lets you
   commit; otherwise keep the tree in a state you can describe), because your session may be resumed: a run that shows
   no progress for 30 minutes is stopped and resumed where it stopped, in the same session. Long builds or tests you wait

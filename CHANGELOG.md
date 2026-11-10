@@ -108,6 +108,12 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
 
 ### Fixed
 
+- `bin/toli lead install` (and the tick and helper installs) no longer leave a running launchd agent unloaded. From a
+  session launchd cannot bootstrap into (a jawan's background launchd session: `launchctl bootout` worked, `bootstrap`
+  failed with 125) it now refuses before booting anything out, naming the fix (run it from a Terminal in the login
+  session). When a bootstrap still fails after the bootout it puts the previous plist back and loads it again, and
+  reports both errors if that fails too. `lead install` restarts a loaded agent whose plist is unchanged in place
+  (`launchctl kickstart -k`) instead of booting it out.
 - Jawans, lead turns and scheduled jobs started by the lead service, the tick or a helper get the user's login
   environment: before a harness starts, toli runs the login shell once (`$SHELL -i -l -c`) and adds the variables the
   service lacks, so provider keys exported in the shell profile (e.g. `ANTHROPIC_API_KEY`) reach them. Before, a

@@ -165,16 +165,21 @@ function recordSent(sent: BalanceSent): void {
     });
 }
 
-/** The delegate command for each of this machine's tasks waiting for a jawan, with its brief when it has one. */
+/**
+ * The delegate command for each of this machine's tasks waiting for a jawan that is not pinned here, with its brief
+ * when it has one.
+ */
 function delegateLines(target: string): string[] {
-    return waitingTasks().map((task) => {
-        const brief = briefPath(task.project, task.id);
-        return [
-            `  ${task.id}: bin/toli delegate ${target} ${shellQuote(task.title)}`,
-            `--brief ${brief === null ? "<file>" : shellQuote(brief)}`,
-            ...(task.project === "" ? [] : [`--project ${shellQuote(task.project)}`]),
-        ].join(" ");
-    });
+    return waitingTasks()
+        .filter((task) => task.pinned === undefined)
+        .map((task) => {
+            const brief = briefPath(task.project, task.id);
+            return [
+                `  ${task.id}: bin/toli delegate ${target} ${shellQuote(task.title)}`,
+                `--brief ${brief === null ? "<file>" : shellQuote(brief)}`,
+                ...(task.project === "" ? [] : [`--project ${shellQuote(task.project)}`]),
+            ].join(" ");
+        });
 }
 
 /**

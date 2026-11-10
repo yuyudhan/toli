@@ -281,6 +281,28 @@ describe("balancePass", () => {
         expect(inboxSends(box)).toEqual([]);
     });
 
+    test("leaves pinned tasks out of the offer, and posts nothing when every queued task is pinned", async () => {
+        const box = withTasks(queued(0), 4);
+        box.ok(["task", "pin", "T2", "--reason", "needs local code"]);
+        expect(box.ok(["task", "list", "--project", "x"])).toContain("pinned: needs local code");
+        expect(await pass(box, T0)).toBe("queue: offered work to m2 (m1 4, m2 0)");
+        const [offer] = queueItems(box);
+        expect(offer).toContain("T1: bin/toli delegate");
+        expect(offer).not.toContain("T2:");
+        expect(offer).toContain("T3: bin/toli delegate");
+
+        for (const id of ["T1", "T3", "T4"]) box.ok(["task", "pin", id]);
+        expect(await pass(box, "2026-11-10T09:30:00.000Z")).toBeNull();
+        expect(queueItems(box)).toHaveLength(1);
+
+        box.ok(["task", "unpin", "T2"]);
+        const tasks = JSON.parse(box.ok(["task", "list", "--json"])) as { id: string; pinned?: string }[];
+        expect(tasks.find((task) => task.id === "T2")?.pinned).toBeUndefined();
+        expect(tasks.find((task) => task.id === "T1")?.pinned).toBe("");
+        expect(await pass(box, "2026-11-10T10:00:00.000Z")).toBe("queue: offered work to m2 (m1 4, m2 0)");
+        expect(queueItems(box).filter((item) => item.includes("T2: bin/toli delegate"))).toHaveLength(1);
+    });
+
     test("is null without other fleet machines, and rejects bad lead settings", async () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
