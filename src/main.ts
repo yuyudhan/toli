@@ -58,10 +58,12 @@ const USAGE = `usage: bin/toli <command> [args]
   task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
   task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
+  task wait <id> --on "<what it waits on>"
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
   task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
+  task link <id> <machine>/T<n> | escalate <machine>/T<n>
   delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
-  delegation receive (delegation JSON on stdin)
+  delegation receive|update|link (JSON on stdin)
   talk <machine> ["<words>"]
   share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
   share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]

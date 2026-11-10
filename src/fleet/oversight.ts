@@ -76,7 +76,8 @@ export type FleetCheck = {
 
 /** This machine's stale active tasks and waiting work, from its own backlog. */
 export function localOversight(tasks: Task[], at: Date = now()): LocalOversight {
-    const stale = findStaleTasks(tasks, at);
+    // A task waiting on something (`task wait`) needs no dispatch, so it is neither stale nor waiting work here.
+    const stale = findStaleTasks(tasks, at).filter((task) => task.reason !== "waiting");
     const staleIds = new Set(stale.map((task) => task.id));
     return {
         machine: hasMachine() ? loadMachine().name : "(unnamed)",

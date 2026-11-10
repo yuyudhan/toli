@@ -33,7 +33,12 @@ const NEXT_LIST_LIMIT = 5;
 
 /** Concrete recommended actions for the lead, most urgent first, each naming the exact skill or command. */
 export function nextActions(input: NextInput): NextAction[] {
-    const actions: NextAction[] = input.stale.slice(0, NEXT_LIST_LIMIT).map((task) => ({
+    // Tasks nothing works on come first; tasks that wait on something (`task wait`) follow, saying what they wait on.
+    const ordered = [
+        ...input.stale.filter((task) => task.reason !== "waiting"),
+        ...input.stale.filter((task) => task.reason === "waiting"),
+    ];
+    const actions: NextAction[] = ordered.slice(0, NEXT_LIST_LIMIT).map((task) => ({
         action: staleLine(task),
         command: redispatchCommand(task),
     }));

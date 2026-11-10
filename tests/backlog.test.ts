@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type BacklogFile, irreversibleTopic, loadBacklog, matchOption, taskCommand } from "../src/records/backlog.ts";
+import { type BacklogFile, loadBacklog, taskCommand } from "../src/records/backlog.ts";
+import { irreversibleTopic, matchOption } from "../src/records/hold-options.ts";
 import { commandIn, inProcess, type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type TaskJson = { id: string; status: string; question?: string; answer?: string; notes: string[]; startedAt?: string };
@@ -179,7 +180,7 @@ describe("task commands in process", () => {
             [["start", "T7"], 'unknown task "T7"'],
             [["list", "--status", "waiting"], "--status must be one of"],
             [["add", "alpha", "Two", "--shape", "build"], "--shape must be ship or scout"],
-            [["rename", "T1"], "usage: toli task add|list|start|done|hold|answer|drop"],
+            [["rename", "T1"], "usage: toli task add|list|start|wait|done|hold|answer|drop"],
         ];
         for (const [argv, message] of refusals) expect(() => task(argv)).toThrow(message);
         task(["drop", "T1"]);

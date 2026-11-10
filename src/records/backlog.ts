@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import {
@@ -12,15 +13,23 @@ import {
     writeJsonAtomic,
 } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
+import { updateRun } from "../jawans/runs.ts";
 import { findProject } from "../projects/projects.ts";
 import type { Workspace } from "../projects/strategy.ts";
+import { answerWake } from "./answer-wake.ts";
 import { recordDecision } from "./decisions.ts";
-import { reportDue, reportToDelegator } from "./delegation-report.ts";
+import { type DelegationFields, reportDue, reportToDelegator } from "./delegation-report.ts";
+import { delegationTaskCommand, forwardEscalatedAnswer } from "./delegation-sync.ts";
 import { listFleet, routeToOwner } from "./fleet-tasks.ts";
-import { answerWake, briefPath } from "./stale.ts";
-
-/** Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there. */
-export type DelegatedBy = { machine: string; task?: string; id: string; at: string };
+import {
+    HOLD_OPTIONS_MAX,
+    HOLD_OPTIONS_MIN,
+    type HoldOption,
+    irreversibleTopic,
+    matchOption,
+    parseOption,
+} from "./hold-options.ts";
+import { briefPath } from "./stale.ts";
 
 /** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
 export type TaskWorkspace = { strategy: Workspace; path: string; branch: string | null; base: string | null };
@@ -28,13 +37,6 @@ export type TaskWorkspace = { strategy: Workspace; path: string; branch: string 
 export const STATUSES = ["queued", "active", "held", "done", "dropped"] as const;
 export type Status = (typeof STATUSES)[number];
 export type Shape = "ship" | "scout";
-
-/** One answer a held task offers the user, and what the lead does if it is chosen. */
-export type HoldOption = { choice: string; outcome: string };
-
-/** How many options a held question offers when it offers any. */
-export const HOLD_OPTIONS_MIN = 2;
-export const HOLD_OPTIONS_MAX = 4;
 
 export type Task = {
     id: string;
@@ -72,16 +74,18 @@ export type Task = {
     agent?: string;
     /** When `agent` was last recorded; a run that finished after it is the recorded jawan's (src/records/stale.ts). */
     dispatchedAt?: string;
+    /**
+     * `task wait --on "<what>"`: the task is active but deliberately waits on something outside a jawan (a deferred
+     * spawn, a push, another task); oversight reports it as waiting, never as needing a re-dispatch. Recording a new
+     * jawan, holding, finishing or dropping the task clears it.
+     */
+    waitingOn?: string;
     workspace?: TaskWorkspace;
     createdAt: string;
     updatedAt: string;
     startedAt?: string;
     doneAt?: string;
-    /** Set on a task another machine's lead delegated here: its report goes back to that machine. */
-    delegatedBy?: DelegatedBy;
-    /** Fleet ids (`<machine>/T<n>`) of tasks this one was delegated as. */
-    delegatedTo?: string[];
-};
+} & DelegationFields;
 
 export type BacklogFile = { nextId: number; tasks: Task[] };
 
@@ -197,6 +201,10 @@ function list(argv: string[]): Promise<void> | undefined {
     for (const task of tasks) out(describe(task));
 }
 
+/**
+ * `task start <id> [--agent <id>]`. A `bin/toli spawn` run id started without `--task` (by hand, or by a private
+ * helper restarting it) gets the task recorded on its run too, so the run and the task always name each other.
+ */
 function start(argv: string[]): void {
     const args = new Args(argv, { values: ["agent"] });
     args.maxPositional(1);
@@ -209,9 +217,31 @@ function start(argv: string[]): void {
         if (agent !== undefined) {
             entry.agent = agent;
             entry.dispatchedAt = now().toISOString();
+            delete entry.waitingOn;
         }
     });
+    if (agent !== undefined && isValidName(agent) && existsSync(paths.jawanRecord(agent)))
+        updateRun(agent, (run) => {
+            run.task ??= task.id;
+            run.project ??= task.project;
+        });
     out(describe(task));
+}
+
+/** `task wait <id> --on "<what>"`: the active task waits on `<what>` (no re-dispatch); see Task.waitingOn. */
+function wait(argv: string[]): void {
+    const args = new Args(argv, { values: ["on"] });
+    args.maxPositional(1);
+    const on = args.str("on")?.trim();
+    if (!on) throw new ToliError('wait needs --on "<what it waits on>"');
+    const task = updateTask(args.pos(0, "id"), (entry) => {
+        if (entry.status === "done" || entry.status === "dropped" || entry.status === "held")
+            throw new ToliError(`${entry.id} is ${entry.status}; only a queued or active task can wait`);
+        entry.status = "active";
+        entry.startedAt ??= now().toISOString();
+        entry.waitingOn = on;
+    });
+    out(`${describe(task)}\t(waiting on: ${on})`);
 }
 
 function done(argv: string[]): void {
@@ -228,38 +258,6 @@ function done(argv: string[]): void {
         if (note !== undefined) entry.notes.push(note);
     });
     out(describe(task));
-}
-
-/** Parse one `--option "<choice> => <what happens then>"`. */
-function parseOption(value: string): HoldOption {
-    const at = value.indexOf("=>");
-    const choice = at === -1 ? "" : value.slice(0, at).trim();
-    const outcome = at === -1 ? "" : value.slice(at + 2).trim();
-    if (choice === "" || outcome === "")
-        throw new ToliError(`--option must be "<choice> => <what happens then>", got "${value}"`);
-    return { choice, outcome };
-}
-
-/** The option a reply or recommendation names: its 1-based number or its exact choice text (any case). */
-export function matchOption(options: HoldOption[], value: string): HoldOption | undefined {
-    const text = value.trim();
-    if (/^\d+$/.test(text)) return options[Number(text) - 1];
-    return options.find((option) => option.choice.toLowerCase() === text.toLowerCase());
-}
-
-/**
- * Words that make a hold never auto-applied, whatever the caller says: push, merge, main, MR/PR, tag, release,
- * destructive or irreversible steps, security, money. Returns the first word found, else undefined.
- */
-const IRREVERSIBLE_WORDS =
-    /\b(push(?:es|ed|ing)?|merg(?:e|es|ed|ing)|main|master|MRs?|PRs?|merge requests?|pull requests?|tags?|releases?|deploy(?:s|ed|ing|ment)?|delet(?:e|es|ed|ing)|drop(?:s|ped|ping)?|destroy(?:s|ed|ing)?|destructive|irreversible|force|wipe|reset|rm|security|secrets?|credentials?|passwords?|tokens?|permissions?|auth|money|payments?|billing|cost|price|pricing)\b/i;
-
-export function irreversibleTopic(texts: (string | undefined)[]): string | undefined {
-    for (const text of texts) {
-        const match = text === undefined ? null : IRREVERSIBLE_WORDS.exec(text);
-        if (match) return match[0];
-    }
-    return undefined;
 }
 
 /**
@@ -316,6 +314,8 @@ function hold(argv: string[]): void {
         if (reversible) entry.reversible = true;
         else delete entry.reversible;
         delete entry.staleSurfacedAt;
+        delete entry.heldFrom;
+        delete entry.waitingOn;
         delete entry.answer;
     });
     out(describe(task));
@@ -333,6 +333,7 @@ function answer(argv: string[]): void {
     const reply = args.pos(1, "answer");
     const from = args.str("from");
     if (from !== undefined) requireName("machine", from);
+    let heldFrom: string | undefined;
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
         const chosen = matchOption(entry.options ?? [], reply);
@@ -341,12 +342,15 @@ function answer(argv: string[]): void {
         const via = from === undefined ? "" : ` (recorded by ${from}'s lead)`;
         entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}${via}`);
         entry.status = entry.startedAt === undefined ? "queued" : "active";
+        heldFrom = entry.heldFrom;
+        delete entry.heldFrom;
     });
     out(describe(task));
     if (isValidName(task.project)) recordDecision(task, reply);
     const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
     out(`unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${brief})`);
     for (const line of answerWake(task, loadBacklog().tasks)) out(line);
+    forwardEscalatedAnswer(heldFrom, reply);
 }
 
 function drop(argv: string[]): void {
@@ -361,7 +365,7 @@ function drop(argv: string[]): void {
 /** Run one `task` subcommand; only `list --fleet` returns a promise (callers await it), so the rest throw synchronously. */
 export function taskCommand(argv: string[]): Promise<void> | undefined {
     const [sub, ...rest] = argv;
-    if (sub !== undefined && routeToOwner(sub, rest)) return;
+    if (sub !== undefined && (routeToOwner(sub, rest) || delegationTaskCommand(sub, rest))) return;
     switch (sub) {
         case "add":
             add(rest);
@@ -370,6 +374,9 @@ export function taskCommand(argv: string[]): Promise<void> | undefined {
             return list(rest);
         case "start":
             start(rest);
+            break;
+        case "wait":
+            wait(rest);
             break;
         case "done":
             done(rest);
@@ -384,6 +391,6 @@ export function taskCommand(argv: string[]): Promise<void> | undefined {
             drop(rest);
             break;
         default:
-            throw new ToliError("usage: toli task add|list|start|done|hold|answer|drop");
+            throw new ToliError("usage: toli task add|list|start|wait|done|hold|answer|drop|link|escalate");
     }
 }

@@ -118,7 +118,13 @@ Nothing may sit idle silently, away mode (`/afk`) included. Two checks run from 
   id toli cannot look up counts as live until such a record shows its run ended. The digest's Next block lists stale
   tasks first, with the run's last report line and any answer recorded since; every tick posts newly stale ones to
   the inbox once per ended run, so the lead gets a `[toli wake]` naming them. Recording a new jawan
-  (`task start --agent`, `spawn --task`) clears it.
+  (`task start --agent`, `spawn --task`) clears it. A task is live while the run it names, or the latest run of that
+  run's resume or replace chain, is queued or running, even when that run carries no task id (`task start --agent`
+  also records the task on a run spawned without `--task`).
+- **Tasks that wait.** `bin/toli task wait T<n> --on "<what>"` marks an active task as deliberately waiting (a
+  deferred spawn, a push, another task). Next names it as `waiting on <what>` after the stale tasks, never as a
+  re-dispatch; the tick and `fleet check` leave it out. Recording a new jawan or holding the task ends the wait. A
+  machine's own helpers that defer or trigger work call it for the tasks they hold back.
 - **Idle machines.** `fleet check` probes every machine (as `fleet status` does) and reads each reachable one's own
   backlog (`fleet check --local --json` over ssh). A reachable machine with no active run while queued work, or a
   stale active task, exists for a project cloned there is idle; every machine's stale tasks are named too. `--wake`

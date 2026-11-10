@@ -5,7 +5,8 @@
 import { Args } from "../core/args.ts";
 import { machineSettings } from "../core/config.ts";
 import { now, out, printJson } from "../core/util.ts";
-import { type HoldOption, loadBacklog, matchOption, type Task, updateBacklog } from "./backlog.ts";
+import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
+import { type HoldOption, matchOption } from "./hold-options.ts";
 
 export const DEFAULT_STALE_DAYS = 7;
 const DAY_MS = 86_400_000;

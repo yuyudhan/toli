@@ -49,8 +49,13 @@ export type StaleTask = {
     agent: string | null;
     /** When the task last changed (the tick gives a task with no jawan this long before posting it). */
     changedAt: string;
-    /** `none`: no jawan recorded; `ended`: its recorded run finished; `gone`: its spawn run's record is missing. */
-    reason: "none" | "ended" | "gone";
+    /**
+     * `none`: no jawan recorded; `ended`: its recorded run finished; `gone`: its spawn run's record is missing;
+     * `waiting`: deliberately waits on `waitingOn` (`task wait`), so it needs no re-dispatch.
+     */
+    reason: "none" | "ended" | "gone" | "waiting";
+    /** What a `waiting` task waits on; null otherwise. */
+    waitingOn: string | null;
     /** When the run ended (`gone`: when the task last changed); null for `none`. */
     endedAt: string | null;
     /** The run's last report line (its outcome inbox item or remote output), when there is one. */
@@ -109,7 +114,8 @@ export function listRemoteRecords(sinceMs: number): RemoteRunRecord[] {
     return records;
 }
 
-function mentions(text: string | null | undefined, id: string): boolean {
+/** Whether `text` names task `id` as a whole word. */
+export function mentions(text: string | null | undefined, id: string): boolean {
     return text !== null && text !== undefined && new RegExp(`\\b${id}\\b`).test(text);
 }
 
@@ -140,14 +146,35 @@ function readLastLine(path: string | null): string | null {
 
 export type StaleInput = { at: Date; minutes: number; runs: JawanRun[]; records: RemoteRunRecord[] };
 
-/** The active tasks in `tasks` that no live run works on, oldest end first. */
+/**
+ * The run that carries on `run`: follow its continuations (`resumedBy`) and replacements (`replacedBy`) to the latest
+ * one, so a task naming an earlier run of a resumed or restarted chain is judged by the run working now.
+ */
+function latestOfChain(run: JawanRun, runs: JawanRun[]): JawanRun {
+    const seen = new Set<string>([run.id]);
+    let latest = run;
+    for (;;) {
+        const nextId = latest.resumedBy ?? latest.replacedBy;
+        const next = nextId === undefined || seen.has(nextId) ? undefined : runs.find((entry) => entry.id === nextId);
+        if (next === undefined) return latest;
+        seen.add(next.id);
+        latest = next;
+    }
+}
+
+/** The active tasks in `tasks` that no live run works on (or that wait on something, `task wait`), oldest end first. */
 export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
     const graceMs = input.minutes * 60_000;
     const found: StaleTask[] = [];
     for (const task of tasks) {
         if (task.status !== "active") continue;
         if (input.runs.some((run) => run.task === task.id && ACTIVE.includes(run.status))) continue;
+        // The latest run of the chain the task names is alive, even when that run carries no task id.
+        const named = task.agent === undefined ? undefined : input.runs.find((entry) => entry.id === task.agent);
+        const latest = named === undefined ? undefined : latestOfChain(named, input.runs);
+        if (latest !== undefined && ACTIVE.includes(latest.status)) continue;
         const base = {
+            waitingOn: null,
             id: task.id,
             project: task.project,
             title: task.title,
@@ -156,17 +183,28 @@ export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
         };
         const dispatched = task.dispatchedAt ?? task.startedAt ?? task.createdAt;
         let end: Pick<StaleTask, "reason" | "endedAt" | "lastLine" | "evidence">;
+        if (task.waitingOn !== undefined) {
+            found.push({
+                ...base,
+                waitingOn: task.waitingOn,
+                reason: "waiting",
+                endedAt: null,
+                lastLine: null,
+                evidence: null,
+                answers: [],
+            });
+            continue;
+        }
         if (task.agent === undefined) {
             end = { reason: "none", endedAt: null, lastLine: null, evidence: null };
         } else if (task.agent.startsWith("j-")) {
-            const run = input.runs.find((entry) => entry.id === task.agent);
-            if (run === undefined) end = { reason: "gone", endedAt: task.updatedAt, lastLine: null, evidence: null };
+            if (latest === undefined) end = { reason: "gone", endedAt: task.updatedAt, lastLine: null, evidence: null };
             else
                 end = {
                     reason: "ended",
-                    endedAt: run.endedAt ?? run.startedAt,
-                    lastLine: readLastLine(run.inbox),
-                    evidence: relative(paths.root(), run.inbox ?? paths.jawanRecord(run.id)),
+                    endedAt: latest.endedAt ?? latest.startedAt,
+                    lastLine: readLastLine(latest.inbox),
+                    evidence: relative(paths.root(), latest.inbox ?? paths.jawanRecord(latest.id)),
                 };
         } else {
             // An agent naming its run on the target (`remote:<machine>:j-...`) is ended only by that run's record: an
@@ -218,6 +256,7 @@ function ago(at: Date, iso: string): string {
 
 /** One line naming the task, how its run ended, its last report line and any answer recorded since. */
 export function staleLine(task: StaleTask, at: Date = now()): string {
+    if (task.reason === "waiting") return `${task.id} (${task.project}) is active, waiting on ${task.waitingOn ?? "?"}`;
     const how =
         task.reason === "none"
             ? "no running jawan is recorded on it"
@@ -234,8 +273,10 @@ export function staleLine(task: StaleTask, at: Date = now()): string {
     return `${task.id} (${task.project}) is active but ${how}${last}${answers}`;
 }
 
-/** What the lead does about a stale task: dispatch one, or re-dispatch it naming its brief when one exists. */
-export function redispatchCommand(task: Pick<StaleTask, "id" | "project" | "reason">): string {
+/** What the lead does about a stale task: dispatch one, re-dispatch it (naming its brief), or nothing while it waits. */
+export function redispatchCommand(task: Pick<StaleTask, "id" | "project" | "reason" | "waitingOn">): string {
+    if (task.reason === "waiting")
+        return `nothing to dispatch while it waits; once that is through it gets a jawan (bin/toli task start ${task.id} --agent <id>) or moves on by itself`;
     const brief = briefPath(task.project, task.id) ?? "<file>";
     if (task.reason === "none")
         return `dispatch one and record it (bin/toli task start ${task.id} --agent <id>, or bin/toli spawn --task ${task.id} --brief ${brief}), or hold/drop it`;
@@ -255,69 +296,9 @@ export function briefPath(project: string, id: string): string | null {
     return match === undefined ? null : relative(paths.root(), join(dir, match));
 }
 
-/** A task waiting on an answered hold, and why toli thinks so. */
-export type WaitingTask = { id: string; project: string; status: string; title: string; why: string };
-
-/**
- * Every open task waiting on `answered`: those its hold's `--blocks` names, holds whose question or blocks name it,
- * and its project's stale active tasks (their run ended, maybe on this very question).
- */
-export function waitingOn(answered: Task, tasks: Task[], stale: StaleTask[]): WaitingTask[] {
-    const open = tasks.filter((task) => task.id !== answered.id && task.status !== "done" && task.status !== "dropped");
-    const waiting = new Map<string, WaitingTask>();
-    const add = (task: Task, why: string): void => {
-        if (!waiting.has(task.id))
-            waiting.set(task.id, { id: task.id, project: task.project, status: task.status, title: task.title, why });
-    };
-    for (const id of answered.blocks?.match(/\bT\d+\b/g) ?? []) {
-        const task = open.find((entry) => entry.id === id);
-        if (task !== undefined) add(task, `named in ${answered.id}'s blocks`);
-    }
-    for (const task of open)
-        if (mentions(task.question, answered.id) || mentions(task.blocks, answered.id))
-            add(task, `its hold names ${answered.id}`);
-    for (const entry of stale) {
-        const task = open.find((candidate) => candidate.id === entry.id);
-        if (task !== undefined && task.project === answered.project) add(task, "active with no live run");
-    }
-    return [...waiting.values()];
-}
-
-function fromName(): string {
+/** The inbox sender for oversight items: this machine's name. */
+export function fromName(): string {
     return hasMachine() ? loadMachine().name : "toli";
-}
-
-/**
- * `task answer`'s wake: every task waiting on `answered` is named with its brief, and the inbox gets the answered
- * task plus those, so the lead re-dispatches all of them in the same turn. Returns the lines to print.
- */
-export function answerWake(answered: Task, tasks: Task[]): string[] {
-    const waiting = waitingOn(answered, tasks, findStaleTasks(tasks));
-    const withBrief = (text: string, project: string, id: string): string => {
-        const brief = briefPath(project, id);
-        return brief === null ? text : `${text} (brief: ${brief})`;
-    };
-    const lines =
-        waiting.length === 0
-            ? [`nothing else waits on ${answered.id}`]
-            : waiting.map((task) =>
-                  withBrief(
-                      `waiting on ${answered.id}: ${task.id} (${task.project}, ${task.status}): ${task.title} - ${task.why}; re-dispatch it now`,
-                      task.project,
-                      task.id,
-                  ),
-              );
-    const path = addInboxItem(
-        fromName(),
-        `answer recorded for ${answered.id}: ${waiting.length === 0 ? "dispatch it" : `${waiting.length + 1} tasks to dispatch`}`,
-        [
-            "Lead: dispatch these in this turn (toli-dispatch skill), with the answer in each brief.",
-            "",
-            `- ${withBrief(`${answered.id} (${answered.project}, ${answered.status}) answered "${answered.answer ?? ""}": dispatch it now`, answered.project, answered.id)}`,
-            ...lines.map((line) => `- ${line}`),
-        ].join("\n"),
-    );
-    return [...lines, `wake posted: ${relative(paths.root(), path)}`];
 }
 
 type SurfacedState = { surfaced: Record<string, string> };
@@ -335,7 +316,9 @@ function surfaceKey(task: StaleTask): string {
 export function surfaceStaleTasks(tasks: Task[], at: Date = now()): string | null {
     const graceMs = staleTaskMinutes() * 60_000;
     const stale = findStaleTasks(tasks, at).filter(
-        (task) => task.reason !== "none" || at.getTime() - Date.parse(task.changedAt) >= graceMs,
+        (task) =>
+            task.reason !== "waiting" &&
+            (task.reason !== "none" || at.getTime() - Date.parse(task.changedAt) >= graceMs),
     );
     const fresh = withLock(paths.lock("stale-tasks"), () => {
         const state = readJson<SurfacedState>(paths.staleTasksState(), { surfaced: {} });

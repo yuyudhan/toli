@@ -73,10 +73,12 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
     task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
     task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
+    task wait <id> --on "<what it waits on>"
     task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
     task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
+    task link <id> <machine>/T<n> | escalate <machine>/T<n>
     delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
-    delegation receive (delegation JSON on stdin)
+    delegation receive|update|link (JSON on stdin)
     talk <machine> ["<words>"]
     share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
     share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
@@ -102,10 +104,12 @@ MR/PR, tag, release, a destructive step, security or money.
 Task ids are unique across the fleet as `<machine>/T<n>`; a bare `T<n>` is this machine's. `task list --fleet` shows
 every machine's open tasks (refreshed over ssh, `--cached` reads the last copies). `task answer <machine>/T<n>` is
 forwarded to the owning machine. `delegate` hands a task to another machine's lead (it lands in that machine's
-backlog and reports done, held or dropped back here); `delegation receive` is what it runs there. `talk` attaches to
-a machine's lead conversation, or sends it words. `share` sends a learning to other leads, who adopt, adapt or
-decline it (the answer comes back; `share --list` shows them). `lead` manages this machine's lead service, which
-serves wakes in headless turns when no lead session is open ([sardars.md](sardars.md)).
+backlog, and every change to it is written back onto the `--for` task here: notes, done with commit and report,
+dropped; a question wakes this lead, who answers it or `task escalate`s it to the Needs-you queue); `task link`
+attaches a delegation made without `--for`; `delegation receive|update|link` is what runs on the other side. `talk`
+attaches to a machine's lead conversation, or sends it words. `share` sends a learning to other leads, who adopt,
+adapt or decline it (the answer comes back; `share --list` shows them). `lead` manages this machine's lead service,
+which serves wakes in headless turns when no lead session is open ([sardars.md](sardars.md)).
 
 ### Landing work
 
