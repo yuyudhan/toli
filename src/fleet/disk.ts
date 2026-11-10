@@ -31,13 +31,12 @@
 // tick toli then deletes nothing and only alerts the inbox on low disk (src/fleet/disk-alert.ts).
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { out, printJson, ToliError, warn } from "../core/util.ts";
+import { out, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
 import { wipeTargetBetweenBuilds } from "./cargo-lock.ts";
-import { diskAlertBeforeWork, diskAlertCommand, diskKeepSetting } from "./disk-alert.ts";
+import { diskAlertBeforeWork, diskKeepSetting } from "./disk-alert.ts";
 import { playwrightBrowsers, pruneDocker, trimSccache } from "./disk-caches.ts";
 import {
     type BuildDir,
@@ -99,7 +98,7 @@ export type KeepReport = {
 };
 
 /** `floor X GB`, with why when the cap lowered it. */
-const floorText = (report: KeepReport): string =>
+export const floorText = (report: KeepReport): string =>
     `floor ${gb(report.floorGB)}${report.floorNote === undefined ? "" : ` (${report.floorNote})`}`;
 
 function freeGB(): number {
@@ -356,47 +355,4 @@ export function keepDiskBeforeWork(mode: "inline" | "detached" = "inline"): stri
     if (!report.ran) return null;
     const cut = report.lastResort ? "; build output in use was deleted too, so a build may need running again" : "";
     return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (${floorText(report)})${cut}`;
-}
-
-/** `toli disk keep [--dry-run] [--floor <GB>] [--json]`, `toli disk alert`. */
-export function diskCommand(argv: string[]): void {
-    const [sub, ...rest] = argv;
-    if (sub === "alert") {
-        new Args(rest).maxPositional(0);
-        diskAlertCommand();
-        return;
-    }
-    if (sub !== "keep")
-        throw new ToliError("usage: toli disk keep [--dry-run] [--floor <GB>] [--json] | toli disk alert");
-    const args = new Args(rest, { booleans: ["dry-run", "json"], values: ["floor"] });
-    args.maxPositional(0);
-    const number = (name: string): number | undefined => {
-        const raw = args.str(name);
-        if (raw === undefined) return undefined;
-        const value = Number(raw);
-        if (!Number.isFinite(value) || value < 0) throw new ToliError(`--${name} must be a non-negative number`);
-        return value;
-    };
-    const floorGB = number("floor");
-    const json = args.bool("json");
-    const dryRun = args.bool("dry-run");
-    let report: KeepReport;
-    try {
-        report = keepDisk({
-            dryRun,
-            ...(floorGB === undefined ? {} : { floorGB }),
-            echo: !json,
-        });
-    } catch (error) {
-        const lines = fallbackSweep(error, !json, dryRun || envDryRun());
-        if (json) printJson({ error: describe(error), fallback: lines });
-        throw new ToliError(`disk keeper failed: ${describe(error)}; swept stale artifacts instead`);
-    }
-    if (json) printJson(report);
-    else if (report.lines.length === 0) out(`free ${gb(report.freeBeforeGB)}, ${floorText(report)}: nothing to do`);
-    if (!json && !report.automatic) {
-        out(
-            "automatic deletion: off (capacity.diskKeep false); toli deletes only when `bin/toli disk keep` is run by hand",
-        );
-    }
 }

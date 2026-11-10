@@ -1,6 +1,6 @@
 import { out, ToliError, warn } from "./core/util.ts";
 import { buildSlotCommand } from "./fleet/build-slots.ts";
-import { diskCommand } from "./fleet/disk.ts";
+import { diskCommand } from "./fleet/disk-command.ts";
 import { execCommand } from "./fleet/exec.ts";
 import { initCommand, syncCommand } from "./fleet/fleet.ts";
 import { fleetCommand, pickCommand } from "./fleet/pick.ts";
