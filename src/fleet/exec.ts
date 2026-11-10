@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, pidAlive, readStdin, requireName, runTee, stamp, type TeeResult, ToliError, warn } from "../core/util.ts";
+import { now, readStdin, requireName, runTee, stamp, type TeeResult, ToliError, warn } from "../core/util.ts";
 import { harnessConfig, parseWork, type WorkType } from "../harness/harness.ts";
 import {
     briefTier,
@@ -25,6 +25,7 @@ import { recordRun, sessionFile } from "../jawans/launch.ts";
 import { continuePrompt, hasReport, usedTimeLimit } from "../jawans/limits.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { loadRun, runMinuteMs, updateRun } from "../jawans/runs.ts";
+import { HARNESS_STOP_GRACE_MS, stopTree } from "../jawans/stop.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { keepDiskBeforeWork } from "./disk.ts";
 import {
@@ -142,6 +143,7 @@ export async function execCommand(argv: string[]): Promise<number> {
         const launched = Date.now();
         let pid: number | null = null;
         let stalled = false;
+        const stopping: Promise<number[]>[] = [];
         const stopWatch = watchStall(
             () => ({ pid, logPath: jawan.logPath, sessionDir, cwd: paths.root() }),
             stall,
@@ -149,7 +151,7 @@ export async function execCommand(argv: string[]): Promise<number> {
             () => {
                 stalled = true;
                 warn(`exec: ${stallText(stall)}; stopping omp`);
-                if (pid !== null && pidAlive(pid)) process.kill(pid, "SIGTERM");
+                if (pid !== null) stopping.push(stopTree(pid, HARNESS_STOP_GRACE_MS));
             },
         );
         try {
@@ -176,6 +178,9 @@ export async function execCommand(argv: string[]): Promise<number> {
             return { ...result, output, stalled, elapsedMs: Date.now() - launched };
         } finally {
             stopWatch();
+            // omp's children that ignore SIGTERM end with it: the attempt is over once none is left.
+            const survivors = (await Promise.all(stopping)).flat();
+            if (survivors.length > 0) warn(`exec: pid ${survivors.join(", ")} outlived SIGKILL`);
         }
     };
     /** How the attempt stopped without a report, in words; null when it finished or reported. */

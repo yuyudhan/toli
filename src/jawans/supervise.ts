@@ -21,12 +21,11 @@ import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
 import { deadlineSection, hasReport, onlyHarnessErrors, usedTimeLimit } from "./limits.ts";
 import { stallText, watchStall } from "./progress.ts";
-import { type JawanRun, killGroup, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
+import { type JawanRun, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
+import { HARNESS_STOP_GRACE_MS, stopTree } from "./stop.ts";
 
 /** Grace after the harness's own time limit before the supervisor kills the process group. */
 export const KILL_GRACE_MINUTES = 10;
-/** After stopping a stalled run with SIGTERM, how long before its process group gets SIGKILL. */
-const STALL_KILL_GRACE_MS = 30_000;
 const OUTPUT_TAIL = 4000;
 
 function tail(path: string, limit: number): string {
@@ -158,13 +157,17 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
         });
     let timedOut = false;
     let stalled = false;
+    const stopping: Promise<number[]>[] = [];
+    const stop = (): void => {
+        if (childPid !== null && stopping.length === 0) stopping.push(stopTree(childPid, HARNESS_STOP_GRACE_MS));
+    };
     const timer =
         run.maxMinutes === null
             ? undefined
             : setTimeout(
                   () => {
                       timedOut = true;
-                      if (childPid !== null) killGroup(childPid, "SIGTERM");
+                      stop();
                   },
                   (run.maxMinutes + KILL_GRACE_MINUTES) * minuteMs,
               );
@@ -175,16 +178,15 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
         () => {
             stalled = true;
             writeSync(logFd, `\n[toli] ${stallText(run.stallMinutes ?? DEFAULT_STALL_MINUTES)}: stopping the run\n`);
-            if (childPid === null) return;
-            killGroup(childPid, "SIGTERM");
-            setTimeout(() => {
-                if (child.exitCode === null && child.signalCode === null) killGroup(childPid, "SIGKILL");
-            }, STALL_KILL_GRACE_MS).unref();
+            stop();
         },
     );
     const exit = await exited;
     clearTimeout(timer);
     stopWatch();
+    // A harness that exits on SIGTERM can leave children that ignore it: the attempt ends once all of them are gone.
+    const survivors = (await Promise.all(stopping)).flat();
+    if (survivors.length > 0) writeSync(logFd, `\n[toli] pid ${survivors.join(", ")} outlived SIGKILL\n`);
     const elapsedMs = Date.now() - launchedAt;
     const output = existsSync(run.logPath) ? readFileSync(run.logPath).subarray(offset).toString("utf8") : "";
     return { exit, timedOut, stalled, elapsedMs, output };

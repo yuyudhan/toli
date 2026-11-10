@@ -101,8 +101,10 @@ take hours, so toli runs it at most once per commit:
 - A gate has no time limit. It is stopped only when it makes no progress for `--stall` minutes (default
   `capacity.gateStallMinutes` in `config/machine.json`, 30 when unset): its log did not grow, its checkout did not
   change and its processes burned under 10 CPU seconds, the same check that finds a stuck jawan run. It is then
-  recorded `stalled` with the reason. A gate that keeps printing, or keeps working silently (a build linking for
-  half an hour before any test prints), runs as long as it needs; a hung one (no output, no CPU) is stopped.
+  recorded `stalled` with the reason, once all its processes are gone: SIGTERM first, SIGKILL after 10 seconds to
+  any that outlive it (a child ignoring SIGTERM after its shell died). A gate that keeps printing, or keeps working
+  silently (a build linking for half an hour before any test prints), runs as long as it needs; a hung one (no
+  output, no CPU) is stopped.
 - A checkout that is not exactly its commit (changed tracked files, or untracked files that are not ignored) is
   refused: the result would not belong to any commit. A pass also counts only if the checkout is still exactly that
   commit when the gate ends; if HEAD moved or files changed while it ran, it is recorded `failed` with the reason.

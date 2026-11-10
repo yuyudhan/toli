@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, pidAlive, readJson, runCombined, ToliError } from "../core/util.ts";
+import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
 import { harnessConfig } from "../harness/harness.ts";
@@ -12,6 +12,7 @@ import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
+import { HARNESS_STOP_GRACE_MS, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
@@ -64,13 +65,14 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     try {
         const attempt = async (chosen: string | null): Promise<{ code: number; output: string }> => {
             let pid: number | null = null;
+            const stopping: Promise<number[]>[] = [];
             const stopWatch = watchStall(
                 () => ({ pid, logPath: null, sessionDir, cwd: paths.root() }),
                 stall,
                 runMinuteMs(),
                 () => {
                     stalled = true;
-                    if (pid !== null && pidAlive(pid)) process.kill(pid, "SIGTERM");
+                    if (pid !== null) stopping.push(stopTree(pid, HARNESS_STOP_GRACE_MS));
                 },
             );
             try {
@@ -85,6 +87,9 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
                 );
             } finally {
                 stopWatch();
+                // omp's children that ignore SIGTERM end with it: the attempt is over once none is left.
+                const survivors = (await Promise.all(stopping)).flat();
+                if (survivors.length > 0) warn(`job ${name}: pid ${survivors.join(", ")} outlived SIGKILL`);
             }
         };
         result = await attempt(model);

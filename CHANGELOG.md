@@ -46,6 +46,11 @@ one. See docs/releasing.md.
   checkout did not change and its process tree burned under 10 CPU seconds for the stall minutes. Before, it watched
   the log alone and killed a busy `just verify all` after 30 minutes without output. A real hang is still stopped
   after the same time.
+- A stopped gate or jawan run leaves no processes behind. A stall (and a jawan's time limit) sends SIGTERM to the
+  run's whole tree, its own process group included, and SIGKILL after the grace (10 s for a gate, 30 s for omp) to
+  whatever outlives it; the run is recorded stopped only once all are gone. Before, a gate cleared its SIGKILL as
+  soon as its shell died, so a child ignoring SIGTERM ran on; a supervised run did the same, and `bin/toli exec`
+  and scheduled jobs signalled omp alone.
 - A gate, a commit and a push never take lost git output for an answer. On a loaded machine a git child that
   succeeded has handed back no stdout: a gate then ran at an empty sha and was recorded failed ("HEAD moved"), and an
   empty `git status` could make a dirty checkout look clean. Commit shas are now read with one check (a full sha, read

@@ -14,7 +14,8 @@ import { checkoutDirty, git, headSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, printJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { watchStall } from "../jawans/progress.ts";
-import { killGroup, runMinuteMs } from "../jawans/runs.ts";
+import { runMinuteMs } from "../jawans/runs.ts";
+import { stopTree } from "../jawans/stop.ts";
 import { toliSelfCheckout } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import {
@@ -33,7 +34,7 @@ import {
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 const TASK_FLAG = "task";
 const DEFAULT_STALL_MINUTES = 30;
-/** After SIGTERM, how long a stopped gate's process group gets before SIGKILL. */
+/** After SIGTERM, how long a stopped gate's processes get before SIGKILL. */
 const STOP_GRACE_MS = 10_000;
 /** How often an attached caller re-reads the record and the log. */
 const FOLLOW_POLL_MS = 250;
@@ -240,13 +241,11 @@ async function runGateProcess(file: string): Promise<void> {
     child.on("exit", (code, signal) => done({ code, signal }));
     child.on("error", (error) => done({ code: 127, signal: null, error: error.message }));
     let stopped: { status: GateStatus; reason: string } | null = null;
-    let forceTimer: NodeJS.Timeout | undefined;
+    const stopping: Promise<number[]>[] = [];
     const stop = (status: GateStatus, reason: string): void => {
         if (stopped !== null || child.pid === undefined) return;
         stopped = { status, reason };
-        const group = child.pid;
-        killGroup(group, "SIGTERM");
-        forceTimer = setTimeout(() => killGroup(group, "SIGKILL"), STOP_GRACE_MS);
+        stopping.push(stopTree(child.pid, STOP_GRACE_MS));
     };
     for (const signal of ["SIGTERM", "SIGINT"] as const)
         process.on(signal, () => stop("killed", `its runner got ${signal}`));
@@ -272,13 +271,17 @@ async function runGateProcess(file: string): Promise<void> {
     const result = await exited;
     clearInterval(output);
     stopWatch();
-    clearTimeout(forceTimer);
+    // The recipe's shell may die on SIGTERM while a child that ignores it runs on: the record waits until all are gone.
+    const survivors = (await Promise.all(stopping)).flat();
     const final = updateRecord(file, (entry) => {
         entry.endedAt = now().toISOString();
         entry.exitCode = result.code;
         if (stopped !== null) {
             entry.status = stopped.status;
-            entry.reason = stopped.reason;
+            entry.reason =
+                survivors.length === 0
+                    ? stopped.reason
+                    : `${stopped.reason}; pid ${survivors.join(", ")} outlived SIGKILL`;
         } else if (result.error !== undefined) {
             entry.status = "failed";
             entry.reason = `could not run it: ${result.error}`;

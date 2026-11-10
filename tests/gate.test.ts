@@ -1,6 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pidAlive } from "../src/core/util.ts";
 import { GIT_ENV, type Sandbox, sandbox, TOLI_BIN, withProject } from "./helpers.ts";
 
 // Gates run real detached runners and wait on them; on a loaded machine one test can take tens of seconds.
@@ -207,6 +208,22 @@ describe("gate", () => {
         expect(stalled.code).toBe(1);
         expect(record?.reason).toContain("CPU use");
         expect(readFileSync(record?.log ?? "", "utf8")).not.toContain("never");
+    });
+
+    test("a stopped gate's child that ignores SIGTERM is killed before the gate is recorded stopped", () => {
+        const { box } = setup();
+        const pidFile = join(box.root, "survivor");
+        const body = `(trap "" TERM; exec sleep 300) & echo $! > "${pidFile}"; wait`;
+        const stubborn = recipe(box, "stubborn", body);
+        const result = box.toli(["gate", "run", "app", "--recipe", stubborn, "--stall", "1"], { env: FAST });
+        const survivor = Number(readFileSync(pidFile, "utf8").trim());
+        try {
+            expect(records(box).find((entry) => entry.recipe === stubborn)).toMatchObject({ status: "stalled" });
+            expect(result.code).toBe(1);
+            expect(pidAlive(survivor)).toBe(false);
+        } finally {
+            if (pidAlive(survivor)) process.kill(survivor, "SIGKILL");
+        }
     });
 
     test("a second run attaches to the running gate, and the runner outlives a killed caller", async () => {
