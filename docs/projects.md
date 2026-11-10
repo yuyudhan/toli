@@ -88,7 +88,8 @@ Examples:
 
 For shop, `bin/toli spawn --task T42 ...` creates `projects/.worktrees/shop/T42` on
 `toli/T42-<slug>` from `main`; after verification the verifier holds T42 asking to push and open the MR, and on the
-user's word a jawan runs `bin/toli push shop --task T42` and `bin/toli pr create shop --task T42 ...`.
+user's word a jawan runs `bin/toli push shop --task T42 --word "<the user's word>"` and
+`bin/toli pr create shop --task T42 ...`. Without `--word` or a standing push grant, `bin/toli push` refuses.
 
 ## Live-stack mode
 
