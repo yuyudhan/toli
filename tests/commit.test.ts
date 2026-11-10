@@ -1,43 +1,14 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
 import { parseHunks } from "../src/projects/commit-checks.ts";
-import { GIT_ENV } from "./helpers.ts";
+import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
 
-const temps: string[] = [];
-const saved = Object.keys(GIT_ENV).map((key) => [key, process.env[key]] as const);
-
-beforeAll(() => Object.assign(process.env, GIT_ENV));
-afterAll(() => {
-    for (const [key, value] of saved) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-    }
-    for (const dir of temps) rmSync(dir, { recursive: true, force: true });
-});
-
-function git(dir: string, args: string[]): string {
-    const proc = Bun.spawnSync(["git", "-C", dir, ...args], {
-        env: { ...process.env, ...GIT_ENV },
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${proc.stderr.toString()}`);
-    return proc.stdout.toString().trim();
-}
-
-/** A repo on `main` with one commit holding `files`. */
-function repo(files: Record<string, string> = { "README.md": "# app\n" }): string {
-    const dir = mkdtempSync(join(tmpdir(), "toli-commit-"));
-    temps.push(dir);
-    git(dir, ["init", "--quiet", "-b", "main"]);
-    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
-    git(dir, ["add", "--all"]);
-    git(dir, ["commit", "--quiet", "-m", "seed"]);
-    return dir;
-}
+// safeCommit is git plumbing, and these tests prove it against real repos: the slowest --merge test runs ~175 git
+// processes and 5 gitleaks scans, 56 s at load 65. That work is what is under test, so allow 3 minutes per test.
+setDefaultTimeout(180_000);
+useGitEnv();
 
 /** Commit `text` to `file` the way another jawan would, without touching the shared index. */
 function otherJawan(dir: string, file: string, text: string, message = `other: ${file}`): string {
@@ -45,7 +16,6 @@ function otherJawan(dir: string, file: string, text: string, message = `other: $
     return safeCommit({ dir, paths: [file], message }).sha;
 }
 
-const head = (dir: string) => git(dir, ["rev-parse", "HEAD"]);
 const changed = (dir: string, sha: string) => git(dir, ["show", "--name-only", "--format=", sha]).split("\n");
 
 describe("bin/toli commit (R23 safe commits)", () => {

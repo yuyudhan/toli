@@ -1,44 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
-import { GIT_ENV } from "./helpers.ts";
+import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
 
-const temps: string[] = [];
-const saved = Object.keys(GIT_ENV).map((key) => [key, process.env[key]] as const);
-
-beforeAll(() => Object.assign(process.env, GIT_ENV));
-afterAll(() => {
-    for (const [key, value] of saved) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-    }
-    for (const dir of temps) rmSync(dir, { recursive: true, force: true });
-});
-
-function git(dir: string, args: string[]): string {
-    const proc = Bun.spawnSync(["git", "-C", dir, ...args], {
-        env: { ...process.env, ...GIT_ENV },
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${proc.stderr.toString()}`);
-    return proc.stdout.toString().trim();
-}
-
-/** A repo on `main` with one commit holding `files`. */
-function repo(files: Record<string, string>): string {
-    const dir = mkdtempSync(join(tmpdir(), "toli-commit-absent-"));
-    temps.push(dir);
-    git(dir, ["init", "--quiet", "-b", "main"]);
-    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
-    git(dir, ["add", "--all"]);
-    git(dir, ["commit", "--quiet", "-m", "seed"]);
-    return dir;
-}
-
-const head = (dir: string) => git(dir, ["rev-parse", "HEAD"]);
+useGitEnv();
 
 describe("bin/toli commit with named paths absent from the working tree", () => {
     test("--merge --resolved commits conflicted paths resolved by deleting them, absent from the merge result", () => {
