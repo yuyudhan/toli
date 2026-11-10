@@ -110,7 +110,6 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
   session). When a bootstrap still fails after the bootout it puts the previous plist back and loads it again, and
   reports both errors if that fails too. `lead install` restarts a loaded agent whose plist is unchanged in place
   (`launchctl kickstart -k`) instead of booting it out.
-||||||| ec12205
 - Jawans, lead turns and scheduled jobs started by the lead service, the tick or a helper get the user's login
   environment: before a harness starts, toli runs the login shell once (`$SHELL -i -l -c`) and adds the variables the
   service lacks, so provider keys exported in the shell profile (e.g. `ANTHROPIC_API_KEY`) reach them. Before, a
