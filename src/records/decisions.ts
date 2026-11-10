@@ -3,7 +3,8 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { paths } from "../core/paths.ts";
 import { now, withLock } from "../core/util.ts";
-import { matchOption, type Task } from "./backlog.ts";
+import type { Task } from "./backlog.ts";
+import { matchOption } from "./hold-options.ts";
 
 /** Append the held question, its options, and the user's verbatim answer to `data/projects/<p>/decisions.md`. */
 export function recordDecision(task: Task, reply: string): void {

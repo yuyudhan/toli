@@ -232,6 +232,7 @@ export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun
                     entry.startedAt ??= run.startedAt;
                     entry.agent = run.id;
                     entry.dispatchedAt = run.startedAt;
+                    delete entry.waitingOn;
                 }
             });
         if (options.now || busySlots() < jawanSlots()) return launch(run.id);

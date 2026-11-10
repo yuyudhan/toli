@@ -53,6 +53,10 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
   and scoped tests against the green stack; the full check runs once per machine at integration or push.
   `bin/toli spawn` warns when such a brief lacks the section, and the project's jawans skip the heavy-build slot
   shim. `capacity.maxRuns` sizes the machine for it (docs/projects.md "Live-stack mode").
+- `bin/toli task wait T<n> --on "<what>"`: an active task that deliberately waits (a deferred spawn, a push) is
+  shown in Next as `waiting on <what>`, never as a re-dispatch, and the tick and `fleet check` leave it out. A task
+  whose recorded run, or the latest run of its resume/replace chain, is alive is never reported stale, even when
+  the run has no task id; `task start --agent` now records the task on a run spawned without `--task`.
 - No idle nights. An active task whose recorded run ended `oversight.staleTaskMinutes` ago (default 15) and that
   nobody re-dispatched (a `bin/toli spawn` run that finished, a `bin/toli remote --task` run whose saved output
   finished, or no jawan at all) now heads the digest's Next block with the run's last report line and whether an

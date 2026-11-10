@@ -254,3 +254,77 @@ describe("oversight never pauses in away mode", () => {
         expect(checks()).toHaveLength(2);
     });
 });
+
+/** A `bin/toli spawn` run record; `supervisorPid` is this test process, so a running run counts as alive. */
+function spawnRun(box: Sandbox, id: string, fields: Record<string, unknown>): void {
+    const dir = join(box.root, "state", "jawans");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+        join(dir, `${id}.json`),
+        JSON.stringify({
+            id,
+            harness: "omp",
+            task: null,
+            project: null,
+            work: null,
+            model: null,
+            cwd: box.root,
+            runDir: join(dir, id),
+            briefPath: join(dir, id, "brief.md"),
+            logPath: join(dir, id, "output.log"),
+            command: "omp",
+            maxMinutes: null,
+            status: "running",
+            supervisorPid: process.pid,
+            pid: process.pid,
+            exitCode: null,
+            signal: null,
+            startedAt: START,
+            endedAt: null,
+            inbox: null,
+            error: null,
+            ...fields,
+        }),
+    );
+}
+
+describe("live runs without a task id, and tasks that wait", () => {
+    test("a task whose recorded run, or that run's continuation, is alive is live even when the run has no task id", () => {
+        const box = coordinator();
+        box.stub("omp", "true");
+        box.ok(["task", "add", "alpha", "restarted by hand"]);
+        box.ok(["task", "add", "alpha", "resumed chain"]);
+        spawnRun(box, "j-20260304-080000-aaaa", {});
+        spawnRun(box, "j-20260304-080000-bbbb", {
+            status: "stalled",
+            endedAt: "2026-03-04T08:10:00.000Z",
+            resumedBy: "j-20260304-081000-cccc",
+        });
+        spawnRun(box, "j-20260304-081000-cccc", { resumeOf: "j-20260304-080000-bbbb" });
+        box.ok(["task", "start", "T1", "--agent", "j-20260304-080000-aaaa"], { now: START });
+        box.ok(["task", "start", "T2", "--agent", "j-20260304-080000-bbbb"], { now: START });
+        expect(box.ok(["digest"], { now: "2026-03-04T10:00:00.000Z" })).not.toContain("is active but");
+        // `task start --agent` records the task on a run spawned without --task.
+        const run = JSON.parse(readFileSync(join(box.root, "state", "jawans", "j-20260304-080000-aaaa.json"), "utf8"));
+        expect([run.task, run.project]).toEqual(["T1", "alpha"]);
+    });
+
+    test("a task that waits on something is reported as waiting, never as needing a re-dispatch, and never posted", () => {
+        const box = coordinator();
+        box.stub("omp", "true");
+        box.ok(["task", "add", "alpha", "land after T9"]);
+        spawnRun(box, "j-20260304-080000-dddd", { status: "done", endedAt: "2026-03-04T08:10:00.000Z" });
+        box.ok(["task", "start", "T1", "--agent", "j-20260304-080000-dddd"], { now: START });
+        box.ok(["task", "wait", "T1", "--on", "a deferred spawn after T9"], { now: START });
+        const text = box.ok(["digest"], { now: "2026-03-04T10:00:00.000Z" });
+        expect(next(text)[0]).toBe(
+            "  - T1 (alpha) is active, waiting on a deferred spawn after T9: nothing to dispatch while it waits; once that is through it gets a jawan (bin/toli task start T1 --agent <id>) or moves on by itself",
+        );
+        expect(text).not.toContain("re-dispatch it now");
+        box.ok(["job", "tick"], { now: "2026-03-04T10:00:00.000Z" });
+        expect(inbox(box).some((item) => item.includes("no live run"))).toBe(false);
+        // A new jawan ends the wait.
+        box.ok(["task", "start", "T1", "--agent", "j-20260304-080000-dddd"], { now: "2026-03-04T10:01:00.000Z" });
+        expect(box.ok(["digest"], { now: "2026-03-04T10:30:00.000Z" })).toContain("T1 (alpha) is active but its run");
+    });
+});
