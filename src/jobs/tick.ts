@@ -34,6 +34,7 @@ import {
     STALE_RUN_MS,
 } from "./jobs.ts";
 import { deliverOutbox } from "./outbox.ts";
+import { pullFleet, pullsItsMessages, pullText } from "./pull.ts";
 
 function log(line: string): void {
     mkdirSync(paths.logsDir(), { recursive: true });
@@ -206,6 +207,16 @@ export async function tick(): Promise<void> {
     const outbox = deliverOutbox(machine, onOutboxDelivered);
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
     for (const error of outbox.errors) log(`outbox: pending ${error}`);
+    // A machine that takes no inbound ssh fetches what the others queued for it (src/jobs/pull.ts).
+    try {
+        if (pullsItsMessages()) {
+            const pulled = await pullFleet();
+            if (pulled === null || pulled.pulled > 0 || pulled.errors.length > 0) log(pullText(pulled));
+            for (const error of pulled?.errors ?? []) log(`pull: ${error}`);
+        }
+    } catch (error) {
+        log(`pull failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     for (const note of failStaleRuns()) log(note);
     // Low disk never stops work: under the floor the tick starts the disk keeper detached (src/fleet/disk.ts) and goes
     // on, so a keeper slowed by a starved disk never holds up a tick. The queue drain below leaves the disk to it.

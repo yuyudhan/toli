@@ -231,6 +231,10 @@ export async function balancePass(): Promise<string | null> {
         `ask-${machine.name}-${stamp()}`,
     );
     recordSent({ kind: "ask", machine: deepest.machine, at: now().toISOString() });
-    const delivery = sent.delivered ? "delivered" : `queued for the tick: ${sent.error}`;
+    const delivery = sent.delivered
+        ? "delivered"
+        : sent.pulled
+          ? "queued for its pull"
+          : `queued for the tick: ${sent.error}`;
     return `queue: asked ${deepest.machine} for work (${machine.name} 0, ${deepest.machine} ${deepest.queue.depth}; ${delivery})`;
 }

@@ -68,7 +68,8 @@ through `talk <machine> "<words>"` instead. Directly on the machine, the same is
 `talk <machine> "<words>"` posts the words to that machine's inbox (`message from <this machine>`), which wakes its
 lead; the message says to reply with `bin/toli talk <this machine> "<reply>"`. That is also how leads talk to each
 other: short messages, ssh-delivered, queued in `state/outbox/` and retried by the minute tick while the other
-machine is unreachable.
+machine is unreachable. A machine that takes no inbound ssh (`inbound: false`) pulls its messages, delegations and
+results from the others' outboxes every minute instead ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)).
 
 ## Delegation
 

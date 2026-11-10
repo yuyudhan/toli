@@ -2,9 +2,9 @@
 // machine's inbox, which wakes its lead; this is also how leads message each other. Without, this terminal opens that
 // machine's lead conversation (`bin/toli lead attach`, over `ssh -t` for another machine).
 import { Args } from "../core/args.ts";
-import { fleetMachine, loadMachine, remoteToliCommand } from "../core/config.ts";
+import { fleetMachine, inboundOff, inboundOffText, loadMachine, remoteToliCommand } from "../core/config.ts";
 import { out, requireName, stamp, ToliError, warn } from "../core/util.ts";
-import { sendToMachine } from "../jobs/outbox.ts";
+import { queuedText, sendToMachine } from "../jobs/outbox.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { attachLead } from "./lead.ts";
 
@@ -37,13 +37,17 @@ export async function talkCommand(argv: string[]): Promise<number> {
         const sent = sendToMachine(self, fleetMachine(machineName), title, body, `talk-${self}-${stamp()}`);
         if (sent.delivered) out(`sent to ${machineName}'s lead; its reply arrives here as a wake`);
         else {
-            warn(sent.error);
-            out(`queued for ${machineName} (unreachable); the minute tick retries`);
+            if (!sent.pulled) warn(sent.error);
+            out(queuedText(machineName, sent));
         }
         return 0;
     }
     if (machineName === self) return attachLead();
     const target = fleetMachine(machineName);
+    if (inboundOff(target))
+        throw new ToliError(
+            `${inboundOffText(target)}: talk to its lead there, or with \`bin/toli talk ${machineName} "<words>"\``,
+        );
     const proc = Bun.spawn(["ssh", "-t", target.ssh, remoteToliCommand(target.root, "lead attach")], {
         stdio: ["inherit", "inherit", "inherit"],
     });

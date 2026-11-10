@@ -4,6 +4,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import {
+    inboundOff,
+    inboundOffText,
     loadMachine,
     type Machine,
     machineSettings,
@@ -86,6 +88,10 @@ export async function syncCommand(argv: string[]): Promise<number> {
     if (local !== 0 || !args.bool("all")) return local;
     let failures = 0;
     for (const machine of otherFleetMachines()) {
+        if (inboundOff(machine)) {
+            out(`${machine.name}: skipped: ${inboundOffText(machine)}; run bin/toli sync there`);
+            continue;
+        }
         // A release install's sync is an upgrade (fetch, migrate, harness sync, runtime snapshot): allow it time.
         const result = run([...sshArgs(machine.ssh, 15), remoteToliCommand(machine.root, "sync")], {
             timeoutMs: 300_000,

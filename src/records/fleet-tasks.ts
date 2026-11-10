@@ -6,6 +6,8 @@ import { Args } from "../core/args.ts";
 import {
     type FleetMachine,
     fleetMachine,
+    inboundOff,
+    inboundOffText,
     loadMachine,
     otherFleetMachines,
     remoteToliCommand,
@@ -21,10 +23,12 @@ import {
     run,
     runAsync,
     shellQuote,
+    stamp,
     ToliError,
     withLock,
     writeJsonAtomic,
 } from "../core/util.ts";
+import { type AnswerBody, queuedText, sendNow } from "../jobs/outbox.ts";
 import { loadBacklog, type Status, type Task } from "./backlog.ts";
 import { fleetId, splitFleetId } from "./delegation-report.ts";
 
@@ -66,10 +70,6 @@ function isTaskList(value: unknown): value is Task[] {
 
 async function fetchCopy(machine: FleetMachine): Promise<FleetCopy> {
     const fetchedAt = now().toISOString();
-    const result = await runAsync(
-        [...sshArgs(machine.ssh, CONNECT_SECONDS), remoteToliCommand(machine.root, "task list --json")],
-        { timeoutMs: FETCH_CAP_MS },
-    );
     const fallback = (error: string): FleetCopy => {
         const last = cached(machine.name);
         return {
@@ -80,6 +80,11 @@ async function fetchCopy(machine: FleetMachine): Promise<FleetCopy> {
             error,
         };
     };
+    if (inboundOff(machine)) return fallback(inboundOffText(machine));
+    const result = await runAsync(
+        [...sshArgs(machine.ssh, CONNECT_SECONDS), remoteToliCommand(machine.root, "task list --json")],
+        { timeoutMs: FETCH_CAP_MS },
+    );
     if (result.timedOut) return fallback(`no answer from ${machine.ssh} within ${FETCH_CAP_MS / 1000}s`);
     if (result.code !== 0)
         return fallback(
@@ -191,7 +196,10 @@ export async function listFleet(options: {
     }
 }
 
-/** `task answer <machine>/T<n> "<answer>"` for another machine's task: the owner records it (rule 2). */
+/**
+ * `task answer <machine>/T<n> "<answer>"` for another machine's task: the owner records it (rule 2). An owner that
+ * takes no inbound ssh gets it with its next pull (an `answer` outbox item).
+ */
 export function forwardAnswer(owner: string, argv: string[]): void {
     const args = new Args(argv);
     args.maxPositional(2);
@@ -199,6 +207,13 @@ export function forwardAnswer(owner: string, argv: string[]): void {
     const reply = args.pos(1, "answer");
     const target = fleetMachine(owner);
     const self = loadMachine().name;
+    const fid = fleetId(owner, id);
+    if (inboundOff(target)) {
+        const body = JSON.stringify({ id, answer: reply } satisfies AnswerBody);
+        sendNow(self, target, "answer", `answer ${fid}`, body, `answer-${id}-${self}-${stamp()}`);
+        out(`answer for ${fid} ${queuedText(owner, { pulled: true })}`);
+        return;
+    }
     const command = `task answer ${shellQuote(id)} ${shellQuote(reply)} --from ${shellQuote(self)}`;
     const result = run([...sshArgs(target.ssh), remoteToliCommand(target.root, command)], { timeoutMs: 120_000 });
     if (result.code !== 0)

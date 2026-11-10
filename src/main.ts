@@ -19,6 +19,7 @@ import { sessionCommand } from "./harness/session.ts";
 import { harnessCommand } from "./harness/sync.ts";
 import { helperCommand } from "./helpers/helpers.ts";
 import { resumeCommand, runCommand, runsCommand, spawnCommand } from "./jawans/spawn.ts";
+import { outboxCommand } from "./jobs/pull.ts";
 import { scheduleCommand } from "./jobs/schedule.ts";
 import { jobCommand } from "./jobs/tick.ts";
 import { branchCommand, commitCommand } from "./projects/commit.ts";
@@ -91,6 +92,7 @@ const USAGE = `usage: bin/toli <command> [args]
   schedule install|uninstall|status
   helper list [--json] | install <name>|--all | uninstall <name>|--all | run <name> | status [<name>] [--json]
   inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack
+  outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
   wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]
@@ -192,6 +194,9 @@ export async function main(argv: string[]): Promise<number> {
                 return await helperCommand(rest);
             case "inbox":
                 inboxCommand(rest);
+                return 0;
+            case "outbox":
+                await outboxCommand(rest);
                 return 0;
             case "wake":
                 wakeCommand(rest);

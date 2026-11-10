@@ -174,5 +174,6 @@ export function reportToDelegator(task: Task): void {
     const update = delegationUpdate(owner, task);
     const id = `update-${task.id}-${stamp(now())}`;
     const sent = sendNow(owner, target, "update", update.message.title, JSON.stringify(update), id);
-    if (!sent.delivered) warn(`${task.id}: report to ${by.machine} queued (${sent.error}); the minute tick retries`);
+    if (!sent.delivered && !sent.pulled)
+        warn(`${task.id}: report to ${by.machine} queued (${sent.error}); the minute tick retries`);
 }

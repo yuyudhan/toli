@@ -19,7 +19,7 @@ import {
     writeTextAtomic,
 } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
-import { type Delivered, sendNow } from "../jobs/outbox.ts";
+import { type Delivered, queuedText, sendNow } from "../jobs/outbox.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
 import { fleetId } from "../records/delegation-report.ts";
@@ -218,18 +218,22 @@ export function acceptDelegation(delegation: Delegation, stdout: string): string
     return id;
 }
 
-/** The minute tick's outbox hook: a queued delegation that landed is recorded here and wakes this lead. */
+/**
+ * The outbox hook (the minute tick's delivery, or a pull's acknowledgement): a queued delegation that landed is
+ * recorded here and wakes this lead.
+ */
 export function onOutboxDelivered({ item, stdout }: Delivered): void {
     if (item.kind !== "delegation") return;
     const delegation = parseDelegation(item.body);
     const id = acceptDelegation(delegation, stdout);
     const existing = ACCEPTED.exec(stdout)?.[2] === "existing";
+    const target = item.to?.name ?? "the target";
     addInboxItem(
         delegation.from,
         `delegated ${id}: ${delegation.title}`,
         existing
-            ? `The delegation queued while ${item.to?.name ?? "the target"} was unreachable was already there as ${id} (an earlier copy landed first); no second task was made.`
-            : `The delegation queued while ${item.to?.name ?? "the target"} was unreachable has landed as ${id}.\nIts lead dispatches it; the result comes back here as a wake.`,
+            ? `The delegation queued for ${target} was already there as ${id} (an earlier copy landed first); no second task was made.`
+            : `The delegation queued for ${target} has landed as ${id}.\nIts lead dispatches it; the result comes back here as a wake.`,
     );
 }
 
@@ -286,9 +290,11 @@ export function delegateCommand(argv: string[]): number {
         `delegation-${delegation.id}`,
     );
     if (!sent.delivered) {
-        warn(sent.error);
+        if (!sent.pulled) warn(sent.error);
         out(
-            `queued: ${target.name} is unreachable; the minute tick retries, and its task id arrives here as a wake (${delegation.id})`,
+            sent.pulled
+                ? `${queuedText(target.name, sent)}; its task id arrives here as a wake (${delegation.id})`
+                : `queued: ${target.name} is unreachable; the minute tick retries, and its task id arrives here as a wake (${delegation.id})`,
         );
         return 0;
     }

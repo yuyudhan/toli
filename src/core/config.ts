@@ -99,7 +99,17 @@ export function machineSettings(): Partial<Machine> {
     return readJson<Partial<Machine>>(paths.machine(), {});
 }
 
-export type FleetMachine = { name: string; ssh: string; root: string };
+export type FleetMachine = {
+    name: string;
+    ssh: string;
+    root: string;
+    /**
+     * false: no other machine ever ssh-es into this one (docs/fleet.md "Machines that take no inbound ssh"). What the
+     * others would send it waits in their outbox, and its minute tick pulls it from them (src/jobs/pull.ts). Set on the
+     * coordinator's list; workers get it with the list.
+     */
+    inbound?: boolean;
+};
 
 export type Fleet = { machines: FleetMachine[] };
 
@@ -134,11 +144,29 @@ export function otherFleetMachines(): FleetMachine[] {
     return loadFleet().machines.filter((entry) => entry.name !== self);
 }
 
+/** Whether a fleet machine takes no inbound ssh (`inbound: false`): nothing ssh-es into it, it pulls instead. */
+export function inboundOff(machine: FleetMachine): boolean {
+    return machine.inbound === false;
+}
+
+/** Why a call does not ssh into `machine`: the line callers show in place of an ssh error. */
+export function inboundOffText(machine: FleetMachine): string {
+    return `${machine.name} takes no inbound ssh (inbound: false in config/fleet.json); it pulls what is queued for it`;
+}
+
+/** The fleet machine reached by ssh name `host` that takes no inbound ssh, if any (a worker's coordinator included). */
+export function inboundOffHost(host: string): FleetMachine | undefined {
+    return loadFleet().machines.find((entry) => inboundOff(entry) && entry.ssh === host);
+}
+
 /**
  * ssh argv prefix: batch mode (never prompts) with a bounded connect timeout, sharing one connection per host
- * across calls (src/core/ssh.ts).
+ * across calls (src/core/ssh.ts). Refuses a host that takes no inbound ssh: callers check `inboundOff` first, so this
+ * only stops a call that forgot to.
  */
 export function sshArgs(host: string, connectTimeoutSeconds = 15): string[] {
+    const blocked = inboundOffHost(host);
+    if (blocked !== undefined) throw new ToliError(inboundOffText(blocked));
     return [
         "ssh",
         ...sshSharingArgs(host),

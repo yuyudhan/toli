@@ -16,6 +16,7 @@ machine's lead ([sardars.md](sardars.md)).
   coordinator is unreachable, results wait in `state/outbox/` (with any delegations, delegated-task reports and
   `talk` messages for other machines) and the per-minute ticker retries them. On a worker, `bin/toli doctor` warns
   while results wait there; a backlog that does not drain means `ssh <coordinator ssh> true` fails from the worker.
+  A coordinator that takes no inbound ssh pulls them instead ([below](#machines-that-take-no-inbound-ssh)).
   When the coordinator's ssh name changes (a VPN peer re-registered under a new name), re-run `bin/toli init` on
   every worker with the new `--coordinator-ssh`.
 
@@ -54,6 +55,41 @@ so a wedged master never holds a call past its timeout; the master, which carrie
 runs too), drops a link dead for two minutes (`ServerAliveInterval 30`, `ServerAliveCountMax 4`). A checkout whose
 path is too long for a unix socket there (`state/ssh` longer than 45 characters) opens a connection per call, as
 before.
+
+### Machines that take no inbound ssh
+
+A machine whose entry in the coordinator's list has `"inbound": false` is never ssh-ed into by toli on any other
+machine (a personal computer the fleet must not log into). It still ssh-es out: its delegations and `talk` reach the
+others over ssh as usual.
+
+```json
+{ "name": "<machine>", "ssh": "<host>", "root": "/path/to/toli", "inbound": false }
+```
+
+Everything the others would deliver to it over ssh (job results and alerts, `talk`, delegations, delegated-task
+reports and links, share answers, task answers and escalated answers, queue offers) stays in their
+`state/outbox/`. Its minute tick runs `bin/toli outbox pull`: it ssh-es to each other machine and runs `bin/toli
+outbox pending --for <itself>` there (the items queued for it, oldest first, by when they were queued), applies each
+item here with the same `bin/toli` command an ssh delivery would have run (`inbox add`, `delegation
+receive|update|link`, `share receive`, `task answer`), then runs `bin/toli outbox ack --for <itself>` there, which
+drops the applied items and, for a delegation, records the task id it got. So:
+
+- **Each item is applied once.** An applied item is recorded in `state/pulled/<machine>.json` until its ack lands;
+  pulled again (the ack was lost), it is acknowledged again, not re-applied.
+- **Nothing is lost while either side is offline.** A machine that does not answer keeps its items for the next
+  pull; an item that fails to apply stays queued.
+- **Order holds per sender.** The first item that fails stops that sender's batch until it applies.
+- **A machine speaks only for itself.** An item whose `from` is not the machine it was pulled from is dropped, not
+  applied.
+
+The pull also carries this machine's `fleet export`: a worker whose coordinator takes no inbound ssh takes its list
+from each pull (its own `fleet sync` does not contact the coordinator), and any other machine learns the flag. From
+then on no toli call there ssh-es into it: sends queue for the pull, fleet reads (`fleet status`, `digest --fleet`,
+`task list --fleet`, `fleet check`, `sync --all`) skip it with the reason, `talk <machine>` without words refuses,
+and a call that forgot the check fails in `sshArgs` before running ssh. `bin/toli doctor` there reports such
+messages as waiting for the pull (a warning only once the oldest is 10 minutes old, i.e. the pulls stopped), never as
+an ssh problem. To take ssh again, drop the flag on the coordinator and run `bin/toli outbox pull` once there: the
+list it carries clears the flag on the others, and their queued items go by ssh from then on.
 
 ## Capacity and picking a machine
 

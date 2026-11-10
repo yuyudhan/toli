@@ -4,6 +4,27 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.4.1 - unreleased
+
+### Added
+
+- A machine can take no inbound ssh: `"inbound": false` on its entry in the coordinator's `config/fleet.json`. No
+  toli call on another machine ssh-es into it; what they would have sent it (job results, `talk`, delegations and
+  their updates, share and task answers, queue offers) waits in their outbox, and its minute tick pulls it
+  (`bin/toli outbox pull`: `outbox pending` there, apply here, `outbox ack` there), each item applied once and in
+  order per sender, nothing lost while either side is offline. The pull carries the fleet list, so workers learn the
+  flag without ssh into the coordinator; their `doctor` reports such messages as waiting for the pull, not as an ssh
+  problem (docs/fleet.md#machines-that-take-no-inbound-ssh).
+- `just release` publishes the GitHub Release after the push: `gh release create vX.Y.Z --verify-tag --latest` with
+  the tag's CHANGELOG section as notes (docs/releasing.md).
+
+### Fixed
+
+- The test suite can no longer write into the checkout it runs in: under the `pre-push` hook it inherited the hook's
+  `GIT_DIR`, so temp repos' commits and a `v1.2.3` tag landed in the real repository. The preload drops every
+  inherited `GIT_*` variable, sets `GIT_CEILING_DIRECTORIES` and a temp `HOME`, and fails the run when the real
+  repository gains a test commit or a tag changes (docs/development.md).
+
 ## v0.4.0 - 2026-11-10
 
 ### Changed

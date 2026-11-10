@@ -1,12 +1,12 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { availableParallelism, homedir } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { hasMachine, loadMachine } from "../core/config.ts";
+import { hasMachine, inboundOff, loadFleet, loadMachine } from "../core/config.ts";
 import { isGitRepo } from "../core/git.ts";
 import { captureLoginEnv, credentialNames, LOGIN_ENV_FLAG, loginShell } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
-import { out, printJson, readJson, run } from "../core/util.ts";
+import { out, printJson, run } from "../core/util.ts";
 import { leadServiceStatus } from "../fleet/lead-service.ts";
 import { interactiveLeadPid } from "../fleet/lead-state.ts";
 import { availabilityLine, fleetStatus } from "../fleet/pick.ts";
@@ -20,6 +20,7 @@ import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../job
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
 import { describeRuntime, runtimeStatus } from "../release/runtime.ts";
+import { outboxCheck } from "./outbox-check.ts";
 
 export type CheckLevel = "ok" | "warn" | "fail";
 export type Check = { level: CheckLevel; name: string; detail: string };
@@ -128,41 +129,6 @@ function forgeChecks(): Check[] {
             detail: `forge not detected for ${nameList(undetected)} (bin/toli forge <project>; set --forge)`,
         });
     return checks;
-}
-
-/**
- * Messages wait in `state/outbox/` while the machine they go to is unreachable; the minute tick retries them. A
- * worker's results go to its coordinator; delegations, delegated-task reports and `talk` messages go to the machine
- * they name. A backlog means they are not arriving (wrong ssh name, ssh key, host key, network).
- */
-function outboxCheck(coordinatorSsh: string | undefined): Check {
-    const dir = paths.outboxDir();
-    // Queued items, plus ones a tick has claimed for sending (`<id>.json.sending-<pid>`).
-    const queued = existsSync(dir) ? readdirSync(dir).filter((file) => /\.json(\.sending-\d+)?$/.test(file)) : [];
-    const count = queued.length;
-    if (count === 0)
-        return {
-            level: "ok",
-            name: "outbox",
-            detail:
-                coordinatorSsh === undefined
-                    ? "no messages waiting for other machines"
-                    : "no results waiting for the coordinator",
-        };
-    const hosts = new Set<string>();
-    for (const file of queued) {
-        const target = readJson<{ to?: { ssh?: string } } | null>(join(dir, file), null)?.to?.ssh ?? coordinatorSsh;
-        if (target !== undefined) hosts.add(target);
-    }
-    const oldestMs = Math.min(...queued.map((file) => statSync(join(dir, file)).mtimeMs));
-    const minutes = Math.max(0, Math.round((Date.now() - oldestMs) / 60_000));
-    const age = minutes < 120 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
-    const checks = [...hosts].map((host) => `\`ssh ${host} true\``).join(", ");
-    return {
-        level: "warn",
-        name: "outbox",
-        detail: `${count} result${count === 1 ? "" : "s"} waiting in state/outbox/ (oldest ${age}): check ${checks} works; the minute tick retries`,
-    };
 }
 
 /**
@@ -320,10 +286,19 @@ export async function runChecks(): Promise<Check[]> {
     if (machineOk) {
         try {
             const fleet = (await fleetStatus()).filter((entry) => !entry.local);
+            const pulling = new Set(
+                loadFleet()
+                    .machines.filter(inboundOff)
+                    .map((machine) => machine.name),
+            );
             if (fleet.length === 0)
                 checks.push({ level: "ok", name: "fleet", detail: "no other machines in config/fleet.json" });
             for (const entry of fleet)
-                checks.push({ level: entry.reachable ? "ok" : "warn", name: "fleet", detail: availabilityLine(entry) });
+                checks.push({
+                    level: entry.reachable || pulling.has(entry.machine) ? "ok" : "warn",
+                    name: "fleet",
+                    detail: availabilityLine(entry),
+                });
         } catch (error) {
             checks.push({
                 level: "fail",

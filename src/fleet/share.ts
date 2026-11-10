@@ -20,7 +20,7 @@ import {
     withLock,
     writeJsonAtomic,
 } from "../core/util.ts";
-import { sendNow } from "../jobs/outbox.ts";
+import { queuedText, sendNow } from "../jobs/outbox.ts";
 import { addInboxItem } from "../records/inbox.ts";
 
 export const DECISIONS = ["adopt", "adapt", "decline"] as const;
@@ -233,8 +233,12 @@ function send(args: Args): void {
         );
         if (sent.delivered) out(`shared ${share.id} with ${target.name}`);
         else {
-            warn(sent.error);
-            out(`queued ${share.id} for ${target.name} (unreachable); the minute tick retries`);
+            if (!sent.pulled) warn(sent.error);
+            out(
+                sent.pulled
+                    ? `${share.id}: ${queuedText(target.name, sent)}`
+                    : `queued ${share.id} for ${target.name} (unreachable); the minute tick retries`,
+            );
         }
     }
 }
@@ -285,8 +289,12 @@ function answer(args: Args): void {
     const sent = sendNow(self, sender, "share", `learning ${id} answer`, message, `share-answer-${id}-${self}`);
     if (sent.delivered) out(`answer sent to ${share.from}`);
     else {
-        warn(sent.error);
-        out(`answer queued for ${share.from} (unreachable); the minute tick retries`);
+        if (!sent.pulled) warn(sent.error);
+        out(
+            sent.pulled
+                ? `answer ${queuedText(share.from, sent)}`
+                : `answer queued for ${share.from} (unreachable); the minute tick retries`,
+        );
     }
 }
 

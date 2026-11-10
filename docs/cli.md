@@ -180,6 +180,7 @@ Details: [harnesses.md](harnesses.md).
     job results [--unseen] [--json] | ack
     schedule install|uninstall|status
     inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack
+    outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
     wake [--json]
 
 - `job due` lists due jobs; `run-due` runs them (the live session); `tick` is the per-minute OS ticker; `begin` and
@@ -187,6 +188,9 @@ Details: [harnesses.md](harnesses.md).
 - `schedule` installs the ticker (launchd on macOS; a systemd user timer on Linux when `systemctl --user` works,
   else crontab).
 - `inbox` holds messages from jawans and other machines; `wake` takes everything new once, for the chat.
+- `outbox pull` is what the minute tick runs on a machine that takes no inbound ssh (`inbound: false`): it fetches
+  what every other machine queued for it (`outbox pending` there), applies it here and acknowledges it (`outbox ack`
+  there), so each item is applied once ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)).
 
 Details: [jobs.md](jobs.md).
 

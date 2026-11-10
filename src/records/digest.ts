@@ -1,7 +1,15 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { hasMachine, loadMachine, otherFleetMachines, remoteToliCommand, sshArgs } from "../core/config.ts";
+import {
+    hasMachine,
+    inboundOff,
+    inboundOffText,
+    loadMachine,
+    otherFleetMachines,
+    remoteToliCommand,
+    sshArgs,
+} from "../core/config.ts";
 import { isGitRepo, type RepoStatus, repoStatus } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { personaLine } from "../core/persona.ts";
@@ -174,6 +182,7 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
 
 function fleetDigests(): FleetEntry[] {
     return otherFleetMachines().map((machine): FleetEntry => {
+        if (inboundOff(machine)) return { machine: machine.name, ok: false, error: inboundOffText(machine) };
         const result = run([...sshArgs(machine.ssh, 15), remoteToliCommand(machine.root, "digest --json")], {
             timeoutMs: 90_000,
         });

@@ -1,5 +1,12 @@
 import { Args } from "../core/args.ts";
-import { loadFleet, remoteToliCommand, sshArgs } from "../core/config.ts";
+import {
+    type FleetMachine,
+    inboundOff,
+    inboundOffText,
+    loadFleet,
+    remoteToliCommand,
+    sshArgs,
+} from "../core/config.ts";
 import { out, printJson, runAsync } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { type Full, fullText } from "./full.ts";
@@ -141,7 +148,7 @@ export function parseResources(text: string): Resources {
     };
 }
 
-async function probe(machine: { name: string; ssh: string; root: string }): Promise<FleetEntry> {
+async function probe(machine: FleetMachine): Promise<FleetEntry> {
     const unreachable = (detail: string): FleetEntry => ({
         machine: machine.name,
         local: false,
@@ -150,6 +157,8 @@ async function probe(machine: { name: string; ssh: string; root: string }): Prom
         reasons: [`unreachable: ${detail}`],
         resources: null,
     });
+    // Never probed, and never picked: work for it goes by `delegate`, which it pulls.
+    if (inboundOff(machine)) return { ...unreachable(""), reasons: [inboundOffText(machine)] };
     const result = await runAsync(
         [...sshArgs(machine.ssh, PROBE_CONNECT_SECONDS), remoteToliCommand(machine.root, "resources --json")],
         {

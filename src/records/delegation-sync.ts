@@ -171,7 +171,7 @@ function link(argv: string[]): void {
     out(
         sent.delivered
             ? `${local} linked to ${fid}: ${sent.stdout.trim()}`
-            : `${local} linked to ${fid} here; ${machine} gets the link from the minute tick (${sent.error})`,
+            : `${local} linked to ${fid} here; ${machine} gets the link ${sent.pulled ? "with its next pull" : "from the minute tick"} (${sent.error})`,
     );
 }
 
