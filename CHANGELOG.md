@@ -67,6 +67,9 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
 
 ### Added
 
+- `bin/toli task pin T<n> [--reason "..."]` keeps a queued task on this machine (it needs code or state only this clone
+  has): the queue balancer never lists it in an offer, and posts no offer when every queued task is pinned.
+  `task unpin T<n>` releases it; `task list` and the digest show the pin.
 - Live-stack mode: `bin/toli project set <p> --live-stack yes` lets one machine run many jawans (8-16) on one
   `same-branch` project against its running dev stack, which rebuilds on every save, instead of each jawan building
   on its own. Briefs keep the new `## Live stack` section (docs/brief-template.md): no own full build/test/lint while
@@ -108,6 +111,12 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
 
 ### Fixed
 
+- The lead service runs the runtime `bin/toli self sync` installed after it started: after a pass that sees a newer
+  runtime it exits 0 and launchd (KeepAlive) or systemd (`Restart=always`) starts it again on the new code, instead
+  of serving the old snapshot until a reboot.
+- `bin/toli` puts bun's directory last on `PATH` when it adds it, so the caller's order wins for every jawan it starts
+  (rustup's `cargo` before Homebrew's, build wrappers first).
+- `bin/toli commit --merge` names a locally modified file whole when it refuses (`CHANGELOG.md`, not `HANGELOG.md`).
 - `bin/toli lead install` (and the tick and helper installs) no longer leave a running launchd agent unloaded. From a
   session launchd cannot bootstrap into (a jawan's background launchd session: `launchctl bootout` worked, `bootstrap`
   failed with 125) it now refuses before booting anything out, naming the fix (run it from a Terminal in the login

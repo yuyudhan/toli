@@ -97,6 +97,16 @@ describe("toli commit", () => {
         expect(dirty.code).toBe(1);
         expect(dirty.stderr).toContain("local changes to files the merge changes: g.txt");
         expect(box.git(dir, ["rev-parse", "HEAD"])).toBe(sha);
+
+        // A modified tracked file is named whole (git status prints it as " M m.txt").
+        box.git(dir, ["switch", "--quiet", "-c", "edit", sha]);
+        writeFileSync(join(dir, "m.txt"), "edit\n");
+        box.ok(["commit", "app", "-m", "edit m", "--", "m.txt"]);
+        box.git(dir, ["switch", "--quiet", "main"]);
+        writeFileSync(join(dir, "m.txt"), "local\n");
+        const modified = box.toli(["commit", "app", "--merge", "edit", "-m", "Merge edit"]);
+        expect(modified.code).toBe(1);
+        expect(modified.stderr).toContain("local changes to files the merge changes: m.txt;");
     });
 });
 

@@ -112,7 +112,8 @@ function cleanMerge(dir: string, parent: string, ref: string, resolved: boolean,
     const checked = files.filter((file) => !conflicts.includes(file) && !regenerated.includes(file));
     // Whether they differ comes from git exit statuses (checkoutDirty); `git status` only names them for the message.
     if (checked.length > 0 && checkoutDirty(dir, { ignored: true, paths: checked })) {
-        const listed = gitOk(dir, [
+        // Raw stdout: gitOk trims, which would eat the first line's leading status column (" M CHANGELOG.md").
+        const listed = git(dir, [
             "--no-optional-locks",
             "status",
             "--porcelain",
@@ -120,7 +121,7 @@ function cleanMerge(dir: string, parent: string, ref: string, resolved: boolean,
             "--ignored=matching",
             "--",
             ...checked,
-        ]);
+        ]).stdout;
         const names = listed
             .split("\n")
             .filter(Boolean)

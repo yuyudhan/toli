@@ -1,7 +1,7 @@
 // The bun and PATH the tick and helpers are installed with: never bun's `bun-node-*` temp dirs, and a warning when
 // the bun an installed tick runs is gone.
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { type Sandbox, sandbox, withCrontab, withSystemd } from "./helpers.ts";
 
@@ -139,5 +139,25 @@ describe("an installed tick whose bun no longer exists", () => {
         writeFileSync(join(systemd.units, "toli-tick.service"), `[Service]\nExecStart=${gone} ${bin} job tick\n`);
         expect(box.ok(["schedule", "status"], { env: systemd.env })).toContain(`warn: ${warning}`);
         expect(doctorWarnings(box, systemd.env)).toEqual([expect.stringContaining(warning)]);
+    });
+});
+
+describe("the bin/toli launcher", () => {
+    test("appends the bun it found to PATH, keeping the caller's order first", () => {
+        const box = sandbox();
+        // Line 2 of bin/toli is the shell prelude; under it, a script that prints the PATH bun was started with.
+        const prelude = readFileSync(join(import.meta.dir, "..", "bin", "toli"), "utf8").split("\n").slice(0, 2);
+        const script = join(box.root, "launcher");
+        writeFileSync(script, `${[...prelude, "console.log(process.env.PATH);"].join("\n")}\n`);
+        const home = join(box.root, "home");
+        mkdirSync(join(home, ".bun", "bin"), { recursive: true });
+        symlinkSync(process.execPath, join(home, ".bun", "bin", "bun"));
+        const first = join(box.root, "first");
+        mkdirSync(first);
+        // No bun on this PATH, so the launcher takes $HOME/.bun/bin/bun.
+        const PATH = [first, "/usr/bin", "/bin"].join(":");
+        const run = Bun.spawnSync(["/bin/sh", script], { env: { HOME: home, PATH } });
+        expect(run.stderr.toString()).toBe("");
+        expect(run.stdout.toString().trim()).toBe(`${PATH}:${join(home, ".bun", "bin")}`);
     });
 });
