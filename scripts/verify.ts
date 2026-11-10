@@ -15,6 +15,10 @@ const TOLI = join(ROOT, "bin", "toli");
 
 const say = (line: string) => process.stdout.write(`${line}\n`);
 
+// A git hook's GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point the temp clone's git calls at this checkout
+// (tagging it, installing from it): every git call below names its repository by cwd only (T897).
+for (const name of Object.keys(process.env)) if (name.startsWith("GIT_")) delete process.env[name];
+
 function exec(cmd: string[], options: { cwd?: string; env?: Record<string, string> } = {}) {
     const result = Bun.spawnSync(cmd, {
         cwd: options.cwd ?? ROOT,
