@@ -109,6 +109,8 @@ export const paths = {
     diskKeepPause: () => join(repoRoot(), "state", "disk-keep.pause"),
     /** Why the disk keeper last did not run, so that reason reaches logs/disk.log once, not every minute. */
     diskKeepSkip: () => join(repoRoot(), "state", "disk-keep.skip"),
+    /** Touched when the last low-disk alert went out with capacity.diskKeep false (src/fleet/disk-alert.ts). */
+    diskAlertStamp: () => join(repoRoot(), "state", "disk-alert.stamp"),
     /** One flock'd file per heavy-build slot, `<n>.lock` (src/fleet/build-slots.ts). */
     buildSlotsDir: () => join(repoRoot(), "state", "build-slots"),
     /** The cargo shim jawans get first on PATH; it routes heavy cargo commands through a build slot. */

@@ -230,8 +230,9 @@ never in the foreground; its output arrives as a new turn. Thresholds live in `c
 reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
 every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). A full disk means delete the
 `target/` folders, in use or not, without asking: cargo rebuilds them. When free space is still under the floor, the
-keeper does that itself; on any machine, run `bin/toli disk keep` the moment a disk is full. Never write a disk floor
-into a brief.
+keeper does that itself; on any machine, run `bin/toli disk keep` the moment a disk is full. Where
+`capacity.diskKeep` is `false` the keeper deletes nothing on its own and low disk only posts an inbox alert naming the
+biggest build folders: there the lead decides what goes. Never write a disk floor into a brief.
 
 ## 7b. Custom machine helpers
 

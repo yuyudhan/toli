@@ -8,6 +8,11 @@ one. See docs/releasing.md.
 
 ### Changed
 
+- `capacity.diskKeep: false` in `config/machine.json` switches off every automatic deletion by the disk keeper
+  (before jawan starts, in the tick, the background keeper, the fallback sweep); the default stays `true`. With it
+  off toli deletes nothing on its own and, when free disk drops under 10 GB (or the emergency level), posts one inbox
+  alert per machine every 6 hours naming the biggest build folders. `bin/toli disk keep` by hand still works and
+  says `automatic deletion: off`; the new `bin/toli disk alert` posts the alert at once. See docs/disk.md.
 - Jawan runs have no wall-clock limit by default (`bin/toli spawn`, `bin/toli remote`/`exec`, scheduled headless
   jobs): they work until done. `--max-time` stays as an explicit opt-in. A run counts as stuck only when it shows no
   progress for `capacity.stallMinutes` (default 30): no output, no omp session activity (messages, tool calls), no

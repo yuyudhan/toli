@@ -27,6 +27,8 @@
 // On a full disk it still works: it writes nothing before it has freed something (log lines wait in memory; a keeper
 // lock it cannot write is done without), no failed write stops it, and when the keeper fails anyway the fallback
 // sweeps stale artifacts out of every target nothing uses, writing nothing first.
+// capacity.diskKeep false switches all of this off but `bin/toli disk keep` by hand: before a jawan start and in the
+// tick toli then deletes nothing and only alerts the inbox on low disk (src/fleet/disk-alert.ts).
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Args } from "../core/args.ts";
@@ -35,6 +37,7 @@ import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
 import { wipeTargetBetweenBuilds } from "./cargo-lock.ts";
+import { diskAlertBeforeWork, diskAlertCommand, diskKeepSetting } from "./disk-alert.ts";
 import { playwrightBrowsers, pruneDocker, trimSccache } from "./disk-caches.ts";
 import {
     type BuildDir,
@@ -90,6 +93,8 @@ export type KeepReport = {
     swept: { target: string; artifacts: number; bytes: number }[];
     /** True when the last resort ran: under the emergency level, so build output in use went too (tier 6). */
     lastResort: boolean;
+    /** False when capacity.diskKeep is false (or invalid): toli deletes nothing on its own, only this run by hand. */
+    automatic: boolean;
     lines: string[];
 };
 
@@ -128,6 +133,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         ran: false,
         swept: [],
         lastResort: false,
+        automatic: diskKeepSetting(machine) === true,
         lines: [],
     };
     if (freeBeforeGB >= floorGB) return report;
@@ -327,9 +333,18 @@ function forceDelete(path: string): string | null {
 
 /**
  * Before work starts (each jawan launch): free disk inline. `detached` (the minute tick) only starts the background
- * keeper, to do all of it. Never throws: disk never stops work.
+ * keeper, to do all of it. With capacity.diskKeep false nothing is deleted: low disk only alerts the inbox
+ * (src/fleet/disk-alert.ts). Never throws: disk never stops work.
  */
 export function keepDiskBeforeWork(mode: "inline" | "detached" = "inline"): string | null {
+    let setting: boolean | string = true;
+    try {
+        setting = diskKeepSetting(loadMachine());
+    } catch {
+        // An unreadable config: the keeper below reports it and falls back to sweeping, as it always has.
+    }
+    if (typeof setting === "string") return `disk keeper: ${setting}: deleting nothing`;
+    if (!setting) return diskAlertBeforeWork(mode, envDryRun());
     if (mode === "detached") return keepDiskDetached(envDryRun());
     let report: KeepReport;
     try {
@@ -343,10 +358,16 @@ export function keepDiskBeforeWork(mode: "inline" | "detached" = "inline"): stri
     return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (${floorText(report)})${cut}`;
 }
 
-/** `toli disk keep [--dry-run] [--floor <GB>] [--json]`. */
+/** `toli disk keep [--dry-run] [--floor <GB>] [--json]`, `toli disk alert`. */
 export function diskCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
-    if (sub !== "keep") throw new ToliError("usage: toli disk keep [--dry-run] [--floor <GB>] [--json]");
+    if (sub === "alert") {
+        new Args(rest).maxPositional(0);
+        diskAlertCommand();
+        return;
+    }
+    if (sub !== "keep")
+        throw new ToliError("usage: toli disk keep [--dry-run] [--floor <GB>] [--json] | toli disk alert");
     const args = new Args(rest, { booleans: ["dry-run", "json"], values: ["floor"] });
     args.maxPositional(0);
     const number = (name: string): number | undefined => {
@@ -373,4 +394,9 @@ export function diskCommand(argv: string[]): void {
     }
     if (json) printJson(report);
     else if (report.lines.length === 0) out(`free ${gb(report.freeBeforeGB)}, ${floorText(report)}: nothing to do`);
+    if (!json && !report.automatic) {
+        out(
+            "automatic deletion: off (capacity.diskKeep false); toli deletes only when `bin/toli disk keep` is run by hand",
+        );
+    }
 }

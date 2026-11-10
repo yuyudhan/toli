@@ -4,7 +4,8 @@ import { existsSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type Machine, remoteToliCommand, sshArgs } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { readJson, run, shellQuote, writeJsonAtomic } from "../core/util.ts";
+import { readJson, run, shellQuote, warn, writeJsonAtomic } from "../core/util.ts";
+import { addInboxItem } from "../records/inbox.ts";
 
 type OutboxItem = { from: string; title: string; body: string };
 
@@ -57,4 +58,14 @@ export function deliverOutbox(machine: Machine): { delivered: number; pending: n
         }
     }
     return result;
+}
+
+/** Post one item to this machine's inbox and, on a worker, forward it to the coordinator. Returns the inbox path. */
+export function notify(machine: Machine, title: string, body: string, outboxId: string): string {
+    const inbox = addInboxItem(machine.name, title, body);
+    if (machine.role === "worker") {
+        queueOutbox(machine, title, body, outboxId);
+        for (const error of deliverOutbox(machine).errors) warn(`outbox: ${error}`);
+    }
+    return inbox;
 }

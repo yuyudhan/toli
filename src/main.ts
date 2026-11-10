@@ -83,6 +83,7 @@ const USAGE = `usage: bin/toli <command> [args]
   resources [--json]
   build-slot -- <command...>
   disk keep [--dry-run] [--floor <GB>] [--json]
+  disk alert
   fleet status [--json]
   pick [--project <name>] [--json]
   exec [--from <machine>] [--task <id>] (prompt on stdin)

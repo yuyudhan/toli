@@ -169,10 +169,10 @@ export class DiskLog {
 }
 
 /**
- * Start `bin/toli disk keep` detached (its lines reach logs/disk.log). Bun's transpiler cache is off for it, as
- * `bin/toli disk` does: the disk may still be full.
+ * Start `bin/toli disk <args>` detached (its lines reach logs/disk.log): the background keeper, or the low-disk alert
+ * (src/fleet/disk-alert.ts). Bun's transpiler cache is off for it, as `bin/toli disk` does: the disk may still be full.
  */
-function startBackgroundKeeper(): void {
+export function startDetachedDisk(args: string[]): void {
     let log: number | "ignore" = "ignore";
     try {
         mkdirSync(paths.logsDir(), { recursive: true });
@@ -181,7 +181,7 @@ function startBackgroundKeeper(): void {
         // A full disk: the keeper's own lines still reach logs/disk.log once it has freed something.
     }
     try {
-        const child = spawnChild(process.execPath, [TOLI_SCRIPT, "disk", "keep"], {
+        const child = spawnChild(process.execPath, [TOLI_SCRIPT, "disk", ...args], {
             cwd: paths.root(),
             detached: true,
             stdio: ["ignore", "ignore", log],
@@ -214,7 +214,7 @@ export function keepDiskDetached(dryRun: boolean): string | null {
     }
     if (dryRun) return `disk keeper: ${why}: would start in the background (dry run)`;
     try {
-        startBackgroundKeeper();
+        startDetachedDisk(["keep"]);
     } catch (error) {
         return `disk keeper: ${why}; background keeper not started: ${describe(error)}`;
     }

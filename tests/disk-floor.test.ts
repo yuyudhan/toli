@@ -162,3 +162,54 @@ describe("the disk keeper in the minute tick", () => {
         expect(existsSync(join(alpha, "web", "node_modules", "pkg", "index.js"))).toBe(true);
     });
 });
+
+describe("the disk keeper switched off (capacity.diskKeep false)", () => {
+    keeperTest("a jawan start and a tick under the floor delete nothing and alert the inbox once per 6 h", () => {
+        const box = keeperBox();
+        const [alpha = ""] = clones(box, ["alpha"]);
+        setCapacity(box, { diskKeepGB: 20, diskKeep: false });
+        // 1 GB free on a 1000 GB disk: under the floor (20), the emergency level and the alert level.
+        box.stub("df", `kb=1048576\n${dfLine(1000)}`);
+        box.stub("omp", "true");
+        const env = { TOLI_DRY_RUN: "0" };
+        const alerts = (): string[] =>
+            (JSON.parse(box.ok(["inbox", "list", "--json"])) as { title: string }[])
+                .map((item) => item.title)
+                .filter((title) => title.startsWith("disk low on m1"));
+        const kept = (): void => {
+            expect(existsSync(join(alpha, "target", "debug", "deps", "libx.rlib"))).toBe(true);
+            expect(existsSync(join(alpha, "web", "dist", "app.js"))).toBe(true);
+        };
+        const briefPath = join(box.root, "brief.md");
+        writeFileSync(briefPath, "TOLI_BRIEF v1\nsay hi\n");
+        box.ok(["spawn", "--brief", briefPath, "--cwd", box.root, "--json"], { env });
+        kept();
+        expect(alerts()).toEqual(["disk low on m1: 1.0 GB free"]);
+        const alert = box.ok(["inbox", "list"]);
+        const item = alert.split("\n").find((line) => line.includes("disk low on m1")) ?? "";
+        const body = readFileSync(item.split("\t").at(-1) ?? "", "utf8");
+        expect(body).toContain(join(alpha, "target"));
+        expect(body).toContain("capacity.diskKeep is false, so toli deletes nothing on its own");
+
+        // Within 6 h of that alert the tick posts no other, and starts no keeper.
+        box.ok(["job", "tick"], { env });
+        expect(alerts()).toHaveLength(1);
+        // Past the 6 h, the tick alerts again (from a detached `disk alert`), still deleting nothing.
+        const later = new Date(Date.now() + 7 * 60 * 60_000).toISOString();
+        box.ok(["job", "tick"], { env, now: later });
+        expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain(
+            "disk keeper off (capacity.diskKeep false): free 1.0 GB < 20.0 GB: alerting the inbox in the background",
+        );
+        const deadline = Date.now() + 60_000;
+        while (alerts().length < 2 && Date.now() < deadline) Bun.sleepSync(200);
+        expect(alerts()).toHaveLength(2);
+        kept();
+        const diskLog = join(box.root, "logs", "disk.log");
+        expect(existsSync(diskLog) ? readFileSync(diskLog, "utf8") : "").not.toContain("deleted");
+
+        // By hand the keeper still runs, and says automatic deletion is off.
+        expect(box.ok(["disk", "keep", "--dry-run"], { env })).toContain(
+            "automatic deletion: off (capacity.diskKeep false)",
+        );
+    });
+});

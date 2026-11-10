@@ -16,6 +16,12 @@ export type CapacityConfig = {
      */
     diskKeepGB?: number;
     /**
+     * Whether toli frees disk on its own (src/fleet/disk.ts; default true): before every jawan start, in the minute
+     * tick and in its fallback sweep. false: toli deletes nothing by itself and only alerts the inbox when free disk
+     * runs low (src/fleet/disk-alert.ts); `bin/toli disk keep` by hand still deletes.
+     */
+    diskKeep?: boolean;
+    /**
      * Minutes without use after which the disk keeper sweeps an artifact out of a cargo target a build holds
      * (src/fleet/stale-sweep.ts; default 180).
      */

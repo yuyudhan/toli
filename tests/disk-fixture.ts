@@ -25,7 +25,7 @@ export function keeperBox(): Sandbox {
 }
 
 /** Merge `capacity` into the sandbox's config/machine.json. */
-export function setCapacity(box: Sandbox, capacity: Record<string, number>): void {
+export function setCapacity(box: Sandbox, capacity: Record<string, number | boolean>): void {
     const file = join(box.root, "config", "machine.json");
     const machine = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
     writeFileSync(file, JSON.stringify({ ...machine, capacity }));
