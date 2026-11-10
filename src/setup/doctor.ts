@@ -5,9 +5,10 @@ import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { out, printJson, run } from "../core/util.ts";
-import { fleetStatus } from "../fleet/pick.ts";
-import { availabilityLine, capacityFor } from "../fleet/resources.ts";
+import { out, printJson, readJson, run } from "../core/util.ts";
+import { interactiveLeadPid, leadServiceStatus } from "../fleet/lead.ts";
+import { availabilityLine, fleetStatus } from "../fleet/pick.ts";
+import { capacityFor } from "../fleet/resources.ts";
 import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
@@ -127,22 +128,37 @@ function forgeChecks(): Check[] {
 }
 
 /**
- * A worker's results wait in `state/outbox/` while its coordinator is unreachable; the minute tick retries them. A
- * backlog means results are not reaching the coordinator (wrong `coordinator.ssh`, ssh key, host key, network).
+ * Messages wait in `state/outbox/` while the machine they go to is unreachable; the minute tick retries them. A
+ * worker's results go to its coordinator; delegations, delegated-task reports and `talk` messages go to the machine
+ * they name. A backlog means they are not arriving (wrong ssh name, ssh key, host key, network).
  */
-function outboxCheck(coordinatorSsh: string): Check {
+function outboxCheck(coordinatorSsh: string | undefined): Check {
     const dir = paths.outboxDir();
     // Queued items, plus ones a tick has claimed for sending (`<id>.json.sending-<pid>`).
     const queued = existsSync(dir) ? readdirSync(dir).filter((file) => /\.json(\.sending-\d+)?$/.test(file)) : [];
     const count = queued.length;
-    if (count === 0) return { level: "ok", name: "outbox", detail: "no results waiting for the coordinator" };
+    if (count === 0)
+        return {
+            level: "ok",
+            name: "outbox",
+            detail:
+                coordinatorSsh === undefined
+                    ? "no messages waiting for other machines"
+                    : "no results waiting for the coordinator",
+        };
+    const hosts = new Set<string>();
+    for (const file of queued) {
+        const target = readJson<{ to?: { ssh?: string } } | null>(join(dir, file), null)?.to?.ssh ?? coordinatorSsh;
+        if (target !== undefined) hosts.add(target);
+    }
     const oldestMs = Math.min(...queued.map((file) => statSync(join(dir, file)).mtimeMs));
     const minutes = Math.max(0, Math.round((Date.now() - oldestMs) / 60_000));
     const age = minutes < 120 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
+    const checks = [...hosts].map((host) => `\`ssh ${host} true\``).join(", ");
     return {
         level: "warn",
         name: "outbox",
-        detail: `${count} result${count === 1 ? "" : "s"} waiting in state/outbox/ (oldest ${age}): check \`ssh ${coordinatorSsh} true\` works; the minute tick retries`,
+        detail: `${count} result${count === 1 ? "" : "s"} waiting in state/outbox/ (oldest ${age}): check ${checks} works; the minute tick retries`,
     };
 }
 
@@ -229,7 +245,7 @@ export async function runChecks(): Promise<Check[]> {
                 ? ` -> coordinator ${machine.coordinator.ssh}:${machine.coordinator.root}`
                 : "";
             checks.push({ level: "ok", name: "machine", detail: `${machine.name} (${machine.role})${coordinator}` });
-            if (machine.coordinator) checks.push(outboxCheck(machine.coordinator.ssh));
+            checks.push(outboxCheck(machine.role === "worker" ? machine.coordinator?.ssh : undefined));
             if (Bun.which("cargo", { PATH: process.env.PATH ?? "" })) {
                 const config = cargoConfigPath();
                 const cargoJobs = capacityFor(machine, availableParallelism()).cargoJobs;
@@ -291,7 +307,27 @@ export async function runChecks(): Promise<Check[]> {
     if (schedule.missingBun !== null)
         checks.push({ level: "warn", name: "scheduler", detail: missingBunWarning(schedule.missingBun) });
     if (schedule.cronLeftover) checks.push({ level: "warn", name: "scheduler", detail: CRON_LEFTOVER_WARNING });
+    checks.push(leadCheck());
     return checks;
+}
+
+/** The lead is served when its service is installed in the scheduler in use, or an interactive lead is open. */
+function leadCheck(): Check {
+    const service = leadServiceStatus();
+    if (service.installed)
+        return {
+            level: "ok",
+            name: "lead",
+            detail: `${service.scheduler} lead service installed${service.running ? " and running" : ", not running"}`,
+        };
+    const interactive = interactiveLeadPid();
+    if (interactive !== null)
+        return { level: "ok", name: "lead", detail: `interactive lead session open (pid ${interactive})` };
+    return {
+        level: "warn",
+        name: "lead",
+        detail: `${service.scheduler} lead service not installed: run bin/toli lead install`,
+    };
 }
 
 /** Prints `ok|warn|fail <name> <detail>` per check; returns the process exit code (1 only on a fail). */

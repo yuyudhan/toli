@@ -1,6 +1,6 @@
-// `bin/toli exec`: the target's side of `bin/toli remote`. Runs the stdin prompt in headless omp here, recorded as a
-// jawan run on the model this machine's tiers pick, with no time limit unless one was asked for; a run that stalls is
-// stopped and its own omp session resumed.
+// `bin/toli exec`: runs the stdin prompt in headless omp here, recorded as a jawan run on the model this machine's
+// tiers pick, with no time limit unless one was asked for; a run that stalls is stopped and its own omp session
+// resumed. A prompt issued by another machine is refused: work crosses machines only by delegation (docs/sardars.md).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Args, parseMinutes } from "../core/args.ts";
@@ -29,6 +29,7 @@ import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.t
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { keepDiskBeforeWork } from "./disk.ts";
 import {
+    DELEGATE_POINTER,
     EXEC_MAX_MINUTES_ENV,
     EXEC_PROJECT_ENV,
     EXEC_TASK_TIER_ENV,
@@ -70,8 +71,9 @@ function execRequest(): { tier: Tier | null; taskTier: Tier | null; work: WorkTy
  * `toli exec`: run the stdin prompt in headless omp here. It is recorded as a jawan run (state/jawans/, so `runs`,
  * `digest` and the jawan slots see it) and counted as load (state/runs/) for its lifetime; its output streams back
  * to the caller and into the run's output.log, and the run ends done or failed with omp's exit. The run carries the
- * issuing machine and task in its environment, so a `bin/toli push` in it is logged as theirs. There is no wall-clock
- * limit unless `bin/toli remote --max-time` set `TOLI_EXEC_MAX_MINUTES`; a run that shows no progress for
+ * issuing machine and task in its environment, so a `bin/toli push` in it is logged as theirs. The issuer is this
+ * machine: `--from` naming another machine is refused. There is no wall-clock limit unless `TOLI_EXEC_MAX_MINUTES`
+ * sets one; a run that shows no progress for
  * capacity.stallMinutes is stopped, and a stalled or limited run without a report resumes its own omp session (up to
  * capacity.autoResume times). The model comes from this machine's tiers (`TOLI_EXEC_TIER`, the prompt's Tier: line,
  * `TOLI_EXEC_WORK`); a run stopped by a rate or usage limit retries once on a fallback model, never waiting for a reset.
@@ -79,13 +81,15 @@ function execRequest(): { tier: Tier | null; taskTier: Tier | null; work: WorkTy
 export async function execCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { values: ["from", "task"] });
     args.maxPositional(0);
+    const machine = loadMachine();
+    const from = requireName("machine", args.str("from") ?? machine.name);
+    // Refused before stdin is read or anything recorded: a jawan here answers only to this machine's lead.
+    if (from !== machine.name) throw new ToliError(`exec: prompt issued by ${from}: ${DELEGATE_POINTER}`);
     const prompt = readStdin();
     if (prompt.trim() === "") throw new ToliError("exec needs the prompt on stdin");
-    const machine = loadMachine();
-    const maxMinutes = parseMinutes(process.env[EXEC_MAX_MINUTES_ENV]) ?? null;
-    const from = requireName("machine", args.str("from") ?? machine.name);
     const task = args.str("task") ?? null;
     if (task !== null) requireName("task", task);
+    const maxMinutes = parseMinutes(process.env[EXEC_MAX_MINUTES_ENV]) ?? null;
     const projectEnv = process.env[EXEC_PROJECT_ENV];
     const project = projectEnv === undefined || projectEnv === "" ? null : requireName("project", projectEnv);
     const request = execRequest();

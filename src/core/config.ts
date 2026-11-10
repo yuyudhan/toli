@@ -86,6 +86,11 @@ export type Machine = {
      * --wake` every `fleetCheckMinutes` (default 60) to name idle machines and such tasks, away mode included.
      */
     oversight?: { staleTaskMinutes?: number; fleetCheckMinutes?: number };
+    /**
+     * This machine's lead service (src/fleet/lead.ts, docs/sardars.md): every `balanceMinutes` (default 30) it compares
+     * queue depths across the fleet and offers or asks for work when the gap is at least `balanceGap` (default 3).
+     */
+    lead?: { balanceMinutes?: number; balanceGap?: number };
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

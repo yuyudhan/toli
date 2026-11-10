@@ -35,27 +35,32 @@ gatekeeping Malik's approvals, and relaying results, and staying free to talk to
 
 ## 3. Choose the machine
 
-Malik has several machines and wants them used when they are free. Availability steers where work goes; it never
-blocks work, and there is no locking between jawans.
+Malik has several machines and wants them all used. Each machine has its own Sardar that dispatches only its own
+jawans (docs/sardars.md); you dispatch only here and hand work for another machine to its Sardar. Queues steer where
+work goes, never CPU, load or memory; there is no locking between jawans.
 
-- The project is cloned here (`bin/toli project list --json` shows `cloned: true`) and this machine is available
-  (`bin/toli resources`): run it locally (step 4 onward).
-- Heavy builds or test suites, a busy local machine, or a project not cloned here: run, through `bash` with
-  `async: true` and `timeout: 0` (it can take up to an hour; never in the foreground):
+- `bin/toli pick --project <project>` ranks machines by task-queue depth, shortest first (ties: the one with the
+  clone, then this machine, then name). It prints `local` when this machine wins: run it here (step 4 onward).
+- Another machine wins: record the task and write its brief as usual (step 4), then, instead of spawning, hand it
+  to that machine's Sardar:
 
-        bin/toli remote auto "<Malik's request, verbatim>" --project <project>
+        bin/toli delegate <machine> "<short title>" --brief data/projects/<project>/briefs/T<n>.md \
+          --project <project> --for T<n> --shape ship|scout [--tier <tier>] --note "<Malik's words>"
 
-    It picks the best available machine (this machine wins near-ties, then one that already has the clone). If it
-    prints `local`, continue at step 4 here. Otherwise it clones the project on that machine if needed, runs the
-    request there, and saves the output in `data/projects/<project>/runs/<stamp>-<machine>.md`. Tell Malik in one line where it went
-    and end the turn; the output arrives as a new turn, and you relay its outcome. `bin/toli pick --project <project>`
-    answers "where" without dispatching.
+    It adds the task to that machine's backlog, wakes its Sardar (who clones the project if needed and dispatches
+    its own jawans) and prints the fleet id `<machine>/T<n>`; `--for` marks your local task as active with that id.
+    Unreachable machines get it from `state/outbox/` once they answer. Tell Malik in one line where it went and end
+    the turn.
 
-- Several independent tasks (a toli): spread them across machines (one async `remote auto` per task, or
-  `bin/toli remote <machine>` with the machines `bin/toli fleet status` shows as available) instead of stacking them
-  on one machine.
-- Nothing available (`pick`/`remote auto` exit 2 with each machine's reasons): queue it with
-  `bin/toli task add ...` (leave it queued) and tell Malik which machines are busy and why.
+- Several independent tasks (a toli): spread them by delegating to the shortest queues (`bin/toli fleet queues`,
+  run async) instead of stacking them on one machine.
+- `pick` exits 2 only when no machine is reachable or qualifies (each machine's reason is printed): queue it with
+  `bin/toli task add ...` (leave it queued) and tell Malik why.
+
+Work also arrives from other Sardars: a `delegated T<n> from <machine>` wake is a task of ours; dispatch it like any
+other (its brief is already saved). Results and holds of tasks you delegated come back as wakes
+(`<machine>/T<n> done|held|dropped: ...`): relay them, and record Malik's answer to a delegated hold with
+`bin/toli task answer <machine>/T<n> "<his words>"`, which goes to the owning machine.
 
 ## 4. Record and brief
 

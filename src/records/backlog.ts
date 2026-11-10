@@ -1,12 +1,26 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
-import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import {
+    isValidName,
+    now,
+    out,
+    printJson,
+    readJson,
+    requireName,
+    ToliError,
+    withLock,
+    writeJsonAtomic,
+} from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { findProject } from "../projects/projects.ts";
 import type { Workspace } from "../projects/strategy.ts";
+import { recordDecision } from "./decisions.ts";
+import { reportDue, reportToDelegator } from "./delegation-report.ts";
+import { listFleet, routeToOwner } from "./fleet-tasks.ts";
 import { answerWake, briefPath } from "./stale.ts";
+
+/** Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there. */
+export type DelegatedBy = { machine: string; task?: string; id: string; at: string };
 
 /** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
 export type TaskWorkspace = { strategy: Workspace; path: string; branch: string | null; base: string | null };
@@ -63,6 +77,10 @@ export type Task = {
     updatedAt: string;
     startedAt?: string;
     doneAt?: string;
+    /** Set on a task another machine's lead delegated here: its report goes back to that machine. */
+    delegatedBy?: DelegatedBy;
+    /** Fleet ids (`<machine>/T<n>`) of tasks this one was delegated as. */
+    delegatedTo?: string[];
 };
 
 export type BacklogFile = { nextId: number; tasks: Task[] };
@@ -82,15 +100,21 @@ export function updateBacklog<T>(fn: (backlog: BacklogFile) => T): T {
     });
 }
 
-/** Mutate one task by id under the backlog lock and return a copy of the result. */
+/**
+ * Mutate one task by id under the backlog lock and return a copy of the result. A delegated task that becomes done,
+ * held or dropped reports to its delegator once the lock is released (src/records/delegation-report.ts).
+ */
 export function updateTask(id: string, fn: (task: Task) => void): Task {
-    return updateBacklog((backlog) => {
+    const { before, after } = updateBacklog((backlog) => {
         const task = backlog.tasks.find((entry) => entry.id === id.toUpperCase());
         if (!task) throw new ToliError(`unknown task "${id}"`);
+        const copy = structuredClone(task);
         fn(task);
         task.updatedAt = now().toISOString();
-        return { ...task };
+        return { before: copy, after: { ...task } };
     });
+    if (reportDue(before, after)) reportToDelegator(after);
+    return after;
 }
 
 function parseShape(value: string | undefined, fallback: Shape): Shape {
@@ -105,6 +129,11 @@ function describe(task: Task): string {
     if (task.agent) extras.push(`agent: ${task.agent}`);
     if (task.commit) extras.push(`commit: ${task.commit}`);
     if (task.report) extras.push(`report: ${task.report}`);
+    if (task.delegatedBy)
+        extras.push(
+            `delegated by ${task.delegatedBy.machine}${task.delegatedBy.task ? `/${task.delegatedBy.task}` : ""}`,
+        );
+    if (task.delegatedTo?.length) extras.push(`delegated to ${task.delegatedTo.join(", ")}`);
     return `${task.id}\t${task.status}\t${task.project}\t${task.shape}\t${task.title}${extras.length ? `\t(${extras.join("; ")})` : ""}`;
 }
 
@@ -136,14 +165,23 @@ function add(argv: string[]): void {
     out(id);
 }
 
-function list(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json"], values: ["status", "project"] });
+/** `task list`: synchronous for this machine's tasks; with `--fleet` it returns the ssh refresh's promise. */
+function list(argv: string[]): Promise<void> | undefined {
+    const args = new Args(argv, { booleans: ["json", "fleet", "cached"], values: ["status", "project"] });
     args.maxPositional(0);
     const status = args.str("status");
     if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
         throw new ToliError(`--status must be one of ${STATUSES.join(", ")}`);
     }
     const project = args.str("project");
+    if (args.bool("fleet"))
+        return listFleet({
+            json: args.bool("json"),
+            cachedOnly: args.bool("cached"),
+            status: STATUSES.find((entry) => entry === status),
+            project,
+        });
+    if (args.bool("cached")) throw new ToliError("--cached goes with --fleet");
     const tasks = loadBacklog().tasks.filter(
         (task) =>
             (status === undefined || task.status === status) && (project === undefined || task.project === project),
@@ -284,48 +322,31 @@ function hold(argv: string[]): void {
 }
 
 /**
- * `task answer <id> "<answer>"`: record the user's words verbatim, release the task, say it is ready to dispatch, and
- * name (and post as a wake) every task waiting on it, so the lead re-dispatches them in the same turn.
+ * `task answer <id> "<answer>" [--from <machine>]`: record the user's words verbatim, release the task, say it is
+ * ready to dispatch, and name (and post as a wake) every task waiting on it, so the lead re-dispatches them in the
+ * same turn. `--from`: the answer was forwarded by another machine's lead (`task answer <this machine>/T<n>` there),
+ * which the task's notes record; the wake posted here makes this machine's lead dispatch it.
  */
 function answer(argv: string[]): void {
-    const args = new Args(argv);
+    const args = new Args(argv, { values: ["from"] });
     args.maxPositional(2);
     const reply = args.pos(1, "answer");
+    const from = args.str("from");
+    if (from !== undefined) requireName("machine", from);
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
         const chosen = matchOption(entry.options ?? [], reply);
         entry.answer = reply;
         entry.answeredAt = now().toISOString();
-        entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}`);
+        const via = from === undefined ? "" : ` (recorded by ${from}'s lead)`;
+        entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}${via}`);
         entry.status = entry.startedAt === undefined ? "queued" : "active";
     });
     out(describe(task));
     if (isValidName(task.project)) recordDecision(task, reply);
-    out(
-        `unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`})`,
-    );
+    const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
+    out(`unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${brief})`);
     for (const line of answerWake(task, loadBacklog().tasks)) out(line);
-}
-
-/** Append the held question, its options, and the user's verbatim answer to `data/projects/<p>/decisions.md`. */
-function recordDecision(task: Task, reply: string): void {
-    const file = paths.projectDecisions(task.project);
-    const options = task.options ?? [];
-    const chosen = matchOption(options, reply);
-    const lines = [`- Q: ${task.question ?? ""}`];
-    if (options.length > 0)
-        lines.push(
-            `- Options: ${options.map((option, index) => `${index + 1}. ${option.choice} => ${option.outcome}`).join("; ")}`,
-        );
-    if (task.recommend !== undefined) lines.push(`- Recommended: ${task.recommend}`);
-    lines.push(`- A: ${reply}`);
-    if (chosen !== undefined) lines.push(`- Chosen: ${chosen.choice} => ${chosen.outcome}`);
-    withLock(paths.lock("decisions"), () => {
-        mkdirSync(dirname(file), { recursive: true });
-        const head = existsSync(file) ? "" : `# ${task.project} decisions\n`;
-        const day = now().toISOString().slice(0, 10);
-        appendFileSync(file, `${head}\n## ${day} ${task.id}: ${task.title}\n\n${lines.join("\n")}\n`);
-    });
 }
 
 function drop(argv: string[]): void {
@@ -337,15 +358,16 @@ function drop(argv: string[]): void {
     out(describe(task));
 }
 
-export function taskCommand(argv: string[]): void {
+/** Run one `task` subcommand; only `list --fleet` returns a promise (callers await it), so the rest throw synchronously. */
+export function taskCommand(argv: string[]): Promise<void> | undefined {
     const [sub, ...rest] = argv;
+    if (sub !== undefined && routeToOwner(sub, rest)) return;
     switch (sub) {
         case "add":
             add(rest);
             break;
         case "list":
-            list(rest);
-            break;
+            return list(rest);
         case "start":
             start(rest);
             break;

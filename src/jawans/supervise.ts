@@ -16,8 +16,8 @@ import { now, ToliError, warn } from "../core/util.ts";
 import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../fleet/resources.ts";
 import { harnessConfig, headlessCommand } from "../harness/harness.ts";
 import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.ts";
-import { notify } from "../jobs/outbox.ts";
 import { isLiveStack } from "../projects/projects.ts";
+import { addInboxItem } from "../records/inbox.ts";
 import { autoResume } from "./continue.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
@@ -93,9 +93,10 @@ export function outcomeMessage(run: JawanRun, output: string): { title: string; 
     return { title, body: lines.join("\n") };
 }
 
+/** Jawans report only to their own machine's lead (docs/sardars.md): the outcome goes to this machine's inbox. */
 function postOutcome(machine: Machine, run: JawanRun): void {
     const { title, body } = outcomeMessage(run, tail(run.logPath, OUTPUT_TAIL));
-    const inbox = notify(machine, title, body, run.id);
+    const inbox = addInboxItem(machine.name, title, body);
     updateRun(run.id, (record) => {
         record.inbox = inbox;
     });

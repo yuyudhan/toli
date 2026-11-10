@@ -110,8 +110,8 @@ root (`bin/toli exec`, scheduled jobs), and every headless omp jawan working els
 omp jawans run with `--wait-async`: a turn that ends while an async `task` subagent, a background `bash` build, or a
 poll the run started is still going does not end the run. omp waits for that work and starts another turn with each
 result, until nothing the run owns is left (or an explicit `--max-time` stops it). Without the flag, print mode exits
-at the first turn that yields and cancels that work. The same flags apply to `bin/toli exec` (and so
-`bin/toli remote`) and scheduled headless jobs.
+at the first turn that yields and cancels that work. The same flags apply to `bin/toli exec` (local headless prompts)
+and scheduled headless jobs.
 
 Headless commands (`src/harness/harness.ts`):
 
@@ -172,10 +172,10 @@ default. `bin/toli spawn --dry-run [--work w] [--tier t] [--brief f]` prints the
 without writing anything.
 
 **Every path** resolves the same way on the machine that runs the work: `spawn` (and its queued starts and automatic
-continuations), `bin/toli remote` / `remote auto` (its `--tier` and `--work`, else the task's tier and shape, travel to
-the target as `TOLI_EXEC_TIER` / `TOLI_EXEC_TASK_TIER` / `TOLI_EXEC_WORK`, ranked as on spawn, and the target picks the model with its own config; a `Tier:` line
-travels inside the prompt), and scheduled headless jobs (`job add --tier`, else the shape: scout and ship are
-`standard`). A lead's in-session subagents (omp `task`, Claude's Agent tool) are started by the lead, not toli: the
+continuations), `bin/toli exec` (local only), and scheduled headless jobs (`job add --tier`, else the shape: scout and
+ship are `standard`). A delegated task's `--tier` becomes the task's tier on the receiving machine, whose lead spawns
+it there and picks the model with that machine's own config. A lead's in-session subagents (omp `task`, Claude's
+Agent tool) are started by the lead, not toli: the
 toli-dispatch skill tells it to pass the tier's model to them.
 
 Configuration, all optional, in `config/machine.json`:
@@ -197,7 +197,7 @@ a rate or usage limit (`429`, `rate_limit_error`, "usage limit" in the tail of i
 standard for `ship`, `verify`, `release` or work of unknown type (scout and mechanical may drop to light); else on the
 same model after the reset the error names (15 minutes when it names none), unless that is more than
 `limitWaitMinutes` (default 300) away. The decision is logged in the run's output and recorded as `fallback` on the run.
-`bin/toli exec` (remote runs) and scheduled jobs never wait for a reset: they only switch model.
+`bin/toli exec` and scheduled jobs never wait for a reset: they only switch model.
 
 **Records:** each run records `harness`, `model`, `tier` and `modelSource` (`bin/toli runs`, `run status`, the
 outcome in the inbox), plus `usage` (tokens, cost) when the harness prints them (Codex's `tokens used`; omp and Claude

@@ -35,6 +35,10 @@ stow; if they are wrong, tell Malik and offer a ship task.
 `data/preferences.md` and `data/learnings.md` load into every session and count against the budget; notes load only into
 briefs for their project.
 
+A lesson other machines' Sardars should know too (above all Malik's own words) is shared after it is written here:
+`bin/toli share "<learning>" [--to <machine>|--all] --source "<his words or the evidence>" [--from-user]`; each
+Sardar adopts, adapts or declines it and the answer comes back as a wake (docs/sardars.md).
+
 ## Entries and lifetimes
 
 An entry is a top-level bullet (with its indented lines) or a `## YYYY-MM-DD ...` heading section. Date it right

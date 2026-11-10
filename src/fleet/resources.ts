@@ -9,6 +9,8 @@ import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writ
 import { type ModelTotal, modelTotalsToday } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { busyBuildSlots } from "./build-slots.ts";
+import { availabilityLine } from "./pick.ts";
+import { localQueue, type Queue } from "./queue.ts";
 
 /**
  * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskKeep`, `diskSweepStaleMinutes`, `diskBuildTools`
@@ -85,6 +87,8 @@ export type Resources = {
     /** Heavy-build slots (src/fleet/build-slots.ts) and how many are held now; absent from machines on an older toli. */
     buildSlots?: number;
     buildSlotsBusy?: number;
+    /** The work queue that ranks machines; null from a machine on a toli older than queue ranking. */
+    queue: Queue | null;
 };
 
 /** A unit of work counted as load on this machine: `state/runs/<runId>.json`. */
@@ -326,6 +330,7 @@ export function localResources(): Resources {
         reasons,
         at: now().toISOString(),
         models: modelTotalsToday(),
+        queue: localQueue(),
     };
 }
 
@@ -356,25 +361,6 @@ export function countActiveRuns(): number {
         else rmSync(path, { force: true });
     }
     return active;
-}
-
-// ---------------------------------------------------------------- fleet
-
-/** Line shown by `fleet status`, `digest --fleet` and doctor. */
-export function availabilityLine(entry: FleetEntry): string {
-    const name = `${entry.machine}${entry.local ? " (this machine)" : ""}`;
-    const state = entry.available ? "available" : `unavailable: ${entry.reasons.join("; ")}`;
-    const r = entry.resources;
-    if (!r) return `${name}: ${state}`;
-    const detail = [
-        `load ${r.load1}/${r.cpus} cpus`,
-        `mem ${r.memAvailableMB}/${r.memTotalMB} MB free`,
-        `disk ${r.diskFreeGB} GB free`,
-        `runs ${r.activeRuns}/${r.maxRuns}`,
-        ...(r.buildSlots === undefined ? [] : [`builds ${r.buildSlotsBusy ?? 0}/${r.buildSlots}`]),
-        `projects ${r.projects.length === 0 ? "none" : r.projects.join(",")}`,
-    ].join(", ");
-    return `${name}: ${state} (${detail})`;
 }
 
 // ---------------------------------------------------------------- commands

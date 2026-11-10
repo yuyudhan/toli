@@ -14,7 +14,7 @@ project lives in `data/projects/<name>/`:
 | `data/projects/<name>/notes.md`     | stack, commands, URLs, proof, delivery, gotchas (every brief) |
 | `data/projects/<name>/briefs/`      | each dispatched brief, `T<n>.md`                              |
 | `data/projects/<name>/reports/`     | scout and task reports, `T<n>.md`                             |
-| `data/projects/<name>/runs/`        | jawan and remote run outputs                                  |
+| `data/projects/<name>/runs/`        | jawan run outputs (and old remote run outputs)                |
 | `data/projects/<name>/decisions.md` | held questions and Malik's answers (`bin/toli task answer`)   |
 
 Cross-project files stay at the top of `data/` (`preferences.md`, `learnings.md`, `jobs/`, `inbox/`, `archive/`,
@@ -83,10 +83,11 @@ unless he granted that project a standing grant in plain words; merging always n
     >
     > Reply like `clone, same-branch, no, detect` or `link ~/code/moneytrace, worktree, mr, yes, bun test`.
 
-3. On his answer, decide where the checkout lives. Default is this machine. If Malik names another machine, run it
-   there through `bash` with `async: true` and `timeout: 0`:
-   `bin/toli remote <machine> "/add-project <name> <git-url> <his answers verbatim>"`, and end the turn. A `link`
-   path is a path on the machine that has it.
+3. On his answer, decide where the checkout lives. Default is this machine. If Malik names another machine, hand it
+   to that machine's Sardar: write a short brief file with `/add-project <name> <git-url> <his answers verbatim>`,
+   run `bin/toli delegate <machine> "/add-project <name>" --brief <file>` (or, for a quick word,
+   `bin/toli talk <machine> "/add-project <name> <git-url> <his answers verbatim>"`), and end the turn; that Sardar
+   does steps 4-6 there and its report comes back as a wake. A `link` path is a path on the machine that has it.
 4. Dispatch one `task` jawan (effort lo; it writes files, so not the read-only `scout` agent) whose brief says:
 
         bin/toli project add <name> <git-url>          (clone)   |   bin/toli project link <name> <path>   (link)
@@ -143,7 +144,8 @@ freshness (older than 30 days is stale). Each gap says who fills it: `ask the us
     bin/toli project ensure <name> <git-url> [--mode m]
 
 Idempotent: no-op when registered and cloned, registers an existing unregistered clone, otherwise clones and
-registers. `bin/toli remote auto --project` runs it on the target machine before dispatching.
+registers. For a task delegated to a machine without the clone, the receiving Sardar's jawan runs it there (the
+delegated task's notes name the command with the URL).
 
 ## Listing
 

@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, writeTextAtomic } from "../core/util.ts";
-import { notify } from "../jobs/outbox.ts";
+import { addInboxItem } from "../records/inbox.ts";
 import { buildDirs, projectCheckouts, sizeGB } from "./disk-scan.ts";
 import { describe, gb, machineFloor, startDetachedDisk } from "./disk-state.ts";
 import { diskEmergencyGB, measureVolume } from "./resources.ts";
@@ -94,8 +94,10 @@ function postDiskAlert(machine: Machine): string {
         listed,
         "",
         "To free space: `bin/toli disk keep --dry-run` lists what the keeper would delete, `bin/toli disk keep` deletes it.",
+        "This machine's disk is its own lead's job (docs/sardars.md): decide what goes; anything that is not rebuildable",
+        "build output waits on the user as a hold. Other machines' leads only advise.",
     ].join("\n");
-    return notify(machine, title, body, `disk-alert-${now().getTime()}`);
+    return addInboxItem(machine.name, title, body);
 }
 
 /** `toli disk alert`: post the low-disk alert now, whatever free disk and the last alert are. */

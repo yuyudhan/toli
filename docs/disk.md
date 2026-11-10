@@ -42,8 +42,9 @@ that machine: before a jawan start, in the tick, the background keeper and the f
 nothing on its own; `bin/toli disk keep` run by hand still works as below, and says `automatic deletion: off`. Low
 disk only alerts: before a jawan start and in every tick toli reads free disk, and when it is under 10 GB (or the
 emergency level, when that is higher) it posts one inbox item, at most once per machine every 6 hours
-(`state/disk-alert.stamp`), titled `disk low on <machine>`, naming the biggest build folders so the lead decides what
-goes. A worker forwards it to the coordinator. The tick posts it from a detached `bin/toli disk alert`, so sizing the
+(`state/disk-alert.stamp`), titled `disk low on <machine>`, naming the biggest build folders so that machine's own
+lead decides what goes ([sardars.md](sardars.md#each-machines-disk-is-its-own-leads-job)); it is not forwarded to the
+coordinator. The tick posts it from a detached `bin/toli disk alert`, so sizing the
 folders never holds the tick up; `bin/toli disk alert` by hand posts it at once. Any value but `true` or `false` also
 deletes nothing and says why.
 

@@ -1,8 +1,9 @@
-// `bin/toli fleet status|check`. The check is oversight that never pauses, away mode included: every reachable
-// machine with no active run while queued work (or an active task no live run works on) exists for a project
-// cloned there is an idle machine, and every active task with no live run on this machine or any reachable one is
-// named. `--wake` posts the findings as one inbox item (a `[toli wake]` for the lead); the coordinator's tick starts
-// `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no job prompt can skip it.
+// `bin/toli fleet status|queues|check` (queues: src/fleet/queues.ts). The check is oversight that never pauses, away
+// mode included: every reachable machine with no active run while queued work (or an active task no live run works
+// on) exists for a project cloned there is an idle machine, and every active task with no live run on this machine
+// or any reachable one is named. `--wake` posts the findings as one inbox item (a `[toli wake]` for the lead); the
+// coordinator's tick starts `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no job prompt
+// can skip it.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { relative, resolve } from "node:path";
@@ -30,8 +31,9 @@ import {
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
-import { fleetStatus } from "./pick.ts";
-import { availabilityLine, type FleetEntry } from "./resources.ts";
+import { availabilityLine, fleetStatus } from "./pick.ts";
+import { queuesCommand } from "./queues.ts";
+import type { FleetEntry } from "./resources.ts";
 
 export const DEFAULT_FLEET_CHECK_MINUTES = 60;
 const REMOTE_CONNECT_SECONDS = 10;
@@ -289,11 +291,13 @@ async function checkCommand(argv: string[]): Promise<void> {
     }
 }
 
-/** `toli fleet status [--json]` | `toli fleet check [--json] [--wake] [--local]`. */
+/** `toli fleet status [--json]` | `toli fleet queues [--json]` | `toli fleet check [--json] [--wake] [--local]`. */
 export async function fleetCommand(argv: string[]): Promise<void> {
     const [sub, ...rest] = argv;
     if (sub === "check") return await checkCommand(rest);
-    if (sub !== "status") throw new ToliError("usage: toli fleet status [--json] | check [--json] [--wake] [--local]");
+    if (sub === "queues") return await queuesCommand(rest);
+    if (sub !== "status")
+        throw new ToliError("usage: toli fleet status [--json] | queues [--json] | check [--json] [--wake] [--local]");
     const args = new Args(rest, { booleans: ["json"] });
     args.maxPositional(0);
     const entries = await fleetStatus();

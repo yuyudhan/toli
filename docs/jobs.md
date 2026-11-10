@@ -51,8 +51,9 @@ result to `data/jobs/<name>/<stamp>.md`. On a worker machine the result is also 
 ## Results reach you
 
 On the same minute, `bin/toli wake` picks up new job results and inbox items, and the harness brings them into the
-chat (how each harness does it: [how-it-works.md](how-it-works.md#results-find-you)). The lead relays what matters
-in plain words and dispatches any follow-up work to jawans. Results stay in `/bearings` and `bin/toli digest` until
+chat (how each harness does it: [how-it-works.md](how-it-works.md#results-find-you)); with no lead session open,
+the lead service takes them in a headless turn ([sardars.md](sardars.md)). The lead relays what matters in plain
+words and dispatches any follow-up work to jawans. Results stay in `/bearings` and `bin/toli digest` until
 acknowledged:
 
     bin/toli job results [--unseen] [--json]
@@ -66,7 +67,8 @@ acknowledged:
     bin/toli schedule status
     bin/toli schedule uninstall
 
-Besides due jobs, every tick retries the worker outbox, marks stale runs as failed, once a week posts the
+Besides due jobs, every tick retries the outbox (results, alerts, delegations, delegated-task reports and `talk`
+messages waiting for an unreachable machine), marks stale runs as failed, once a week posts the
 `bin/toli prune` dry run to the inbox ([memory.md](memory.md#pruning)), and every 3 days starts the update check in
 the background ([install.md](install.md#update-check)). It also runs oversight that no job prompt can switch off,
 away mode included: active tasks no live run works on go to the inbox once, and on the coordinator `bin/toli fleet

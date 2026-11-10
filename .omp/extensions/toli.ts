@@ -24,7 +24,7 @@
 //     keeps retrying quietly, re-registers the session if that failed, and
 //     recovers silently once the CLI works again;
 //   - session_shutdown unregisters the session so the OS ticker takes over.
-// Headless runs (omp -p: the ticker, toli remote, spawned jawans) and subagent
+// Headless runs (omp -p: the ticker, the lead service's turns, spawned jawans) and subagent
 // sessions load this file too; they must not claim jobs, take results, get the
 // lead guidance or the guard, so everything is gated on the main TUI session.
 import { execFile, spawn } from "node:child_process";

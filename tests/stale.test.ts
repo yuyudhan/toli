@@ -134,15 +134,36 @@ describe("active tasks with no live run", () => {
         expect(inbox(box).length).toBeGreaterThan(before);
     });
 
-    test("bin/toli remote --task records the task, so its end is seen without a brief heading", () => {
+    test("a pre-cutover remote --task record names its task, so its end is seen without a brief heading", () => {
         const box = fleet(remoteSnapshot("m2"));
         box.stub("omp", "true");
         withProject(box, "alpha");
         box.ok(["task", "add", "alpha", "ship it"]);
         box.ok(["task", "start", "T1", "--agent", "remote:m2:bg_1"], { env: ENV, now: START });
-        box.ok(["remote", "m2", "do the work", "--task", "t1"], { env: ENV, now: "2026-03-04T08:05:00.000Z" });
-        const [record] = readdirSync(join(box.root, "data", "remote"));
-        expect(readFileSync(join(box.root, "data", "remote", record ?? ""), "utf8")).toContain("- task: T1\n");
+        // As `remote m2 "do the work" --task t1` wrote it before remote refused (docs/sardars.md).
+        mkdirSync(join(box.root, "data", "remote"), { recursive: true });
+        writeFileSync(
+            join(box.root, "data", "remote", "2026-03-04T08-05-00-000Z-m2.md"),
+            [
+                "# remote m2",
+                "",
+                "- from: m1",
+                "- to: m2 (host2:/srv/toli)",
+                "- task: T1",
+                "- started: 2026-03-04T08:05:00.000Z",
+                "- finished: 2026-03-04T08:05:00.000Z",
+                "- exit: 0",
+                "",
+                "## Prompt",
+                "",
+                "do the work",
+                "",
+                "## Output",
+                "",
+                "ran on m2",
+                "",
+            ].join("\n"),
+        );
         expect(next(box.ok(["digest"], { env: ENV, now: "2026-03-04T08:30:00.000Z" }))[0]).toStartWith(
             '  - T1 (alpha) is active but its run remote:m2:bg_1 ended 25m ago (data/remote/2026-03-04T08-05-00-000Z-m2.md); last report line: "ran on m2"; no answer recorded since',
         );

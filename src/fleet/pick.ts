@@ -2,22 +2,40 @@ import { Args } from "../core/args.ts";
 import { loadFleet, remoteToliCommand, sshArgs } from "../core/config.ts";
 import { out, printJson, runAsync } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
+import { type Queue, queueText } from "./queue.ts";
 import { type FleetEntry, localResources, type Resources } from "./resources.ts";
 
-export type Candidate = { machine: string; local: boolean; hasClone: boolean; score: number };
+/** Line shown by `resources`, `fleet status`, `digest --fleet` and doctor. */
+export function availabilityLine(entry: FleetEntry): string {
+    const name = `${entry.machine}${entry.local ? " (this machine)" : ""}`;
+    const state = entry.available ? "available" : `unavailable: ${entry.reasons.join("; ")}`;
+    const r = entry.resources;
+    if (!r) return `${name}: ${state}`;
+    const detail = [
+        queueText(r.queue),
+        `load ${r.load1}/${r.cpus} cpus`,
+        `mem ${r.memAvailableMB}/${r.memTotalMB} MB free`,
+        `disk ${r.diskFreeGB} GB free`,
+        `runs ${r.activeRuns}/${r.maxRuns}`,
+        ...(r.buildSlots === undefined ? [] : [`builds ${r.buildSlotsBusy ?? 0}/${r.buildSlots}`]),
+        `projects ${r.projects.length === 0 ? "none" : r.projects.join(",")}`,
+    ].join(", ");
+    return `${name}: ${state} (${detail})`;
+}
+
+/** A machine that may take the work; `depth` is its queue depth, null when its toli is too old to report one. */
+export type Candidate = { machine: string; local: boolean; hasClone: boolean; depth: number | null };
 
 export type Rejection = { machine: string; reasons: string[] };
 
 export type PickResult = {
     machine: string | null;
     local: boolean;
-    score: number | null;
+    depth: number | null;
     candidates: Candidate[];
     rejected: Rejection[];
 };
 
-/** Candidates whose score is within this of the best are ranked by preference (local, clone, name) instead. */
-const TIE_BAND = 0.1;
 const PROBE_CONNECT_SECONDS = 10;
 const PROBE_CAP_MS = 20_000;
 
@@ -55,6 +73,27 @@ export function parseResources(text: string): Resources {
     };
     const available = fields.get("available");
     if (typeof available !== "boolean") throw new Error("field available is not a boolean");
+    const rawQueue: unknown = fields.get("queue");
+    let queue: Queue | null = null;
+    if (rawQueue !== undefined) {
+        if (typeof rawQueue !== "object" || rawQueue === null || Array.isArray(rawQueue))
+            throw new Error("field queue is not an object");
+        const parts = new Map(Object.entries(rawQueue));
+        const count = (key: keyof Queue): number => {
+            const part = parts.get(key);
+            if (typeof part !== "number" || !Number.isInteger(part) || part < 0)
+                throw new Error(`field queue.${key} is not a count`);
+            return part;
+        };
+        queue = {
+            queued: count("queued"),
+            active: count("active"),
+            held: count("held"),
+            jawansRunning: count("jawansRunning"),
+            jawansQueued: count("jawansQueued"),
+            depth: count("depth"),
+        };
+    }
     return {
         machine: str("machine"),
         platform: str("platform"),
@@ -71,6 +110,7 @@ export function parseResources(text: string): Resources {
         available,
         reasons: strings("reasons"),
         at: str("at"),
+        queue,
     };
 }
 
@@ -127,26 +167,21 @@ export async function fleetStatus(): Promise<FleetEntry[]> {
     ];
 }
 
-/** min(cpu headroom, memory headroom) − activeRuns / maxRuns. */
-export function score(r: Resources): number {
-    const cpuBudget = r.cpus * r.maxLoadPerCpu;
-    const cpuHeadroom = cpuBudget > 0 ? 1 - r.load1 / cpuBudget : 0;
-    const memHeadroom = r.memTotalMB > 0 ? r.memAvailableMB / r.memTotalMB : 0;
-    return Math.min(cpuHeadroom, memHeadroom) - r.activeRuns / Math.max(1, r.maxRuns);
-}
-
 /**
- * Rank machines for one unit of work. With a project, a machine qualifies when it holds the clone, or when the
- * project's URL is known here (it can be cloned there).
+ * Rank machines for one unit of work by queue depth, shortest first; on equal depth a machine with the project's
+ * clone wins, then this machine, then name order. A machine whose toli reports no queue ranks after every known
+ * queue. Load, memory, disk and `available` never pass a machine over: a machine busy with builds but with an empty
+ * queue gets work first. Only an unreachable machine, or (with a project) one without the clone when the project's
+ * URL is not known here, is rejected.
  */
 export function rankMachines(entries: FleetEntry[], project?: { name: string; urlKnown: boolean }): PickResult {
     const candidates: Candidate[] = [];
     const rejected: Rejection[] = [];
     for (const entry of entries) {
-        if (!entry.available || !entry.resources) {
+        if (!entry.resources) {
             rejected.push({
                 machine: entry.machine,
-                reasons: entry.reasons.length > 0 ? entry.reasons : ["not available"],
+                reasons: entry.reasons.length > 0 ? entry.reasons : ["unreachable"],
             });
             continue;
         }
@@ -158,29 +193,29 @@ export function rankMachines(entries: FleetEntry[], project?: { name: string; ur
             });
             continue;
         }
-        candidates.push({ machine: entry.machine, local: entry.local, hasClone, score: score(entry.resources) });
+        candidates.push({
+            machine: entry.machine,
+            local: entry.local,
+            hasClone,
+            depth: entry.resources.queue?.depth ?? null,
+        });
     }
-    const best = Math.max(...candidates.map((candidate) => candidate.score));
-    const inBand = (candidate: Candidate): boolean => candidate.score >= best - TIE_BAND;
     candidates.sort((a, b) => {
-        const bandA = inBand(a);
-        const bandB = inBand(b);
-        if (bandA !== bandB) return bandA ? -1 : 1;
-        if (bandA) {
-            if (a.local !== b.local) return a.local ? -1 : 1;
-            if (a.hasClone !== b.hasClone) return a.hasClone ? -1 : 1;
-        } else if (a.score !== b.score) {
-            return b.score - a.score;
+        if (a.depth !== b.depth) {
+            if (a.depth === null) return 1;
+            if (b.depth === null) return -1;
+            return a.depth - b.depth;
         }
+        if (a.hasClone !== b.hasClone) return a.hasClone ? -1 : 1;
+        if (a.local !== b.local) return a.local ? -1 : 1;
         return a.machine < b.machine ? -1 : a.machine > b.machine ? 1 : 0;
     });
-    const rounded = candidates.map((candidate) => ({ ...candidate, score: Math.round(candidate.score * 1000) / 1000 }));
-    const winner = rounded[0];
+    const winner = candidates[0];
     return {
         machine: winner?.machine ?? null,
         local: winner?.local ?? false,
-        score: winner?.score ?? null,
-        candidates: rounded,
+        depth: winner?.depth ?? null,
+        candidates,
         rejected,
     };
 }
@@ -193,9 +228,9 @@ export async function pickMachine(projectName: string | undefined): Promise<Pick
     return rankMachines(entries, { name: projectName, urlKnown: Boolean(known?.url) });
 }
 
-export function noCandidateText(pick: PickResult): string {
+function noCandidateText(pick: PickResult): string {
     return [
-        "no machine available:",
+        "no machine qualifies:",
         ...pick.rejected.map((entry) => `  ${entry.machine}: ${entry.reasons.join("; ")}`),
     ].join("\n");
 }

@@ -187,14 +187,20 @@ describe("availability thresholds", () => {
     });
 });
 
-/** A reachable, available machine whose score is `1 - load1 / 10` (full memory headroom, no runs). */
-function machine(name: string, load1: number, options: { local?: boolean; projects?: string[] } = {}): FleetEntry {
+/** A reachable machine with `depth` queued tasks (null: a toli too old to report its queue). */
+function machine(
+    name: string,
+    depth: number | null,
+    options: { local?: boolean; projects?: string[]; load1?: number; available?: boolean } = {},
+): FleetEntry {
+    const available = options.available ?? true;
+    const reasons = available ? [] : ["load 50/10 cpus over 1"];
     const resources: Resources = {
         machine: name,
         platform: "linux",
         cpus: 10,
-        load1,
-        load5: load1,
+        load1: options.load1 ?? 0,
+        load5: options.load1 ?? 0,
         memTotalMB: 1000,
         memAvailableMB: 1000,
         diskFreeGB: 100,
@@ -202,53 +208,46 @@ function machine(name: string, load1: number, options: { local?: boolean; projec
         maxRuns: 2,
         maxLoadPerCpu: 1,
         projects: options.projects ?? [],
-        available: true,
-        reasons: [],
+        available,
+        reasons,
         at: "2026-10-29T00:00:00.000Z",
+        queue: depth === null ? null : { queued: depth, active: 0, held: 0, jawansRunning: 0, jawansQueued: 0, depth },
     };
-    return { machine: name, local: options.local ?? false, reachable: true, available: true, reasons: [], resources };
+    return { machine: name, local: options.local ?? false, reachable: true, available, reasons, resources };
 }
 
 describe("pick ranking", () => {
-    test("score is the smaller headroom minus the share of run slots in use", () => {
-        const entry = machine("m", 0);
-        if (!entry.resources) throw new Error("fixture");
-        entry.resources = { ...entry.resources, load1: 2, cpus: 4, memAvailableMB: 750, activeRuns: 1, maxRuns: 4 };
-        // cpu 1 - 2/4 = 0.5, memory 0.75 -> 0.5, minus 1/4
-        expect(rankMachines([entry]).score).toBe(0.25);
+    test("the shortest queue wins, whatever the load or availability", () => {
+        const pick = rankMachines([
+            machine("here", 2, { local: true }),
+            machine("busy", 0, { load1: 50, available: false }),
+        ]);
+        expect(pick).toMatchObject({ machine: "busy", local: false, depth: 0 });
+        expect(pick.candidates.map((candidate) => candidate.machine)).toEqual(["busy", "here"]);
     });
 
-    test("this machine wins when within 0.1 of the best", () => {
-        const pick = rankMachines([machine("remote", 4), machine("here", 4.5, { local: true })]);
-        expect(pick.machine).toBe("here");
-        expect(pick.local).toBe(true);
+    test("on equal depth the clone holder wins, then this machine, then name order", () => {
+        const entries = [
+            machine("beta", 1),
+            machine("here", 1, { local: true }),
+            machine("alpha", 1),
+            machine("holder", 1, { projects: ["x"] }),
+        ];
+        expect(rankMachines(entries, { name: "x", urlKnown: true }).candidates.map((c) => c.machine)).toEqual([
+            "holder",
+            "here",
+            "alpha",
+            "beta",
+        ]);
+        expect(rankMachines(entries).candidates.map((c) => c.machine)).toEqual(["here", "alpha", "beta", "holder"]);
     });
 
-    test("this machine loses when more than 0.1 behind", () => {
-        const pick = rankMachines([machine("remote", 4), machine("here", 5.5, { local: true })]);
-        expect(pick.machine).toBe("remote");
-        expect(pick.local).toBe(false);
-    });
-
-    test("a clone holder beats a slightly better machine without the clone", () => {
-        const pick = rankMachines([machine("fresh", 4), machine("holder", 4.5, { projects: ["x"] })], {
-            name: "x",
-            urlKnown: true,
-        });
-        expect(pick.machine).toBe("holder");
-    });
-
-    test("this machine is preferred over a clone holder in the band", () => {
-        const pick = rankMachines([machine("holder", 4, { projects: ["x"] }), machine("here", 4.5, { local: true })], {
-            name: "x",
-            urlKnown: true,
-        });
-        expect(pick.machine).toBe("here");
-    });
-
-    test("otherwise name order decides within the band", () => {
-        const pick = rankMachines([machine("beta", 4), machine("alpha", 4.5), machine("gamma", 9)]);
-        expect(pick.candidates.map((candidate) => candidate.machine)).toEqual(["alpha", "beta", "gamma"]);
+    test("a machine whose toli reports no queue ranks after every known queue but stays a candidate", () => {
+        const pick = rankMachines([machine("old", null, { local: true }), machine("deep", 9)]);
+        expect(pick.candidates).toEqual([
+            { machine: "deep", local: false, hasClone: false, depth: 9 },
+            { machine: "old", local: true, hasClone: false, depth: null },
+        ]);
     });
 
     test("without a known URL only clone holders qualify for a project", () => {
@@ -262,8 +261,7 @@ describe("pick ranking", () => {
         ]);
     });
 
-    test("no available machine yields no pick and keeps each machine's reasons", () => {
-        const busy: FleetEntry = { ...machine("busy", 0), available: false, reasons: ["2 of 2 runs active"] };
+    test("only unreachable machines are rejected; none left yields no pick with each machine's reasons", () => {
         const gone: FleetEntry = {
             machine: "gone",
             local: false,
@@ -272,11 +270,10 @@ describe("pick ranking", () => {
             reasons: ["unreachable: timeout"],
             resources: null,
         };
-        const pick = rankMachines([busy, gone]);
+        expect(rankMachines([machine("busy", 3, { available: false }), gone]).machine).toBe("busy");
+        const pick = rankMachines([gone]);
         expect(pick.machine).toBeNull();
-        expect(pick.rejected).toEqual([
-            { machine: "busy", reasons: ["2 of 2 runs active"] },
-            { machine: "gone", reasons: ["unreachable: timeout"] },
-        ]);
+        expect(pick.depth).toBeNull();
+        expect(pick.rejected).toEqual([{ machine: "gone", reasons: ["unreachable: timeout"] }]);
     });
 });

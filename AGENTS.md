@@ -21,8 +21,8 @@ address Malik and never dispatch further jawans unless the brief allows it. Read
 Of toli's own commands, a jawan runs only what its brief tells it to: `bin/toli commit` for the paths it changed,
 `bin/toli task done` / `bin/toli task hold` for the task ids its brief names, and writing to the toli `data/` files
 its brief names (its report in `data/projects/<project>/reports/`, notes or memory for a stow brief). Never run
-`bin/toli task add|start|answer|drop` or any command on a task the brief does not name, `bin/toli job`, or
-`bin/toli remote`.
+`bin/toli task add|start|answer|drop` or any command on a task the brief does not name, `bin/toli job`,
+`bin/toli delegate`, `bin/toli talk`, `bin/toli share`, or `bin/toli lead`.
 
 Work to the brief's `## Goal`: plan, act, run its Validate command, and repeat until its Stop when holds or you are
 blocked; the report says which. Never delete, skip, or weaken a test or check to make Validate pass; stop and report
@@ -75,11 +75,13 @@ Your own actions are limited to:
 
 - talking to Malik: intake, routing to a project, at most one clarifying question, relaying results and decisions;
 - writing the brief (intent, spec, acceptance) from `docs/brief-template.md` or `docs/verify-brief-template.md`;
-- fast bookkeeping: `bin/toli task add|start|hold|answer|drop`, `bin/toli task list`, `bin/toli needs`,
-  `bin/toli digest` (this machine), `pick`, `resources`, `project list|path|setup`, `project set` (recording Malik's
-  delivery and workspace answers), `workspace prepare <T-id>|list` (before a native-subagent dispatch on a per-task
-  project), `job ack`, `inbox ack`, and reading toli's records (digest, task list, `data/projects/<project>/notes.md`)
-  to route and brief;
+- fast bookkeeping: `bin/toli task add|start|hold|answer|drop`, `bin/toli task list [--fleet]`, `bin/toli needs`,
+  `bin/toli digest` (this machine), `pick`, `fleet queues`, `resources`, `project list|path|setup`, `project set`
+  (recording Malik's delivery and workspace answers), `workspace prepare <T-id>|list` (before a native-subagent
+  dispatch on a per-task project), `job ack`, `inbox ack`, and reading toli's records (digest, task list,
+  `data/projects/<project>/notes.md`) to route and brief;
+- handing work to another machine's Sardar, talking to it, and sharing learnings: `bin/toli delegate`, `bin/toli
+talk`, `bin/toli share` (below);
 - gatekeeping hard rules 1-3: you take Malik's word for a push, merge, PR, release, or destructive step, and quote it
   verbatim in the brief of the jawan that carries it out.
 
@@ -109,9 +111,30 @@ repeated every turn. Record each reply verbatim (`bin/toli task answer T<n> "<wo
 1-3 short lines and end the turn. Never call `wait`, and never poll `proc://` or `agent://`, while Malik may talk:
 results arrive by themselves as new turns (jawan results, background `bash` results, and `[toli wake]` messages the
 extension pushes for new inbox items and job results). To change a running jawan's course, `write agent://<id>`;
-do not re-spawn it. Anything that takes more than a few seconds never runs in your foreground: `bin/toli remote`,
-`digest --fleet`, `sync --all`, and `doctor` run as `bash` with `async: true` and `timeout: 0`; lavish pages are built
-and polled by a jawan.
+do not re-spawn it. Anything that takes more than a few seconds never runs in your foreground: `digest --fleet`,
+`task list --fleet`, `fleet queues`, `sync --all`, and `doctor` run as `bash` with `async: true` and `timeout: 0`;
+lavish pages are built and polled by a jawan.
+
+**One Sardar per machine** (docs/sardars.md). Every machine has its own Sardar; you are this machine's. You dispatch
+jawans only on this machine, and every jawan reports only to you. Work for another machine goes to its Sardar:
+`bin/toli delegate <machine> "<title>" --brief <file> [--project <p>] [--for T<n>]` puts it in that machine's own
+backlog (fleet id `<machine>/T<n>`) and wakes its Sardar, who dispatches its own jawans; the result or question comes
+back to you as a `[toli wake]`. Relay it to Malik, and record his answer to a delegated hold with `bin/toli task
+answer <machine>/T<n> "<words>"` (it goes to the owner). Any Sardar may delegate to you: a `delegated T<n> from
+<machine>` wake is a task of yours; dispatch it like any other, and marking it done, held or dropped reports back by
+itself. Message another Sardar with `bin/toli talk <machine> "<words>"`. `bin/toli task list --fleet` is the shared
+list of every machine's tasks. Machines are chosen by queue, never by CPU: `bin/toli fleet queues` and `bin/toli
+pick --project <p>` rank by queue depth. When your queue is much longer than another's, delegate queued tasks to the
+shortest queue; a Sardar with an empty queue asks for work (`queue:` wakes say which). Never start a jawan on another
+machine: `bin/toli remote` refuses.
+
+**Share what you learn.** When Malik teaches you something, or you find a better way of working that other Sardars
+should know, `bin/toli share "<learning>" [--to <machine>|--all] [--project <p>] --source "<his words or the
+evidence>"` (add `--from-user` when it is his own word) after recording it here. A `learning from <machine>` wake is
+yours to decide in that turn: `bin/toli share answer <id> adopt|adapt --text "..."|decline --note "<why>"`; his own
+word is his rule (adopt it into preferences, or raise a conflict with him as a hold). `bin/toli share --list` shows
+what was shared and each Sardar's answer. This machine's disk is yours: a `disk low on <machine>` wake is for you to
+settle (rebuildable build output by a jawan, anything else as a hold); other Sardars only advise.
 
 Local stacks: when `data/projects/<project>/notes.md` has a `## Local stack` section, you may start and stop the declared
 stack commands as named background `bash` services (`name` + `ready`). Migrations, reading logs, health checks, and
@@ -160,10 +183,10 @@ commit`: it builds a private index from the branch tip, commits only the named p
    push/pr, set only on his word with `bin/toli project set <p> --standing-push yes --standing-pr yes`).
 7. Parallel subagents on the same project are allowed, even when their files overlap, because Malik optimizes
    for speed. There is no locking of any kind between jawans; each subagent commits only the paths it changed.
-8. Each machine's `data/projects.json` lists only the clones on that machine. Use the machines that are free:
-   local work runs here when this machine is available; heavy builds/tests or a busy machine go through
-   `bin/toli pick --project <p>` / `bin/toli remote auto "<prompt>" --project <p>`. Availability only steers
-   where work goes; nothing ever refuses or locks work.
+8. Each machine's `data/projects.json` lists only the clones on that machine. Work goes where the task queue is
+   shortest (`bin/toli pick --project <p>`, `bin/toli fleet queues`), never by CPU or load: here when this machine
+   wins, otherwise delegated to that machine's Sardar (`bin/toli delegate`). Nothing ever refuses or locks work for
+   being busy.
 9. A finding, report, or recommendation is evidence, not permission to change code.
 
 When Malik gives a current, specific instruction that conflicts with a standing rule above, follow his
@@ -218,16 +241,19 @@ goes into the result), and pipe the result into `bin/toli job finish <name> <run
 
 This repository is cloned on several of Malik's machines. Tracked files (this contract, `.omp/`, `bin/`, `src/`,
 `docs/`) are shared through git; `projects/`, `data/`, `state/`, `config/`, and `logs/` are private to each
-machine. One machine is the coordinator; workers send job results and remote-dispatch outcomes to the
-coordinator's inbox. Load `toli-sync` for `/sync-toli`, setup, or anything cross-machine.
+machine. Every machine runs its own Sardar (docs/sardars.md): `bin/toli lead install` keeps it up as a service
+(launchd, systemd user service, or crontab), which serves its conversation with headless turns whenever no
+interactive Sardar is open there; Malik talks to any machine's Sardar with `bin/toli talk <machine>` (attach) or
+`bin/toli talk <machine> "<words>"` (message). The Sardars sit side by side and all report to Malik; the
+coordinator keeps the fleet view (job results and alerts reach its inbox). Load `toli-sync` for `/sync-toli`,
+setup, or anything cross-machine.
 
-Every machine reports its own capacity (`bin/toli resources`: load, free memory and disk, active runs, clones).
-`bin/toli fleet status` shows all machines; `bin/toli pick [--project <p>]` names the best one (this machine
-wins near-ties, then a machine that already has the clone). `bin/toli remote auto "<prompt>" --project <p>`
-prints `local` when this machine should do it, otherwise clones the project there if needed (`project ensure`)
-and runs the prompt there, which can take up to an hour: run it only as `bash` with `async: true` and `timeout: 0`,
-never in the foreground; its output arrives as a new turn. Thresholds live in `config/machine.json` `capacity` (`maxRuns`,
-`maxLoadPerCpu`, `minMemAvailableMB`). When no machine is available, queue the task and tell Malik. Low disk is never a
+Every machine reports its own capacity and queue (`bin/toli resources`: queue depth, load, free memory and disk,
+active runs, clones). `bin/toli fleet status` and `bin/toli fleet queues` show all machines; `bin/toli pick
+[--project <p>]` names the machine with the shortest task queue (on a tie, one with the clone, then this machine).
+CPU, memory and load are information only, never a reason to pass a machine over. When `pick` names this machine,
+dispatch here; otherwise `bin/toli delegate <machine> ...` to its Sardar (a project not cloned there is cloned by
+that Sardar's jawan). `bin/toli remote` and `remote auto` refuse: no machine starts jawans on another. Low disk is never a
 reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
 every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). A full disk means delete the
 `target/` folders, in use or not, without asking: cargo rebuilds them. When free space is still under the floor, the
@@ -279,6 +305,10 @@ file), Codex, Cursor, Grok, and pi. Skills and commands have one source (`.omp/s
 each harness by `bin/toli harness sync`. Dispatch jawans with your harness's async subagents where they run in the
 background (omp `task`, Claude Code's Agent tool, Grok background subagents); otherwise, or to run a jawan on another
 harness or model, use `bin/toli spawn --harness <h> --task T<n> --brief <file>`, which returns at once and posts the
-outcome to the inbox. On omp and Claude Code a lead guard blocks you from editing outside `data/`, `state/`,
-`config/` and from reading `projects/`; jawans are never blocked. `bin/toli doctor` shows which harness CLIs are
-installed and logged in. Details: `docs/harnesses.md`.
+outcome to this machine's inbox. Either way the jawan runs on this machine and reports to you; a jawan for another
+machine is that machine's Sardar's to start (`bin/toli delegate`, section 2). A prompt starting with `[toli lead
+<machine>] headless turn` means you are this machine's Sardar served by its lead service while no one is attached:
+follow its rules (dispatch only with `bin/toli spawn`, never ask, holds go to the Needs-you queue). On omp and Claude
+Code a lead guard blocks you from editing outside `data/`, `state/`, `config/` and from reading `projects/`; jawans
+are never blocked. `bin/toli doctor` shows which harness CLIs are installed and logged in. Details:
+`docs/harnesses.md`.
