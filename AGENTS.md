@@ -144,7 +144,8 @@ jawans stop on any OTP or captcha.
    heavy-build slots (`capacity.buildSlots`, default one per six cores), each with `CARGO_BUILD_JOBS` at one slot's
    share of the cores (`bin/toli spawn` puts toli's cargo shim first on its jawans' PATH and sets it; run other heavy
    commands under `bin/toli build-slot -- <command>`). Never put "own CARGO_TARGET_DIR", "build in a temp dir" or
-   "verify on a scratch copy" in a brief.
+   "verify on a scratch copy" in a brief. A live-stack project (`project set --live-stack yes`, docs/projects.md) has
+   one build per machine, its running dev stack: its jawans skip the slot and run only scoped tests themselves.
 6. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
    commit on the project's working branch; no branches unless Malik asks. When the project has a fixed branch
    (`branch`), all work happens on it and `bin/toli commit` refuses on any other branch: never switch branches to

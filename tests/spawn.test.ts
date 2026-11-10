@@ -234,6 +234,23 @@ echo "verified"`,
         expect(withGoal.code).toBe(0);
         expect(withGoal.stderr).not.toContain(warning);
     });
+
+    test("a live-stack project's code brief without a Live stack section is warned about but still spawned", () => {
+        const box = coordinator();
+        box.stub("omp", "true");
+        withProject(box, "alpha");
+        const warning = "runs in live-stack mode but the brief";
+        const goal = "## Goal\n\n- Objective: say hi\n- Stop when: hi was said";
+        const spawn = (body: string, work = "ship") =>
+            box.toli(["spawn", "--harness", "omp", "--work", work, "--project", "alpha", "--brief", brief(box, body)]);
+        expect(spawn(goal).stderr).not.toContain(warning);
+        box.ok(["project", "set", "alpha", "--live-stack", "yes"]);
+        const bare = spawn(goal);
+        expect(bare.code).toBe(0);
+        expect(bare.stderr).toContain(`alpha ${warning}`);
+        expect(spawn(goal, "scout").stderr).not.toContain(warning);
+        expect(spawn(`${goal}\n\n## Live stack\n\n- Logs: just logs`).stderr).not.toContain(warning);
+    });
 });
 
 describe("one live jawan per task", () => {

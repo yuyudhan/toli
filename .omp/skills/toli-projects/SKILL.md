@@ -26,15 +26,16 @@ A project is either cloned fresh into `projects/<name>/` (`bin/toli project add 
 checkout Malik already has (`bin/toli project link <name> <path>`: validates the git repo, reports origin, forge and
 branch, and makes `projects/<name>` a symlink to it). Dropping a linked project removes only the symlink.
 
-| Malik's choice                                         | Recorded with (`bin/toli project set <name> ...`)               |
-| ------------------------------------------------------ | --------------------------------------------------------------- |
-| `same-branch`: commit on the checked-out branch        | `--workspace same-branch --mode commit --branch none`           |
-| `same-branch <b>`: commit on a fixed named branch      | `--workspace same-branch --mode commit --branch <b>`            |
-| `branch`: one clone, a branch + PR/MR per task         | `--workspace branch-per-task --mode pr --branch <base>\|none`   |
-| `worktree`: a worktree + branch + PR/MR per task       | `--workspace worktree-per-task --mode pr --branch <base>\|none` |
-| + no-mistakes gate (any of them)                       | same, but `--mode no-mistakes`                                  |
-| + standing grant (branch/worktree only, his word only) | `--standing-push yes --standing-pr yes` (or push only)          |
-| same strategy for every project                        | `bin/toli project set --all --workspace <strategy>`             |
+| Malik's choice                                          | Recorded with (`bin/toli project set <name> ...`)               |
+| ------------------------------------------------------- | --------------------------------------------------------------- |
+| `same-branch`: commit on the checked-out branch         | `--workspace same-branch --mode commit --branch none`           |
+| `same-branch <b>`: commit on a fixed named branch       | `--workspace same-branch --mode commit --branch <b>`            |
+| `branch`: one clone, a branch + PR/MR per task          | `--workspace branch-per-task --mode pr --branch <base>\|none`   |
+| `worktree`: a worktree + branch + PR/MR per task        | `--workspace worktree-per-task --mode pr --branch <base>\|none` |
+| + no-mistakes gate (any of them)                        | same, but `--mode no-mistakes`                                  |
+| + standing grant (branch/worktree only, his word only)  | `--standing-push yes --standing-pr yes` (or push only)          |
+| + live-stack mode (same-branch, stack rebuilds on save) | `--live-stack yes` (docs/projects.md "Live-stack mode")         |
+| same strategy for every project                         | `bin/toli project set --all --workspace <strategy>`             |
 
 The strategies in one line each: **same-branch** - every jawan works in the one clone on the project's branch;
 **branch-per-task** - one clone, switched to a `toli/<T-id>-<slug>` branch per task (two live tasks cannot share the

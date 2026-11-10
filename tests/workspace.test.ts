@@ -9,6 +9,7 @@ type ProjectJson = {
     workspace: string;
     workspaceSetAt?: string;
     standing: { push: boolean; pr: boolean };
+    liveStack: boolean;
     linkedTo: string | null;
     brokenLink: string | null;
 };
@@ -89,6 +90,25 @@ describe("workspace config", () => {
             ["same-branch", "commit"],
         ]);
         expect(box.ok(["project", "list"])).toContain("workspace=same-branch");
+    });
+
+    test("--live-stack yes|no turns a project's live-stack mode on and off", () => {
+        const box = coordinator();
+        withProject(box, "app");
+        expect(projects(box)[0]?.liveStack).toBe(false);
+        refused(box, ["project", "set", "app", "--live-stack", "maybe"], "--live-stack must be yes or no");
+        refused(box, ["project", "set", "--all", "--workspace", "same-branch", "--live-stack", "yes"], "sets only");
+        expect(box.ok(["project", "set", "app", "--live-stack", "yes"])).toBe(
+            "app: mode=commit workspace=same-branch live-stack=yes",
+        );
+        expect(projects(box)[0]?.liveStack).toBe(true);
+        expect(box.ok(["project", "list"])).toContain("live-stack=yes");
+        const stored = JSON.parse(readFileSync(join(box.root, "data", "projects.json"), "utf8")) as {
+            projects: Record<string, unknown>[];
+        };
+        expect(stored.projects[0]?.liveStack).toBe(true);
+        expect(box.ok(["project", "set", "app", "--live-stack", "no"])).toBe("app: mode=commit workspace=same-branch");
+        expect(projects(box)[0]?.liveStack).toBe(false);
     });
 
     test("the machine default applies to new projects and is reported as defaulted by project setup", () => {

@@ -29,6 +29,9 @@ export type Forge = (typeof FORGES)[number];
  * `deliverySetAt`: when the user's delivery choice (mode/branch) was recorded; absent means mode is a default.
  * `workspace`: the branching/worktree strategy; `workspaceSetAt` stamps the user's choice (absent: defaulted).
  * With a per-task strategy, `branch` is the base branch task branches start from and PR/MRs target.
+ * `liveStack`: the project runs in live-stack mode (docs/projects.md "Live-stack mode"): its jawans code in the one
+ * shared checkout against the machine's running dev stack, which rebuilds on every save, instead of building
+ * themselves.
  */
 export type Project = {
     name: string;
@@ -42,6 +45,7 @@ export type Project = {
     workspace: Workspace;
     workspaceSetAt?: string;
     standing?: Standing;
+    liveStack?: true;
     /** Set for `project link`: the user's own checkout that projects/<name> is a symlink to (never deleted by toli). */
     linkedTo?: string;
 };
@@ -67,6 +71,7 @@ export function loadProjects(): Project[] {
             workspace,
             workspaceSetAt,
             standing,
+            liveStack,
             linkedTo,
         }) => ({
             name,
@@ -80,6 +85,7 @@ export function loadProjects(): Project[] {
             workspace: isWorkspace(workspace) ? workspace : legacyWorkspace({ mode, branch }),
             ...(workspaceSetAt ? { workspaceSetAt } : {}),
             ...(standing ? { standing: { push: standing.push === true, pr: standing.pr === true } } : {}),
+            ...(liveStack === true ? { liveStack: true as const } : {}),
             ...(linkedTo ? { linkedTo } : {}),
         }),
     );
@@ -112,6 +118,11 @@ export function findProject(name: string): Project {
     const project = loadProjects().find((entry) => entry.name === name);
     if (!project) throw new ToliError(`unknown project "${name}" (see \`bin/toli project list\`)`);
     return project;
+}
+
+/** Whether `name` is a registered project in live-stack mode (`project set --live-stack yes`); false for null/unknown. */
+export function isLiveStack(name: string | null): boolean {
+    return name !== null && loadProjects().some((project) => project.name === name && project.liveStack === true);
 }
 
 export function parseMode(value: string | undefined): Mode | undefined {
@@ -239,6 +250,7 @@ function list(argv: string[]): void {
                 ...entry,
                 branch: entry.branch ?? null,
                 standing: entry.standing ?? { push: false, pr: false },
+                liveStack: entry.liveStack === true,
                 path: paths.projectDir(entry.name),
                 cloned: isGitRepo(paths.projectDir(entry.name)),
                 linkedTo: entry.linkedTo ?? null,
@@ -272,13 +284,14 @@ function list(argv: string[]): void {
     }
 }
 
-/** `branch=`, `forge=`, `forge-host=`, `standing=` labels for the fields that are set. */
+/** `branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=` labels for the fields that are set. */
 export function overrideLabels(project: Project): string[] {
     return [
         ...(project.branch ? [`branch=${project.branch}`] : []),
         ...(project.forge ? [`forge=${project.forge}`] : []),
         ...(project.forgeHost ? [`forge-host=${project.forgeHost}`] : []),
         ...(project.standing ? [`standing=${standingText(project.standing)}`] : []),
+        ...(project.liveStack ? ["live-stack=yes"] : []),
     ];
 }
 

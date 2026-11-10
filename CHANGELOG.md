@@ -29,6 +29,13 @@ one. See docs/releasing.md.
 
 ### Added
 
+- Live-stack mode: `bin/toli project set <p> --live-stack yes` lets one machine run many jawans (8-16) on one
+  `same-branch` project against its running dev stack, which rebuilds on every save, instead of each jawan building
+  on its own. Briefs keep the new `## Live stack` section (docs/brief-template.md): no own full build/test/lint while
+  coding, commit only your own paths, fix the compile/runtime errors your change caused in the live logs, then browser
+  and scoped tests against the green stack; the full check runs once per machine at integration or push.
+  `bin/toli spawn` warns when such a brief lacks the section, and the project's jawans skip the heavy-build slot
+  shim. `capacity.maxRuns` sizes the machine for it (docs/projects.md "Live-stack mode").
 - No idle nights. An active task whose recorded run ended `oversight.staleTaskMinutes` ago (default 15) and that
   nobody re-dispatched (a `bin/toli spawn` run that finished, a `bin/toli remote --task` run whose saved output
   finished, or no jawan at all) now heads the digest's Next block with the run's last report line and whether an

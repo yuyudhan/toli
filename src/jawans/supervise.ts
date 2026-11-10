@@ -17,6 +17,7 @@ import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../f
 import { harnessConfig, headlessCommand } from "../harness/harness.ts";
 import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.ts";
 import { notify } from "../jobs/outbox.ts";
+import { isLiveStack } from "../projects/projects.ts";
 import { autoResume } from "./continue.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
@@ -295,7 +296,12 @@ export async function superviseRun(id: string): Promise<void> {
         startedAt: initial.startedAt,
         title: `jawan ${initial.harness}${initial.task === null ? "" : ` ${initial.task}`}`,
     });
-    const env = jawanEnv(process.env, id, capacityFor(machine, availableParallelism()).cargoJobs);
+    const env = jawanEnv(
+        process.env,
+        id,
+        capacityFor(machine, availableParallelism()).cargoJobs,
+        isLiveStack(initial.project),
+    );
     const logFd = openSync(initial.logPath, "a");
     const minuteMs = runMinuteMs();
     try {

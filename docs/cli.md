@@ -53,6 +53,7 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     project list [--json] | path <name>
     project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
                 [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no] [--standing-pr yes|no]
+                [--live-stack yes|no]
     project set --all --workspace <strategy>
     project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
     project setup <name> [--json] | setup --all [--json]
@@ -61,7 +62,8 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
   idempotent form used for remote work; `import` registers clones already in `projects/`.
 - `set` records delivery, branch, forge, workspace strategy, and standing grants ([delivery.md](delivery.md),
   [projects.md](projects.md#workspace-strategy)). `--branch <b>` also switches a clean clone to `<b>`, or prints the
-  `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)).
+  `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)). `--live-stack yes`
+  puts the project in live-stack mode ([projects.md](projects.md#live-stack-mode)).
 - `drop` keeps the clone and data unless asked; it refuses a dirty clone or unpushed commits.
 - `setup` is the per-project checklist ([projects.md](projects.md#setting-up-an-existing-project)).
 
