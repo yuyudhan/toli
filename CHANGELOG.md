@@ -23,7 +23,7 @@ one. See docs/releasing.md.
 - The test suite can no longer write into the checkout it runs in: under the `pre-push` hook it inherited the hook's
   `GIT_DIR`, so temp repos' commits and a `v1.2.3` tag landed in the real repository. The preload drops every
   inherited `GIT_*` variable, sets `GIT_CEILING_DIRECTORIES` and a temp `HOME`, and fails the run when the real
-  repository gains a test commit or a tag changes (docs/development.md).
+  repository gains a test commit or a tag changes (docs/development.md). `just verify`'s install smoke drops them too.
 
 ## v0.4.0 - 2026-11-10
 
