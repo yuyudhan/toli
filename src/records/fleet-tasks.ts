@@ -210,7 +210,14 @@ export function forwardAnswer(owner: string, argv: string[]): void {
 }
 
 /** Subcommands that change one task: they take its id first, and only its owner may run them. */
-const TASK_WRITES: Record<string, true> = { start: true, done: true, hold: true, answer: true, drop: true };
+const TASK_WRITES: Record<string, true> = {
+    start: true,
+    done: true,
+    hold: true,
+    answer: true,
+    drop: true,
+    handback: true,
+};
 
 /**
  * A task write naming a fleet id (`<machine>/T<n>`): this machine's own id becomes the bare `T<n>` in `rest`; an

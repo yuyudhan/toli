@@ -6,7 +6,7 @@ import { currentBranch, git, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "../core/util.ts";
-import { type Forge, findProject, type Project, projectCloneDir } from "../projects/projects.ts";
+import { type Forge, findProject, loadProjects, type Project, projectCloneDir } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import { appendPush, pushAttribution, pushLine } from "../records/push-log.ts";
 import { BITBUCKET_CREDENTIALS_HELP, BitbucketClient, bitbucketCredentials } from "./bitbucket.ts";
@@ -206,8 +206,24 @@ function requireBranch(dir: string, action: string): string {
 }
 
 /**
- * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Runs in
- * the task's workspace with `--task` (or from inside a task worktree), else in the project clone. A push that moved
+ * Hard rule 1: refuse a push that carries neither the user's `--word` nor the project's standing push grant on this
+ * machine (`bin/toli project set <p> --standing-push yes`, kept in this machine's project entry).
+ */
+function requirePushAuthority(project: string, word: string | null): void {
+    if (word !== null) return;
+    if (loadProjects().find((entry) => entry.name === project)?.standing?.push === true) return;
+    const user = persona().user;
+    throw new ToliError(
+        `refusing to push ${project}: no --word and no standing push grant for ${project} on this machine. ` +
+            `Pass --word "<${user}'s word>" quoting ${user}'s word for this push, or have ${user} grant it with ` +
+            `\`bin/toli project set ${project} --standing-push yes\``,
+    );
+}
+
+/**
+ * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Refused
+ * unless `--word` quotes the user's word for this push or the project has a standing push grant on this machine. Runs
+ * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. A push that moved
  * origin's branch is recorded in this machine's push log (src/records/push-log.ts), attributed with `--by`/`--for`/
  * `--word` (or the issuing machine and task `bin/toli exec` put in the environment). With `--gate "<recipe>"` the
  * gate runs first (cached per commit, src/forge/gate.ts) and the push happens only once it passed at HEAD; the push's
@@ -219,6 +235,7 @@ export async function pushCommand(argv: string[]): Promise<void> {
     const project = args.pos(0, "project");
     const { dir, task } = workDir(project, args.str(TASK_FLAG));
     const attribution = pushAttribution(args, task?.id);
+    requirePushAuthority(project, attribution.word);
     const branch = requireBranch(dir, "push");
     const ref = `refs/heads/${branch}`;
     const recipe = args.str("gate");

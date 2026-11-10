@@ -275,6 +275,7 @@ describe("gate", () => {
 
     test("push --gate pushes only after the gate passed and tells the hooks which gate passed", () => {
         const { box, dir } = setup();
+        box.ok(["project", "set", "app", "--standing-push", "yes"]);
         box.git(dir, ["switch", "-c", "feature"]);
         const sha = commitFile(box, dir, "a.txt");
         const seen = join(box.root, "hook-env");

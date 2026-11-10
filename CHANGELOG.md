@@ -90,6 +90,9 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
 
 ### Fixed
 
+- `bin/toli push` refuses, pushing nothing, when it has no `--word` and the project has no standing push grant on
+  this machine (hard rule 1). Before, a push with neither went through and was only logged with `word=null`. The
+  message names both ways on: `--word "<the user's word>"`, or `bin/toli project set <p> --standing-push yes`.
 - A gate that works silently (cargo linking hundreds of test binaries before any test prints) is no longer stopped
   as stalled. Its stall check now is the jawan one: it counts the gate as stuck only when its log did not grow, its
   checkout did not change and its process tree burned under 10 CPU seconds for the stall minutes. Before, it watched

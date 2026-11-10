@@ -23,7 +23,7 @@ import { type Delivered, sendNow } from "../jobs/outbox.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
 import { fleetId } from "../records/delegation-report.ts";
-import { applyUpdate, parseLink, parseUpdate, receiveLink } from "../records/delegation-sync.ts";
+import { applyUpdate, parseLink, parseUpdate, receiveLink, workOnBy } from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
 
 /** What travels to the target (JSON on `delegation receive`'s stdin). */
@@ -200,7 +200,8 @@ export function delegationCommand(argv: string[]): void {
 
 /**
  * Record the target's answer to a delivered delegation: the fleet id goes on the `--for` task, which counts as
- * active with that id as its jawan, so oversight does not call it stale. Returns the fleet id.
+ * active with that id as its jawan, so oversight does not call it stale; a done or dropped `--for` task (its earlier
+ * delegation was given up) is reopened. Returns the fleet id.
  */
 export function acceptDelegation(delegation: Delegation, stdout: string): string {
     const accepted = ACCEPTED.exec(stdout);
@@ -211,12 +212,7 @@ export function acceptDelegation(delegation: Delegation, stdout: string): string
         updateTask(forTask, (task) => {
             if (!task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
             task.notes.push(`delegated to ${id}: ${delegation.title}`);
-            if (task.status === "queued" || task.status === "active") {
-                task.status = "active";
-                task.startedAt ??= now().toISOString();
-                task.agent = id;
-                task.dispatchedAt = now().toISOString();
-            }
+            workOnBy(task, id);
         });
     }
     return id;

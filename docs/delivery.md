@@ -75,8 +75,10 @@ bitbucket.org login in the git credential helper. `bin/toli doctor` and `bin/tol
     bin/toli pr list <project> [--json]
     bin/toli pr merge <project> <id> [--method merge|squash|rebase]
 
-`push` refuses a detached HEAD. `pr create` refuses until the current branch is on origin and contains local HEAD,
-then prints the PR/MR URL. `--task` runs the command in the task's workspace.
+`push` refuses without `--word` (the user's word for this push, quoted) unless the project has a standing push grant
+on the machine whose clone pushes (`bin/toli project set <p> --standing-push yes` there); nothing is pushed. It also
+refuses a detached HEAD. `pr create` refuses until the current branch is on origin and contains local HEAD, then prints
+the PR/MR URL. `--task` runs the command in the task's workspace.
 
 ## Gates: long checks run once per commit
 

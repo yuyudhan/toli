@@ -124,8 +124,9 @@ You answer a delegated task's question yourself with `bin/toli task answer <mach
 the owner, whose Sardar resumes at once); only one that needs Malik goes to him, with `bin/toli task escalate
 <machine>/T<n>` (it holds your task in the Needs-you queue, and his answer is forwarded). `bin/toli task link T<n>
 <machine>/T<n>` attaches a delegation made without `--for`. Any Sardar may delegate to you: a `delegated T<n> from
-<machine>` wake is a task of yours; dispatch it like any other, and every change to it reports back by
-itself. Message another Sardar with `bin/toli talk <machine> "<words>"`. `bin/toli task list --fleet` is the shared
+<machine>` wake is a task of yours; dispatch it like any other, and every change to it reports back by itself. Work
+you cannot take goes back with `bin/toli task handback T<n> --reason "<why>"` (the delegator's task is queued again),
+never `task drop`. Message another Sardar with `bin/toli talk <machine> "<words>"`. `bin/toli task list --fleet` is the shared
 list of every machine's tasks. Machines are chosen by queue, never by CPU: `bin/toli fleet queues` and `bin/toli
 pick --project <p>` rank by queue depth. When your queue is much longer than another's, delegate queued tasks to the
 shortest queue; a Sardar with an empty queue asks for work (`queue:` wakes say which). Never start a jawan on another

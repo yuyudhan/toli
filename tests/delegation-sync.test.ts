@@ -157,3 +157,50 @@ describe("task link", () => {
         expect(m1.ok(["task", "link", "T1", "m2/T1"])).toContain("T1 linked to m2/T1 here; m2 gets the link");
     });
 });
+
+describe("handing delegated work back", () => {
+    test("task handback queues the --for task again with the reason, and a new delegation finishes it", () => {
+        const { m1, m2 } = delegated();
+        expect(m2.toli(["task", "handback", "T1"]).stderr).toContain("task handback needs --reason");
+        expect(m2.ok(["task", "handback", "m2/T1", "--reason", "overloaded"])).toContain(
+            "handed back to m1: overloaded",
+        );
+        expect(tasks(m2)[0]?.status).toBe("dropped");
+        const task = parent(m1);
+        expect(task.status).toBe("queued");
+        expect(task.agent).toBeUndefined();
+        expect(task.notes).toContain("m2/T1 handed the work back: overloaded");
+        const wake = inbox(m1).find((item) => item.title === "m2/T1 handed back: the work");
+        expect(readFileSync(wake?.path ?? "", "utf8")).toContain("T1 is queued again: give it to another Sardar");
+
+        expect(m1.ok(["delegate", "m2", "the work, again", "--brief", brief(m1), "--for", "T1"])).toContain("m2/T2");
+        expect(parent(m1)).toMatchObject({ status: "active", agent: "m2/T2" });
+        m2.ok(["task", "done", "T2", "--commit", "f00d"]);
+        expect(parent(m1)).toMatchObject({ status: "done", commit: "f00d" });
+    });
+
+    test("a task not delegated here cannot be handed back", () => {
+        const { m2 } = pair();
+        withProject(m2, "app");
+        m2.ok(["task", "add", "app", "mine"]);
+        expect(m2.toli(["task", "handback", "T1", "--reason", "x"]).stderr).toContain("was not delegated here");
+    });
+
+    test("delegating or linking for a dropped task reopens it, and a dropped delegation does not block done", () => {
+        const { m1, m2 } = delegated();
+        m2.ok(["task", "drop", "T1"]);
+        expect(parent(m1).status).toBe("dropped");
+        m1.ok(["delegate", "m2", "another try", "--brief", brief(m1), "--for", "T1"]);
+        const reopened = parent(m1);
+        expect(reopened).toMatchObject({ status: "active", agent: "m2/T2" });
+        expect(reopened.notes).toContain("reopened (was dropped): it works through m2/T2 now");
+        expect(m1.ok(["task", "start", "T1", "--agent", "j-1"])).toContain("T1\tactive");
+        m2.ok(["task", "done", "T2", "--commit", "c4fe"]);
+        expect(parent(m1)).toMatchObject({ status: "done", commit: "c4fe" });
+
+        // A link to a delegation made without --for reopens a done task the same way.
+        m1.ok(["delegate", "m2", "unlinked", "--brief", brief(m1)]);
+        m1.ok(["task", "link", "T1", "m2/T3"]);
+        expect(parent(m1)).toMatchObject({ status: "active", agent: "m2/T3" });
+    });
+});

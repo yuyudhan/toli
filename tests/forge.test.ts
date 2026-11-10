@@ -24,12 +24,14 @@ type ForgeBox = { box: Sandbox; dir: string; log: string; env: Record<string, st
 
 /**
  * A registered project "app" whose origin URL is `url` (rewritten to a local bare repo via insteadOf), with stub
- * `ssh -G` (alias gh-alias -> github.com), stub gh/glab logging their argv, and an isolated glab config.
+ * `ssh -G` (alias gh-alias -> github.com), stub gh/glab logging their argv, and an isolated glab config. "app" has a
+ * standing push grant, so `bin/toli push app` needs no `--word`.
  */
 function forgeBox(url: string): ForgeBox {
     const box = sandbox();
     box.ok(["init", "--name", "m1", "--role", "coordinator"]);
     const dir = withProject(box, "app");
+    box.ok(["project", "set", "app", "--standing-push", "yes"]);
     pointOrigin({ box, dir }, url);
     const glabDir = join(box.root, ".glab");
     mkdirSync(glabDir);
@@ -184,6 +186,43 @@ describe("toli push and pr create", () => {
         expect(pushes.join(" ")).not.toMatch(/--force|\s-f\s|\+refs/);
         const bare = join(fb.box.root, ".origin", "app.git");
         expect(fb.box.git(bare, ["rev-parse", "feature"])).toBe(fb.box.git(fb.dir, ["rev-parse", "HEAD"]));
+    });
+
+    test("push without --word or a standing push grant is refused and never calls git push", () => {
+        const fb = forgeBox("https://github.com/acme/app.git");
+        fb.box.ok(["project", "set", "app", "--standing-push", "no"]);
+        const gitLog = join(fb.box.root, "git.log");
+        fb.box.stub("git", `printf '%s ' "$@" >> "${gitLog}"; echo >> "${gitLog}"; exec "${REAL_GIT}" "$@"`);
+        const gitPushes = () =>
+            existsSync(gitLog)
+                ? readFileSync(gitLog, "utf8")
+                      .split("\n")
+                      .filter((line) => line.includes(" push "))
+                : [];
+        const bare = join(fb.box.root, ".origin", "app.git");
+        fb.box.git(fb.dir, ["switch", "-c", "feature"]);
+        for (const argv of [
+            ["push", "app"],
+            ["push", "app", "--word", "  "],
+        ]) {
+            const refused = fb.box.toli(argv, { env: fb.env });
+            expect(refused.code).toBe(1);
+            expect(refused.stderr).toContain("refusing to push app: no --word and no standing push grant");
+            expect(refused.stderr).toContain("--word");
+            expect(refused.stderr).toContain("bin/toli project set app --standing-push yes");
+        }
+        expect(gitPushes()).toEqual([]);
+        expect(fb.box.git(bare, ["branch", "--list", "feature"])).toBe("");
+        expect(existsSync(join(fb.box.root, "data", "pushes.jsonl"))).toBe(false);
+
+        fb.box.ok(["push", "app", "--word", "yes, push it"], { env: fb.env });
+        expect(gitPushes()).toEqual([`-C ${fb.dir} push -u origin refs/heads/feature:refs/heads/feature `]);
+        expect(fb.box.git(bare, ["rev-parse", "feature"])).toBe(fb.box.git(fb.dir, ["rev-parse", "HEAD"]));
+
+        fb.box.git(fb.dir, ["switch", "-c", "granted"]);
+        fb.box.ok(["project", "set", "app", "--standing-push", "yes"]);
+        fb.box.ok(["push", "app"], { env: fb.env });
+        expect(fb.box.git(bare, ["rev-parse", "granted"])).toBe(fb.box.git(fb.dir, ["rev-parse", "HEAD"]));
     });
 
     test("pr create refuses until the branch is on origin, then calls gh with the right arguments", () => {

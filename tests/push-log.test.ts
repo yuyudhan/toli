@@ -19,11 +19,15 @@ type Push = {
     word: string | null;
 };
 
-/** A worker "mini" with project "app" on a new local branch "feature" one commit ahead of origin/main. */
+/**
+ * A worker "mini" with project "app" on a new local branch "feature" one commit ahead of origin/main. "app" has a
+ * standing push grant on mini, so a push needs no `--word`.
+ */
 function mini(): { box: Sandbox; dir: string } {
     const box = sandbox();
     box.ok(["init", "--name", "mini", "--role", "worker", "--coordinator-ssh", "mac", "--coordinator-root", "/r"]);
     const dir = withProject(box, "app");
+    box.ok(["project", "set", "app", "--standing-push", "yes"]);
     box.git(dir, ["switch", "-c", "feature"]);
     commitFile(box, dir, "a.txt");
     return { box, dir };
