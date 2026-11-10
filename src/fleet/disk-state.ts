@@ -12,8 +12,6 @@ import { now, pidAlive } from "../core/util.ts";
 import { capacityFor, diskKeepFloor, measureVolume } from "./resources.ts";
 
 export const KEEPER_LOCK = "disk-keep";
-/** How long the background keeper waits for busy builds to pause before it gives up on a target (tier 5). */
-const BACKGROUND_LOCK_WAIT_MS = 30 * 60_000;
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 
@@ -171,10 +169,10 @@ export class DiskLog {
 }
 
 /**
- * Start `bin/toli disk keep --wait` detached (its lines reach logs/disk.log), to wipe busy targets as builds pause.
- * Bun's transpiler cache is off for it, as `bin/toli disk` does: the disk may still be full.
+ * Start `bin/toli disk keep` detached (its lines reach logs/disk.log). Bun's transpiler cache is off for it, as
+ * `bin/toli disk` does: the disk may still be full.
  */
-export function startBackgroundKeeper(): void {
+function startBackgroundKeeper(): void {
     let log: number | "ignore" = "ignore";
     try {
         mkdirSync(paths.logsDir(), { recursive: true });
@@ -183,16 +181,12 @@ export function startBackgroundKeeper(): void {
         // A full disk: the keeper's own lines still reach logs/disk.log once it has freed something.
     }
     try {
-        const child = spawnChild(
-            process.execPath,
-            [TOLI_SCRIPT, "disk", "keep", "--wait", String(BACKGROUND_LOCK_WAIT_MS / 60_000)],
-            {
-                cwd: paths.root(),
-                detached: true,
-                stdio: ["ignore", "ignore", log],
-                env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
-            },
-        );
+        const child = spawnChild(process.execPath, [TOLI_SCRIPT, "disk", "keep"], {
+            cwd: paths.root(),
+            detached: true,
+            stdio: ["ignore", "ignore", log],
+            env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+        });
         child.unref();
     } finally {
         if (log !== "ignore") closeSync(log);

@@ -1,17 +1,27 @@
-// Sweep stale artifacts out of a cargo target that builds keep busy (src/fleet/disk.ts tier 5). When jawans build the
-// same clone back to back, cargo's lock is never free and the whole-target wipe never gets its moment; the target only
-// grows. Cargo rebuilds any artifact it finds missing, so the keeper deletes, without waiting for the lock, every entry
-// directly inside `<profile>/{deps,build,.fingerprint,incremental}` that nothing used for `capacity.diskSweepStaleMinutes`
-// (default 180): no file in it read (atime) or written (mtime) since, none of cargo's lock files in it, and no process
-// holding a file in it open, running or mapping it. Use is read from atime only where the mount keeps atime current
-// enough for that age (see atimeVerdict); elsewhere from mtime alone. The same sweep over every target is the keeper's
-// fallback when it fails (fallbackSweep): it needs nothing but deletions, so it works on a full disk.
+// Sweep stale artifacts out of a cargo target that builds keep busy (src/fleet/disk.ts tier 5, under the emergency
+// level only). When jawans build the same clone back to back, cargo's lock is never free and the whole-target wipe
+// never gets its moment; the target only grows. Cargo rebuilds any artifact it finds missing, so the keeper deletes,
+// without waiting for the lock, every entry directly inside `<profile>/{deps,build,.fingerprint,incremental}` that
+// nothing used for `capacity.diskSweepStaleMinutes` (default 180): no file in it read (atime) or written (mtime) since,
+// none of cargo's lock files in it, and no process holding a file in it open, running or mapping it. Use is read from
+// atime only where the mount keeps atime current enough for that age (see atimeVerdict); elsewhere from mtime alone.
+// The same sweep over every target nothing uses is the keeper's fallback when it fails (fallbackSweep): it needs
+// nothing but deletions, so it works on a full disk.
 import { type Dirent, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { out, platform, run, warn } from "../core/util.ts";
-import { CARGO_LOCKS, LOCK_DEPTH } from "./cargo-lock.ts";
-import { buildDirs, heldOpenBelow, projectCheckouts, within } from "./disk-scan.ts";
+import { CARGO_LOCKS, LOCK_DEPTH, targetInUse } from "./cargo-lock.ts";
+import {
+    type BuildDir,
+    buildDirs,
+    type Checkout,
+    checkoutUse,
+    currentHolders,
+    heldOpenBelow,
+    projectCheckouts,
+    within,
+} from "./disk-scan.ts";
 import { DiskLog, describe, diskPause, GIB, gb } from "./disk-state.ts";
 import { DEFAULT_DISK_SWEEP_STALE_MINUTES, diskSweepStaleMinutes, procFile } from "./resources.ts";
 
@@ -219,9 +229,11 @@ export function sweepLine(target: string, staleMinutes: number, swept: SweepResu
 
 /**
  * The keeper's fallback when it fails anyway (free disk or config unreadable, anything unforeseen): sweep the stale
- * artifacts out of every target, the one step that needs nothing but deletions. It reads no free disk and takes no
- * keeper lock, honours state/disk-keep.pause, writes logs/disk.log only once it has deleted something, and never
- * throws. Returns its lines.
+ * artifacts out of every target nothing uses, the one step that needs nothing but deletions. Not knowing free disk,
+ * it cannot know the disk is under the emergency level, so a target in use (a jawan or process working in its
+ * checkout, a build holding its lock, anything a wipe checks) is kept whole. It reads no free disk and takes no keeper
+ * lock, honours state/disk-keep.pause, writes logs/disk.log only once it has deleted something, and never throws.
+ * Returns its lines.
  */
 export function fallbackSweep(failure: unknown, echo: boolean, dryRun: boolean): string[] {
     const lines: string[] = [];
@@ -233,7 +245,7 @@ export function fallbackSweep(failure: unknown, echo: boolean, dryRun: boolean):
         log.add(line);
     };
     try {
-        say(`disk keeper failed (${describe(failure)}): sweeping stale artifacts out of every target instead`);
+        say(`disk keeper failed (${describe(failure)}): sweeping stale artifacts out of every idle target instead`);
         const pause = diskPause();
         if (pause !== null) {
             say(`paused by pid ${pause.pid} (state/disk-keep.pause): deleting nothing`);
@@ -245,17 +257,22 @@ export function fallbackSweep(failure: unknown, echo: boolean, dryRun: boolean):
         } catch (error) {
             say(`${describe(error)}: sweeping what was unused for the default ${staleMinutes} min`);
         }
-        let targets: string[] = [];
+        let checkouts: Checkout[] = [];
+        let targets: BuildDir[] = [];
         try {
-            targets = projectCheckouts()
-                .flatMap(buildDirs)
-                .filter((dir) => dir.kind === "target")
-                .map((dir) => dir.path);
+            checkouts = projectCheckouts();
+            targets = checkouts.flatMap(buildDirs).filter((dir) => dir.kind === "target");
         } catch (error) {
             say(`cannot list the checkouts' targets: ${describe(error)}`);
         }
-        for (const target of targets) {
+        for (const dir of targets) {
+            const target = dir.path;
             try {
+                const use = checkoutUse(dir.checkout, currentHolders(), checkouts) ?? targetInUse(target);
+                if (use !== null) {
+                    say(`kept ${target}: in use (${use})`);
+                    continue;
+                }
                 const swept = sweepStaleArtifacts(target, staleMinutes, dryRun);
                 if (!dryRun && swept.artifacts > 0) log.open();
                 say(sweepLine(target, staleMinutes, swept, dryRun));

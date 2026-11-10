@@ -100,6 +100,25 @@ function openIn(target: string, probes: UseProbes): string | null {
     return open.length > 0 ? `open files, e.g. ${open.join(", ")}` : null;
 }
 
+/** Why something other than a lock uses `target`: a cargo in its workspace, a process running from it, an open file. */
+function useBesideLocks(target: string, probes: UseProbes): string | null {
+    return (
+        cargoRunsIn(dirname(target), probes.cargos) ??
+        targetUse(target, probes.processes, probes.buildTools) ??
+        openIn(target, probes)
+    );
+}
+
+/** Why `target` is in use right now (a build holds one of its locks, or anything a wipe checks), or null. */
+export function targetInUse(target: string, probes: UseProbes = LIVE_PROBES): string | null {
+    const lock = flock();
+    if (lock === null) return "cannot load libc flock to take cargo's locks";
+    const held = tryLockAll(cargoLockFiles(target), lock);
+    if (typeof held === "string") return `a build holds ${held}`;
+    release(held, lock);
+    return useBesideLocks(target, probes);
+}
+
 /**
  * Wipe `target` once no build holds its locks, no cargo runs in its workspace (the folder holding it), no process uses
  * it and `holdOff` (checked on every try) gives no reason to wait, retrying for up to `waitMs`. Nothing is deleted
@@ -121,11 +140,7 @@ export function wipeTargetBetweenBuilds(
         if (typeof held === "string") reason = `a build holds ${held}`;
         else {
             try {
-                const busy =
-                    holdOff() ??
-                    cargoRunsIn(dirname(target), probes.cargos) ??
-                    targetUse(target, probes.processes, probes.buildTools) ??
-                    openIn(target, probes);
+                const busy = holdOff() ?? useBesideLocks(target, probes);
                 if (busy !== null) reason = busy;
                 else {
                     // Renaming can need a directory block that a full disk lacks: then delete in place, still under

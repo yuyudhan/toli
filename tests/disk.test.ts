@@ -5,7 +5,7 @@ import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
 import { parseSccacheStats } from "../src/fleet/disk-caches.ts";
 import type { HeldFile, ProcessUse, UseProbes } from "../src/fleet/disk-scan.ts";
-import { buildOutput, holdLock, keeperBox, keeperTest, libc } from "./disk-fixture.ts";
+import { buildOutput, dfLine, holdLock, keeperBox, keeperTest, libc } from "./disk-fixture.ts";
 import { type Sandbox, tempDir, withProject } from "./helpers.ts";
 
 /** A running jawan run of `project` working in `cwd`, its supervisor this (live) test process. */
@@ -66,6 +66,7 @@ describe("disk keeper", () => {
             runningJawan(box, "beta", busy);
             box.stub("docker", "exit 1");
             box.stub("sccache", "exit 2");
+            box.stub("df", `kb=${100 * 1048576}\n${dfLine(200)}`);
             const report = JSON.parse(
                 box.ok(["disk", "keep", "--dry-run", "--floor", "1000000000", "--json"]),
             ) as KeepReport;
@@ -84,12 +85,11 @@ describe("disk keeper", () => {
             expect(lines).not.toContain(`would delete ${join(busy, "web", "node_modules")}`);
             expect(lines).not.toContain("docs/dist");
             expect(lines).toContain("docker: skipped (daemon not reachable)");
-            // The busy clone's target is still freed, but only between build steps, under cargo's locks.
-            expect(lines).toContain(`${join(busy, "target")} is in use (jawan j-20261105-000000-test works in it)`);
-            const order = ["alpha/target", "T1/web/node_modules", "docker:", "beta/target is in use"].map((text) =>
-                lines.indexOf(text),
-            );
-            expect(order).toEqual([...order].sort((a, b) => a - b));
+            expect(lines).toContain(`kept ${join(busy, "target")} in use: free 100.0 GB is over the emergency level`);
+            expect(report.swept).toEqual([]);
+            const order = ["alpha/target", "T1/web/node_modules", "docker:", "beta/target in use"];
+            const at = order.map((text) => lines.indexOf(text));
+            expect(at).toEqual([...at].sort((a, b) => a - b));
             expect(existsSync(join(idle, "target"))).toBe(true);
             expect(existsSync(join(idle, "web", "node_modules"))).toBe(true);
         },

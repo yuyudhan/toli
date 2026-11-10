@@ -85,9 +85,15 @@ one. See docs/releasing.md.
   `bin/toli self sync`. Before, a merge put a machine's live session on code whose check had not run. Other commits
   still refresh the runtime themselves.
 - The minute tick never waits on the disk keeper: under the floor it only starts the background keeper
-  (`bin/toli disk keep --wait 30`, detached, the same tiers and emergency rule) and goes on, and the tick's queue
-  drain runs no keeper of its own. Before, the tick ran the keeper inline, and on an I/O-starved disk one run held
-  the tick up for about an hour. Jawan starts still run it inline first.
+  (`bin/toli disk keep`, detached, the same tiers and emergency rule) and goes on, and the tick's queue drain runs no
+  keeper of its own. Before, the tick ran the keeper inline, and on an I/O-starved disk one run held the tick up for
+  about an hour. Jawan starts still run it inline first.
+- The disk keeper never touches a build folder in use while free space is over the emergency level (max(5 GB, 3% of
+  the disk)): no wipe between build steps and no sweep of its old artifacts, even under the floor. Before, a sweep of
+  artifacts unused for 180 min ran inside a `target/` whose build held cargo's lock, and a 54-minute build was lost.
+  Under the emergency level the busy-target wipe, the sweep and the last resort run as before. The fallback sweep
+  (free disk unreadable) skips targets in use too. `bin/toli disk keep --wait` is gone: the background keeper no
+  longer waits to wipe busy targets, and a jawan start no longer starts one after its inline run.
 
 ## v0.3.1 - 2026-11-09
 
