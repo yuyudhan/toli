@@ -38,6 +38,11 @@ Every 15 seconds the service makes one pass:
    items. The last turn's output is in `logs/lead.log`.
 4. Every `lead.balanceMinutes` (default 30) it compares queues across the fleet (below) and posts an offer or an ask.
 
+The loop imports its code once, so it runs the runtime it started on (`bin/toli self sync`, docs/releasing.md). After
+each pass it checks `state/runtime`: when a newer runtime is installed it logs that and exits 0, and launchd
+(KeepAlive) or systemd (`Restart=always`) starts it again on the new one. The per-minute crontab form starts afresh
+every run. A `lead run` on the working tree (`TOLI_DEV=1`) has no snapshot and never exits for this.
+
 Because the conversation is resumed, not restarted, it remembers every earlier turn, whoever drove it.
 
 ### Talking to a machine's lead

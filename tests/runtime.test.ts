@@ -66,6 +66,17 @@ function checkout(): Checkout {
     return made;
 }
 
+/** The first line a `lead run` child prints. */
+async function startLine(child: { stdout: ReadableStream<Uint8Array> }): Promise<string> {
+    const reader = child.stdout.getReader();
+    try {
+        const chunk = await reader.read();
+        return new TextDecoder().decode(chunk.value);
+    } finally {
+        reader.releaseLock();
+    }
+}
+
 describe("installed runtime", () => {
     test("a broken working tree does not break the tick once a runtime is installed", () => {
         const live = checkout();
@@ -149,4 +160,48 @@ describe("installed runtime", () => {
         expect(status).toContain("no installed runtime");
         expect(existsSync(join(live.dir, "state", "runtime"))).toBe(false);
     });
+
+    test("a running lead service exits once self sync installs a newer runtime, so its supervisor restarts it on that one", async () => {
+        const live = checkout();
+        const first = String(JSON.parse(live.toli(["self", "sync", "--json"]).stdout).runtime);
+        const spawnLead = (extra: Record<string, string | undefined>) =>
+            Bun.spawn([process.execPath, join(live.dir, "bin", "toli"), "lead", "run"], {
+                cwd: live.dir,
+                env: {
+                    ...process.env,
+                    ...GIT_ENV,
+                    TOLI_RUNTIME_HOME: live.runtimeHome,
+                    TOLI_LEAD_POLL_MS: "100",
+                    TOLI_ROOT: undefined,
+                    ...extra,
+                },
+                stdin: "ignore",
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+        const service = spawnLead({ TOLI_DEV: undefined });
+        const workingTree = spawnLead({ TOLI_DEV: "1" });
+        try {
+            // Both are past their imports once they say where they run from.
+            expect(await startLine(service)).toContain(`lead service started on ${first}`);
+            expect(await startLine(workingTree)).toContain(`lead service started on ${live.dir}`);
+
+            writeFileSync(join(live.dir, "newer.txt"), "newer\n");
+            live.git(["add", "newer.txt"]);
+            live.git(["commit", "--quiet", "-m", "newer"]);
+            const second = String(JSON.parse(live.toli(["self", "sync", "--json"]).stdout).runtime);
+            expect(second).not.toBe(first);
+
+            expect(await service.exited).toBe(0);
+            expect(readFileSync(join(live.dir, "logs", "lead.log"), "utf8")).toContain(
+                "a newer runtime is installed: exiting so the service restarts on it",
+            );
+            // A process running the working tree has no snapshot to be behind.
+            expect(workingTree.exitCode).toBeNull();
+        } finally {
+            service.kill();
+            workingTree.kill();
+            await Promise.all([service.exited, workingTree.exited]);
+        }
+    }, 60_000);
 });
