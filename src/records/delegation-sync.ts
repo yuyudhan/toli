@@ -50,14 +50,17 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         const seen = task.delegates?.[id];
         if (seen !== undefined && seen.updatedAt >= update.task.updatedAt) return;
         applied = true;
-        const { status, updatedAt, notes, question, options, recommend, blocks, commit } = update.task;
+        const { status, updatedAt, notes, question, options, recommend, blocks, commit, handedBack } = update.task;
         if (!task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
         for (const note of notes.slice(seen?.notes ?? 0))
             if (!note.startsWith("delegated by ")) task.notes.push(`${id}: ${note}`);
-        if (seen?.status !== status) task.notes.push(`${id} is ${status}`);
+        if (handedBack !== undefined && seen?.handedBack === undefined)
+            task.notes.push(`${id} handed the work back: ${handedBack}`);
+        else if (seen?.status !== status) task.notes.push(`${id} is ${status}`);
         const state: DelegateState = { status, updatedAt, notes: notes.length };
         if (status === "held") Object.assign(state, { question, options, recommend, blocks });
         if (commit !== undefined) state.commit = commit;
+        if (handedBack !== undefined) state.handedBack = handedBack;
         task.delegates = { ...task.delegates, [id]: state };
         if (status === "done" && update.report !== null) task.report = saveReport(id, update.report);
         settle(task, id, status, commit);
@@ -65,7 +68,10 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
     return applied;
 }
 
-/** The `--for` task's own status after a delegate's change: done when all are done, dropped when all are dropped. */
+/**
+ * The `--for` task's own status after a delegate's change: done when every delegation not dropped is done, dropped
+ * when all are dropped, queued again (for another Sardar or this one) when every delegation was handed back.
+ */
 function settle(task: Task, id: string, status: DelegateState["status"], commit: string | undefined): void {
     if (task.status === "held" && task.heldFrom === id && status !== "held") {
         task.status = "active";
@@ -73,14 +79,21 @@ function settle(task: Task, id: string, status: DelegateState["status"], commit:
         task.notes.push(`${id} no longer waits on the escalated question`);
     }
     if (task.status !== "queued" && task.status !== "active") return;
-    const states = (task.delegatedTo ?? []).map((entry) => task.delegates?.[entry]?.status ?? "active");
-    if (states.every((entry) => entry === "done")) {
+    const live = (task.delegatedTo ?? []).filter((entry) => task.delegates?.[entry]?.handedBack === undefined);
+    const open = live
+        .map((entry) => task.delegates?.[entry]?.status ?? "active")
+        .filter((entry) => entry !== "dropped");
+    if (live.length === 0) {
+        task.status = "queued";
+        delete task.agent;
+        delete task.dispatchedAt;
+    } else if (open.length === 0) task.status = "dropped";
+    else if (open.every((entry) => entry === "done")) {
         task.status = "done";
         task.doneAt = now().toISOString();
         if (commit !== undefined) task.commit = commit;
         delete task.waitingOn;
-    } else if (states.every((entry) => entry === "dropped")) task.status = "dropped";
-    else task.status = "active";
+    } else task.status = "active";
 }
 
 /** Record that this update was seen; returns whether it is a new outcome to wake this lead for. */
@@ -143,12 +156,7 @@ function link(argv: string[]): void {
     updateTask(local, (task) => {
         if (!task.delegatedTo?.includes(fid)) task.delegatedTo = [...(task.delegatedTo ?? []), fid];
         task.notes.push(`linked to ${fid}`);
-        if (task.status === "queued" || task.status === "active") {
-            task.status = "active";
-            task.startedAt ??= now().toISOString();
-            task.agent = fid;
-            task.dispatchedAt = now().toISOString();
-        }
+        workOnBy(task, fid);
     });
     const body = JSON.stringify({ from: self, task: local, id } satisfies DelegationLink);
     const sent = sendNow(
@@ -210,10 +218,49 @@ export function forwardEscalatedAnswer(heldFrom: string | undefined, reply: stri
     }
 }
 
-/** `task link` and `task escalate`; returns whether `sub` was one of them. */
+/**
+ * The `--for` task now works through `fid` (a new delegation or a link): queued and active become active with it as
+ * the jawan, and a done or dropped task (its earlier delegation finished or was given up) is reopened.
+ */
+export function workOnBy(task: Task, fid: string): void {
+    if (task.status === "held") return;
+    if (task.status === "done" || task.status === "dropped") {
+        task.notes.push(`reopened (was ${task.status}): it works through ${fid} now`);
+        delete task.doneAt;
+    }
+    task.status = "active";
+    task.startedAt ??= now().toISOString();
+    task.agent = fid;
+    task.dispatchedAt = now().toISOString();
+}
+
+/**
+ * `task handback <id> --reason "..."`: give a task another machine delegated here back to it (overloaded, not cloned,
+ * wrong machine). It is dropped here; the delegator's `--for` task goes back to queued with the reason, never dropped.
+ */
+function handback(argv: string[]): void {
+    const args = new Args(argv, { values: ["reason"] });
+    args.maxPositional(1);
+    const reason = args.str("reason")?.trim();
+    if (!reason) throw new ToliError('task handback needs --reason "..."');
+    const task = updateTask(args.pos(0, "id"), (entry) => {
+        if (entry.delegatedBy === undefined)
+            throw new ToliError(`${entry.id} was not delegated here: drop it instead (bin/toli task drop ${entry.id})`);
+        if (entry.status === "done" || entry.status === "dropped")
+            throw new ToliError(`${entry.id} is ${entry.status}`);
+        entry.status = "dropped";
+        entry.handedBack = reason;
+        entry.notes.push(`handed back to ${entry.delegatedBy.machine}: ${reason}`);
+        delete entry.waitingOn;
+    });
+    out(`${task.id}\thanded back to ${task.delegatedBy?.machine}: ${reason}`);
+}
+
+/** `task link`, `task escalate` and `task handback`; returns whether `sub` was one of them. */
 export function delegationTaskCommand(sub: string, rest: string[]): boolean {
     if (sub === "link") link(rest);
     else if (sub === "escalate") escalate(rest);
+    else if (sub === "handback") handback(rest);
     else return false;
     return true;
 }

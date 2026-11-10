@@ -27,6 +27,8 @@ export type DelegateState = {
     recommend?: string;
     blocks?: string;
     commit?: string;
+    /** The owner handed the work back (`task handback`) with this reason: it no longer counts for the `--for` task. */
+    handedBack?: string;
 };
 
 /** The delegation fields of a task (src/records/backlog.ts `Task`). */
@@ -39,6 +41,8 @@ export type DelegationFields = {
     delegates?: Record<string, DelegateState>;
     /** `task escalate`: this hold is a delegated task's question; answering it here also answers it there. */
     heldFrom?: string;
+    /** `task handback`: this delegated task was given back to its delegator, for this reason. */
+    handedBack?: string;
 };
 
 /** What travels to the delegator (JSON on `delegation update`'s stdin). */
@@ -48,7 +52,7 @@ export type DelegationUpdate = {
     /** The delegator's own task this one works for, when the delegation named one. */
     forTask?: string;
     task: Pick<Task, "status" | "title" | "updatedAt" | "notes"> &
-        Partial<Pick<Task, "question" | "options" | "recommend" | "blocks" | "commit">>;
+        Partial<Pick<Task, "question" | "options" | "recommend" | "blocks" | "commit" | "handedBack">>;
     /** The task's report file, read on the owner. */
     report: string | null;
     /** The wake the delegator's lead gets for a new outcome. */
@@ -103,6 +107,14 @@ export function delegationReport(owner: string, task: Task): { title: string; bo
         ...(task.commit === undefined ? [] : [`- commit: ${task.commit}`]),
         ...(task.report === undefined ? [] : [`- report (on ${owner}): ${task.report}`]),
     ];
+    if (task.handedBack !== undefined)
+        lines.push(
+            "",
+            `${owner}'s lead handed this work back: ${task.handedBack}`,
+            by?.task === undefined
+                ? "Give it to another Sardar (`bin/toli delegate <machine> ...`) or do it here."
+                : `${by.task} is queued again: give it to another Sardar (\`bin/toli delegate <machine> "<title>" --brief <file> --for ${by.task}\`) or dispatch it here.`,
+        );
     if (task.status === "held") {
         lines.push("", "## Question", "", task.question ?? "");
         for (const [index, option] of (task.options ?? []).entries())
@@ -121,12 +133,13 @@ export function delegationReport(owner: string, task: Task): { title: string; bo
     if (notes.length > 0) lines.push("", "## Latest notes", "", ...notes.map((note) => `- ${note}`));
     const report = reportText(task);
     if (report !== null) lines.push("", "## Report", "", report);
-    return { title: `${id} ${task.status}: ${task.title}`, body: lines.join("\n") };
+    const status = task.handedBack === undefined ? task.status : "handed back";
+    return { title: `${id} ${status}: ${task.title}`, body: lines.join("\n") };
 }
 
 /** The update for `task` as it is now, owned by `owner`. */
 export function delegationUpdate(owner: string, task: Task): DelegationUpdate {
-    const { status, title, updatedAt, notes, question, options, recommend, blocks, commit } = task;
+    const { status, title, updatedAt, notes, question, options, recommend, blocks, commit, handedBack } = task;
     return {
         owner,
         id: task.id,
@@ -141,6 +154,7 @@ export function delegationUpdate(owner: string, task: Task): DelegationUpdate {
             ...(recommend === undefined ? {} : { recommend }),
             ...(blocks === undefined ? {} : { blocks }),
             ...(commit === undefined ? {} : { commit }),
+            ...(handedBack === undefined ? {} : { handedBack }),
         },
         report: reportText(task),
         message: delegationReport(owner, task),

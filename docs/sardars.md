@@ -102,6 +102,14 @@ forwarded to the owner too.
 A delegation made without `--for` is attached later with `bin/toli task link T<n> <owner>/T<n>`: the owner's task
 then names this task as its delegator and sends its current state back at once.
 
+**Handing work back.** A lead that cannot take delegated work (overloaded, project not cloneable, wrong machine)
+gives it back with `bin/toli task handback T<n> --reason "<why>"`, never `task drop`: its task is dropped there, and
+the delegator's `--for` task goes back to queued with `<owner>/T<n> handed the work back: <why>` in its notes and a
+`<owner>/T<n> handed back` wake, so its lead delegates it to another Sardar or dispatches it itself. `task drop`
+means the work itself is given up, and drops the `--for` task once every delegation of it is dropped. Delegating or
+linking for a done or dropped task reopens it (`reopened (was dropped)` in its notes); a dropped delegation never
+keeps the `--for` task from being done by the others.
+
 ## The shared task list
 
     bin/toli task list --fleet [--json] [--cached] [--status <s>] [--project <p>]

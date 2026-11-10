@@ -61,7 +61,7 @@ const USAGE = `usage: bin/toli <command> [args]
   task wait <id> --on "<what it waits on>"
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
   task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
-  task link <id> <machine>/T<n> | escalate <machine>/T<n>
+  task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..."
   delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
   delegation receive|update|link (JSON on stdin)
   talk <machine> ["<words>"]
