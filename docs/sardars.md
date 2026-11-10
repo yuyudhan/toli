@@ -75,17 +75,32 @@ title, brief text, project, note, shape, tier and its own name. The receiving ma
 The receiving lead dispatches its own jawans for the task as for any task (`task start`, `spawn --task`). A project
 not cloned there is its lead's to clone: the task's notes name `bin/toli project ensure <p> <url>` with the URL the
 delegator knows. Each delegation carries an id (`<from>-<timestamp>`); a
-repeat of the same id returns the task already created, so a retried delivery never makes two tasks. When the target
-is unreachable, the delegation waits in `state/outbox/` and the minute tick retries it; when it lands, the fleet id
-arrives here as a wake.
+repeat of the same id returns the task already created, so a retried delivery never makes two tasks, and so does a
+delegation of the same title for the same `--for` task while an earlier one is still open (a copy queued for the tick
+that lands after a retry went through). When the target is unreachable, the delegation waits in `state/outbox/` and
+the minute tick retries it; when it lands, the fleet id arrives here as a wake.
 
 ### Results and questions go back
 
-A delegated task reports to its delegator by itself. Whenever the owner's task is marked done, held (a question for
-the user) or dropped, the owner sends `<owner>/T<n> <status>: <title>` to the delegating machine's inbox, with the
-notes, commit, report text (truncated) and, for a hold, the question and its options. It wakes the delegating lead,
-which relays it. An answer is recorded on the owner: `bin/toli task answer <owner>/T<n> "<words>"` from any machine
-forwards the words over ssh to the owner's `task answer`, which releases the task and wakes the owner's lead.
+A delegated task reports to its delegator by itself, and its delegator's `--for` task follows it. Whenever the
+owner's task changes status, question, notes, commit or report, the owner sends the task as it is now to the
+delegating machine (`bin/toli delegation update` there, through the outbox, so an unreachable delegator gets it from
+the owner's minute tick). The delegator writes it back onto the `--for` task: the owner's new notes are appended as
+`<owner>/T<n>: <note>`, its state is kept under `delegates`, and once every delegation of that task is done the task
+is done too, with the last commit and the report saved in `data/reports/delegated/<owner>-T<n>.md` (all dropped:
+dropped). A repeat of an update (the owner's `updatedAt` is no newer) is applied once and wakes no one again.
+
+A new outcome (done, held, dropped) also wakes the delegating lead with `<owner>/T<n> <status>: <title>`, the notes,
+commit, report text (truncated) and, for a hold, the question and its options. **The delegating lead answers its
+delegated work's questions itself**: `bin/toli task answer <owner>/T<n> "<answer>"` from any machine forwards the
+words over ssh to the owner's `task answer`, which releases the task and wakes the owner's lead, who resumes the work
+at once. A question only the user can decide (push, merge, release, money, security, a destructive step, his taste)
+goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task with `<owner>/T<n> asks: <question>` and its
+options, so it sits in this machine's Needs-you queue; his `task answer T<n> "<words>"` there is recorded here and
+forwarded to the owner too.
+
+A delegation made without `--for` is attached later with `bin/toli task link T<n> <owner>/T<n>`: the owner's task
+then names this task as its delegator and sends its current state back at once.
 
 ## The shared task list
 

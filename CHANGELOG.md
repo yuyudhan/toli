@@ -12,8 +12,11 @@ one. See docs/releasing.md.
 run|attach` keeps its lead conversation served by a launchd agent, systemd user service or crontab line, taking
   wakes in headless turns whenever no lead session is open. Leads hand each other work with `bin/toli delegate
 <machine> "<title>" --brief <file> [--project <p>] [--for T<n>]`: the task lands in that machine's backlog (fleet
-  id `<machine>/T<n>`, idempotent, queued in `state/outbox/` while unreachable) and reports done, held or dropped back
-  to the delegator by itself; `bin/toli task answer <machine>/T<n>` forwards an answer to the owner. `bin/toli talk
+  id `<machine>/T<n>`, idempotent, queued in `state/outbox/` while unreachable) and writes every change back onto the
+  delegator's `--for` task (notes; done with commit and report in `data/reports/delegated/`; dropped), waking its
+  lead for each outcome. The delegating lead answers a delegated question with `bin/toli task answer <machine>/T<n>`
+  (forwarded to the owner) or, when only the user can decide, `bin/toli task escalate <machine>/T<n>` puts it in its
+  own Needs-you queue; `bin/toli task link T<n> <machine>/T<n>` attaches a delegation made without `--for`. `bin/toli talk
 <machine> ["<words>"]` attaches to or messages another machine's lead. `bin/toli task list --fleet [--cached]` is
   the shared list of every machine's tasks. `pick` and the new `bin/toli fleet queues` rank machines by task-queue
   depth, shortest first (ties: the clone, this machine, name); CPU, load and memory are shown but never exclude a

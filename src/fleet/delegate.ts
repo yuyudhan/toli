@@ -23,6 +23,7 @@ import { type Delivered, sendNow } from "../jobs/outbox.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
 import { fleetId } from "../records/delegation-report.ts";
+import { applyUpdate, parseLink, parseUpdate, receiveLink } from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
 
 /** What travels to the target (JSON on `delegation receive`'s stdin). */
@@ -90,15 +91,33 @@ function parseDelegation(text: string): Delegation {
     };
 }
 
+/** Whether `task` is an open delegation of the same work: same delegator, same `--for` task and title. */
+function sameOpenWork(task: Task, delegation: Delegation): boolean {
+    const by = task.delegatedBy;
+    return (
+        by !== undefined &&
+        delegation.fromTask !== undefined &&
+        by.machine === delegation.from &&
+        by.task === delegation.fromTask &&
+        task.title === delegation.title &&
+        task.status !== "done" &&
+        task.status !== "dropped"
+    );
+}
+
 /**
- * Record a delegation in this machine's backlog, once per delegation id. Returns the task and whether it was new; a
- * new one gets its brief saved and an inbox item that wakes this machine's lead.
+ * Record a delegation in this machine's backlog, once per delegation id, and once per open piece of work: a delegation
+ * of the same title for the same `--for` task while an earlier one is open (a copy queued for the tick and a retry
+ * that went through) returns that task. Returns the task and whether it was new; a new one gets its brief saved and an
+ * inbox item that wakes this machine's lead.
  */
 export function receiveDelegation(delegation: Delegation): { task: Task; created: boolean } {
     const project = delegation.project ?? DEFAULT_PROJECT;
     const cloned = existsSync(paths.projectDir(project));
     const result = updateBacklog((backlog) => {
-        const existing = backlog.tasks.find((task) => task.delegatedBy?.id === delegation.id);
+        const existing =
+            backlog.tasks.find((task) => task.delegatedBy?.id === delegation.id) ??
+            backlog.tasks.find((task) => sameOpenWork(task, delegation));
         if (existing) return { task: { ...existing }, created: false };
         const at = now().toISOString();
         const by = delegation.fromTask === undefined ? delegation.from : `${delegation.from}/${delegation.fromTask}`;
@@ -154,13 +173,29 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
     return result;
 }
 
-/** `delegation receive` (delegation JSON on stdin): what `delegate` runs on the target over ssh. */
+/**
+ * `delegation receive|update|link` (JSON on stdin): what another machine's lead runs here over ssh. `receive`: a new
+ * delegation (`delegate`); `update`: a delegated task's owner reports it (src/records/delegation-sync.ts); `link`:
+ * this machine's task starts reporting to the delegator's (`task link`).
+ */
 export function delegationCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
-    if (sub !== "receive") throw new ToliError("usage: toli delegation receive (delegation JSON on stdin)");
     new Args(rest).maxPositional(0);
-    const { task, created } = receiveDelegation(parseDelegation(readStdin()));
-    out(`delegation-accepted ${fleetId(loadMachine().name, task.id)} ${created ? "created" : "existing"}`);
+    switch (sub) {
+        case "receive": {
+            const { task, created } = receiveDelegation(parseDelegation(readStdin()));
+            out(`delegation-accepted ${fleetId(loadMachine().name, task.id)} ${created ? "created" : "existing"}`);
+            return;
+        }
+        case "update":
+            out(applyUpdate(parseUpdate(readStdin())));
+            return;
+        case "link":
+            out(receiveLink(parseLink(readStdin())));
+            return;
+        default:
+            throw new ToliError("usage: toli delegation receive|update|link (JSON on stdin)");
+    }
 }
 
 /**
@@ -192,10 +227,13 @@ export function onOutboxDelivered({ item, stdout }: Delivered): void {
     if (item.kind !== "delegation") return;
     const delegation = parseDelegation(item.body);
     const id = acceptDelegation(delegation, stdout);
+    const existing = ACCEPTED.exec(stdout)?.[2] === "existing";
     addInboxItem(
         delegation.from,
         `delegated ${id}: ${delegation.title}`,
-        `The delegation queued while ${item.to?.name ?? "the target"} was unreachable has landed as ${id}.\nIts lead dispatches it; the result comes back here as a wake.`,
+        existing
+            ? `The delegation queued while ${item.to?.name ?? "the target"} was unreachable was already there as ${id} (an earlier copy landed first); no second task was made.`
+            : `The delegation queued while ${item.to?.name ?? "the target"} was unreachable has landed as ${id}.\nIts lead dispatches it; the result comes back here as a wake.`,
     );
 }
 

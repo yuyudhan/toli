@@ -1,80 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { storeCopy } from "../src/records/fleet-tasks.ts";
-import { inProcess, type Sandbox, sandbox, TOLI_BIN, withProject } from "./helpers.ts";
-
-type Task = {
-    id: string;
-    status: string;
-    project: string;
-    agent?: string;
-    notes: string[];
-    delegatedBy?: { machine: string; task?: string; id: string };
-    delegatedTo?: string[];
-};
-type FleetList = {
-    machine: string;
-    local: boolean;
-    fetchedAt: string | null;
-    error?: string;
-    tasks: { fleetId: string }[];
-}[];
-type InboxItem = { title: string; path: string };
-
-/**
- * Two real machines, m1 and m2, each a sandbox of its own, and m3 that never answers. Their `ssh` stub runs the
- * remote `bin/toli ...` command against the named machine's sandbox, so a delegation really crosses machines.
- * Touching `<root>/.m2-down` makes m2 unreachable.
- */
-function pair(): { m1: Sandbox; m2: Sandbox; down: () => void; up: () => void } {
-    const m1 = sandbox();
-    const m2 = sandbox();
-    const roots: Record<string, string> = { host1: m1.root, host2: m2.root };
-    const flag = join(m1.root, ".m2-down");
-    const fleet = JSON.stringify({
-        machines: [
-            { name: "m1", ssh: "host1", root: m1.root },
-            { name: "m2", ssh: "host2", root: m2.root },
-            { name: "m3", ssh: "host3", root: "/srv/toli" },
-        ],
-    });
-    for (const [name, box] of [
-        ["m1", m1],
-        ["m2", m2],
-    ] as const) {
-        box.ok(["init", "--name", name, "--role", "coordinator"]);
-        writeFileSync(join(box.root, "config", "fleet.json"), fleet);
-        box.stub(
-            "ssh",
-            [
-                'host="$5"; cmd="$6"',
-                `if [ "$host" = host2 ] && [ -e "${flag}" ]; then echo "ssh: connect to host host2: Connection refused" >&2; exit 255; fi`,
-                'case "$host" in',
-                ...Object.entries(roots).map(([host, root]) => `  ${host}) root="${root}" ;;`),
-                '  *) echo "ssh: connect to host $host port 22: Connection refused" >&2; exit 255 ;;',
-                "esac",
-                `cmd=$(printf '%s' "$cmd" | sed "s#bin/toli #'${process.execPath}' '${TOLI_BIN}' #")`,
-                'TOLI_ROOT="$root" exec sh -c "$cmd"',
-            ].join("\n"),
-        );
-    }
-    return { m1, m2, down: () => writeFileSync(flag, "1"), up: () => rmSync(flag, { force: true }) };
-}
-
-function tasks(box: Sandbox): Task[] {
-    return JSON.parse(box.ok(["task", "list", "--json"])) as Task[];
-}
-
-function inbox(box: Sandbox): InboxItem[] {
-    return JSON.parse(box.ok(["inbox", "list", "--json"])) as InboxItem[];
-}
-
-function brief(box: Sandbox, text = "TOLI_BRIEF v1\n# no-op\nReply done.\n"): string {
-    const file = join(box.root, "brief.md");
-    writeFileSync(file, text);
-    return file;
-}
+import { brief, type FleetList, inbox, pair, tasks } from "./delegate-fixture.ts";
+import { inProcess, type Sandbox, withProject } from "./helpers.ts";
 
 describe("delegate", () => {
     test("lands in the target's own backlog, wakes its lead, and records the fleet id on the --for task", () => {
@@ -141,6 +70,29 @@ describe("delegate", () => {
     });
 });
 
+describe("one open delegation per piece of work", () => {
+    test("a queued copy that lands after a retry went through makes no second task", () => {
+        const { m1, m2, down, up } = pair();
+        withProject(m1, "app");
+        m1.ok(["task", "add", "app", "parent work"]);
+        down();
+        expect(m1.ok(["delegate", "m2", "same work", "--brief", brief(m1), "--for", "T1"])).toContain("queued");
+        up();
+        expect(m1.ok(["delegate", "m2", "same work", "--brief", brief(m1), "--for", "T1"])).toContain(
+            "delegated to m2/T1",
+        );
+        m1.ok(["job", "tick"]);
+        expect(readdirSync(join(m1.root, "state", "outbox"))).toHaveLength(0);
+        expect(tasks(m2).map((task) => task.id)).toEqual(["T1"]);
+        const landed = inbox(m1).filter((item) => item.title === "delegated m2/T1: same work");
+        expect(readFileSync(landed.at(-1)?.path ?? "", "utf8")).toContain("no second task was made");
+        // Other work for the same task, or the same work once the first is done, is a new delegation.
+        expect(m1.ok(["delegate", "m2", "other work", "--brief", brief(m1), "--for", "T1"])).toContain("m2/T2");
+        m2.ok(["task", "done", "T1"]);
+        expect(m1.ok(["delegate", "m2", "same work", "--brief", brief(m1), "--for", "T1"])).toContain("m2/T3");
+    });
+});
+
 describe("delegated results go back", () => {
     test("done, held and dropped each report to the delegator's inbox, which wakes its lead", () => {
         const { m1, m2 } = pair();
@@ -157,7 +109,8 @@ describe("delegated results go back", () => {
         expect(wake.message).toContain("no-op done");
         expect(wake.message).toContain("Which one?");
         expect(wake.message).toContain("1. a => fast");
-        expect(wake.message).toContain('bin/toli task answer m2/T2 "<his words>"');
+        expect(wake.message).toContain('bin/toli task answer m2/T2 "<answer>"');
+        expect(wake.message).toContain("bin/toli task escalate m2/T2");
         // A change that is not a new outcome (another note on a done task) sends nothing more.
         m2.ok(["task", "done", "T1", "--note", "again"]);
         expect(inbox(m1)).toHaveLength(2);

@@ -47,6 +47,7 @@ export function headlessPrompt(machine: string, wake: string): string {
         "- Dispatch jawans ONLY with `bin/toli spawn --task T<n> --brief <file>`: it returns at once and the result arrives as a later wake. Never use native or harness subagents, and never wait for or poll a jawan.",
         `- Never ask questions: a decision for ${user} is \`bin/toli task hold <id> --question "..."\` (the Needs-you queue).`,
         '- Work for another machine goes by `bin/toli delegate <machine> "<title>" --brief <file>`, never `bin/toli remote`. Reply to another machine\'s lead with `bin/toli talk <machine> "<words>"`.',
+        `- A delegated task's question (\`<machine>/T<n> held\`) is yours to answer: \`bin/toli task answer <machine>/T<n> "<answer>"\`. Only one that needs ${user} (push, merge, release, money, security, destructive, taste) goes to \`bin/toli task escalate <machine>/T<n>\`.`,
         "- After handling the items, acknowledge them with `bin/toli inbox ack` / `bin/toli job ack`.",
         "",
         wake,
