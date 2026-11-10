@@ -90,6 +90,32 @@ For shop, `bin/toli spawn --task T42 ...` creates `projects/.worktrees/shop/T42`
 `toli/T42-<slug>` from `main`; after verification the verifier holds T42 asking to push and open the MR, and on the
 user's word a jawan runs `bin/toli push shop --task T42` and `bin/toli pr create shop --task T42 ...`.
 
+## Live-stack mode
+
+A `same-branch` project whose dev stack rebuilds itself on save (a backend under a file watcher, a hot-reloading
+frontend dev server) can run many jawans at once, 8 to 16 per machine, against that one running stack instead of each
+jawan building and testing on its own:
+
+    bin/toli project set app --live-stack yes      # --live-stack no turns it off
+
+`live-stack=yes` shows in `bin/toli project list` (`liveStack` in `--json`). For such a project:
+
+- The notes carry a `## Live stack mode` section with the exact start, logs and health commands (the stack runs as
+  a long-lived service on each machine: detached, with a restart policy, so it outlives the session and comes back
+  with the machine's container runtime after a reboot).
+- Every code brief keeps the `## Live stack` section of [brief-template.md](brief-template.md): write code in the
+  shared checkout, never run your own full build/test/lint while coding, commit only your own paths, follow the live
+  logs and fix every compile or runtime error your change caused (other jawans' errors are theirs: tell them by agent
+  message), and once the stack is green with your change in it, run your browser tests against it and your own scoped
+  tests. The full check runs once per machine, at integration or before a push. `bin/toli spawn` warns when a
+  live-stack project's code brief has no `## Live stack` section.
+- Its spawned jawans run without the heavy-build slot shim (src/jawans/env.ts): the machine's one build is the
+  stack's; their scoped test builds share the checkout's build folder, where cargo's own lock already runs them one
+  at a time, still capped at `capacity.cargoJobs`.
+- The machine's jawan cap must fit the team: set `capacity.maxRuns` in `config/machine.json` to the number of
+  jawans the machine runs at once (16 for 8-16 jawans; the default is a quarter of the cores, [fleet.md](fleet.md)).
+  Spawns beyond it queue.
+
 ## Setting up an existing project
 
 Projects registered before the interview, imported clones, and notes that drifted get the same treatment:

@@ -68,8 +68,12 @@ acknowledged:
 
 Besides due jobs, every tick retries the worker outbox, marks stale runs as failed, once a week posts the
 `bin/toli prune` dry run to the inbox ([memory.md](memory.md#pruning)), and every 3 days starts the update check in
-the background ([install.md](install.md#update-check)). Optional `pre-tick` and `post-tick` hooks
-in `local/hooks/` run around it ([helpers.md](helpers.md#hooks)). Tick output goes to `logs/tick.log`.
+the background ([install.md](install.md#update-check)). It also runs oversight that no job prompt can switch off,
+away mode included: active tasks no live run works on go to the inbox once, and on the coordinator `bin/toli fleet
+check --wake` runs hourly to name idle machines with waiting work ([fleet.md](fleet.md#oversight)). A job's prompt
+never skips itself because the user is away (`state/afk`): away mode changes who is asked, not what is checked.
+Optional `pre-tick` and `post-tick` hooks in `local/hooks/` run around it ([helpers.md](helpers.md#hooks)). Tick
+output goes to `logs/tick.log`.
 
 For a machine's own recurring chores (disk cleanup, backups) that do not need an agent, use a
 [helper](helpers.md) instead of a job.

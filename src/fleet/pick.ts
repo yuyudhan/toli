@@ -1,8 +1,8 @@
 import { Args } from "../core/args.ts";
 import { loadFleet, remoteToliCommand, sshArgs } from "../core/config.ts";
-import { out, printJson, runAsync, ToliError } from "../core/util.ts";
+import { out, printJson, runAsync } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
-import { availabilityLine, type FleetEntry, localResources, type Resources } from "./resources.ts";
+import { type FleetEntry, localResources, type Resources } from "./resources.ts";
 
 export type Candidate = { machine: string; local: boolean; hasClone: boolean; score: number };
 
@@ -198,16 +198,6 @@ export function noCandidateText(pick: PickResult): string {
         "no machine available:",
         ...pick.rejected.map((entry) => `  ${entry.machine}: ${entry.reasons.join("; ")}`),
     ].join("\n");
-}
-
-export async function fleetCommand(argv: string[]): Promise<void> {
-    const [sub, ...rest] = argv;
-    if (sub !== "status") throw new ToliError("usage: toli fleet status [--json]");
-    const args = new Args(rest, { booleans: ["json"] });
-    args.maxPositional(0);
-    const entries = await fleetStatus();
-    if (args.bool("json")) printJson(entries);
-    else for (const entry of entries) out(availabilityLine(entry));
 }
 
 /** Prints the chosen machine; exit 2 with each machine's reasons when none qualifies. */

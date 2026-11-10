@@ -55,10 +55,11 @@ For each answer, record the user's words exactly:
 
     bin/toli task answer T<n> "<the user's words>"
 
-It writes the question, options, and answer to `data/projects/<project>/decisions.md` and prints
-`unblocked: dispatch T<n> ...`. Dispatch it in the same turn through `skill://toli-dispatch`: add the answer to the
-saved brief (`data/projects/<project>/briefs/T<n>.md`) and re-spawn, or dispatch a gate jawan to respond to the
-no-mistakes gate (`skill://toli-nm`). A task the user says to abandon is dropped:
+It writes the question, options, and answer to `data/projects/<project>/decisions.md`, prints
+`unblocked: dispatch T<n> ...` and one `waiting on T<n>: ...` line per task waiting on that answer (with its brief),
+and posts the same as an inbox wake. Dispatch all of them in the same turn through `skill://toli-dispatch`: add the
+answer to each saved brief (`data/projects/<project>/briefs/T<n>.md`) and re-spawn, or dispatch a gate jawan to
+respond to the no-mistakes gate (`skill://toli-nm`). A task the user says to abandon is dropped:
 
     bin/toli task drop T<n>
 

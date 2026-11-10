@@ -28,7 +28,7 @@ import {
     type Tier,
     usageText,
 } from "../harness/models.ts";
-import { findProject } from "../projects/projects.ts";
+import { findProject, isLiveStack } from "../projects/projects.ts";
 import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { continueRun } from "./continue.ts";
@@ -157,6 +157,11 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
     if (resolved.work === "ship" && !/^## Goal\b/m.test(resolved.brief))
         warn(
             `the ship brief ${options.briefPath} has no "## Goal" section (Objective, Validate, Stop when; docs/brief-template.md); spawning anyway`,
+        );
+    // A live-stack project's code brief carries the live-stack rules (docs/brief-template.md `## Live stack`).
+    if (resolved.work !== "scout" && isLiveStack(resolved.project) && !/^## Live stack\b/m.test(resolved.brief))
+        warn(
+            `${resolved.project} runs in live-stack mode but the brief ${options.briefPath} has no "## Live stack" section (docs/brief-template.md); spawning anyway`,
         );
     if (resolved.task !== null && resolved.project !== null && resolved.work !== "scout") {
         const workspace = prepareWorkspace(resolved.task);

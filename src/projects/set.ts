@@ -1,4 +1,4 @@
-// `bin/toli project set`: record the user's delivery, forge, workspace strategy and standing-grant answers.
+// `bin/toli project set`: record the user's delivery, forge, workspace strategy, standing-grant and live-stack answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
@@ -42,7 +42,7 @@ function parseForgeHost(value: string | undefined): string | null | undefined {
     return value.toLowerCase();
 }
 
-/** `--standing-push` / `--standing-pr`: yes or no. */
+/** `--standing-push` / `--standing-pr` / `--live-stack`: yes or no. */
 function parseYesNo(value: string | undefined, flag: string): boolean | undefined {
     if (value === undefined) return undefined;
     if (value !== "yes" && value !== "no") throw new ToliError(`${flag} must be yes or no, got "${value}"`);
@@ -98,7 +98,7 @@ function setAll(args: Args): void {
     const value = args.str("workspace");
     if (args.positional.length > 0) throw new ToliError("project set takes a name or --all, not both");
     if (value === undefined) throw new ToliError("project set --all needs --workspace <strategy>");
-    const others = ["mode", "branch", "forge", "forge-host", "standing-push", "standing-pr"].filter(
+    const others = ["mode", "branch", "forge", "forge-host", "standing-push", "standing-pr", "live-stack"].filter(
         (flag) => args.str(flag) !== undefined,
     );
     if (others.length > 0)
@@ -116,7 +116,7 @@ function setAll(args: Args): void {
 export function projectSetCommand(argv: string[]): void {
     const args = new Args(argv, {
         booleans: ["all"],
-        values: ["mode", "branch", "forge", "forge-host", "workspace", "standing-push", "standing-pr"],
+        values: ["mode", "branch", "forge", "forge-host", "workspace", "standing-push", "standing-pr", "live-stack"],
     });
     args.maxPositional(1);
     if (args.bool("all")) {
@@ -132,10 +132,16 @@ export function projectSetCommand(argv: string[]): void {
     const workspace = workspaceValue === undefined ? undefined : parseWorkspace(workspaceValue);
     const standingPush = parseYesNo(args.str("standing-push"), "--standing-push");
     const standingPr = parseYesNo(args.str("standing-pr"), "--standing-pr");
-    if ([mode, branch, forge, forgeHost, workspace, standingPush, standingPr].every((value) => value === undefined))
+    const liveStack = parseYesNo(args.str("live-stack"), "--live-stack");
+    if (
+        [mode, branch, forge, forgeHost, workspace, standingPush, standingPr, liveStack].every(
+            (value) => value === undefined,
+        )
+    )
         throw new ToliError(
             "nothing to set: pass --mode <m>, --branch <b>|none, --forge <f>|none, --forge-host <h>|none, " +
-                "--workspace <s>, --standing-push yes|no or --standing-pr yes|no (or --all --workspace <s>)",
+                "--workspace <s>, --standing-push yes|no, --standing-pr yes|no or --live-stack yes|no " +
+                "(or --all --workspace <s>)",
         );
     const at = now().toISOString();
     const { updated, note } = updateProjects((projects) => {
@@ -167,6 +173,8 @@ export function projectSetCommand(argv: string[]): void {
             if (standing.push || standing.pr) project.standing = standing;
             else delete project.standing;
         }
+        if (liveStack === true) project.liveStack = true;
+        else if (liveStack === false) delete project.liveStack;
         return { updated: { ...project }, note: moved };
     });
     if (note !== null) out(note);

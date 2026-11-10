@@ -7,22 +7,11 @@ import type { Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, warn } from "../core/util.ts";
 import { autoResumeLimit } from "../fleet/resources.ts";
-import { deliverOutbox, queueOutbox } from "../jobs/outbox.ts";
+import { notify } from "../jobs/outbox.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
-import { addInboxItem } from "../records/inbox.ts";
 import { baseBriefOf, sessionFile, startOrQueue } from "./launch.ts";
 import { continuePrompt, type ResumeFacts, resumeSection } from "./limits.ts";
 import { type JawanRun, loadRun, updateRun } from "./runs.ts";
-
-/** Post one item to this machine's inbox and, on a worker, forward it to the coordinator. Returns the inbox path. */
-export function notify(machine: Machine, title: string, body: string, outboxId: string): string {
-    const inbox = addInboxItem(machine.name, title, body);
-    if (machine.role === "worker") {
-        queueOutbox(machine, title, body, outboxId);
-        for (const error of deliverOutbox(machine).errors) warn(`outbox: ${error}`);
-    }
-    return inbox;
-}
 
 /** Add one line to the run's task notes, when the run has a task that is in the backlog. */
 function noteOnTask(run: JawanRun, line: string): void {

@@ -60,8 +60,10 @@ sequenceDiagram
 Questions a jawan cannot answer put the task on hold (`bin/toli task hold`) with 2-4 options, a recommendation, and
 what it blocks. Held tasks are the Needs-you queue (`bin/toli needs`, the top of the digest): the lead raises them
 together at session start, after results that add questions, or when you ask (`/ahoy`), never one at a time or every
-turn. `bin/toli task answer` records your reply verbatim in the project's `decisions.md`, and the lead dispatches the
-unblocked task right away.
+turn. `bin/toli task answer` records your reply verbatim in the project's `decisions.md` and names every task waiting
+on it, and the lead dispatches all of them right away. An active task whose jawan stopped with nobody re-dispatching
+it, or a machine left idle with queued work, is raised to the lead within minutes, away mode included
+([fleet.md](fleet.md#oversight)).
 
 ## Proof before done
 

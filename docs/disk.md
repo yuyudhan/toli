@@ -35,6 +35,18 @@ jawan on any machine that finds its disk full runs `bin/toli disk keep` and neve
 Only one keeper runs at a time (`state/disk-keep.lock` holds its pid). Every action goes to `logs/disk.log`. A reason
 the keeper did not run (paused, or another keeper busy) is logged once when it starts, not on every minute's tick.
 
+## Switching automatic deletion off
+
+`"capacity": { "diskKeep": false }` in `config/machine.json` (default `true`) turns every automatic deletion off on
+that machine: before a jawan start, in the tick, the background keeper and the fallback sweep. Toli then deletes
+nothing on its own; `bin/toli disk keep` run by hand still works as below, and says `automatic deletion: off`. Low
+disk only alerts: before a jawan start and in every tick toli reads free disk, and when it is under 10 GB (or the
+emergency level, when that is higher) it posts one inbox item, at most once per machine every 6 hours
+(`state/disk-alert.stamp`), titled `disk low on <machine>`, naming the biggest build folders so the lead decides what
+goes. A worker forwards it to the coordinator. The tick posts it from a detached `bin/toli disk alert`, so sizing the
+folders never holds the tick up; `bin/toli disk alert` by hand posts it at once. Any value but `true` or `false` also
+deletes nothing and says why.
+
 ## Pausing it for a long job
 
 A long job that must keep its build output for a while (a release build, a test gate, a benchmark) writes its own
@@ -45,18 +57,13 @@ pid to `state/disk-keep.pause`, optionally followed by a short reason, and remov
     ...                                              # the long job
     rm -f "$pause"
 
-While that pid is alive the keeper deletes nothing (`bin/toli disk keep` says `paused by pid N (reason)`), as long as
-free space is at or over the emergency level (max(5 GB, 3% of the disk), at most the floor). Under it a full disk
-fails the paused job's builds anyway, so the keeper runs despite the pause: it sweeps every `target/` of artifacts
-unused for `capacity.diskSweepStaleMinutes`, then, still under, deletes whole `target/` folders, oldest first, until
-free space is back over the emergency level, and logs `paused by pid N (reason), but free X GB is under the emergency
-level Y GB: running anyway; a build cut off fails and its owner retries it`. Nothing else is touched under a pause
-(no `node_modules/`, `dist/`, Docker or sccache). Once the pid is dead the file is stale and ignored, so a job killed
-before its cleanup never blocks the keeper for good. A pause also expires 2 hours after the file was last written
-(its modification time), even while the pid lives: a job that hangs, or forgets its cleanup while its shell lives on,
-cannot turn cleaning off for good. The keeper then removes the file and logs once `pause by pid N expired after 2 h;
-cleaning resumed`. A job that runs longer than 2 hours touches the file again before then (`touch "$pause"`, say
-once an hour) to keep its pause. Use this file, never `state/disk-keep.lock`: the lock belongs to the keeper itself.
+While that pid is alive the keeper deletes nothing (`bin/toli disk keep` says `paused by pid N (reason)`). Once the
+pid is dead the file is stale and ignored, so a job killed before its cleanup never blocks the keeper for good. A
+pause also expires 2 hours after the file was last written (its modification time), even while the pid lives: a
+job that hangs, or forgets its cleanup while its shell lives on, cannot turn cleaning off for good. The keeper then
+removes the file and logs once `pause by pid N expired after 2 h; cleaning resumed`. A job that runs longer than 2
+hours touches the file again before then (`touch "$pause"`, say once an hour) to keep its pause. Use this file,
+never `state/disk-keep.lock`: the lock belongs to the keeper itself.
 
 ## What it deletes, in order
 
@@ -155,10 +162,11 @@ its own caches.
 ## Settings
 
 ```json
-{ "capacity": { "diskKeepGB": 60, "diskSweepStaleMinutes": 180, "diskBuildTools": ["my-queue", "my-tool queue"] } }
+{ "capacity": { "diskKeep": true, "diskKeepGB": 60, "diskSweepStaleMinutes": 180, "diskBuildTools": ["my-queue"] } }
 ```
 
-`diskKeepGB` is the floor in GB, capped at 15% of the size of the volume holding toli (see the top of this page).
+`diskKeep` false leaves all deleting to the lead (see above). `diskKeepGB` is the floor in GB, capped at 15% of the
+size of the volume holding toli (see the top of this page).
 `diskSweepStaleMinutes` is how long an artifact in a busy target must go unused
 before the sweep deletes it (a positive number of minutes; at 1440 or more, Linux `relatime` access times count too).
 `diskBuildTools` (default none) names this machine's own build tools, such as a project's build queue that runs

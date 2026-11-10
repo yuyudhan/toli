@@ -8,11 +8,11 @@ one. See docs/releasing.md.
 
 ### Changed
 
-- A live `state/disk-keep.pause` no longer holds the disk keeper off under its emergency level (max(5 GB, 3% of the
-  disk)): it sweeps stale artifacts out of every `target/`, then deletes whole `target/` folders, oldest first, until
-  free space is back over that level; the paused build fails once and its owner runs it again. The minute tick starts
-  the background keeper in that case too. A machine whose long build held the pause back to back sat at 0 GB free.
-
+- `capacity.diskKeep: false` in `config/machine.json` switches off every automatic deletion by the disk keeper
+  (before jawan starts, in the tick, the background keeper, the fallback sweep); the default stays `true`. With it
+  off toli deletes nothing on its own and, when free disk drops under 10 GB (or the emergency level), posts one inbox
+  alert per machine every 6 hours naming the biggest build folders. `bin/toli disk keep` by hand still works and
+  says `automatic deletion: off`; the new `bin/toli disk alert` posts the alert at once. See docs/disk.md.
 - Jawan runs have no wall-clock limit by default (`bin/toli spawn`, `bin/toli remote`/`exec`, scheduled headless
   jobs): they work until done. `--max-time` stays as an explicit opt-in. A run counts as stuck only when it shows no
   progress for `capacity.stallMinutes` (default 30): no output, no omp session activity (messages, tool calls), no
@@ -29,6 +29,26 @@ one. See docs/releasing.md.
 
 ### Added
 
+- Live-stack mode: `bin/toli project set <p> --live-stack yes` lets one machine run many jawans (8-16) on one
+  `same-branch` project against its running dev stack, which rebuilds on every save, instead of each jawan building
+  on its own. Briefs keep the new `## Live stack` section (docs/brief-template.md): no own full build/test/lint while
+  coding, commit only your own paths, fix the compile/runtime errors your change caused in the live logs, then browser
+  and scoped tests against the green stack; the full check runs once per machine at integration or push.
+  `bin/toli spawn` warns when such a brief lacks the section, and the project's jawans skip the heavy-build slot
+  shim. `capacity.maxRuns` sizes the machine for it (docs/projects.md "Live-stack mode").
+- No idle nights. An active task whose recorded run ended `oversight.staleTaskMinutes` ago (default 15) and that
+  nobody re-dispatched (a `bin/toli spawn` run that finished, a `bin/toli remote --task` run whose saved output
+  finished, or no jawan at all) now heads the digest's Next block with the run's last report line and whether an
+  answer was recorded since, and the tick posts it to the inbox once per ended run. `bin/toli remote --task` records
+  `- task: T<n>` in its saved output for this.
+- `bin/toli task answer` names every task waiting on the answer (those the hold's `--blocks` names, holds whose
+  question names it, and the project's active tasks with no live run), each with its brief, and posts them as one
+  inbox wake, so the lead re-dispatches all of them in the same turn.
+- `bin/toli fleet check [--json] [--wake] [--local]`: idle machines (no active run) with queued work for a project
+  cloned there, and active tasks with no live run, on every reachable machine, in one batched message. The
+  coordinator's tick runs `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), away mode included,
+  so no job prompt can silence it; the toli-afk and toli-schedule skills say jobs never skip while the user is away.
+  See docs/fleet.md#oversight.
 - `bin/toli resume <run> [--note "<text>"] [--max-time <minutes>] [--now]`: the lead continues any finished run in
   its own omp session.
 - `bin/toli gate run|check|status <project> --recipe "<command>"`: a long gate (a verify, a push gate) runs once

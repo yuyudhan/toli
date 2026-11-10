@@ -139,6 +139,7 @@ export async function remoteCommand(argv: string[]): Promise<number> {
             `- from: ${from}`,
             `- to: ${target.name} (${target.ssh}:${target.root})`,
             ...(projectName === undefined ? [] : [`- project: ${projectName}`]),
+            ...(taskId === undefined ? [] : [`- task: ${taskId.toUpperCase()}`]),
             `- started: ${startedAt.toISOString()}`,
             `- finished: ${now().toISOString()}`,
             `- exit: ${code}`,

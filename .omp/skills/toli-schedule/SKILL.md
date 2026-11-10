@@ -31,6 +31,8 @@ ambiguous ("in the morning", "evening"), ask once.
 - `<name>`: short kebab-case from the purpose (`daily-deps-check`).
 - `--prompt`: a self-contained instruction; the run will not see this conversation.
 - `--shape`: `scout` (default choice for reports and checks) unless the job must change code.
+- Never write a prompt that skips itself while Malik is away (`state/afk`): away mode changes who is asked, never
+  what is checked. A status or fleet job starts with `bin/toli fleet check` and reports its findings first.
 - `--machine`: run the job only on that machine (e.g. where the project is cloned), when that is not this one.
 - `bin/toli job run <name>` runs a job once now, for testing. It takes as long as the job (there is no time limit; it
   is stopped only if it stalls), so run it only through `bash` with `async: true` and `timeout: 0`, then end the turn;
@@ -65,7 +67,7 @@ How jobs run, in plain words for Malik:
 
 Every scheduled run: never push, merge, open PRs, or ask questions. Ship jobs commit only with `bin/toli commit` on
 the current branch. Anything needing Malik becomes `bin/toli task hold <id> --question "..."` and is noted in the
-result.
+result. A run never answers "skipped" because Malik is away (`state/afk`); it does its job and reports.
 
 ## Handling `[toli job <name> <runId>]`
 

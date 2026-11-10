@@ -15,6 +15,9 @@ Independent verification of ship work uses docs/verify-brief-template.md.
 Model tier: the work type picks the jawan's model (docs/harnesses.md "Model tiers": scout and ship standard,
 mechanical light, verify and release deep). A hard brief adds a line `Tier: deep` (or `light`, `standard`) right under
 the title, before the first `## ` section; `bin/toli spawn --tier` and `--model` still override it.
+Live-stack projects (`liveStack: true` in `bin/toli project list --json`, docs/projects.md "Live-stack mode"): keep
+the `## Live stack` section and fill its commands from the notes' `## Live stack mode`; drop it for every other
+project and for scouts. `bin/toli spawn` warns when a live-stack project's code brief lacks it.
 -->
 
 # Task <T-id>: <short title>
@@ -69,6 +72,31 @@ links to scout reports (data/projects/<project>/reports/<T-id>.md), and any deci
 
 Other jawans may be working in the same project at the same time, possibly in the same files. Change only what this
 task needs, and never revert or reformat changes you did not make.
+
+## Live stack
+
+<Keep only for a live-stack project; drop for any other project and for scouts.>
+
+This project runs in live-stack mode: every jawan on this machine writes code in the one shared checkout, on its one
+branch, and the machine's dev stack is the one build. It is already running and rebuilds on every save (backend
+recompiles, dashboard hot-reloads); never stop, restart or rebuild it from scratch yourself.
+
+- Start (only if it is down): `<start command from the notes' ## Live stack mode>`
+- Follow the logs: `<logs command from the notes>`
+- Health: `<health command from the notes>`
+
+1. While coding, never run your own build, test or lint of the whole project (`cargo build`/`test`/`clippy`, the
+   full test suites, the project's full check): the running stack compiles everyone's changes. Backend first, then
+   the frontend, then migrations and anything else the feature needs, in this shared checkout.
+2. Commit only your own paths with `bin/toli commit` (Landing below), never anyone else's.
+3. Follow the live logs after every save. Fix every compile or runtime error your change caused; an error in a file
+   you did not touch belongs to the jawan who did: leave it to them (tell them in an agent message when you can
+   name them), and wait for it to clear instead of editing their code.
+4. Once the stack is green (the backend compiles and answers Health, the dashboard builds) with your change in it,
+   run your browser tests against the live stack and your own scoped automated tests (the notes' scoped commands for
+   the crates and folders you changed), and fix what fails.
+5. The full check runs once per machine, at integration or before a push, not per change: leave it out unless this
+   brief's Landing asks for it.
 
 ## Acceptance / evidence required
 

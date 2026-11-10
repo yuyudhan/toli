@@ -72,6 +72,16 @@ re-dispatch or a later question can reuse it.
 If `bin/toli project setup <project>` would flag the delivery mode or the notes as missing (digest says the project
 needs setup), still dispatch the request, and offer `/setup-project <project>` in the same reply.
 
+**Live-stack projects** (`liveStack: true` in `bin/toli project list --json`; docs/projects.md "Live-stack mode"):
+this machine's jawans all code in the one shared checkout against its running dev stack, so give the machine several
+parallel tasks at once (up to its `capacity.maxRuns`) instead of queueing them. Keep the brief's `## Live stack`
+section with the start, logs and health commands from the notes' `## Live stack mode`: each jawan never runs its own
+full build/test/lint while coding, commits only its own paths, fixes the compile and runtime errors its change caused
+in the live logs (leaving others' to them), then tests its feature in the browser against the green stack plus its
+own scoped tests. The full check runs once on the machine at integration or push, not in every brief's Validate:
+write Validate as the scoped tests plus the Health command. If the stack is down, the brief's first step is its Start
+command.
+
 ### The goal
 
 Every brief's `## Goal` tells the jawan when it is done, so it loops (plan, act, validate) instead of stopping at

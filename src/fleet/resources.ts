@@ -11,13 +11,13 @@ import { loadProjects } from "../projects/projects.ts";
 import { busyBuildSlots } from "./build-slots.ts";
 
 /**
- * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskSweepStaleMinutes`, `diskBuildTools` and
- * `gateStallMinutes` are not ones (see their readers below and in src/forge/gate.ts).
+ * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskKeep`, `diskSweepStaleMinutes`, `diskBuildTools`
+ * and `gateStallMinutes` are not ones (see their readers below, in src/fleet/disk-alert.ts and src/forge/gate.ts).
  */
 export type Capacity = Required<
     Omit<
         CapacityConfig,
-        "autoResume" | "stallMinutes" | "diskSweepStaleMinutes" | "diskBuildTools" | "gateStallMinutes"
+        "autoResume" | "stallMinutes" | "diskKeep" | "diskSweepStaleMinutes" | "diskBuildTools" | "gateStallMinutes"
     >
 >;
 

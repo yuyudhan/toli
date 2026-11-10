@@ -144,7 +144,8 @@ jawans stop on any OTP or captcha.
    heavy-build slots (`capacity.buildSlots`, default one per six cores), each with `CARGO_BUILD_JOBS` at one slot's
    share of the cores (`bin/toli spawn` puts toli's cargo shim first on its jawans' PATH and sets it; run other heavy
    commands under `bin/toli build-slot -- <command>`). Never put "own CARGO_TARGET_DIR", "build in a temp dir" or
-   "verify on a scratch copy" in a brief.
+   "verify on a scratch copy" in a brief. A live-stack project (`project set --live-stack yes`, docs/projects.md) has
+   one build per machine, its running dev stack: its jawans skip the slot and run only scoped tests themselves.
 6. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and
    commit on the project's working branch; no branches unless Malik asks. When the project has a fixed branch
    (`branch`), all work happens on it and `bin/toli commit` refuses on any other branch: never switch branches to
@@ -230,8 +231,9 @@ never in the foreground; its output arrives as a new turn. Thresholds live in `c
 reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
 every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). A full disk means delete the
 `target/` folders, in use or not, without asking: cargo rebuilds them. When free space is still under the floor, the
-keeper does that itself; on any machine, run `bin/toli disk keep` the moment a disk is full. Never write a disk floor
-into a brief.
+keeper does that itself; on any machine, run `bin/toli disk keep` the moment a disk is full. Where
+`capacity.diskKeep` is `false` the keeper deletes nothing on its own and low disk only posts an inbox alert naming the
+biggest build folders: there the lead decides what goes. Never write a disk floor into a brief.
 
 ## 7b. Custom machine helpers
 

@@ -112,7 +112,34 @@ plain ssh (builds, tests) are not runs there: that worker's `runs` never shows t
 `maxRuns`) or its free memory is under `minMemAvailableMB`, even when the target was named rather than picked by
 `auto`; load alone does not refuse, since it swings with the builds already running.
 Remote runs can take a long time, so the lead always starts them in the background and their result arrives in the
-chat by itself.
+chat by itself. With `--task`, the saved output names the task (`- task: T<n>`), which is how oversight sees the run
+end (older records are matched by the brief's `# Task T<n>` heading).
+
+## Oversight
+
+    bin/toli fleet check [--json] [--wake] [--local]
+
+Nothing may sit idle silently, away mode (`/afk`) included. Two checks run from the tick, whatever a job prompt says:
+
+- **Active tasks with no live run.** An active task whose recorded run ended `oversight.staleTaskMinutes` ago
+  (default 15) is stale: a `bin/toli spawn` run no longer queued or running, a `bin/toli remote --task` run whose
+  saved output says it finished after the task's jawan was recorded, or no jawan recorded at all. A harness subagent
+  id toli cannot look up counts as live until such a record shows its run ended. The digest's Next block lists stale
+  tasks first, with the run's last report line and any answer recorded since; every tick posts newly stale ones to
+  the inbox once per ended run, so the lead gets a `[toli wake]` naming them. Recording a new jawan
+  (`task start --agent`, `spawn --task`) clears it.
+- **Idle machines.** `fleet check` probes every machine (as `fleet status` does) and reads each reachable one's own
+  backlog (`fleet check --local --json` over ssh). A reachable machine with no active run while queued work, or a
+  stale active task, exists for a project cloned there is idle; every machine's stale tasks are named too. `--wake`
+  posts the findings as one batched inbox item, only when there is something to act on. The coordinator's tick runs
+  `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), detached when other machines must be
+  reached over ssh, in-process on a lone machine.
+
+Both intervals live in `config/machine.json` (defaults shown):
+
+```json
+{ "oversight": { "staleTaskMinutes": 15, "fleetCheckMinutes": 60 } }
+```
 
 ## Keeping machines in sync
 

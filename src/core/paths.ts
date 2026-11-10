@@ -92,6 +92,11 @@ export const paths = {
     /** The update check's last result and the versions the user was told about (src/release/update-check.ts). */
     updateCheck: () => join(repoRoot(), "state", "update-check.json"),
     updateCheckLog: () => join(repoRoot(), "logs", "update-check.log"),
+    /** Which stale active tasks the tick already posted, per ended run (src/records/stale.ts). */
+    staleTasksState: () => join(repoRoot(), "state", "stale-tasks.json"),
+    /** When the tick last started `bin/toli fleet check --wake` (src/fleet/oversight.ts). */
+    fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
+    fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
     runsDir: () => join(repoRoot(), "state", "runs"),
     runRecord: (runId: string) => join(repoRoot(), "state", "runs", `${runId}.json`),
@@ -109,6 +114,8 @@ export const paths = {
     diskKeepPause: () => join(repoRoot(), "state", "disk-keep.pause"),
     /** Why the disk keeper last did not run, so that reason reaches logs/disk.log once, not every minute. */
     diskKeepSkip: () => join(repoRoot(), "state", "disk-keep.skip"),
+    /** Touched when the last low-disk alert went out with capacity.diskKeep false (src/fleet/disk-alert.ts). */
+    diskAlertStamp: () => join(repoRoot(), "state", "disk-alert.stamp"),
     /** One flock'd file per heavy-build slot, `<n>.lock` (src/fleet/build-slots.ts). */
     buildSlotsDir: () => join(repoRoot(), "state", "build-slots"),
     /** The cargo shim jawans get first on PATH; it routes heavy cargo commands through a build slot. */

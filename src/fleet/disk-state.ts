@@ -9,7 +9,7 @@ import { dirname, resolve } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, pidAlive } from "../core/util.ts";
-import { capacityFor, diskEmergencyGB, diskKeepFloor, measureVolume } from "./resources.ts";
+import { capacityFor, diskKeepFloor, measureVolume } from "./resources.ts";
 
 export const KEEPER_LOCK = "disk-keep";
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
@@ -169,10 +169,10 @@ export class DiskLog {
 }
 
 /**
- * Start `bin/toli disk keep` detached (its lines reach logs/disk.log). Bun's transpiler cache is off for it, as
- * `bin/toli disk` does: the disk may still be full.
+ * Start `bin/toli disk <args>` detached (its lines reach logs/disk.log): the background keeper, or the low-disk alert
+ * (src/fleet/disk-alert.ts). Bun's transpiler cache is off for it, as `bin/toli disk` does: the disk may still be full.
  */
-function startBackgroundKeeper(): void {
+export function startDetachedDisk(args: string[]): void {
     let log: number | "ignore" = "ignore";
     try {
         mkdirSync(paths.logsDir(), { recursive: true });
@@ -181,7 +181,7 @@ function startBackgroundKeeper(): void {
         // A full disk: the keeper's own lines still reach logs/disk.log once it has freed something.
     }
     try {
-        const child = spawnChild(process.execPath, [TOLI_SCRIPT, "disk", "keep"], {
+        const child = spawnChild(process.execPath, [TOLI_SCRIPT, "disk", ...args], {
             cwd: paths.root(),
             detached: true,
             stdio: ["ignore", "ignore", log],
@@ -196,9 +196,8 @@ function startBackgroundKeeper(): void {
 /**
  * The minute tick's keeper: it only reads free disk (one `df`) and, under the floor, starts the background keeper,
  * which runs every tier (the last resort included) with the usual rules. The tick never waits on a deletion, which on
- * an I/O-starved disk can take an hour. Nothing starts while a keeper runs, nor while a pause holds it over the
- * emergency level (under it the keeper runs despite the pause); when free disk cannot be read the background keeper
- * starts anyway (it falls back to sweeping). A dry run starts nothing. Never throws.
+ * an I/O-starved disk can take an hour. Nothing starts while a keeper runs or a pause holds it; when free disk cannot
+ * be read the background keeper starts anyway (it falls back to sweeping). A dry run starts nothing. Never throws.
  */
 export function keepDiskDetached(dryRun: boolean): string | null {
     let why: string;
@@ -207,8 +206,7 @@ export function keepDiskDetached(dryRun: boolean): string | null {
         if (typeof volume === "string") why = `cannot read free disk (${volume})`;
         else {
             const { floorGB } = machineFloor(loadMachine(), volume.totalGB);
-            if (volume.freeGB >= floorGB || keeperHolder() !== null) return null;
-            if (diskPause() !== null && volume.freeGB >= diskEmergencyGB(floorGB, volume.totalGB)) return null;
+            if (volume.freeGB >= floorGB || keeperHolder() !== null || diskPause() !== null) return null;
             why = `free ${gb(volume.freeGB)} < floor ${gb(floorGB)}`;
         }
     } catch (error) {
@@ -216,7 +214,7 @@ export function keepDiskDetached(dryRun: boolean): string | null {
     }
     if (dryRun) return `disk keeper: ${why}: would start in the background (dry run)`;
     try {
-        startBackgroundKeeper();
+        startDetachedDisk(["keep"]);
     } catch (error) {
         return `disk keeper: ${why}; background keeper not started: ${describe(error)}`;
     }

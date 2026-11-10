@@ -39,6 +39,14 @@ describe("build slot capacity", () => {
         expect(jawanEnv({ PATH: `/bin:${shims}` }, "r2", 6).PATH).toBe(`${shims}:/bin`);
         expect(existsSync(join(shims, "cargo"))).toBe(true);
     });
+
+    test("a live-stack project's jawan runs without the shim, its cargo jobs still capped", () => {
+        const shims = paths.buildShimsDir();
+        const env = jawanEnv({ PATH: `${shims}:/usr/bin`, TOLI_BUILD_SLOT: "1" }, "r1", 6, true);
+        expect(env.PATH).toBe("/usr/bin");
+        expect(env.CARGO_BUILD_JOBS).toBe("6");
+        expect(env.TOLI_BUILD_SLOT).toBeUndefined();
+    });
 });
 
 describe("jawan environment", () => {

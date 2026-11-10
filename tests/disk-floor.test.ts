@@ -1,4 +1,4 @@
-// The disk keeper's floor, its use probes on Linux, its deletion order, its pause marker (expiry, emergency level).
+// The disk keeper's floor, its use probes on Linux, its deletion order and its pause marker's expiry.
 import { describe, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -114,7 +114,6 @@ describe("the disk keeper's pause marker", () => {
     keeperTest("a marker older than 2 h is ignored though its pid lives, logged once; a fresh one still pauses", () => {
         const box = keeperBox();
         const [alpha = ""] = clones(box, ["alpha"]);
-        box.stub("df", `kb=${100 * 1048576}\n${dfLine(200)}`); // over the emergency level 6 GB, where a pause counts
         const pause = join(box.root, "state", "disk-keep.pause");
         const diskLog = join(box.root, "logs", "disk.log");
         const plan = (): KeepReport => keep(box, ["--dry-run", "--floor", "1000000000"], { TOLI_DRY_RUN: "1" });
@@ -135,72 +134,6 @@ describe("the disk keeper's pause marker", () => {
         expect(report.ran).toBe(false);
         expect(report.pausedBy).toBe(process.pid);
     });
-
-    keeperTest(
-        "over the emergency level a live pid in state/disk-keep.pause holds it off, logged once; a dead pid's pause is stale",
-        () => {
-            const box = keeperBox();
-            box.ok(["init", "--name", "m1", "--role", "coordinator"]);
-            const idle = realpathSync(withProject(box, "alpha"));
-            buildOutput(box, idle);
-            box.stub("docker", "exit 1");
-            box.stub("sccache", "exit 2");
-            box.stub("df", `kb=${100 * 1048576}\n${dfLine(200)}`); // 100 GB free, emergency level 6 GB
-            const keep = (): KeepReport =>
-                JSON.parse(box.ok(["disk", "keep", "--dry-run", "--floor", "1000000000", "--json"])) as KeepReport;
-            const pause = join(box.root, "state", "disk-keep.pause");
-            const diskLog = join(box.root, "logs", "disk.log");
-            writeFileSync(pause, `${process.pid}\nrelease gate\n`);
-            for (const _ of [1, 2, 3]) {
-                const report = keep();
-                expect(report.ran).toBe(false);
-                expect(report.pausedBy).toBe(process.pid);
-                expect(report.lines.join("\n")).toContain(`paused by pid ${process.pid} (release gate)`);
-                expect(report.lines.join("\n")).not.toContain("would delete");
-            }
-            const pausedLines = readFileSync(diskLog, "utf8")
-                .split("\n")
-                .filter((line) => line.includes("paused by"));
-            expect(pausedLines).toHaveLength(1);
-
-            const dead = Bun.spawnSync(["true"]).pid;
-            writeFileSync(pause, `${dead}\n`);
-            const report = keep();
-            expect(report.ran).toBe(true);
-            expect(report.pausedBy).toBeUndefined();
-            expect(report.lines.join("\n")).toContain(`would delete ${join(idle, "target")} (`);
-        },
-    );
-
-    keeperTest(
-        "under the emergency level a live pause does not hold it off: it sweeps stale artifacts, then deletes targets",
-        () => {
-            const box = keeperBox();
-            box.ok(["init", "--name", "m1", "--role", "coordinator"]);
-            const main = realpathSync(withProject(box, "alpha"));
-            buildOutput(box, main);
-            box.stub("docker", "exit 1");
-            box.stub("sccache", "exit 2");
-            box.stub("df", `kb=1048576\n${dfLine(200)}`); // 1 GB free, emergency level 6 GB
-            writeFileSync(join(box.root, "state", "disk-keep.pause"), `${process.pid}\nkalki-queue try\n`);
-            const report = JSON.parse(box.ok(["disk", "keep", "--dry-run", "--floor", "50", "--json"])) as KeepReport;
-            const lines = report.lines.join("\n");
-            expect(report.ran).toBe(true);
-            expect(report.pausedBy).toBe(process.pid);
-            expect(report.lastResort).toBe(true);
-            expect(lines).toContain(
-                `paused by pid ${process.pid} (kalki-queue try), but free 1.0 GB is under the emergency level 6.0 GB: running anyway; a build cut off fails and its owner retries it`,
-            );
-            const sweep = lines.indexOf(`swept ${join(main, "target")}: no artifacts unused for `);
-            const remove = lines.indexOf(`would delete ${join(main, "target")} (`);
-            expect(report.swept.map((swept) => swept.target)).toEqual([join(main, "target")]);
-            expect(sweep).toBeGreaterThan(-1);
-            expect(remove).toBeGreaterThan(sweep);
-            // Only targets: a pause still keeps every other build folder, and docker is never reached.
-            expect(lines).not.toContain(`would delete ${join(main, "web")}`);
-            expect(lines).not.toContain("docker:");
-        },
-    );
 });
 
 describe("the disk keeper in the minute tick", () => {
@@ -227,5 +160,56 @@ describe("the disk keeper in the minute tick", () => {
         expect(finished()).toBe(true);
         expect(existsSync(join(alpha, "target"))).toBe(false);
         expect(existsSync(join(alpha, "web", "node_modules", "pkg", "index.js"))).toBe(true);
+    });
+});
+
+describe("the disk keeper switched off (capacity.diskKeep false)", () => {
+    keeperTest("a jawan start and a tick under the floor delete nothing and alert the inbox once per 6 h", () => {
+        const box = keeperBox();
+        const [alpha = ""] = clones(box, ["alpha"]);
+        setCapacity(box, { diskKeepGB: 20, diskKeep: false });
+        // 1 GB free on a 1000 GB disk: under the floor (20), the emergency level and the alert level.
+        box.stub("df", `kb=1048576\n${dfLine(1000)}`);
+        box.stub("omp", "true");
+        const env = { TOLI_DRY_RUN: "0" };
+        const alerts = (): string[] =>
+            (JSON.parse(box.ok(["inbox", "list", "--json"])) as { title: string }[])
+                .map((item) => item.title)
+                .filter((title) => title.startsWith("disk low on m1"));
+        const kept = (): void => {
+            expect(existsSync(join(alpha, "target", "debug", "deps", "libx.rlib"))).toBe(true);
+            expect(existsSync(join(alpha, "web", "dist", "app.js"))).toBe(true);
+        };
+        const briefPath = join(box.root, "brief.md");
+        writeFileSync(briefPath, "TOLI_BRIEF v1\nsay hi\n");
+        box.ok(["spawn", "--brief", briefPath, "--cwd", box.root, "--json"], { env });
+        kept();
+        expect(alerts()).toEqual(["disk low on m1: 1.0 GB free"]);
+        const alert = box.ok(["inbox", "list"]);
+        const item = alert.split("\n").find((line) => line.includes("disk low on m1")) ?? "";
+        const body = readFileSync(item.split("\t").at(-1) ?? "", "utf8");
+        expect(body).toContain(join(alpha, "target"));
+        expect(body).toContain("capacity.diskKeep is false, so toli deletes nothing on its own");
+
+        // Within 6 h of that alert the tick posts no other, and starts no keeper.
+        box.ok(["job", "tick"], { env });
+        expect(alerts()).toHaveLength(1);
+        // Past the 6 h, the tick alerts again (from a detached `disk alert`), still deleting nothing.
+        const later = new Date(Date.now() + 7 * 60 * 60_000).toISOString();
+        box.ok(["job", "tick"], { env, now: later });
+        expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain(
+            "disk keeper off (capacity.diskKeep false): free 1.0 GB < 20.0 GB: alerting the inbox in the background",
+        );
+        const deadline = Date.now() + 60_000;
+        while (alerts().length < 2 && Date.now() < deadline) Bun.sleepSync(200);
+        expect(alerts()).toHaveLength(2);
+        kept();
+        const diskLog = join(box.root, "logs", "disk.log");
+        expect(existsSync(diskLog) ? readFileSync(diskLog, "utf8") : "").not.toContain("deleted");
+
+        // By hand the keeper still runs, and says automatic deletion is off.
+        expect(box.ok(["disk", "keep", "--dry-run"], { env })).toContain(
+            "automatic deletion: off (capacity.diskKeep false)",
+        );
     });
 });

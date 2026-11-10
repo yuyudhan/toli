@@ -187,6 +187,38 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
         }
     });
 
+    keeperTest("a live pid in state/disk-keep.pause holds it off, logged once; a dead pid's pause is stale", () => {
+        const box = keeperBox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const idle = realpathSync(withProject(box, "alpha"));
+        buildOutput(box, idle);
+        box.stub("docker", "exit 1");
+        box.stub("sccache", "exit 2");
+        const keep = (): KeepReport =>
+            JSON.parse(box.ok(["disk", "keep", "--dry-run", "--floor", "1000000000", "--json"])) as KeepReport;
+        const pause = join(box.root, "state", "disk-keep.pause");
+        const diskLog = join(box.root, "logs", "disk.log");
+        writeFileSync(pause, `${process.pid}\nrelease gate\n`);
+        for (const _ of [1, 2, 3]) {
+            const report = keep();
+            expect(report.ran).toBe(false);
+            expect(report.pausedBy).toBe(process.pid);
+            expect(report.lines.join("\n")).toContain(`paused by pid ${process.pid} (release gate)`);
+            expect(report.lines.join("\n")).not.toContain("would delete");
+        }
+        const pausedLines = readFileSync(diskLog, "utf8")
+            .split("\n")
+            .filter((line) => line.includes("paused by"));
+        expect(pausedLines).toHaveLength(1);
+
+        const dead = Bun.spawnSync(["true"]).pid;
+        writeFileSync(pause, `${dead}\n`);
+        const report = keep();
+        expect(report.ran).toBe(true);
+        expect(report.pausedBy).toBeUndefined();
+        expect(report.lines.join("\n")).toContain(`would delete ${join(idle, "target")} (`);
+    });
+
     keeperTest("beside another live keeper it logs that once, not on every run", () => {
         const box = keeperBox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);

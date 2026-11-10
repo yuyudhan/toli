@@ -16,6 +16,12 @@ export type CapacityConfig = {
      */
     diskKeepGB?: number;
     /**
+     * Whether toli frees disk on its own (src/fleet/disk.ts; default true): before every jawan start, in the minute
+     * tick and in its fallback sweep. false: toli deletes nothing by itself and only alerts the inbox when free disk
+     * runs low (src/fleet/disk-alert.ts); `bin/toli disk keep` by hand still deletes.
+     */
+    diskKeep?: boolean;
+    /**
      * Minutes without use after which the disk keeper sweeps an artifact out of a cargo target a build holds
      * (src/fleet/stale-sweep.ts; default 180).
      */
@@ -74,6 +80,12 @@ export type Machine = {
     defaults?: { workspace?: string };
     /** The Needs-you queue (`bin/toli needs`): a hold unanswered for `staleDays` (default 7) is re-surfaced once. */
     needs?: { staleDays?: number };
+    /**
+     * Oversight of work nobody is doing (src/records/stale.ts): an active task whose recorded run ended
+     * `staleTaskMinutes` ago (default 15) is raised to the lead; the coordinator's tick runs `bin/toli fleet check
+     * --wake` every `fleetCheckMinutes` (default 60) to name idle machines and such tasks, away mode included.
+     */
+    oversight?: { staleTaskMinutes?: number; fleetCheckMinutes?: number };
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

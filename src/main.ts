@@ -3,7 +3,8 @@ import { buildSlotCommand } from "./fleet/build-slots.ts";
 import { diskCommand } from "./fleet/disk-command.ts";
 import { execCommand } from "./fleet/exec.ts";
 import { initCommand, syncCommand } from "./fleet/fleet.ts";
-import { fleetCommand, pickCommand } from "./fleet/pick.ts";
+import { fleetCommand } from "./fleet/oversight.ts";
+import { pickCommand } from "./fleet/pick.ts";
 import { remoteCommand } from "./fleet/remote.ts";
 import { resourcesCommand } from "./fleet/resources.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge/forge.ts";
@@ -46,6 +47,7 @@ const USAGE = `usage: bin/toli <command> [args]
   project list [--json] | path <name>
   project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
               [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no] [--standing-pr yes|no]
+              [--live-stack yes|no]
   project set --all --workspace <strategy>
   project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
   project setup <name> [--json] | setup --all [--json]
@@ -83,7 +85,9 @@ const USAGE = `usage: bin/toli <command> [args]
   resources [--json]
   build-slot -- <command...>
   disk keep [--dry-run] [--floor <GB>] [--json]
+  disk alert
   fleet status [--json]
+  fleet check [--json] [--wake] [--local]
   pick [--project <name>] [--json]
   exec [--from <machine>] [--task <id>] (prompt on stdin)
   remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>] [--tier <t>] [--work <w>]

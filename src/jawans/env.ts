@@ -10,11 +10,15 @@ import { paths } from "../core/paths.ts";
  * (src/fleet/build-slots.ts), and every cargo run is capped with `CARGO_BUILD_JOBS` at the machine's
  * `capacity.cargoJobs` (one slot's share of the cores), the one setting for this machine; an inherited value never
  * overrides it, and an inherited `TOLI_BUILD_SLOT` is dropped: a jawan's builds never ride on a slot it did not take.
+ * A live-stack project's jawan (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim: the machine's
+ * one build is the running stack's, its own scoped test builds share the checkout's build folder, where cargo's lock
+ * already runs them one at a time, so they never also wait for a heavy-build slot.
  */
 export function jawanEnv(
     base: Record<string, string | undefined>,
     runId: string,
     cargoJobs: number,
+    liveStack = false,
 ): Record<string, string | undefined> {
     const env: Record<string, string | undefined> = { ...base, TOLI_ROLE: "jawan", TOLI_RUN_ID: runId };
     // A Claude Code lead exports these; a nested `claude -p` must start as its own top-level session.
@@ -25,6 +29,6 @@ export function jawanEnv(
     env.CARGO_BUILD_JOBS = String(cargoJobs);
     const shims = paths.buildShimsDir();
     const inherited = base.PATH ? base.PATH.split(delimiter).filter((dir) => dir !== shims) : [];
-    env.PATH = [shims, ...inherited].join(delimiter);
+    env.PATH = (liveStack ? inherited : [shims, ...inherited]).join(delimiter);
     return env;
 }
