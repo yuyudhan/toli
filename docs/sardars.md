@@ -25,6 +25,14 @@ a launchd agent (`com.toli.lead`, KeepAlive) on macOS, a systemd user service (`
 `Restart=always`, needs `loginctl enable-linger`) on Linux, or a per-minute crontab line running `lead run --once`
 where neither works. No terminal multiplexer is involved.
 
+`bin/toli lead install` never trades a running agent for an unloaded one. launchd loads a user agent only from the
+user's login session: from a background launchd job (such as a jawan's) it can boot an agent out but cannot load one
+again (`Bootstrap failed: 125`). So it first probes `launchctl print gui/<uid>`, and from a session that fails it
+changes nothing and tells you to run it from a Terminal in your login session. When the plist on disk already is the
+one it would write and the agent is loaded, it restarts the agent in place (`launchctl kickstart -k`). Otherwise it
+boots the agent out and bootstraps the new plist; when that bootstrap fails it writes the previous plist back and loads
+it again, and reports both errors if that fails too. The tick and helper installs share the probe and the restore.
+
 Every 15 seconds the service makes one pass:
 
 1. When an interactive lead session is live on this machine (`state/session.json`, registered by the omp extension,

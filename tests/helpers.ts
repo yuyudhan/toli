@@ -156,6 +156,61 @@ esac`,
     };
 }
 
+export type LaunchctlOptions = {
+    /** false: a session launchd cannot load agents into (`managername` Background): domain `print` and `bootstrap` exit 125. */
+    gui?: boolean;
+    /** `bootstrap` refuses (exit 5) any plist file containing this text, as launchd refuses a plist it cannot load. */
+    rejects?: string;
+};
+
+export type Launchctl = {
+    /** Mark `label` loaded, as if bootstrapped earlier. */
+    load(label: string): void;
+    loaded(label: string): boolean;
+    /** Every call so far, one line each (`bootout gui/501/com.toli.lead`). */
+    calls(): string[];
+};
+
+/**
+ * A stateful `launchctl` stub: bootstrap marks a label loaded (failing when it already is, like the real one),
+ * bootout unloads it, kickstart needs it loaded, service `print` succeeds only while loaded, and domain `print`
+ * follows `options.gui`. Every call is appended to `.launchctl/log`.
+ */
+export function withLaunchctl(box: Sandbox, options: LaunchctlOptions = {}): Launchctl {
+    const state = join(box.root, ".launchctl");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, ".rejects"), options.rejects ?? "");
+    if (options.gui === false) writeFileSync(join(state, ".background"), "");
+    const refuseDomain = `[ -f "$state/.background" ] && { echo "Domain does not support specified action" >&2; exit 125; }`;
+    box.stub(
+        "launchctl",
+        `state="${state}"; echo "$*" >> "$state/log"
+case "$1" in
+    managername) if [ -f "$state/.background" ]; then echo Background; else echo Aqua; fi ;;
+    print)
+        case "$2" in
+            gui/*/*) label="\${2##*/}"; [ -f "$state/$label" ] || exit 113; printf 'state = running\\npid = 4242\\nlast exit code = 0\\n' ;;
+            *) ${refuseDomain}; echo "domain = $2" ;;
+        esac ;;
+    bootstrap)
+        ${refuseDomain}
+        label="$(basename "$3" .plist)"
+        [ -f "$state/$label" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+        [ -s "$state/.rejects" ] && grep -qF -f "$state/.rejects" "$3" && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+        touch "$state/$label" ;;
+    bootout) label="\${2##*/}"; [ -f "$state/$label" ] || exit 3; rm -f "$state/$label" ;;
+    kickstart) label="\${3##*/}"; [ -f "$state/$label" ] || exit 113 ;;
+    *) exit 2 ;;
+esac`,
+    );
+    return {
+        load: (label) => writeFileSync(join(state, label), ""),
+        loaded: (label) => existsSync(join(state, label)),
+        calls: () =>
+            existsSync(join(state, "log")) ? readFileSync(join(state, "log"), "utf8").trimEnd().split("\n") : [],
+    };
+}
+
 /** A bare "origin" repo with one commit on main, plus `projects/<name>` registered via `toli project add`. */
 export function withProject(box: Sandbox, name: string): string {
     const origin = join(box.root, ".origin", `${name}.git`);

@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox, withCrontab, withSystemd } from "./helpers.ts";
+import {
+    type Launchctl,
+    type LaunchctlOptions,
+    type Sandbox,
+    sandbox,
+    withCrontab,
+    withLaunchctl,
+    withSystemd,
+} from "./helpers.ts";
 
 const linux = { TOLI_PLATFORM: "linux", TOLI_DRY_RUN: "0" };
 
@@ -62,6 +70,80 @@ describe("lead install", () => {
         expect(line.endsWith("# toli lead")).toBe(true);
         expect(box.ok(["lead", "uninstall"], { env: linux })).toBe("removed the toli lead crontab line");
         expect(readFileSync(file, "utf8")).toBe("0 3 * * * /usr/bin/backup\n");
+    });
+});
+
+describe("lead install under launchd (a launchctl stub)", () => {
+    const label = "com.toli.lead";
+    const booted = (calls: string[]): string[] => calls.filter((call) => /^boot(out|strap) /.test(call));
+
+    /** A launchd sandbox whose agents dir already holds `previous` as the lead plist, and (when `loaded`) the loaded agent. */
+    function installed(
+        options: LaunchctlOptions & { loaded?: boolean },
+        previous: string | null,
+    ): { box: Sandbox; env: Record<string, string>; plist: string; launchctl: Launchctl } {
+        const box = sandbox();
+        const launchctl = withLaunchctl(box, options);
+        const agents = join(box.root, "agents");
+        const plist = join(agents, `${label}.plist`);
+        if (previous !== null) {
+            mkdirSync(agents, { recursive: true });
+            writeFileSync(plist, previous);
+        }
+        if (options.loaded !== false) launchctl.load(label);
+        const env = { TOLI_PLATFORM: "darwin", TOLI_DRY_RUN: "0", TOLI_LAUNCH_AGENTS_DIR: agents };
+        return { box, env, plist, launchctl };
+    }
+
+    test("a session launchd cannot bootstrap into is refused before the running agent is booted out", () => {
+        const { box, env, plist, launchctl } = installed({ gui: false }, "previous plist\n");
+        const result = box.toli(["lead", "install"], { env });
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain("cannot load com.toli.lead from this session, and nothing was changed");
+        expect(result.stderr).toContain("launchctl session: Background");
+        expect(result.stderr).toContain("Terminal in the login session");
+        expect(booted(launchctl.calls())).toEqual([]);
+        expect(launchctl.loaded(label)).toBe(true);
+        expect(readFileSync(plist, "utf8")).toBe("previous plist\n");
+    });
+
+    test("a changed plist is booted out and bootstrapped; an unchanged one is restarted in place", () => {
+        const { box, env, plist, launchctl } = installed({}, "previous plist\n");
+        expect(box.ok(["lead", "install"], { env })).toContain(`installed and loaded ${plist}`);
+        expect(readFileSync(plist, "utf8")).toContain("<key>KeepAlive</key>");
+        expect(booted(launchctl.calls()).map((call) => call.split(" ")[0])).toEqual(["bootout", "bootstrap"]);
+
+        expect(box.ok(["lead", "install"], { env })).toContain("restarted it in place");
+        const calls = launchctl.calls();
+        expect(booted(calls)).toHaveLength(2);
+        expect(calls.at(-1)).toMatch(/^kickstart -k gui\/\d+\/com\.toli\.lead$/);
+        expect(launchctl.loaded(label)).toBe(true);
+    });
+
+    test("a failed bootstrap of the new plist puts the previous agent back and reports the failure", () => {
+        const { box, env, plist, launchctl } = installed({ rejects: "KeepAlive" }, "previous plist\n");
+        const result = box.toli(["lead", "install"], { env });
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain("Bootstrap failed: 5");
+        expect(result.stderr).toContain("com.toli.lead is loaded again, unchanged");
+        expect(readFileSync(plist, "utf8")).toBe("previous plist\n");
+        expect(launchctl.loaded(label)).toBe(true);
+        expect(booted(launchctl.calls()).map((call) => call.split(" ")[0])).toEqual([
+            "bootout",
+            "bootstrap",
+            "bootstrap",
+        ]);
+    });
+
+    test("when restoring the previous agent fails too, both errors are reported and the old plist is back on disk", () => {
+        const { box, env, plist, launchctl } = installed({ rejects: "KeepAlive" }, "previous KeepAlive plist\n");
+        const result = box.toli(["lead", "install"], { env });
+        expect(result.code).toBe(1);
+        expect(result.stderr.match(/Bootstrap failed: 5/g)).toHaveLength(2);
+        expect(result.stderr).toContain("restoring the previous agent failed too");
+        expect(result.stderr).toContain("com.toli.lead is now unloaded");
+        expect(readFileSync(plist, "utf8")).toBe("previous KeepAlive plist\n");
+        expect(launchctl.loaded(label)).toBe(false);
     });
 });
 

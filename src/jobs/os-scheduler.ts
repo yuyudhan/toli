@@ -1,6 +1,6 @@
 // The OS schedulers behind the tick (schedule.ts) and the helpers (src/helpers/): which one this machine uses, and
 // the launchd, systemd --user and crontab primitives both share.
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { platform, run, ToliError, writeTextAtomic } from "../core/util.ts";
@@ -188,11 +188,72 @@ export function launchctlLoaded(label: string): boolean {
     return run(["launchctl", "print", `${guiDomain()}/${label}`]).code === 0;
 }
 
-/** Write a launchd agent and (re)load it: an already-loaded copy is booted out first, so reinstalling is safe. */
-export function loadLaunchAgent(label: string, target: string, plist: string): void {
+function failure(result: { stderr: string; stdout: string }): string {
+    return (result.stderr || result.stdout).trim();
+}
+
+/**
+ * Why launchd would refuse `launchctl bootstrap gui/<uid>` from this session, or null when it accepts it. A session
+ * outside the user's login (a launchd background job, a daemon, no one logged in) can still `bootout` an agent but
+ * cannot load one into the gui domain (error 125: "Domain does not support specified action"), and `launchctl print`
+ * of the domain fails the same way.
+ */
+export function launchdSessionProblem(): string | null {
+    const probe = run(["launchctl", "print", guiDomain()]);
+    if (probe.code === 0) return null;
+    const session = run(["launchctl", "managername"]).stdout.trim() || "unknown";
+    return `launchctl print ${guiDomain()} exited ${probe.code} (${failure(probe) || "no output"}); launchctl session: ${session}`;
+}
+
+export type LoadOptions = {
+    /** A loaded agent whose plist on disk already is this one is kicked (`kickstart -k`), never booted out. */
+    restartUnchanged?: boolean;
+};
+
+/**
+ * Write a launchd agent and (re)load it; returns what was done. launchd cannot swap a loaded agent in place, so a
+ * changed plist is booted out and bootstrapped again: the session is probed first (nothing is touched when launchd
+ * would refuse the bootstrap), and when the bootstrap still fails the previous plist is put back and loaded again,
+ * so a failed install does not leave a working agent unloaded.
+ */
+export function loadLaunchAgent(
+    label: string,
+    target: string,
+    plist: string,
+    options: LoadOptions = {},
+): "loaded" | "restarted" {
+    const problem = launchdSessionProblem();
+    if (problem !== null)
+        throw new ToliError(
+            `cannot load ${label} from this session, and nothing was changed: ${problem}. launchd only loads user agents ` +
+                `into ${guiDomain()} from the user's login session, so booting out a running ${label} here would leave it ` +
+                "unloaded. Run this command from a Terminal in the login session.",
+        );
+    const service = `${guiDomain()}/${label}`;
+    const bootstrap = ["launchctl", "bootstrap", guiDomain(), target];
+    const loaded = launchctlLoaded(label);
+    const previous = existsSync(target) ? readFileSync(target, "utf8") : null;
+    if (loaded && options.restartUnchanged === true && previous === plist) {
+        mustRun(["launchctl", "kickstart", "-k", service]);
+        return "restarted";
+    }
     writeTextAtomic(target, plist);
-    if (launchctlLoaded(label)) mustRun(["launchctl", "bootout", `${guiDomain()}/${label}`]);
-    mustRun(["launchctl", "bootstrap", guiDomain(), target]);
+    if (loaded) mustRun(["launchctl", "bootout", service]);
+    const booted = run(bootstrap);
+    if (booted.code === 0) return "loaded";
+    const message = `${bootstrap.join(" ")} failed: ${failure(booted)}`;
+    if (!loaded) throw new ToliError(message);
+    if (previous === null)
+        throw new ToliError(
+            `${message}; ${label} was loaded without a plist at ${target}, so the previous agent cannot be restored and ${label} is now unloaded`,
+        );
+    writeTextAtomic(target, previous);
+    const restored = run(bootstrap);
+    if (restored.code === 0)
+        throw new ToliError(`${message}; the previous ${target} is back and ${label} is loaded again, unchanged`);
+    throw new ToliError(
+        `${message}; restoring the previous agent failed too (${bootstrap.join(" ")}: ${failure(restored)}), so ${label} is now unloaded; the previous plist is back at ${target}`,
+    );
 }
 
 /** Boot out a launchd agent (when loaded) and remove its plist; returns whether anything was there. */
