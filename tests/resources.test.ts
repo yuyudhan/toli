@@ -191,7 +191,14 @@ describe("availability thresholds", () => {
 function machine(
     name: string,
     depth: number | null,
-    options: { local?: boolean; projects?: string[]; load1?: number; available?: boolean } = {},
+    options: {
+        local?: boolean;
+        projects?: string[];
+        load1?: number;
+        available?: boolean;
+        maxRuns?: number;
+        full?: { reason: string; since: string; until: string | null };
+    } = {},
 ): FleetEntry {
     const available = options.available ?? true;
     const reasons = available ? [] : ["load 50/10 cpus over 1"];
@@ -205,13 +212,24 @@ function machine(
         memAvailableMB: 1000,
         diskFreeGB: 100,
         activeRuns: 0,
-        maxRuns: 2,
+        maxRuns: options.maxRuns ?? 2,
         maxLoadPerCpu: 1,
         projects: options.projects ?? [],
         available,
         reasons,
         at: "2026-10-29T00:00:00.000Z",
-        queue: depth === null ? null : { queued: depth, active: 0, held: 0, jawansRunning: 0, jawansQueued: 0, depth },
+        queue:
+            depth === null
+                ? null
+                : {
+                      queued: depth,
+                      active: 0,
+                      held: 0,
+                      jawansRunning: 0,
+                      jawansQueued: 0,
+                      depth,
+                      ...(options.full === undefined ? {} : { full: options.full }),
+                  },
     };
     return { machine: name, local: options.local ?? false, reachable: true, available, reasons, resources };
 }
@@ -245,8 +263,8 @@ describe("pick ranking", () => {
     test("a machine whose toli reports no queue ranks after every known queue but stays a candidate", () => {
         const pick = rankMachines([machine("old", null, { local: true }), machine("deep", 9)]);
         expect(pick.candidates).toEqual([
-            { machine: "deep", local: false, hasClone: false, depth: 9 },
-            { machine: "old", local: true, hasClone: false, depth: null },
+            { machine: "deep", local: false, hasClone: false, depth: 9, load: 4.5 },
+            { machine: "old", local: true, hasClone: false, depth: null, load: null },
         ]);
     });
 
@@ -275,5 +293,27 @@ describe("pick ranking", () => {
         expect(pick.machine).toBeNull();
         expect(pick.depth).toBeNull();
         expect(pick.rejected).toEqual([{ machine: "gone", reasons: ["unreachable: timeout"] }]);
+    });
+
+    test("ranks by queue per jawan slot: a high-CPU machine with an empty queue first, a big machine before a small", () => {
+        const pick = rankMachines([
+            machine("small", 3, { maxRuns: 2, local: true }),
+            machine("big", 6, { maxRuns: 12 }),
+            machine("hot", 0, { load1: 90, available: false }),
+        ]);
+        expect(pick.candidates.map((c) => [c.machine, c.depth, c.load])).toEqual([
+            ["hot", 0, 0],
+            ["big", 6, 0.5],
+            ["small", 3, 1.5],
+        ]);
+    });
+
+    test("a machine whose lead is full is passed over with its reason", () => {
+        const full = { reason: "earlyoom kills builds", since: "2026-11-10T09:00:00.000Z", until: null };
+        const pick = rankMachines([machine("idle", 0, { full }), machine("here", 4, { local: true })]);
+        expect(pick.machine).toBe("here");
+        expect(pick.rejected).toEqual([
+            { machine: "idle", reasons: ["full: earlyoom kills builds (until lead full --clear)"] },
+        ]);
     });
 });

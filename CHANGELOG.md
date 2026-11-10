@@ -8,6 +8,20 @@ one. See docs/releasing.md.
 
 ### Changed
 
+- Queues rank by queued tasks plus running and waiting jawans per jawan slot (`capacity.maxRuns`); active tasks with
+  no jawan here (a lead's bookkeeping, delegated work) are no longer queue, and `fleet queues` shows queued, running,
+  active and held separately with the load per slot. `bin/toli lead full [--reason ...] [--until 2h] | --clear |
+--status` (or `task handback ... --full`) marks a machine full: `pick`, `fleet queues` and the balancing offers
+  pass it over until it clears. `bin/toli task handback <id> --reason "..."` gives delegated work back: the
+  delegator's `--for` task is queued again, never dropped, and delegating or linking for a done or dropped task
+  reopens it.
+- Workers take `config/fleet.json` from the coordinator: `bin/toli self sync` (and `bin/toli fleet sync`) reads the
+  coordinator's `bin/toli fleet export` (each machine as `user@host`) and rewrites the list, keeping the worker's own
+  ssh names for machines it already lists.
+- On Linux each jawan runs in its own systemd scope (`systemd-run --user --scope --unit toli-jawan-<run id>`), so an
+  OOM kill of the lead service or of one jawan no longer takes every jawan the lead spawned.
+- Queue depth and the balancing offer count only queued tasks waiting for a jawan: a queued task a run already works
+  on, or one delegated elsewhere and still open, is neither counted twice nor offered to another lead.
 - One lead per machine (docs/sardars.md). Every machine runs its own lead: `bin/toli lead install|uninstall|status|
 run|attach` keeps its lead conversation served by a launchd agent, systemd user service or crontab line, taking
   wakes in headless turns whenever no lead session is open. Leads hand each other work with `bin/toli delegate
@@ -96,6 +110,13 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
   session). When a bootstrap still fails after the bootout it puts the previous plist back and loads it again, and
   reports both errors if that fails too. `lead install` restarts a loaded agent whose plist is unchanged in place
   (`launchctl kickstart -k`) instead of booting it out.
+||||||| ec12205
+- Jawans, lead turns and scheduled jobs started by the lead service, the tick or a helper get the user's login
+  environment: before a harness starts, toli runs the login shell once (`$SHELL -i -l -c`) and adds the variables the
+  service lacks, so provider keys exported in the shell profile (e.g. `ANTHROPIC_API_KEY`) reach them. Before, a
+  launchd agent or systemd service passed PATH alone and every jawan it spawned failed with no API key. Nothing is
+  stored: values stay in memory, PATH stays the service's. `bin/toli doctor` warns (names only) about a credential
+  variable set in the shell but not by the login profile (docs/harnesses.md "Service environment").
 - `bin/toli push` refuses, pushing nothing, when it has no `--word` and the project has no standing push grant on
   this machine (hard rule 1). Before, a push with neither went through and was only logged with `word=null`. The
   message names both ways on: `--word "<the user's word>"`, or `bin/toli project set <p> --standing-push yes`.

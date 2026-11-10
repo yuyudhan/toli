@@ -204,3 +204,11 @@ describe("handing delegated work back", () => {
         expect(parent(m1)).toMatchObject({ status: "active", agent: "m2/T3" });
     });
 });
+
+test("task handback --full also marks the owner full, so no lead offers it more work", () => {
+    const { m1, m2 } = delegated();
+    const output = m2.ok(["task", "handback", "T1", "--reason", "overloaded", "--full"]);
+    expect(output).toContain("full: handed back T1: overloaded (until ");
+    expect(m2.ok(["lead", "full", "--status"])).toStartWith("full: handed back T1: overloaded");
+    expect(m1.ok(["lead", "full", "--status"])).toBe("not full: this machine takes work");
+});

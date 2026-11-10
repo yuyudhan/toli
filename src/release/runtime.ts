@@ -33,6 +33,7 @@ import { Args } from "../core/args.ts";
 import { gitOk, headSha } from "../core/git.ts";
 import { codeRoot, paths, RUNTIME_MARKER } from "../core/paths.ts";
 import { isJsonObject, out, printJson, run, ToliError, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
+import { fleetSyncText, syncWorkerFleet } from "../fleet/fleet-sync.ts";
 
 /** Snapshots kept per checkout: the active one and the two before it (a running process may still import from them). */
 const KEEP = 3;
@@ -216,12 +217,15 @@ export function runtimeCommand(argv: string[]): void {
         else out(describeRuntime(status));
     } else if (sub === "sync") {
         const synced = syncRuntime();
-        if (args.bool("json")) printJson(synced);
-        else
+        const fleet = syncWorkerFleet();
+        if (args.bool("json")) printJson({ ...synced, fleet });
+        else {
             out(
                 synced.changed
                     ? `runtime ${synced.commit.slice(0, 12)} installed at ${synced.runtime}; the live session runs it from the next bin/toli call`
                     : `runtime ${synced.commit.slice(0, 12)} already installed at ${synced.runtime}`,
             );
+            if (fleet !== null) out(typeof fleet === "string" ? `fleet: ${fleet}` : fleetSyncText(fleet));
+        }
     } else throw new ToliError("usage: toli self sync | status [--json]");
 }
