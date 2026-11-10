@@ -5,6 +5,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
+import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { now, readStdin, requireName, runTee, stamp, type TeeResult, ToliError, warn } from "../core/util.ts";
 import { harnessConfig, parseWork, type WorkType } from "../harness/harness.ts";
@@ -133,6 +134,8 @@ export async function execCommand(argv: string[]): Promise<number> {
         startedAt: now().toISOString(),
         title: runTitle(prompt),
     });
+    // Over ssh this is a non-login shell: omp needs the login profile's provider keys.
+    adoptLoginEnv();
     const startedMs = Date.now();
     const stall = stallMinutes(machine);
     const sessionDir = jawan.sessionDir ?? join(jawan.runDir, "session");

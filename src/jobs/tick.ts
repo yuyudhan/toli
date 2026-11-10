@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
+import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
@@ -60,6 +61,8 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
         startedAt: now().toISOString(),
         title: `job ${name}`,
     });
+    // The tick starts toli with PATH alone; omp needs the login profile's provider keys.
+    adoptLoginEnv();
     const choice = jobModel(job);
     let model = choice.model;
     let fallback = "";
