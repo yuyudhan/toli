@@ -20,8 +20,10 @@ Work the backlog under the normal rules; being away never loosens them, and Sard
     bin/toli task list --json --status queued
 
 - Send the queued tasks out through `skill://toli-dispatch` (ship or scout as recorded), independent tasks together
-  in one batched spawn, spread across free machines (`pick` / async `remote auto`). Verifier jawans land ship work as
-  usual.
+  in one batched spawn here, and spread across the fleet by delegating to the shortest-queue machines
+  (`bin/toli fleet queues`, `bin/toli delegate ... --for T<n>`). A `queue:` wake (this queue much longer than
+  another's, or another Sardar asking for work) means delegate queued tasks to the machine it names. Delegated
+  results and holds arrive as wakes and go into the report like local ones. Verifier jawans land ship work as usual.
 - Delivery is commit-on-the-working-branch only (the project's fixed branch when it has one). No branches, branch
   switches, pushes, merges, PRs, releases, or no-mistakes runs, even if the project mode prefers them; those need
   Malik's word for the specific change.

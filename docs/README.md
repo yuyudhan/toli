@@ -12,7 +12,8 @@ New here? Read the [README](../README.md) first, then [install](install.md) and 
 | [projects.md](projects.md)         | Registering projects (clone or link), workspace strategies, project setup, data |
 | [delivery.md](delivery.md)         | How work lands: delivery modes, standing grants, forges and PRs, no-mistakes    |
 | [jobs.md](jobs.md)                 | Scheduled jobs, the per-minute ticker, results arriving in chat                 |
-| [fleet.md](fleet.md)               | Several machines: coordinator and workers, capacity, remote work, sync          |
+| [fleet.md](fleet.md)               | Several machines: coordinator and workers, queues and picking a machine, sync   |
+| [sardars.md](sardars.md)           | One lead per machine: lead service, talk, delegation, the shared task list      |
 | [disk.md](disk.md)                 | The disk keeper: low disk never stops work; what it deletes, in what order      |
 | [memory.md](memory.md)             | Preferences, learnings, notes; the memory budget; pruning                       |
 | [helpers.md](helpers.md)           | Private per-machine scripts on launchd, systemd, or crontab                     |

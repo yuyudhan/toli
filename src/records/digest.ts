@@ -6,8 +6,8 @@ import { isGitRepo, type RepoStatus, repoStatus } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { personaLine } from "../core/persona.ts";
 import { now, out, printJson, run, ToliError } from "../core/util.ts";
-import { fleetStatus } from "../fleet/pick.ts";
-import { type FleetEntry as AvailabilityEntry, availabilityLine } from "../fleet/resources.ts";
+import { availabilityLine, fleetStatus } from "../fleet/pick.ts";
+import type { FleetEntry as AvailabilityEntry } from "../fleet/resources.ts";
 import { configuredHarnesses, harnessPath } from "../harness/harness.ts";
 import {
     activeRuns,

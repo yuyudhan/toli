@@ -3,20 +3,21 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENV, fleet, remoteSnapshot, sshLog } from "./fleet-fixture.ts";
 
-describe("remote and exec model tiers", () => {
-    test("remote sends the tier and work type to exec as variables, and only when given", () => {
+describe("remote refuses and exec model tiers", () => {
+    test("remote with a tier or work type refuses, sending nothing and recording no run", () => {
         const box = fleet(remoteSnapshot("m2"));
-        box.ok(["remote", "m2", "check it", "--work", "verify", "--tier", "light"], { env: ENV });
-        box.ok(["remote", "m2", "plain"], { env: ENV });
-        const execs = sshLog(box)
-            .split("\n")
-            .filter((line) => line.includes("bin/toli exec"));
-        expect(execs[0]).toContain("TOLI_EXEC_TIER=light TOLI_EXEC_WORK=verify bin/toli exec --from m1");
-        expect(execs[1]).not.toContain("TOLI_EXEC_TIER");
-        expect(execs[1]).not.toContain("TOLI_EXEC_WORK");
-        expect(box.toli(["remote", "m2", "x", "--tier", "huge"], { env: ENV }).stderr).toContain(
-            "--tier must be one of light, standard, deep",
-        );
+        for (const args of [
+            ["remote", "m2", "check it", "--work", "verify", "--tier", "light"],
+            ["remote", "m2", "x", "--tier", "huge"],
+            ["remote", "auto", "plain"],
+        ]) {
+            const result = box.toli(args, { env: ENV });
+            expect(result.code).toBe(1);
+            expect(result.stderr).toContain("toli: remote: no machine starts a jawan on another machine");
+            expect(result.stderr).toContain("bin/toli delegate <machine>");
+        }
+        expect(sshLog(box)).toBe("");
+        expect(box.ok(["runs", "--json"])).toBe("[]");
     });
 
     test("exec picks the model with this machine's own tier table and records it on the run", () => {

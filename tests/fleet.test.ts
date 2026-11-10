@@ -7,7 +7,10 @@ import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Snapshot = { machine: string; available: boolean; reasons: string[]; activeRuns: number };
 type Entry = { machine: string; local: boolean; reachable: boolean; available: boolean; reasons: string[] };
-type Pick = { machine: string | null; local: boolean; candidates: { machine: string }[] };
+type Pick = { machine: string | null; local: boolean; depth: number | null; candidates: { machine: string }[] };
+
+/** What `remote` and `exec --from <other machine>` say instead of starting a jawan for another machine. */
+const POINTER = "no machine starts a jawan on another machine; choose with `bin/toli pick --project <p>`";
 
 describe("fleet status", () => {
     test("an unreachable machine is reported unavailable, not fatal, and the rest still shows", () => {
@@ -52,48 +55,46 @@ describe("pick", () => {
         expect(pick.candidates.map((candidate) => candidate.machine)).toContain("m1");
     });
 
-    test("nothing available exits 2 and says why for each machine", () => {
+    test("load and memory never leave a machine out; only unreachable machines are rejected", () => {
         const box = fleet(remoteSnapshot("m2", { available: false, reasons: ["load 9/8 cpus over 0.8"] }), {
             ...ROOMY,
             minMemAvailableMB: 1e12,
         });
-        const result = box.toli(["pick"], { env: ENV });
+        const pick = JSON.parse(box.ok(["pick", "--json"], { env: ENV })) as Pick & {
+            rejected: { machine: string }[];
+        };
+        expect(pick.candidates.map((candidate) => candidate.machine)).toEqual(["m1", "m2"]);
+        expect(pick.rejected.map((entry) => entry.machine)).toEqual(["m3"]);
+        expect(pick).toMatchObject({ machine: "m1", local: true, depth: 0 });
+    });
+
+    test("no qualifying machine exits 2 and says why for each machine", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        const result = box.toli(["pick", "--project", "ghost"], { env: ENV });
         expect(result.code).toBe(2);
-        expect(result.stdout).toContain("no machine available:");
-        expect(result.stdout).toContain("m1: memory ");
-        expect(result.stdout).toContain("m2: load 9/8 cpus over 0.8");
+        expect(result.stdout).toContain("no machine qualifies:");
+        expect(result.stdout).toContain("m1: no clone of ghost, and its git URL is not registered here");
+        expect(result.stdout).toContain("m2: no clone of ghost, and its git URL is not registered here");
         expect(result.stdout).toContain("m3: unreachable: ");
     });
 });
 
-describe("remote auto", () => {
-    test("prints local and dispatches nothing when this machine wins", () => {
-        // m2 has almost no free memory, so its score is far below this machine's.
-        const box = fleet(remoteSnapshot("m2", { memAvailableMB: 1 }));
-        expect(box.ok(["remote", "auto", "do the thing"], { env: ENV })).toBe("local");
-        expect(sshLog(box)).not.toContain("exec");
+describe("remote refuses", () => {
+    test("remote auto and remote <machine> exit 1 with the delegate pointer and send nothing over ssh", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        for (const args of [
+            ["remote", "auto", "do the thing"],
+            ["remote", "m2", 'it\'s "quoted"; $(rm -rf /)'],
+            ["remote", "m3", "x"],
+        ]) {
+            const result = box.toli(args, { env: ENV });
+            expect(result.code).toBe(1);
+            expect(result.stdout).toBe("");
+            expect(result.stderr).toContain(POINTER);
+            expect(result.stderr).toContain('bin/toli delegate <machine> "<title>" --brief <file> [--project <p>]');
+        }
+        expect(sshLog(box)).toBe("");
         expect(existsSync(join(box.root, "data", "remote"))).toBe(false);
-    });
-
-    test("sends the prompt on stdin to the picked machine's exec", () => {
-        const box = fleet(remoteSnapshot("m2", { memAvailableMB: 16000, load1: 0 }), {
-            ...ROOMY,
-            minMemAvailableMB: 1e12,
-        });
-        const output = box.ok(["remote", "auto", 'it\'s "quoted"; $(rm -rf /)'], { env: ENV });
-        expect(output).toContain("ran on m2");
-        expect(sshLog(box)).toContain("cd /srv/toli && bin/toli exec --from m1");
-        expect(sshLog(box)).not.toContain("rm -rf");
-    });
-
-    test("nothing available exits 2 without dispatching", () => {
-        const box = fleet(remoteSnapshot("m2", { available: false, reasons: ["busy"] }), {
-            ...ROOMY,
-            minMemAvailableMB: 1e12,
-        });
-        const result = box.toli(["remote", "auto", "x"], { env: ENV });
-        expect(result.code).toBe(2);
-        expect(sshLog(box)).not.toContain("exec");
     });
 });
 
@@ -102,10 +103,22 @@ describe("run records", () => {
         const box = fleet(remoteSnapshot("m2"));
         const runs = join(box.root, "state", "runs");
         box.stub("omp", `ls "${runs}"; exit 3`);
-        const result = box.toli(["exec", "--from", "m2", "--task", "T4"], { env: ENV, stdin: "fix the build\n" });
+        const result = box.toli(["exec", "--from", "m1", "--task", "T4"], { env: ENV, stdin: "fix the build\n" });
         expect(result.code).toBe(3);
         expect(result.stdout).toMatch(/^exec-.*\.json$/m);
         expect(readdirSync(runs)).toEqual([]);
+    });
+
+    test("exec refuses a prompt issued by another machine and records nothing", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        box.stub("omp", `touch "${join(box.root, ".omp-ran")}"`);
+        const result = box.toli(["exec", "--from", "m2", "--task", "T4"], { env: ENV, stdin: "fix the build\n" });
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain("exec: prompt issued by m2: ");
+        expect(result.stderr).toContain(POINTER);
+        expect(existsSync(join(box.root, ".omp-ran"))).toBe(false);
+        expect(existsSync(join(box.root, "state", "runs"))).toBe(false);
+        expect(box.ok(["runs", "--json"])).toBe("[]");
     });
 
     test("exec refuses to start when this machine's run slots are full, so a target picked by name is not overloaded", () => {
@@ -164,51 +177,35 @@ describe("run records", () => {
         box.stub("omp", `echo "by=$TOLI_ISSUED_BY task=\${TOLI_ISSUED_TASK-unset}"`);
         const run = (args: string[], env: Record<string, string> = {}): string =>
             box.ok(["exec", ...args], { env: { ...ENV, ...env }, stdin: "push it\n" });
-        expect(run(["--from", "m2", "--task", "T4"])).toBe("by=m2 task=T4");
-        // No --task: an inherited TOLI_ISSUED_TASK must not leak into the run.
-        expect(run(["--from", "m2"], { TOLI_ISSUED_TASK: "T99" })).toBe("by=m2 task=unset");
+        expect(run(["--from", "m1", "--task", "T4"])).toBe("by=m1 task=T4");
+        // No --from: this machine issued it. No --task: an inherited TOLI_ISSUED_TASK must not leak into the run.
+        expect(run([], { TOLI_ISSUED_TASK: "T99" })).toBe("by=m1 task=unset");
         expect(box.toli(["exec", "--task", "../x"], { env: ENV, stdin: "x\n" }).stderr).toContain(
             'invalid task name "../x"',
         );
     });
 
-    test("remote --task passes the coordinator's task to exec on the target", () => {
+    test("remote with --task, --project or --max-time still refuses and runs no exec anywhere", () => {
         const box = fleet(remoteSnapshot("m2"));
-        box.ok(["remote", "m2", "push ujjwal/overnight", "--task", "T118"], { env: ENV });
-        expect(sshLog(box)).toContain("exec --from m1 --task T118");
-    });
-
-    test("remote --project reaches exec through the environment, so the target's run record carries it", () => {
-        const box = fleet(remoteSnapshot("m2"));
-        box.ok(["remote", "m2", "build it", "--project", "kalki"], { env: ENV });
-        expect(sshLog(box)).toContain("TOLI_EXEC_PROJECT=kalki bin/toli exec --from m1");
-    });
-
-    test("remote --max-time reaches exec through the environment, and without it there is no limit", () => {
-        const box = fleet(remoteSnapshot("m2"));
-        box.ok(["remote", "m2", "ship it"], { env: ENV });
-        box.ok(["remote", "m2", "ship it", "--max-time", "5"], { env: ENV });
-        const execs = sshLog(box)
-            .split("\n")
-            .filter((line) => line.includes("bin/toli exec"));
-        // Set as a variable, not an exec flag, so a target on an older toli still runs the prompt.
-        expect(execs.map((line) => line.match(/TOLI_EXEC_MAX_MINUTES=\S+ bin\/toli exec --from m1/)?.[0])).toEqual([
-            undefined,
-            "TOLI_EXEC_MAX_MINUTES=5 bin/toli exec --from m1",
-        ]);
-        expect(execs[0]).not.toContain("TOLI_EXEC_MAX_MINUTES");
-        for (const bad of ["0", "1.5", "soon"]) {
-            expect(box.toli(["remote", "m2", "x", "--max-time", bad], { env: ENV }).stderr).toContain(
-                "--max-time must be a whole number of minutes",
-            );
+        for (const flags of [
+            ["--task", "T118"],
+            ["--project", "kalki"],
+            ["--max-time", "5"],
+            ["--max-time", "soon"],
+        ]) {
+            const result = box.toli(["remote", "m2", "ship it", ...flags], { env: ENV });
+            expect(result.code).toBe(1);
+            expect(result.stderr).toContain(POINTER);
         }
+        expect(sshLog(box)).not.toContain("bin/toli exec");
+        expect(box.ok(["runs", "--json"])).toBe("[]");
     });
 
     test("exec gives omp no time limit by default; an explicit one is killed 5 minutes after it", () => {
         const box = fleet(remoteSnapshot("m2"));
         box.stub("omp", 'echo "$*"');
         const run = (env: Record<string, string> = {}): string =>
-            box.ok(["exec", "--from", "m2"], { env: { ...ENV, ...env }, stdin: "work\n" });
+            box.ok(["exec", "--from", "m1"], { env: { ...ENV, ...env }, stdin: "work\n" });
         const unlimited = run();
         expect(unlimited).not.toContain("--max-time");
         expect(unlimited).toContain("--session-dir ");

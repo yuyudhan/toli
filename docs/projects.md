@@ -158,11 +158,11 @@ user (the lead batches every such question into one message) or a jawan (detecte
       notes.md        stack, commands, local stack, URLs, proof, delivery, gotchas; fed into every brief
       briefs/         each dispatched brief (T<n>.md, T<n>-verify.md, ...)
       reports/        scout and task reports (T<n>.md)
-      runs/           jawan and remote run outputs (bin/toli remote --project)
+      runs/           jawan run outputs, and outputs of remote runs started before the one-lead-per-machine cutover
       decisions.md    held questions, their options, and the user's verbatim answers (appended by bin/toli task answer)
 
 Cross-project files stay at the top of `data/`: the user's preferences (`preferences.md`), `learnings.md`, `jobs/`,
-`inbox/`, `archive/`, toli-wide `reports/`, and `remote/` for remote runs without a project. In code, every path
+`inbox/`, `archive/`, toli-wide `reports/`, and `remote/` for old remote runs without a project. In code, every path
 comes from `src/core/paths.ts` (`paths.projectNotes(p)`, `projectBriefsDir(p)`, `projectReportsDir(p)`,
 `projectReport(p, id)`, `projectRunsDir(p)`, `projectDecisions(p)`).
 

@@ -142,7 +142,8 @@ recompiles, dashboard hot-reloads); never stop, restart or rebuild it from scrat
   shared index. If it refuses (a moved branch, a revert of a recent commit, a lock file that does not parse, a
   secret), fix the cause; never work around it.
 - Of toli's own commands, run only those the Landing section names, and only for task <T-id>. Never run
-  `bin/toli task add|start|answer|drop`, `bin/toli job`, or `bin/toli remote`.
+  `bin/toli task add|start|answer|drop`, `bin/toli job`, `bin/toli delegate`, `bin/toli talk`, `bin/toli share`, or
+  `bin/toli lead`.
 - Destructive, irreversible, or security-sensitive steps: stop and report instead of doing them.
 - Never end your turn while a subagent, background job, build, or poll you started is still running: wait for its
   result in the same turn, then finish the work. A headless run that yields with nothing more to do is over.

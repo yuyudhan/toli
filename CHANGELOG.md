@@ -8,6 +8,23 @@ one. See docs/releasing.md.
 
 ### Changed
 
+- One lead per machine (docs/sardars.md). Every machine runs its own lead: `bin/toli lead install|uninstall|status|
+run|attach` keeps its lead conversation served by a launchd agent, systemd user service or crontab line, taking
+  wakes in headless turns whenever no lead session is open. Leads hand each other work with `bin/toli delegate
+<machine> "<title>" --brief <file> [--project <p>] [--for T<n>]`: the task lands in that machine's backlog (fleet
+  id `<machine>/T<n>`, idempotent, queued in `state/outbox/` while unreachable) and reports done, held or dropped back
+  to the delegator by itself; `bin/toli task answer <machine>/T<n>` forwards an answer to the owner. `bin/toli talk
+<machine> ["<words>"]` attaches to or messages another machine's lead. `bin/toli task list --fleet [--cached]` is
+  the shared list of every machine's tasks. `pick` and the new `bin/toli fleet queues` rank machines by task-queue
+  depth, shortest first (ties: the clone, this machine, name); CPU, load and memory are shown but never exclude a
+  machine, and the lead service offers or asks for work when queues differ by `lead.balanceGap` (every
+  `lead.balanceMinutes`). `bin/toli remote` (`remote auto` included) now refuses with a pointer to `pick` and
+  `delegate`, and `bin/toli exec` refuses prompts from another machine; runs started by `remote` earlier still finish
+  and report as before. A spawned jawan's outcome and the low-disk alert go only to their own machine's inbox (that
+  machine's lead settles its disk); job results still reach the coordinator. `bin/toli share "<learning>" [--to
+<machine>|--all] [--from-user] [--source "..."]` sends a learning or best practice to other leads, who adopt it
+  (dated, with its source, into their learnings, preferences for the user's own words, or project notes), adapt it or
+  decline it with a reason; the answer comes back as a wake and `bin/toli share --list` shows them all.
 - `capacity.diskKeep: false` in `config/machine.json` switches off every automatic deletion by the disk keeper
   (before jawan starts, in the tick, the background keeper, the fallback sweep); the default stays `true`. With it
   off toli deletes nothing on its own and, when free disk drops under 10 GB (or the emergency level), posts one inbox

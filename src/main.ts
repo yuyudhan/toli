@@ -1,12 +1,16 @@
 import { out, ToliError, warn } from "./core/util.ts";
 import { buildSlotCommand } from "./fleet/build-slots.ts";
+import { delegateCommand, delegationCommand } from "./fleet/delegate.ts";
 import { diskCommand } from "./fleet/disk-command.ts";
 import { execCommand } from "./fleet/exec.ts";
 import { initCommand, syncCommand } from "./fleet/fleet.ts";
+import { leadCommand } from "./fleet/lead.ts";
 import { fleetCommand } from "./fleet/oversight.ts";
 import { pickCommand } from "./fleet/pick.ts";
 import { remoteCommand } from "./fleet/remote.ts";
 import { resourcesCommand } from "./fleet/resources.ts";
+import { shareCommand } from "./fleet/share.ts";
+import { talkCommand } from "./fleet/talk.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge/forge.ts";
 import { gateCommand } from "./forge/gate.ts";
 import { guidanceCommand } from "./harness/guidance.ts";
@@ -52,10 +56,17 @@ const USAGE = `usage: bin/toli <command> [args]
   project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
   project setup <name> [--json] | setup --all [--json]
   task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
-  task list [--json] [--status queued|active|held|done|dropped]
+  task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
   task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
-  task answer <id> "<answer>" | drop <id>
+  task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
+  delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
+  delegation receive (delegation JSON on stdin)
+  talk <machine> ["<words>"]
+  share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
+  share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
+  share receive (JSON on stdin)
+  lead install|uninstall | status [--json] | run [--once] | attach
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
   branch <project> <branch>
@@ -87,10 +98,10 @@ const USAGE = `usage: bin/toli <command> [args]
   disk keep [--dry-run] [--floor <GB>] [--json]
   disk alert
   fleet status [--json]
+  fleet queues [--json]
   fleet check [--json] [--wake] [--local]
   pick [--project <name>] [--json]
-  exec [--from <machine>] [--task <id>] (prompt on stdin)
-  remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>] [--tier <t>] [--work <w>]
+  exec [--task <id>] (prompt on stdin; runs here only)
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
         [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
@@ -124,8 +135,20 @@ export async function main(argv: string[]): Promise<number> {
                 projectCommand(rest);
                 return 0;
             case "task":
-                taskCommand(rest);
+                await taskCommand(rest);
                 return 0;
+            case "delegate":
+                return delegateCommand(rest);
+            case "delegation":
+                delegationCommand(rest);
+                return 0;
+            case "talk":
+                return await talkCommand(rest);
+            case "share":
+                shareCommand(rest);
+                return 0;
+            case "lead":
+                return await leadCommand(rest);
             case "needs":
                 needsCommand(rest);
                 return 0;
@@ -196,7 +219,7 @@ export async function main(argv: string[]): Promise<number> {
             case "exec":
                 return await execCommand(rest);
             case "remote":
-                return await remoteCommand(rest);
+                return remoteCommand(rest);
             case "session":
                 sessionCommand(rest);
                 return 0;

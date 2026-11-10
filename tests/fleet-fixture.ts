@@ -35,6 +35,7 @@ export function remoteSnapshot(machine: string, overrides: Record<string, unknow
         available: true,
         reasons: [],
         at: "2026-10-29T00:00:00.000Z",
+        queue: { queued: 0, active: 0, held: 0, jawansRunning: 0, jawansQueued: 0, depth: 0 },
         ...overrides,
     });
 }

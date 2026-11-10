@@ -25,7 +25,7 @@ They exist in every harness that supports project commands; `bin/toli harness sy
 
 `bin/toli --help` prints the synopsis; every line of it is below, grouped by topic. Most commands take `--json` for
 machine-readable output. Exit code 0 is success, 1 a failure with the reason on stderr, 2 an unknown command or, for
-`pick`, no machine available.
+`pick`, no machine reachable or qualifying.
 
 ### Setup and status
 
@@ -59,7 +59,8 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     project setup <name> [--json] | setup --all [--json]
 
 - `add` clones into `projects/<name>`; `link` registers an existing checkout through a symlink; `ensure` is the
-  idempotent form used for remote work; `import` registers clones already in `projects/`.
+  idempotent form a delegated task's jawan runs on a machine without the clone; `import` registers clones already in
+  `projects/`.
 - `set` records delivery, branch, forge, workspace strategy, and standing grants ([delivery.md](delivery.md),
   [projects.md](projects.md#workspace-strategy)). `--branch <b>` also switches a clean clone to `<b>`, or prints the
   `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)). `--live-stack yes`
@@ -70,10 +71,17 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
 ### Tasks
 
     task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
-    task list [--json] [--status queued|active|held|done|dropped]
+    task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
     task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
     task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
-    task answer <id> "<answer>" | drop <id>
+    task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
+    delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
+    delegation receive (delegation JSON on stdin)
+    talk <machine> ["<words>"]
+    share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
+    share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
+    share receive (JSON on stdin)
+    lead install|uninstall | status [--json] | run [--once] | attach
     needs [--json]
 
 Every request becomes a task (`data/backlog.json`). `start` records which jawan carries it; `hold` parks it on a
@@ -90,6 +98,14 @@ digest opens with the same list, flags holds with no question, and re-surfaces a
 option is safe to undo, so an installation may apply it when the hold stays unanswered past its own timeout
 (recorded with `task answer`); it needs `--recommend` and is refused when the hold mentions push, merge, main,
 MR/PR, tag, release, a destructive step, security or money.
+
+Task ids are unique across the fleet as `<machine>/T<n>`; a bare `T<n>` is this machine's. `task list --fleet` shows
+every machine's open tasks (refreshed over ssh, `--cached` reads the last copies). `task answer <machine>/T<n>` is
+forwarded to the owning machine. `delegate` hands a task to another machine's lead (it lands in that machine's
+backlog and reports done, held or dropped back here); `delegation receive` is what it runs there. `talk` attaches to
+a machine's lead conversation, or sends it words. `share` sends a learning to other leads, who adopt, adapt or
+decline it (the answer comes back; `share --list` shows them). `lead` manages this machine's lead service, which
+serves wakes in headless turns when no lead session is open ([sardars.md](sardars.md)).
 
 ### Landing work
 
@@ -192,13 +208,15 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     disk keep [--dry-run] [--floor <GB>] [--json]
     disk alert
     fleet status [--json]
+    fleet queues [--json]
     fleet check [--json] [--wake] [--local]
     pick [--project <name>] [--json]
-    exec [--from <machine>] [--task <id>] (prompt on stdin)
-    remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>] [--tier <t>] [--work <w>]
+    exec [--task <id>] (prompt on stdin; runs here only)
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
-- `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.
+- `resources`, `fleet status`: capacity and queue of this machine and of all machines. `fleet queues`, `pick`:
+  machines ranked by queue depth, shortest first, and the one for a task
+  ([fleet.md](fleet.md#capacity-and-picking-a-machine)).
 - `fleet check`: idle machines (no active run) with queued work for a project cloned there, and active tasks no
   live run works on, on every reachable machine; `--wake` posts the findings as one inbox item; `--local` reports
   this machine's own backlog (what the coordinator reads over ssh). The coordinator's tick runs it every
@@ -213,7 +231,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   `capacity.diskKeep: false` it runs only by hand: before jawan starts and in the tick toli deletes nothing and only
   alerts the inbox, once per 6 hours, when free disk is under 10 GB (or the emergency level).
 - `disk alert`: post that low-disk alert now, naming the biggest build folders.
-- `remote` runs a prompt on another machine; `exec` is what it runs there (headless omp, up to an hour).
+- `exec` runs a prompt in headless omp on this machine and refuses one from another machine; `remote` (any form)
+  refuses and points to `pick` and `delegate` ([sardars.md](sardars.md)).
 
 Details: [fleet.md](fleet.md).
 

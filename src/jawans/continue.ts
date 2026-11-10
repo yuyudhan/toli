@@ -7,8 +7,8 @@ import type { Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, warn } from "../core/util.ts";
 import { autoResumeLimit } from "../fleet/resources.ts";
-import { notify } from "../jobs/outbox.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
+import { addInboxItem } from "../records/inbox.ts";
 import { baseBriefOf, sessionFile, startOrQueue } from "./launch.ts";
 import { continuePrompt, type ResumeFacts, resumeSection } from "./limits.ts";
 import { type JawanRun, loadRun, updateRun } from "./runs.ts";
@@ -112,7 +112,8 @@ export function autoResume(machine: Machine, run: JawanRun, reason: string, stop
             `Its edits are uncommitted in ${run.cwd}. Look at the log, then \`bin/toli resume ${run.id}\` (optionally with --note), relaunch with a narrower brief, or finish it by hand.`,
         ].join("\n");
         const title = `jawan ${run.id} not resumed: auto-resume limit reached${where === "" ? "" : ` for ${where}`}`;
-        notify(machine, title, body, `${run.id}-resume-cap`);
+        // Jawans report only to their own machine's lead (docs/sardars.md).
+        addInboxItem(machine.name, title, body);
         noteOnTask(run, `run ${run.id} ${stopped}; not resumed: ${cap} automatic resumes used (capacity.autoResume)`);
         return run;
     }

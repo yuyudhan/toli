@@ -99,18 +99,21 @@ Staging is only read, never changed, and jawans stop at any OTP or captcha.
 
 ## Results find you
 
-Jawan outcomes, scheduled job results, and messages from other machines land in toli's records (`data/inbox/`,
-`data/jobs/`). `bin/toli wake` takes everything new since the last call, once, and the harness brings it into the
-chat:
+Jawan outcomes, scheduled job results, and messages from other machines' leads (delegated tasks, their results and
+questions, `bin/toli talk` words) land in toli's records (`data/inbox/`, `data/jobs/`). `bin/toli wake` takes
+everything new since the last call, once, and the harness brings it into the chat:
 
 - **omp**: the extension (`.omp/extensions/toli.ts`) runs `wake` every minute and pushes a `[toli wake]` message
   into the session, so the lead relays it without being asked.
 - **Claude Code**: the prompt hook runs `wake` and adds new results to your next message.
 - **Codex, Cursor, Grok, pi**: the lead sees them in `bin/toli digest`.
+- **No session open**: the machine's lead service (`bin/toli lead install`) takes them in a headless turn of the same
+  lead conversation ([sardars.md](sardars.md)).
 
 Delivered items keep showing in `bin/toli digest` and `/bearings` until acknowledged (`bin/toli job ack`,
-`bin/toli inbox ack`). Long-running things (work on other machines, fleet probes, lavish pages) also run in the
-background and arrive the same way.
+`bin/toli inbox ack`). Long-running things (fleet probes, lavish pages) also run in the background and arrive the
+same way. Every machine has its own lead: work for another machine is delegated to its lead, which dispatches its own
+jawans and sends the result back here ([sardars.md](sardars.md)).
 
 ## Talking to the lead
 
@@ -148,9 +151,9 @@ private to each machine.
     data/learnings.md            lessons learned across projects
     data/reports/                toli-wide reports
     data/jobs/<name>/<stamp>.md  job results
-    data/inbox/, data/remote/    messages from jawans and other machines; remote runs without a project
+    data/inbox/, data/remote/    messages from jawans and other machines; old remote run outputs without a project
     data/archive/                archived memory entries and old tasks; never loaded
-    state/                       session, job and ack state, outbox/, runs/, jawan run records
+    state/                       session, job and ack state, outbox/, runs/, jawan run records, lead/
     logs/, .env*, .lavish/
 
 `bin/toli digest` reads all of it at the start of every session: this machine's name and role, the Needs-you queue
@@ -160,7 +163,7 @@ first, each project's branch and uncommitted state, work in flight, unseen job r
 
 - Tasks, projects, and where jawans work: [projects.md](projects.md)
 - How work lands: [delivery.md](delivery.md)
-- Several machines: [fleet.md](fleet.md)
+- Several machines: [fleet.md](fleet.md), [sardars.md](sardars.md)
 - Timed jobs: [jobs.md](jobs.md)
 - Memory and cleanup: [memory.md](memory.md)
 - Harness details and `bin/toli spawn`: [harnesses.md](harnesses.md)

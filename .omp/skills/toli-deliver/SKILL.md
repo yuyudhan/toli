@@ -33,18 +33,21 @@ turn, and relays the result.
 
 ## Pushing on another machine
 
-When the clone that pushes is on another fleet machine (the push runs over ssh, or via `bin/toli remote <machine>
-... --task <id>`), the brief has the jawan record the push in that machine's toli checkout, quoting Malik's word:
+A push from a clone on another fleet machine is that machine's Sardar's work: delegate it (`bin/toli delegate
+<machine> "<title>" --brief <file> --project <project> --for <id>`, `skill://toli-dispatch` step 3) with a brief
+that quotes Malik's word for the push. That machine's jawan runs `bin/toli push` there, which records it in that
+machine's push log under its own task; `--by <machine> --for <id>` name the delegating machine and task when the
+brief gives them:
 
-    ssh <host> 'cd <toli root> && bin/toli push <project> --by <this machine> --for <id> --word "<Malik'\''s word>"'
+    bin/toli push <project> --task T<n> --by <delegating machine> --for <id> --word "<Malik's word>"
 
 A raw `git push` there (e.g. `--no-verify` on Malik's word) is followed at once by
 
-    ssh <host> 'cd <toli root> && bin/toli push-log add <project> --by <this machine> --for <id> --word "<...>"'
+    bin/toli push-log add <project> --by <delegating machine> --for <id> --word "<...>"
 
 which takes the branch from the clone and old..new from `origin/<branch>`'s reflog (`--branch`/`--old`/`--new`
-override). Inside a `bin/toli exec` run (what `bin/toli remote` starts) `--by`/`--for` default to the issuing
-machine and task.
+override). Runs started by `bin/toli remote` before the cutover still default `--by`/`--for` to the issuing machine
+and task.
 
 ## Mode: commit (default)
 

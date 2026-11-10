@@ -1,6 +1,6 @@
 ---
 name: toli-sync
-description: Keep the toli repo current across Malik's machines, bootstrap a fresh machine, and explain coordinator and worker roles and how results flow between them. Use for /sync-toli, when setting up Sardar on a new machine, when the digest says a new toli release is out, or when Malik asks about the fleet, other machines, or updating Sardar.
+description: Keep the toli repo current across Malik's machines, bootstrap a fresh machine, and explain the per-machine Sardars, the coordinator, and how work and results flow between machines. Use for /sync-toli, when setting up Sardar on a new machine, when the digest says a new toli release is out, or when Malik asks about the fleet, other machines, or updating Sardar.
 ---
 
 # Machines and sync (/sync-toli)
@@ -10,28 +10,36 @@ everything private (`projects/ data/ state/ config/ logs/ local/ .env* .lavish/`
 
 ## Roles
 
-- **Coordinator**: the main Sardar. Malik talks to it day to day. It holds `config/fleet.json` (every machine's name,
-  ssh host, and repo root), can see the whole fleet with `bin/toli digest --fleet`, and receives results from workers
-  in its inbox.
-- **Worker**: has some projects cloned and runs their work and jobs. It knows the coordinator from `config/machine.json`
-  (`coordinator: {ssh, root}`).
+- **Every machine has its own Sardar** (docs/sardars.md): a lead service (`bin/toli lead install`) keeps its lead
+  conversation served when no terminal session is open. Each Sardar dispatches only its own machine's jawans, and
+  every jawan reports only to the Sardar of the machine it runs on. Malik may talk to any of them.
+- **Coordinator**: the Sardar Malik talks to day to day, and the one that keeps the fleet view. It holds
+  `config/fleet.json` (every machine's name, ssh host, and repo root), sees the whole fleet with
+  `bin/toli digest --fleet`, and receives job results and toli alerts from the other machines in its inbox.
+- **Worker**: any other machine. It knows the coordinator from `config/machine.json` (`coordinator: {ssh, root}`).
 
-Each machine's `data/projects.json` lists only its own clones; a project may be cloned on several machines. Work goes
-to whichever machine is free:
+Each machine's `data/projects.json` lists only its own clones; a project may be cloned on several machines.
 
-    bin/toli resources              # this machine: load, free memory/disk, active runs, clones, available or why not
-    bin/toli fleet status           # every machine in config/fleet.json, probed over ssh in parallel
-    bin/toli pick --project <p>     # best machine for one unit of work (exit 2 + reasons when none)
-    bin/toli remote auto "<prompt>" --project <p>   # prints `local`, or clones if needed and runs it there
+## Working across machines
 
-`bin/toli remote <machine> "<prompt>"` targets a named machine. Output is saved in
-`data/projects/<project>/runs/<stamp>-<machine>.md` with `--project <project>`, else in
-`data/remote/<stamp>-<machine>.md`.
-Remote runs execute through `bin/toli exec` on the target and count as load there while they run. Per-machine
-thresholds live in `config/machine.json` `capacity` (`maxRuns`, default cpus/4; `maxLoadPerCpu` 0.8;
-`minMemAvailableMB` 2048). Free disk is never a threshold: below `capacity.diskKeepGB` (60) the disk keeper frees
-build output before work starts (`bin/toli disk keep`, docs/disk.md); a full disk means delete every `target/`, in use
-or not, without asking. An unreachable machine is reported, never fatal.
+    bin/toli lead install|status        # this machine's lead service (start now and at every login/boot)
+    bin/toli talk <machine>             # attach to that machine's Sardar conversation
+    bin/toli talk <machine> "<words>"   # send that Sardar a message; it answers with talk back
+    bin/toli delegate <machine> "<title>" --brief <file> [--project <p>] [--for T<n>]
+    bin/toli task list --fleet          # every machine's open tasks (fleet ids <machine>/T<n>)
+    bin/toli fleet queues               # every machine's queue depth, shortest first
+    bin/toli pick --project <p>         # the shortest queue for one unit of work (exit 2 only when none qualifies)
+    bin/toli resources                  # this machine: queue, load, free memory/disk, runs, clones
+    bin/toli fleet status               # every machine in config/fleet.json, probed over ssh in parallel
+
+Work for another machine goes to its Sardar with `delegate`: the task lands in that machine's backlog, its Sardar
+dispatches its own jawans, and the result or question comes back here as a wake (`skill://toli-dispatch`, step 3).
+Machines are ranked by queue depth, never by CPU, load or memory; those are shown for information. No machine starts
+a jawan on another: `bin/toli remote` refuses and points to `pick` and `delegate`, and `bin/toli exec` refuses a
+prompt from another machine. Spawn slots (`capacity.maxRuns` in `config/machine.json`, default cpus/4) still cap
+jawans per machine. Free disk is never a threshold: below `capacity.diskKeepGB` (60) the disk keeper frees build
+output before work starts (`bin/toli disk keep`, docs/disk.md); a full disk means delete every `target/`, in use or
+not, without asking. An unreachable machine is reported, never fatal.
 
 ## Syncing the repo
 
@@ -59,8 +67,9 @@ digest shows it once as `Update: toli vX.Y.Z is out ...` with its CHANGELOG sect
 - Tell Malik once, in plain words: the new version, the few changes that matter to him, and that it updates only on
   his word. Never raise the same version again; the digest will not either.
 - He confirms: dispatch a jawan (start a task first) whose brief quotes his word and runs `bin/toli upgrade`, which
-  checks out the release and runs `bin/toli migrate` and `bin/toli harness sync`; it reports the output, and any
-  refusal (local edits to tracked files) verbatim. Relay the result and that a session restart loads the new
+  checks out the release and runs `bin/toli migrate` and `bin/toli harness sync`, then `bin/toli lead install` so
+  this machine's lead service runs (each machine's Sardar does the same on its own machine); it reports the output,
+  and any refusal (local edits to tracked files) verbatim. Relay the result and that a session restart loads the new
   contract and skills.
 - On a development clone (the notice says `development clone on branch <b>`) `upgrade` refuses: the jawan updates
   it with git instead (fetch the tag, fast-forward or merge into `<b>`), stopping on any conflict.
@@ -78,22 +87,29 @@ On the new machine, in the directory where the clone should live:
     bin/toli init --name <machine> --role worker --coordinator-ssh <host> --coordinator-root <path>
     bin/toli doctor
     bin/toli schedule install
+    bin/toli lead install
 
 - Run `bin/toli doctor` through `bash` with `async: true`. Relay each failure (bun, omp, git, gh auth, no-mistakes,
   machine config, project clones, fleet reachability and availability, scheduler) in plain words; fixes that need
   more than Malik's own action go to a jawan.
-- On the coordinator, add the new machine to `config/fleet.json` so `--fleet`, `--all`, `fleet status`, and `pick`
-  reach it. Every machine that should pick or dispatch needs the full fleet list in its own `config/fleet.json`.
+- On the coordinator, add the new machine to `config/fleet.json` so `--fleet`, `--all`, `fleet status`,
+  `fleet queues`, `pick`, `delegate` and `talk` reach it. Every machine that should pick, delegate or talk needs the
+  full fleet list in its own `config/fleet.json`.
 - Re-add the projects cloned on this machine with `/add-project` (`skill://toli-projects`).
 - Machine helpers are per machine and never synced: `local/` is gitignored. If this machine needs any (disk cleanup,
   VPN reconnect), follow `skill://toli-helpers`; a copied `local/` from another machine is installed with
   `bin/toli helper install --all` and checked with `bin/toli helper status`.
 
-## Results flowing to the coordinator
+## Results flowing between machines
 
-- New inbox items and job results reach the open Sardar session by themselves as `[toli wake]` messages (each once).
-- On a worker, every job result is also sent to the coordinator's inbox over ssh (`bin/toli inbox add`).
-- If the coordinator is unreachable, results wait in `state/outbox/` and retry every minute.
-- On the coordinator, `bin/toli inbox list --unseen` (and `/bearings`) shows them; `bin/toli inbox ack` clears them
-  after Malik has seen them.
-- To send a one-off note from a worker: `bin/toli inbox add --from <machine> --title "<t>"` with the body on stdin.
+- New inbox items and job results reach the open Sardar session by themselves as `[toli wake]` messages (each once);
+  with no session open, the lead service takes them in a headless turn.
+- A jawan's outcome goes only to its own machine's inbox. A delegated task reports done, held or dropped to the
+  delegating machine's inbox by itself.
+- On a worker, every job result and toli alert is also sent to the coordinator's inbox over ssh
+  (`bin/toli inbox add`).
+- Everything sent to another machine (job results, alerts, delegations, delegated-task reports, `talk` messages)
+  waits in `state/outbox/` while that machine is unreachable and retries every minute.
+- `bin/toli inbox list --unseen` (and `/bearings`) shows them; `bin/toli inbox ack` clears them after Malik has seen
+  them.
+- To send a one-off note to another machine's Sardar: `bin/toli talk <machine> "<words>"`.

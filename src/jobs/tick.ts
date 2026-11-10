@@ -3,6 +3,7 @@ import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
+import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
@@ -11,6 +12,7 @@ import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveM
 import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
+import { reportUnpostedRuns } from "../jawans/adopt.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
@@ -198,7 +200,7 @@ export async function tick(): Promise<void> {
     } catch (error) {
         log(`update check failed to start: ${error instanceof Error ? error.message : String(error)}`);
     }
-    const outbox = deliverOutbox(machine);
+    const outbox = deliverOutbox(machine, onOutboxDelivered);
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
     for (const error of outbox.errors) log(`outbox: pending ${error}`);
     for (const note of failStaleRuns()) log(note);
@@ -211,6 +213,12 @@ export async function tick(): Promise<void> {
         for (const note of drainQueue({ diskKept: true })) log(note);
     } catch (error) {
         log(`queued jawan runs not started: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // Every jawan reports to this machine's lead: a run that ended without posting its outcome is posted now.
+    try {
+        for (const note of reportUnpostedRuns()) log(note);
+    } catch (error) {
+        log(`unreported jawan runs not posted: ${error instanceof Error ? error.message : String(error)}`);
     }
     // Oversight never pauses (away mode included): active tasks no live run works on are posted once per ended run,
     // and the coordinator's fleet check names idle machines with waiting work (src/records/stale.ts, fleet/oversight.ts).

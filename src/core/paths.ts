@@ -98,6 +98,22 @@ export const paths = {
     fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
     fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
+    /** This machine's lead service (src/fleet/lead.ts): its conversation, turn state, pending wake, attach marker. */
+    leadDir: () => join(repoRoot(), "state", "lead"),
+    leadSessionsDir: () => join(repoRoot(), "state", "lead", "sessions"),
+    leadState: () => join(repoRoot(), "state", "lead", "state.json"),
+    leadPending: () => join(repoRoot(), "state", "lead", "pending.md"),
+    leadAttach: () => join(repoRoot(), "state", "lead", "attach.json"),
+    leadLog: () => join(repoRoot(), "logs", "lead.log"),
+    /** Since when the tick posts outcomes of runs that ended without one (src/jawans/adopt.ts). */
+    leadAdoptState: () => join(repoRoot(), "state", "lead", "adopt.json"),
+    /** When the lead last compared fleet queues and what it offered or asked (src/fleet/queues.ts). */
+    leadBalanceState: () => join(repoRoot(), "state", "lead", "balance.json"),
+    /** The last copy of each other machine's own task list (`bin/toli task list --fleet`, src/records/fleet-tasks.ts). */
+    fleetTasksDir: () => join(repoRoot(), "state", "fleet-tasks"),
+    fleetTasksCopy: (machine: string) => join(repoRoot(), "state", "fleet-tasks", `${machine}.json`),
+    /** Learnings shared between leads, sent and received, with each lead's answer (`bin/toli share`, src/fleet/share.ts). */
+    sharesDir: () => join(repoRoot(), "data", "shares"),
     runsDir: () => join(repoRoot(), "state", "runs"),
     runRecord: (runId: string) => join(repoRoot(), "state", "runs", `${runId}.json`),
     /** omp session dirs of headless scheduled job runs, watched for progress while they run. */
