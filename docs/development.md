@@ -117,7 +117,7 @@ fail with that hint instead of skipping.
 | `just fmt-check` | Report unformatted files.                                                                                     |
 | `just lint`      | Biome lint rules, shellcheck, actionlint, the repo guards, and `scripts/useless-await.ts` (TS80007).          |
 | `just typecheck` | `tsc --noEmit` over `src/`, `tests/`, `scripts/`, `.omp/extensions/`.                                         |
-| `just test`      | `bun test` with 60 s per test (most tests run `bin/toli` and git; parallel jawans load the machine).          |
+| `just test`      | `bun run test`: `bun test` with 60 s per test, set once in package.json's test script for `check` too.        |
 | `just check`     | fmt-check, lint, typecheck, test: **passes before every commit to toli** (`bin/toli commit toli`).            |
 | `just verify`    | check, then smoke runs: `bin/toli version`, `doctor`, `harness sync --check`, `setup status`, and an install. |
 | `just guard`     | The hygiene guards over tracked files.                                                                        |

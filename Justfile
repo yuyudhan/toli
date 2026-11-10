@@ -29,9 +29,9 @@ lint:
 typecheck:
     bun run typecheck
 
-# Run the test suite
+# Run the test suite (package.json's test script holds the per-test timeout `just check` uses too)
 test:
-    bun test
+    bun run test
 
 # The gate every agent runs before committing: fmt-check, lint, typecheck, test
 check:

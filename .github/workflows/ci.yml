@@ -106,7 +106,7 @@ jobs:
 
             - name: Test coverage threshold (bunfig.toml)
               if: runner.os == 'Linux'
-              run: bun test --coverage --timeout 60000
+              run: bun run test --coverage
 
             - name: Secrets scan (gitleaks, full history)
               if: runner.os == 'Linux'
