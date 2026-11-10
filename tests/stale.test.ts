@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENV, fleet, remoteSnapshot } from "./fleet-fixture.ts";
-import { type Sandbox, sandbox, withProject } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, sandbox, withProject } from "./helpers.ts";
 
 const START = "2026-03-04T08:00:00.000Z";
 
@@ -218,8 +218,9 @@ describe("oversight never pauses in away mode", () => {
         box.stub(
             "ssh",
             [
-                'case "$5" in',
-                `  host2) case "$6" in *"resources --json"*) cat "${join(box.root, ".m2.json")}" ;; *"fleet check --local --json"*) cat "${join(box.root, ".m2-check.json")}" ;; *) exit 1 ;; esac ;;`,
+                SSH_STUB_ARGS,
+                'case "$host" in',
+                `  host2) case "$cmd" in *"resources --json"*) cat "${join(box.root, ".m2.json")}" ;; *"fleet check --local --json"*) cat "${join(box.root, ".m2-check.json")}" ;; *) exit 1 ;; esac ;;`,
                 "  *) echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
                 "esac",
             ].join("\n"),

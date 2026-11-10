@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, sandbox } from "./helpers.ts";
 
 type FleetFile = { machines: { name: string; ssh: string; root: string }[] };
 
@@ -51,7 +51,8 @@ function worker(): Sandbox {
         "ssh",
         [
             `if [ -e "${box.root}/.coord-down" ]; then echo "ssh: connect to host coord: Connection refused" >&2; exit 255; fi`,
-            `case "$6" in *"fleet export"*) cat "${exported}" ;; *) exit 1 ;; esac`,
+            SSH_STUB_ARGS,
+            `case "$cmd" in *"fleet export"*) cat "${exported}" ;; *) exit 1 ;; esac`,
         ].join("\n"),
     );
     return box;

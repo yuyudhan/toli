@@ -8,6 +8,10 @@ one. See docs/releasing.md.
 
 ### Changed
 
+- toli's ssh calls to fleet machines share one connection per host for ten minutes (`ssh -F state/ssh/config`:
+  `ControlMaster auto`, `ControlPath state/ssh/%C`, `ControlPersist 10m`, after your own ssh config, whose `Control*`
+  lines win), so a minute of fleet calls is one login instead of many. A control socket whose master no longer
+  answers is removed before the call, so it never hangs past its timeout (docs/fleet.md#the-fleet-list).
 - Queues rank by queued tasks plus running and waiting jawans per jawan slot (`capacity.maxRuns`); active tasks with
   no jawan here (a lead's bookkeeping, delegated work) are no longer queue, and `fleet queues` shows queued, running,
   active and held separately with the load per slot. `bin/toli lead full [--reason ...] [--until 2h] | --clear |

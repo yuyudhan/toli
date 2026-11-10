@@ -1,7 +1,7 @@
 // Two real machines for delegation tests (tests/delegate.test.ts, tests/delegation-sync.test.ts).
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox, TOLI_BIN } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, sandbox, TOLI_BIN } from "./helpers.ts";
 
 export type Task = {
     id: string;
@@ -60,7 +60,7 @@ export function pair(): Pair {
         box.stub(
             "ssh",
             [
-                'host="$5"; cmd="$6"',
+                SSH_STUB_ARGS,
                 `if [ -e "${m1.root}/.m$(printf '%s' "$host" | sed 's/^host//')-down" ]; then echo "ssh: connect to host $host: Connection refused" >&2; exit 255; fi`,
                 'case "$host" in',
                 ...Object.entries(roots).map(([host, root]) => `  ${host}) root="${root}" ;;`),

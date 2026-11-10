@@ -98,6 +98,8 @@ export const paths = {
     fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
     fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
+    /** Reused ssh connections to fleet machines: the generated client config and one control socket per host. */
+    sshDir: () => join(repoRoot(), "state", "ssh"),
     /** This machine's lead service (src/fleet/lead.ts): its conversation, turn state, pending wake, attach marker. */
     leadDir: () => join(repoRoot(), "state", "lead"),
     leadSessionsDir: () => join(repoRoot(), "state", "lead", "sessions"),

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import type { HarnessConfig } from "../harness/harness.ts";
 import { paths } from "./paths.ts";
+import { sshSharingArgs } from "./ssh.ts";
 import { readJson, shellQuote, ToliError } from "./util.ts";
 
 export type Role = "coordinator" | "worker";
@@ -133,9 +134,20 @@ export function otherFleetMachines(): FleetMachine[] {
     return loadFleet().machines.filter((entry) => entry.name !== self);
 }
 
-/** ssh argv prefix: batch mode (never prompts) with a bounded connect timeout. */
+/**
+ * ssh argv prefix: batch mode (never prompts) with a bounded connect timeout, sharing one connection per host
+ * across calls (src/core/ssh.ts).
+ */
 export function sshArgs(host: string, connectTimeoutSeconds = 15): string[] {
-    return ["ssh", "-o", "BatchMode=yes", "-o", `ConnectTimeout=${connectTimeoutSeconds}`, host];
+    return [
+        "ssh",
+        ...sshSharingArgs(host),
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        `ConnectTimeout=${connectTimeoutSeconds}`,
+        host,
+    ];
 }
 
 // ssh runs the remote command in a non-interactive shell that skips the login profile, so Homebrew and Bun's

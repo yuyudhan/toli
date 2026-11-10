@@ -44,6 +44,17 @@ lists (edit a worker's entry to point at an alias that works there; the next syn
 coordinator is unreachable keeps its list and says why. Each machine's `data/projects.json` lists only the clones on
 that machine; a project may be cloned on several.
 
+toli's calls to other machines share one ssh connection per host: they run `ssh -F state/ssh/config`, a generated
+config that includes `~/.ssh/config` and `/etc/ssh/ssh_config` first and then sets `ControlMaster auto`, `ControlPath
+state/ssh/%C` and `ControlPersist 10m` for every host, so the calls of the next ten minutes reuse one login instead of
+opening a connection each (which security monitoring reads as many logins). ssh keeps the first value it reads, so a
+host's own `Control*` lines in your ssh config win (`ControlMaster no` turns sharing off for it). `state/ssh` is
+mode 0700. Before a call, a control socket whose master does not answer `ssh -O check` within 2 seconds is removed,
+so a wedged master never holds a call past its timeout; the master, which carries every shared session (long `exec`
+runs too), drops a link dead for two minutes (`ServerAliveInterval 30`, `ServerAliveCountMax 4`). A checkout whose
+path is too long for a unix socket there (`state/ssh` longer than 45 characters) opens a connection per call, as
+before.
+
 ## Capacity and picking a machine
 
     bin/toli resources [--json]               # this machine: queue, load, memory/disk, runs, build slots, clones

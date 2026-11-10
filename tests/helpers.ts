@@ -24,6 +24,12 @@ export const GIT_ENV: Record<string, string> = {
     GIT_CONFIG_NOSYSTEM: "1",
 };
 
+/**
+ * Shell line for an `ssh` stub: sets `$host` and `$cmd` to its last two arguments, whatever options toli's ssh
+ * calls put before them (sshArgs in src/core/config.ts).
+ */
+export const SSH_STUB_ARGS = 'for arg in "$@"; do host="$cmd"; cmd="$arg"; done';
+
 const temps: string[] = [];
 
 /** A fresh `toli-<prefix>-*` dir under the OS temp dir, removed after the whole run (tests/setup.ts). */

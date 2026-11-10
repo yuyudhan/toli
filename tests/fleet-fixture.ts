@@ -1,7 +1,7 @@
 // A coordinator sandbox with a stubbed fleet (ssh, vm_stat), shared by the fleet and remote tests.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, sandbox } from "./helpers.ts";
 
 /** Thresholds loose enough that this test host is always available, whatever its real load and memory. */
 export const ROOMY = { maxRuns: 50, maxLoadPerCpu: 1000, minMemAvailableMB: 0 };
@@ -65,8 +65,9 @@ export function fleet(m2Snapshot: string, capacity: Record<string, number> = ROO
         "ssh",
         [
             `printf '%s\\n' "$*" >> "${join(box.root, ".ssh.log")}"`,
-            'case "$5" in',
-            `  host2) case "$6" in *"resources --json"*) cat "${join(box.root, ".m2.json")}" ;; *) cat >/dev/null; echo "ran on m2" ;; esac ;;`,
+            SSH_STUB_ARGS,
+            'case "$host" in',
+            `  host2) case "$cmd" in *"resources --json"*) cat "${join(box.root, ".m2.json")}" ;; *) cat >/dev/null; echo "ran on m2" ;; esac ;;`,
             "  *) echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
             "esac",
         ].join("\n"),
