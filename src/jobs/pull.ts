@@ -11,14 +11,21 @@
 // Each sender's items apply in order, and the first that fails stops that sender's batch until the next pull. An item
 // applied here is recorded in state/pulled/<sender>.json until its ack lands, so an item pulled again (the ack was
 // lost, the sender was offline) is acknowledged again without being applied twice.
-import { closeSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Args } from "../core/args.ts";
-import { type FleetMachine, inboundOff, loadFleet, loadMachine, remoteToliCommand, sshArgs } from "../core/config.ts";
+import {
+    type FleetMachine,
+    inboundOff,
+    loadFleet,
+    loadMachine,
+    remoteToliCommand,
+    sshArgsAsync,
+} from "../core/config.ts";
 import { paths } from "../core/paths.ts";
+import { tryPidLock } from "../core/pid-lock.ts";
 import {
     out,
-    pidAlive,
     printJson,
     readJson,
     readStdin,
@@ -33,11 +40,17 @@ import {
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { fleetExport, takePullerExport } from "../fleet/fleet-sync.ts";
 import { deliveryArgv, itemTarget, type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
+import { Reach } from "./reach.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
-const CONNECT_SECONDS = 15;
-const REMOTE_TIMEOUT_MS = 120_000;
+/** Short, so a machine that is down costs the pull a few seconds, never the others' items. */
+const CONNECT_SECONDS = 5;
+/**
+ * `outbox pending` and `outbox ack` only read and write a few files there; a call this slow is a link that connected
+ * and then stalled (a VPN peer half up), and the tick backs that machine off rather than wait two minutes on it.
+ */
+const REMOTE_TIMEOUT_MS = 30_000;
 const APPLY_TIMEOUT_MS = 120_000;
 /** An applied item whose ack never landed is forgotten after this long (its sender dropped it long ago). */
 const APPLIED_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
@@ -121,7 +134,8 @@ function ack(args: Args): void {
 
 // The puller's side.
 
-export type PullReport = { pulled: number; applied: number; acked: number; errors: string[] };
+/** `held`: machines not tried, each with why (it failed earlier in the tick's pass, or it is backed off). */
+export type PullReport = { pulled: number; applied: number; acked: number; held: string[]; errors: string[] };
 
 function appliedFile(sender: string): string {
     return join(paths.pulledDir(), `${sender}.json`);
@@ -193,91 +207,80 @@ function applyBatch(sender: FleetMachine, batch: PendingBatch, report: PullRepor
     return acks;
 }
 
-/** Hold the pull lock for this pid, or null when a live pull already holds it. */
-function claimPull(): string | null {
-    const file = paths.lock("pull");
+/**
+ * Pull from one machine what waits there for this one, apply it here and acknowledge it there. It runs alongside the
+ * other machines' pulls, so one that is slow or down never holds up their items.
+ */
+async function pullFrom(
+    sender: FleetMachine,
+    self: string,
+    exported: Promise<string>,
+    reach: Reach,
+    report: PullReport,
+): Promise<void> {
+    const args = await sshArgsAsync(sender.ssh, CONNECT_SECONDS);
+    const remote = (command: string, stdin: string) =>
+        runAsync([...args, remoteToliCommand(sender.root, command)], { stdin, timeoutMs: REMOTE_TIMEOUT_MS });
+    const result = await remote(`outbox pending --for ${shellQuote(self)}`, await exported);
+    if (result.code !== 0 || result.timedOut) {
+        const why = result.timedOut ? "timed out" : `exited ${result.code}`;
+        const error = `ssh ${sender.ssh} ${why}: ${(result.stderr || result.stdout).trim()}`;
+        reach.failure(sender.ssh, error, result);
+        report.errors.push(`${sender.name}: ${error}`);
+        return;
+    }
+    reach.success(sender.ssh);
+    let batch: PendingBatch;
     try {
-        const fd = openSync(file, "wx");
-        writeSync(fd, String(process.pid));
-        closeSync(fd);
-        return file;
+        batch = parseBatch(result.stdout);
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        report.errors.push(
+            `${sender.name}: bad outbox pending output: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
     }
-    let holder = 0;
-    try {
-        holder = Number(readFileSync(file, "utf8").trim());
-    } catch {
-        // Released between the open and the read: take it.
+    report.pulled += batch.items.length;
+    const acks = applyBatch(sender, batch, report);
+    if (acks.length === 0) return;
+    const sent = await remote(`outbox ack --for ${shellQuote(self)}`, JSON.stringify({ acks } satisfies PullAcks));
+    if (sent.code !== 0 || sent.timedOut) {
+        reach.failure(sender.ssh, `ssh ${sender.ssh} exited ${sent.code} on outbox ack`, sent);
+        report.errors.push(
+            `${sender.name}: ack not sent (ssh ${sender.ssh} exited ${sent.code}); the next pull repeats it`,
+        );
+        return;
     }
-    if (pidAlive(holder)) return null;
-    writeJsonAtomic(file, process.pid);
-    return file;
+    const applied = readJson<Applied>(appliedFile(sender.name), {});
+    for (const { id } of acks) delete applied[id];
+    saveApplied(sender.name, applied);
+    report.acked += acks.length;
 }
 
 /**
- * Pull from every other fleet machine what waits there for this one, apply it here and acknowledge it there. A
- * machine that does not answer keeps its items for the next pull. Null when another pull is running.
+ * Pull from every other fleet machine what waits there for this one, apply it here and acknowledge it there, from all
+ * of them at once. A machine that does not answer keeps its items for the next pull; one `reach` holds (it failed
+ * earlier in the tick's pass, or is backed off: src/jobs/reach.ts) is not tried. Null when another pull is running.
  */
-export async function pullFleet(): Promise<PullReport | null> {
-    const lock = claimPull();
-    if (lock === null) return null;
+export async function pullFleet(reach: Reach = new Reach({ backoff: false })): Promise<PullReport | null> {
+    const lock = paths.lock("pull");
+    if (!tryPidLock(lock)) return null;
     try {
         const self = loadMachine().name;
-        const senders = loadFleet().machines.filter((entry) => entry.name !== self && !inboundOff(entry));
-        const exported = JSON.stringify(fleetExport());
-        const report: PullReport = { pulled: 0, applied: 0, acked: 0, errors: [] };
-        const remote = (sender: FleetMachine, command: string, stdin: string) =>
-            runAsync([...sshArgs(sender.ssh, CONNECT_SECONDS), remoteToliCommand(sender.root, command)], {
-                stdin,
-                timeoutMs: REMOTE_TIMEOUT_MS,
-            });
-        const fetched = await Promise.all(
-            senders.map((sender) => remote(sender, `outbox pending --for ${shellQuote(self)}`, exported)),
-        );
-        const acking: Array<Promise<void>> = [];
-        senders.forEach((sender, index) => {
-            const result = fetched[index];
-            if (result === undefined) return;
-            if (result.code !== 0 || result.timedOut) {
-                const why = result.timedOut ? "timed out" : `exited ${result.code}`;
-                report.errors.push(
-                    `${sender.name}: ssh ${sender.ssh} ${why}: ${(result.stderr || result.stdout).trim()}`,
-                );
-                return;
-            }
-            let batch: PendingBatch;
-            try {
-                batch = parseBatch(result.stdout);
-            } catch (error) {
-                report.errors.push(
-                    `${sender.name}: bad outbox pending output: ${error instanceof Error ? error.message : String(error)}`,
-                );
-                return;
-            }
-            report.pulled += batch.items.length;
-            const acks = applyBatch(sender, batch, report);
-            if (acks.length === 0) return;
-            acking.push(
-                remote(
-                    sender,
-                    `outbox ack --for ${shellQuote(self)}`,
-                    JSON.stringify({ acks } satisfies PullAcks),
-                ).then((sent) => {
-                    if (sent.code !== 0 || sent.timedOut) {
-                        report.errors.push(
-                            `${sender.name}: ack not sent (ssh ${sender.ssh} exited ${sent.code}); the next pull repeats it`,
-                        );
-                        return;
-                    }
-                    const applied = readJson<Applied>(appliedFile(sender.name), {});
-                    for (const { id } of acks) delete applied[id];
-                    saveApplied(sender.name, applied);
-                    report.acked += acks.length;
-                }),
-            );
-        });
-        await Promise.all(acking);
+        const report: PullReport = { pulled: 0, applied: 0, acked: 0, held: [], errors: [] };
+        const senders: FleetMachine[] = [];
+        for (const entry of loadFleet().machines) {
+            if (entry.name === self || inboundOff(entry)) continue;
+            const why = reach.held(entry.ssh);
+            if (why === null) senders.push(entry);
+            else report.held.push(`${entry.name}: ${why}`);
+        }
+        if (senders.length === 0) return report;
+        // Resolved once for the whole pull, while the connection checks run.
+        const exported = fleetExport().then((value) => JSON.stringify(value));
+        // Each pull awaits it and reports its failure; this only stops a failure before the first await from
+        // counting as unhandled.
+        exported.catch(() => undefined);
+        await Promise.all(senders.map((sender) => pullFrom(sender, self, exported, reach, report)));
         return report;
     } finally {
         rmSync(lock, { force: true });
@@ -294,7 +297,8 @@ export function pullsItsMessages(): boolean {
 /** One line for the tick log and `outbox pull`. */
 export function pullText(report: PullReport | null): string {
     if (report === null) return "pull: another pull is running";
-    return `pull: ${report.pulled} waiting, ${report.applied} applied, ${report.acked} acknowledged${report.errors.length > 0 ? `; ${report.errors.length} problem(s)` : ""}`;
+    const held = report.held.length > 0 ? `; ${report.held.length} machine(s) held back` : "";
+    return `pull: ${report.pulled} waiting, ${report.applied} applied, ${report.acked} acknowledged${held}${report.errors.length > 0 ? `; ${report.errors.length} problem(s)` : ""}`;
 }
 
 /** `outbox pending --for <m>` | `outbox ack --for <m>` (a sender's side) | `outbox pull [--json]` (the puller's). */

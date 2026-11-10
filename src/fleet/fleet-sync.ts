@@ -16,15 +16,32 @@ import {
     sshArgs,
 } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { out, printJson, run, ToliError, writeJsonAtomic } from "../core/util.ts";
+import { out, printJson, run, runAsync, ToliError, writeJsonAtomic } from "../core/util.ts";
 import { pullOnly } from "../jobs/outbox.ts";
 
 /** What `fleet export` prints: the coordinator's name and its list with portable ssh targets. */
 export type FleetExport = { coordinator: string; machines: FleetMachine[] };
 
+/** `ssh -G` only reads config files, but a host behind a VPN that is down can take seconds to resolve. */
+const RESOLVE_TIMEOUT_MS = 10_000;
+
+/**
+ * Each ssh name's portable form, resolved once per process: a tick that pulls more than once (keepExchanging in
+ * src/jobs/tick.ts) builds its list with no further `ssh -G`.
+ */
+const portable = new Map<string, Promise<string>>();
+
 /** `user@host` (with `ssh://...:port` when not 22) for an ssh name, from `ssh -G`; the name itself when that fails. */
-function portableSsh(name: string): string {
-    const result = run(["ssh", "-G", name]);
+function portableSsh(name: string): Promise<string> {
+    const known = portable.get(name);
+    if (known !== undefined) return known;
+    const resolving = resolvePortableSsh(name);
+    portable.set(name, resolving);
+    return resolving;
+}
+
+async function resolvePortableSsh(name: string): Promise<string> {
+    const result = await runAsync(["ssh", "-G", name], { timeoutMs: RESOLVE_TIMEOUT_MS });
     if (result.code !== 0) return name;
     const options = new Map(
         result.stdout
@@ -40,17 +57,19 @@ function portableSsh(name: string): string {
     return port === "22" ? `${user}@${host}` : `ssh://${user}@${host}:${port}`;
 }
 
-/** This machine's fleet list as the workers take it. */
-export function fleetExport(): FleetExport {
+/** This machine's fleet list as the workers take it; every machine's ssh name resolves at once. */
+export async function fleetExport(): Promise<FleetExport> {
     const self = loadMachine().name;
     return {
         coordinator: self,
-        machines: loadFleet().machines.map((entry) => ({
-            name: entry.name,
-            root: entry.root,
-            ssh: entry.name === self ? entry.ssh : portableSsh(entry.ssh),
-            ...(entry.inbound === undefined ? {} : { inbound: entry.inbound }),
-        })),
+        machines: await Promise.all(
+            loadFleet().machines.map(async (entry) => ({
+                name: entry.name,
+                root: entry.root,
+                ssh: entry.name === self ? entry.ssh : await portableSsh(entry.ssh),
+                ...(entry.inbound === undefined ? {} : { inbound: entry.inbound }),
+            })),
+        ),
     };
 }
 
@@ -190,10 +209,10 @@ export function fleetSyncText(result: FleetSyncResult): string {
 }
 
 /** `fleet export [--json]` (the coordinator's list for workers) | `fleet sync` (a worker takes it). */
-export function fleetListCommand(sub: "export" | "sync", argv: string[]): void {
+export async function fleetListCommand(sub: "export" | "sync", argv: string[]): Promise<void> {
     new Args(argv, { booleans: ["json"] }).maxPositional(0);
     if (sub === "export") {
-        printJson(fleetExport());
+        printJson(await fleetExport());
         return;
     }
     const result = syncFleetFromCoordinator();

@@ -201,7 +201,35 @@ export async function runCombined(
 
 export type AsyncRunResult = RunResult & { timedOut: boolean };
 
-/** Run a program asynchronously, capturing stdout and stderr separately; on timeout the process is killed. */
+/**
+ * After a program exits, how long its output may take to close. An ssh client that shares a connection hands its
+ * stdout and stderr to the master (ControlMaster), which holds them until the remote session ends: on a stalled link
+ * that can be never, even once the client was killed for its timeout.
+ */
+const OUTPUT_GRACE_MS = 2_000;
+
+/** Read `stream` to its end, or until `stop` resolves; returns the text read. */
+async function drain(stream: ReadableStream<Uint8Array>, stop: Promise<void>): Promise<string> {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    const stopped = stop.then(() => null);
+    let text = "";
+    for (;;) {
+        const next = await Promise.race([reader.read(), stopped]);
+        if (next === null) {
+            reader.cancel().catch(() => undefined);
+            break;
+        }
+        if (next.done) break;
+        text += decoder.decode(next.value, { stream: true });
+    }
+    return text + decoder.decode();
+}
+
+/**
+ * Run a program asynchronously, capturing stdout and stderr separately; on timeout the process is killed. Output still
+ * open OUTPUT_GRACE_MS after the program exits is cut off there, so a call never outlives its program by more.
+ */
 export async function runAsync(cmd: string[], options: RunOptions = {}): Promise<AsyncRunResult> {
     const program = cmd[0];
     if (program === undefined) throw new Error("runAsync: empty command");
@@ -222,15 +250,22 @@ export async function runAsync(cmd: string[], options: RunOptions = {}): Promise
                   timedOut = true;
                   proc.kill("SIGKILL");
               }, options.timeoutMs);
+    const { promise: cutOff, resolve: cutOutput } = Promise.withResolvers<void>();
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const exited = proc.exited.then((code) => {
+        grace = setTimeout(cutOutput, OUTPUT_GRACE_MS);
+        return code;
+    });
     try {
         const [stdout, stderr, code] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
+            drain(proc.stdout, cutOff),
+            drain(proc.stderr, cutOff),
+            exited,
         ]);
         return { code, stdout, stderr, timedOut };
     } finally {
         clearTimeout(timer);
+        clearTimeout(grace);
     }
 }
 

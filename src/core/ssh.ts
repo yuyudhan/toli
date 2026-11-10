@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "./paths.ts";
-import { run, writeTextAtomic } from "./util.ts";
+import { type RunResult, run, runAsync, writeTextAtomic } from "./util.ts";
 
 /** How long a shared connection stays up after its last call. */
 const CONTROL_PERSIST = "10m";
@@ -62,12 +62,16 @@ function prepareSharing(): string | null {
     return config;
 }
 
-/** The control socket ssh uses for `host` under `config`, resolved without connecting. */
-function controlSocket(config: string, host: string): string | null {
-    const resolved = run(["ssh", "-F", config, "-G", host], { timeoutMs: RESOLVE_TIMEOUT_MS });
+/** The control socket in `ssh -G` output, or null when that call failed. */
+function controlPath(resolved: RunResult): string | null {
     if (resolved.code !== 0) return null;
     const line = resolved.stdout.split("\n").find((entry) => entry.startsWith("controlpath "));
     return line ? line.slice("controlpath ".length).trim() : null;
+}
+
+/** Whether `socket` is a control socket toli made in state/ssh. */
+function ownSocket(socket: string | null): socket is string {
+    return socket?.startsWith(`${paths.sshDir()}/`) === true && existsSync(socket);
 }
 
 /**
@@ -76,11 +80,19 @@ function controlSocket(config: string, host: string): string | null {
  * would hang the call until its caller's timeout and every later call with it.
  */
 function dropDeadMaster(config: string, host: string): void {
-    const dir = paths.sshDir();
-    if (!readdirSync(dir).some((name) => SOCKET_NAME.test(name))) return;
-    const socket = controlSocket(config, host);
-    if (!socket?.startsWith(`${dir}/`) || !existsSync(socket)) return;
+    if (!readdirSync(paths.sshDir()).some((name) => SOCKET_NAME.test(name))) return;
+    const socket = controlPath(run(["ssh", "-F", config, "-G", host], { timeoutMs: RESOLVE_TIMEOUT_MS }));
+    if (!ownSocket(socket)) return;
     const check = run(["ssh", "-F", config, "-O", "check", host], { timeoutMs: CHECK_TIMEOUT_MS });
+    if (check.code !== 0) rmSync(socket, { force: true });
+}
+
+/** dropDeadMaster without blocking, so the checks for several hosts run at once. */
+async function dropDeadMasterAsync(config: string, host: string): Promise<void> {
+    if (!readdirSync(paths.sshDir()).some((name) => SOCKET_NAME.test(name))) return;
+    const socket = controlPath(await runAsync(["ssh", "-F", config, "-G", host], { timeoutMs: RESOLVE_TIMEOUT_MS }));
+    if (!ownSocket(socket)) return;
+    const check = await runAsync(["ssh", "-F", config, "-O", "check", host], { timeoutMs: CHECK_TIMEOUT_MS });
     if (check.code !== 0) rmSync(socket, { force: true });
 }
 
@@ -92,5 +104,13 @@ export function sshSharingArgs(host: string): string[] {
     const config = prepareSharing();
     if (!config) return [];
     dropDeadMaster(config, host);
+    return ["-F", config];
+}
+
+/** sshSharingArgs without blocking (`ssh -G` can take seconds for a host behind a VPN that is down). */
+export async function sshSharingArgsAsync(host: string): Promise<string[]> {
+    const config = prepareSharing();
+    if (!config) return [];
+    await dropDeadMasterAsync(config, host);
     return ["-F", config];
 }

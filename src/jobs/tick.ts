@@ -1,8 +1,9 @@
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { Args } from "../core/args.ts";
-import { loadMachine } from "../core/config.ts";
+import { loadMachine, type Machine } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
+import { tryPidLock } from "../core/pid-lock.ts";
 import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
@@ -35,10 +36,64 @@ import {
 } from "./jobs.ts";
 import { deliverOutbox } from "./outbox.ts";
 import { pullFleet, pullsItsMessages, pullText } from "./pull.ts";
+import { Reach } from "./reach.ts";
 
 function log(line: string): void {
     mkdirSync(paths.logsDir(), { recursive: true });
     appendFileSync(paths.tickLog(), `${now().toISOString()} ${line}\n`);
+}
+
+/** While the tick waits on its job runs, it moves the fleet's messages this often (see keepExchanging). */
+const EXCHANGE_EVERY_MS = 60_000;
+
+/**
+ * One pass of the fleet's messages: a machine that takes no inbound ssh first pulls what the others queued for it
+ * (src/jobs/pull.ts), from all of them at once, then the outbox goes out. Both share one Reach (src/jobs/reach.ts), so
+ * a host that failed is tried once per pass and a host that is down is backed off across ticks. A pass that finds
+ * another still running (an overlapping cron tick) leaves this round to it.
+ */
+async function exchangeMessages(machine: Machine): Promise<void> {
+    const lock = paths.lock("messages");
+    if (!tryPidLock(lock)) {
+        log("messages: the previous pass is still running; this one is skipped");
+        return;
+    }
+    try {
+        const reach = new Reach({ backoff: true });
+        try {
+            if (pullsItsMessages()) {
+                const pulled = await pullFleet(reach);
+                if (pulled === null || pulled.pulled > 0 || pulled.errors.length > 0) log(pullText(pulled));
+                for (const error of pulled?.errors ?? []) log(`pull: ${error}`);
+            }
+        } catch (error) {
+            log(`pull failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const outbox = deliverOutbox(machine, onOutboxDelivered, reach);
+        if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
+        for (const error of outbox.errors) log(`outbox: pending ${error}`);
+    } finally {
+        rmSync(lock, { force: true });
+    }
+}
+
+/**
+ * Wait for `work`, moving the fleet's messages every minute meanwhile. launchd and systemd start no tick while one
+ * still runs, so without this a tick waiting on a long job run would hold every pull and delivery until it ended.
+ */
+async function keepExchanging(machine: Machine, work: Promise<void>): Promise<void> {
+    let done = false;
+    const finished = work.finally(() => {
+        done = true;
+    });
+    while (!done) {
+        const { promise: wait, resolve: wake } = Promise.withResolvers<void>();
+        const timer = setTimeout(wake, EXCHANGE_EVERY_MS);
+        await Promise.race([finished, wait]);
+        clearTimeout(timer);
+        if (!done) await exchangeMessages(machine);
+    }
+    await finished;
 }
 
 /** The model a job runs on: its own tier, else its shape's work type, on this machine's omp tiers. */
@@ -204,19 +259,7 @@ export async function tick(): Promise<void> {
     } catch (error) {
         log(`update check failed to start: ${error instanceof Error ? error.message : String(error)}`);
     }
-    const outbox = deliverOutbox(machine, onOutboxDelivered);
-    if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
-    for (const error of outbox.errors) log(`outbox: pending ${error}`);
-    // A machine that takes no inbound ssh fetches what the others queued for it (src/jobs/pull.ts).
-    try {
-        if (pullsItsMessages()) {
-            const pulled = await pullFleet();
-            if (pulled === null || pulled.pulled > 0 || pulled.errors.length > 0) log(pullText(pulled));
-            for (const error of pulled?.errors ?? []) log(`pull: ${error}`);
-        }
-    } catch (error) {
-        log(`pull failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    await exchangeMessages(machine);
     for (const note of failStaleRuns()) log(note);
     // Low disk never stops work: under the floor the tick starts the disk keeper detached (src/fleet/disk.ts) and goes
     // on, so a keeper slowed by a starved disk never holds up a tick. The queue drain below leaves the disk to it.
@@ -253,7 +296,7 @@ export async function tick(): Promise<void> {
         log(`live session pid ${session.pid}: due jobs left to it`);
         return;
     }
-    await runDueJobs("ticker");
+    await keepExchanging(machine, runDueJobs("ticker"));
 }
 
 /** `toli job run <name>`: run a job once, now, headless, regardless of its schedule. */

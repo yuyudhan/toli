@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { HarnessConfig } from "../harness/harness.ts";
 import { paths } from "./paths.ts";
-import { sshSharingArgs } from "./ssh.ts";
+import { sshSharingArgs, sshSharingArgsAsync } from "./ssh.ts";
 import { readJson, shellQuote, ToliError } from "./util.ts";
 
 export type Role = "coordinator" | "worker";
@@ -165,17 +165,23 @@ export function inboundOffHost(host: string): FleetMachine | undefined {
  * only stops a call that forgot to.
  */
 export function sshArgs(host: string, connectTimeoutSeconds = 15): string[] {
+    refuseInboundOff(host);
+    return sshArgv(host, connectTimeoutSeconds, sshSharingArgs(host));
+}
+
+/** sshArgs without blocking, so the connection checks for several hosts run at once (src/jobs/pull.ts). */
+export async function sshArgsAsync(host: string, connectTimeoutSeconds = 15): Promise<string[]> {
+    refuseInboundOff(host);
+    return sshArgv(host, connectTimeoutSeconds, await sshSharingArgsAsync(host));
+}
+
+function refuseInboundOff(host: string): void {
     const blocked = inboundOffHost(host);
     if (blocked !== undefined) throw new ToliError(inboundOffText(blocked));
-    return [
-        "ssh",
-        ...sshSharingArgs(host),
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        `ConnectTimeout=${connectTimeoutSeconds}`,
-        host,
-    ];
+}
+
+function sshArgv(host: string, connectTimeoutSeconds: number, sharing: string[]): string[] {
+    return ["ssh", ...sharing, "-o", "BatchMode=yes", "-o", `ConnectTimeout=${connectTimeoutSeconds}`, host];
 }
 
 // ssh runs the remote command in a non-interactive shell that skips the login profile, so Homebrew and Bun's

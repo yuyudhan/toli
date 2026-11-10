@@ -190,7 +190,8 @@ Details: [harnesses.md](harnesses.md).
 - `inbox` holds messages from jawans and other machines; `wake` takes everything new once, for the chat.
 - `outbox pull` is what the minute tick runs on a machine that takes no inbound ssh (`inbound: false`): it fetches
   what every other machine queued for it (`outbox pending` there), applies it here and acknowledges it (`outbox ack`
-  there), so each item is applied once ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)).
+  there), so each item is applied once ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)). Run by hand, it also
+  tries the machines the tick backs off ([fleet.md](fleet.md#unreachable-machines)).
 
 Details: [jobs.md](jobs.md).
 

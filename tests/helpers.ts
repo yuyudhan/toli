@@ -51,6 +51,8 @@ export type Sandbox = {
     root: string;
     stubs: string;
     toli(args: string[], options?: { stdin?: string; now?: string; env?: Record<string, string> }): ToliRun;
+    /** `toli` without blocking, so several can run at once (overlapping ticks). */
+    toliAsync(args: string[], options?: { now?: string; env?: Record<string, string> }): Promise<ToliRun>;
     /** `toli` that must succeed; returns trimmed stdout. */
     ok(args: string[], options?: { stdin?: string; now?: string; env?: Record<string, string> }): string;
     stub(name: string, script: string): void;
@@ -81,34 +83,51 @@ export function sandbox(): Sandbox {
     const gitleaks = Bun.which("gitleaks");
     if (gitleaks) symlinkSync(gitleaks, join(stubs, "gitleaks"));
     const path = [stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
+    const toliEnv = (options: { now?: string; env?: Record<string, string> }) => ({
+        ...process.env,
+        ...GIT_ENV,
+        PATH: path,
+        TOLI_ROOT: root,
+        TOLI_DRY_RUN: "1",
+        // Jawans start without a systemd scope, so tests on a Linux host never create real units.
+        TOLI_JAWAN_SCOPE: "off",
+        // Harnesses start without the host user's login shell (src/core/login-env.ts); a test turns it on.
+        TOLI_LOGIN_ENV: "off",
+        // The disk keeper's last resort deletes Playwright's browsers: never the host's.
+        PLAYWRIGHT_BROWSERS_PATH: join(root, ".playwright"),
+        ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),
+        ...options.env,
+    });
     const toli: Sandbox["toli"] = (args, options = {}) => {
         const proc = Bun.spawnSync([process.execPath, TOLI_BIN, ...args], {
             cwd: root,
-            env: {
-                ...process.env,
-                ...GIT_ENV,
-                PATH: path,
-                TOLI_ROOT: root,
-                TOLI_DRY_RUN: "1",
-                // Jawans start without a systemd scope, so tests on a Linux host never create real units.
-                TOLI_JAWAN_SCOPE: "off",
-                // Harnesses start without the host user's login shell (src/core/login-env.ts); a test turns it on.
-                TOLI_LOGIN_ENV: "off",
-                // The disk keeper's last resort deletes Playwright's browsers: never the host's.
-                PLAYWRIGHT_BROWSERS_PATH: join(root, ".playwright"),
-                ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),
-                ...options.env,
-            },
+            env: toliEnv(options),
             stdin: options.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
             stdout: "pipe",
             stderr: "pipe",
         });
         return { code: proc.exitCode ?? 1, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
     };
+    const toliAsync: Sandbox["toliAsync"] = async (args, options = {}) => {
+        const proc = Bun.spawn([process.execPath, TOLI_BIN, ...args], {
+            cwd: root,
+            env: toliEnv(options),
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        return { code, stdout, stderr };
+    };
     return {
         root,
         stubs,
         toli,
+        toliAsync,
         ok(args, options) {
             const result = toli(args, options);
             if (result.code !== 0)

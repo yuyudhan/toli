@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import { sshArgs } from "../src/core/config.ts";
-import { run } from "../src/core/util.ts";
+import { sshArgs, sshArgsAsync } from "../src/core/config.ts";
+import { run, runAsync } from "../src/core/util.ts";
 
 // A control socket path must stay under ~100 bytes, which the OS temp dir on macOS leaves no room for; /tmp does.
 const root = mkdtempSync("/tmp/toli-ssh-");
@@ -73,5 +73,39 @@ describe("ssh connection reuse", () => {
         } finally {
             wedged.close();
         }
+    });
+
+    test("the async argv matches the sync one and drops a wedged control socket too", async () => {
+        const host = "ssh://127.0.0.1:1";
+        const sync = await inRoot(() => sshArgs(host, 2));
+        expect(await inRoot(() => sshArgsAsync(host, 2))).toEqual(sync);
+        const socket = resolved(sync).get("controlpath") ?? "";
+        const wedged = createServer(() => undefined);
+        const listening = Promise.withResolvers<void>();
+        wedged.listen(socket, () => listening.resolve());
+        await listening.promise;
+        try {
+            const args = await inRoot(() => sshArgsAsync(host, 2));
+            expect(existsSync(socket)).toBe(false);
+            expect((await runAsync([...args, "true"], { timeoutMs: 20_000 })).code).toBe(255);
+        } finally {
+            wedged.close();
+        }
+    });
+});
+
+describe("runAsync", () => {
+    test("returns soon after its program exits even when something else holds its output open", async () => {
+        // As a shared ssh connection's master holds a killed client's stdout and stderr.
+        const start = Date.now();
+        const result = await runAsync(["sh", "-c", "sleep 30 & echo started"], { timeoutMs: 20_000 });
+        expect(result).toMatchObject({ code: 0, stdout: "started\n", timedOut: false });
+        expect(Date.now() - start).toBeLessThan(10_000);
+    });
+
+    test("a timed-out program is killed and reported", async () => {
+        const result = await runAsync(["sh", "-c", "echo begun; exec sleep 30"], { timeoutMs: 500 });
+        expect(result.timedOut).toBe(true);
+        expect(result.stdout).toBe("begun\n");
     });
 });

@@ -18,6 +18,7 @@ import {
 import { paths } from "../core/paths.ts";
 import { readJson, run, shellQuote, warn, writeJsonAtomic } from "../core/util.ts";
 import { addInboxItem } from "../records/inbox.ts";
+import { Reach } from "./reach.ts";
 
 /**
  * `inbox`: `bin/toli inbox add` on the target; `delegation`: `bin/toli delegation receive`; `update`: `bin/toli
@@ -53,6 +54,8 @@ export function queueOutbox(machine: Machine, title: string, body: string, id: s
 
 const SENDING_STALE_MS = 10 * 60 * 1000;
 const DELIVERY_TIMEOUT_MS = 120_000;
+/** A queued item's delivery waits this long for a connection; one the tick could not make, it retries later. */
+const DELIVERY_CONNECT_SECONDS = 5;
 
 function parseAnswer(body: string): AnswerBody {
     const value: unknown = JSON.parse(body);
@@ -125,19 +128,31 @@ export function queuedItems(): Queued[] {
     return entries.map(({ file, item }) => ({ file, item }));
 }
 
-export type DeliveryResult = { delivered: number; pending: number; awaitingPull: number; errors: string[] };
+/** `held`: items left queued without an ssh call, as their host failed earlier in the pass or is backed off. */
+export type DeliveryResult = {
+    delivered: number;
+    pending: number;
+    awaitingPull: number;
+    held: number;
+    errors: string[];
+};
 
 /**
  * Deliver every queued outbox item over ssh, oldest first: targeted items to their machine, the rest to the
  * coordinator (on a worker). Each item is claimed by an atomic rename first, so overlapping ticks never send the same
- * item twice; failures go back to the queue. Items for a machine that takes no inbound ssh stay queued for its pull
- * (`awaitingPull`). `onDelivered` sees each delivered item and what its target printed; delegations are delivered
- * only by a caller that passes it (the minute tick, or the pull's acknowledgement), since their answer must be
- * recorded here.
+ * item twice; failures go back to the queue. After a host's first failure its remaining items stay queued for the next
+ * pass, in order, and a host `reach` backs off (src/jobs/reach.ts) is not tried at all; one error line names each
+ * such host. Items for a machine that takes no inbound ssh stay queued for its pull (`awaitingPull`). `onDelivered`
+ * sees each delivered item and what its target printed; delegations are delivered only by a caller that passes it
+ * (the minute tick, or the pull's acknowledgement), since their answer must be recorded here.
  */
-export function deliverOutbox(machine: Machine, onDelivered?: (delivered: Delivered) => void): DeliveryResult {
+export function deliverOutbox(
+    machine: Machine,
+    onDelivered?: (delivered: Delivered) => void,
+    reach: Reach = new Reach({ backoff: false }),
+): DeliveryResult {
     const dir = paths.outboxDir();
-    const result: DeliveryResult = { delivered: 0, pending: 0, awaitingPull: 0, errors: [] };
+    const result: DeliveryResult = { delivered: 0, pending: 0, awaitingPull: 0, held: 0, errors: [] };
     if (!existsSync(dir)) return result;
     for (const file of readdirSync(dir)) {
         const sending = /^(.*\.json)\.sending-\d+$/.exec(file);
@@ -146,12 +161,21 @@ export function deliverOutbox(machine: Machine, onDelivered?: (delivered: Delive
         }
     }
     const fleet = loadFleet();
+    const held = new Map<string, { items: number; why: string }>();
     for (const { file, item: peek } of queuedItems()) {
         const queued = join(dir, file);
         const target = itemTarget(peek, machine);
         if (target === undefined || (peek.kind === "delegation" && onDelivered === undefined)) continue;
         if (pullOnly(target, fleet) !== null) {
             result.awaitingPull += 1;
+            continue;
+        }
+        const why = reach.held(target.ssh);
+        if (why !== null) {
+            const entry = held.get(target.ssh) ?? { items: 0, why };
+            entry.items += 1;
+            held.set(target.ssh, entry);
+            result.held += 1;
             continue;
         }
         const claimed = `${queued}.sending-${process.pid}`;
@@ -161,11 +185,12 @@ export function deliverOutbox(machine: Machine, onDelivered?: (delivered: Delive
             continue;
         }
         const item = readJson<OutboxItem>(claimed, { from: machine.name, title: file, body: "" });
-        const sent = run([...sshArgs(target.ssh), remoteCommand(item, target.root)], {
+        const sent = run([...sshArgs(target.ssh, DELIVERY_CONNECT_SECONDS), remoteCommand(item, target.root)], {
             stdin: item.body,
             timeoutMs: DELIVERY_TIMEOUT_MS,
         });
         if (sent.code === 0) {
+            reach.success(target.ssh);
             rmSync(claimed, { force: true });
             result.delivered += 1;
             try {
@@ -178,11 +203,13 @@ export function deliverOutbox(machine: Machine, onDelivered?: (delivered: Delive
         } else {
             renameSync(claimed, queued);
             result.pending += 1;
-            result.errors.push(
-                `${file}: ssh ${target.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`,
-            );
+            const error = `ssh ${target.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`;
+            reach.failure(target.ssh, error, sent);
+            result.errors.push(`${file}: ${error}`);
         }
     }
+    for (const [host, { items, why }] of held)
+        result.errors.push(`${items} item${items === 1 ? "" : "s"} for ${host} left queued: ${why}`);
     return result;
 }
 

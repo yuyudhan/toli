@@ -103,6 +103,8 @@ export const paths = {
      * and applied here but not yet acknowledged there, one `<machine>.json` each, so a re-pulled item is applied once.
      */
     pulledDir: () => join(repoRoot(), "state", "pulled"),
+    /** Fleet hosts the tick's ssh could not reach, with their backoff (src/jobs/reach.ts). */
+    reachState: () => join(repoRoot(), "state", "reach.json"),
     /** Reused ssh connections to fleet machines: the generated client config and one control socket per host. */
     sshDir: () => join(repoRoot(), "state", "ssh"),
     /** This machine's lead service (src/fleet/lead.ts): its conversation, turn state, pending wake, attach marker. */

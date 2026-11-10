@@ -4,6 +4,23 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.4.2 - unreleased
+
+### Fixed
+
+- A machine that pulls its messages gets each reply within about a minute even while fleet machines are down (it took
+  up to 7 minutes with four offline). The tick's messaging pass pulls first, from every machine at once with a 5 s
+  ConnectTimeout and a 30 s limit per call, so one that is down or stalled never holds up another's items; the outbox
+  delivery follows. A host is tried once per pass: after its first failure its other items wait, in order, for the
+  next pass. A host the tick cannot reach is backed off across ticks (`state/reach.json`: 30 s, doubling, at most 10
+  minutes; a hand-run `outbox pull` still tries it). `fleet export` resolves every ssh name at once instead of one
+  after another. Passes never overlap (a lock), and a tick waiting on a long job run moves messages every minute
+  meanwhile (launchd and systemd start no tick while one runs) (docs/fleet.md#unreachable-machines). m5's tick with
+  three machines down: about 3 minutes before, 7-17 s after.
+- An async call (`runAsync`) no longer hangs after its program exits or is killed while something else holds its
+  output open, as a shared ssh connection's master does for a client it served on a stalled link: output still open
+  2 s after the exit is cut off.
+
 ## v0.4.1 - 2026-11-10
 
 ### Added
