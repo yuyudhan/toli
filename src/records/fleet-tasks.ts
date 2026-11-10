@@ -192,7 +192,7 @@ export async function listFleet(options: {
 }
 
 /** `task answer <machine>/T<n> "<answer>"` for another machine's task: the owner records it (rule 2). */
-function forwardAnswer(owner: string, argv: string[]): void {
+export function forwardAnswer(owner: string, argv: string[]): void {
     const args = new Args(argv);
     args.maxPositional(2);
     const id = splitFleetId(args.pos(0, "id")).id;

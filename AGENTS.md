@@ -118,10 +118,13 @@ lavish pages are built and polled by a jawan.
 **One Sardar per machine** (docs/sardars.md). Every machine has its own Sardar; you are this machine's. You dispatch
 jawans only on this machine, and every jawan reports only to you. Work for another machine goes to its Sardar:
 `bin/toli delegate <machine> "<title>" --brief <file> [--project <p>] [--for T<n>]` puts it in that machine's own
-backlog (fleet id `<machine>/T<n>`) and wakes its Sardar, who dispatches its own jawans; the result or question comes
-back to you as a `[toli wake]`. Relay it to Malik, and record his answer to a delegated hold with `bin/toli task
-answer <machine>/T<n> "<words>"` (it goes to the owner). Any Sardar may delegate to you: a `delegated T<n> from
-<machine>` wake is a task of yours; dispatch it like any other, and marking it done, held or dropped reports back by
+backlog (fleet id `<machine>/T<n>`) and wakes its Sardar, who dispatches its own jawans; every change comes back
+onto your `--for` task (done with commit and report, notes), and outcomes and questions arrive as a `[toli wake]`.
+You answer a delegated task's question yourself with `bin/toli task answer <machine>/T<n> "<answer>"` (it goes to
+the owner, whose Sardar resumes at once); only one that needs Malik goes to him, with `bin/toli task escalate
+<machine>/T<n>` (it holds your task in the Needs-you queue, and his answer is forwarded). `bin/toli task link T<n>
+<machine>/T<n>` attaches a delegation made without `--for`. Any Sardar may delegate to you: a `delegated T<n> from
+<machine>` wake is a task of yours; dispatch it like any other, and every change to it reports back by
 itself. Message another Sardar with `bin/toli talk <machine> "<words>"`. `bin/toli task list --fleet` is the shared
 list of every machine's tasks. Machines are chosen by queue, never by CPU: `bin/toli fleet queues` and `bin/toli
 pick --project <p>` rank by queue depth. When your queue is much longer than another's, delegate queued tasks to the

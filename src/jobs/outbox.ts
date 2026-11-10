@@ -10,10 +10,11 @@ import { readJson, run, shellQuote, warn, writeJsonAtomic } from "../core/util.t
 import { addInboxItem } from "../records/inbox.ts";
 
 /**
- * `inbox`: `bin/toli inbox add` on the target; `delegation`: `bin/toli delegation receive`; `share`: `bin/toli share
- * receive` (the body of the last two is their JSON).
+ * `inbox`: `bin/toli inbox add` on the target; `delegation`: `bin/toli delegation receive`; `update`: `bin/toli
+ * delegation update`; `link`: `bin/toli delegation link`; `share`: `bin/toli share receive` (the body of all but
+ * `inbox` is their JSON).
  */
-export type OutboxKind = "inbox" | "delegation" | "share";
+export type OutboxKind = "inbox" | "delegation" | "update" | "link" | "share";
 
 export type OutboxItem = { from: string; title: string; body: string; to?: FleetMachine; kind?: OutboxKind };
 
@@ -30,6 +31,8 @@ const DELIVERY_TIMEOUT_MS = 120_000;
 /** The remote command one item runs on its target. */
 function remoteCommand(item: OutboxItem, root: string): string {
     if (item.kind === "delegation") return remoteToliCommand(root, "delegation receive");
+    if (item.kind === "update") return remoteToliCommand(root, "delegation update");
+    if (item.kind === "link") return remoteToliCommand(root, "delegation link");
     if (item.kind === "share") return remoteToliCommand(root, "share receive");
     return remoteToliCommand(root, `inbox add --from ${shellQuote(item.from)} --title ${shellQuote(item.title)}`);
 }

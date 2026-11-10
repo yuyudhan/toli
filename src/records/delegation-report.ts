@@ -1,16 +1,62 @@
-// A delegated task reports to the machine that delegated it (docs/sardars.md): whenever its owner marks it done,
-// held or dropped, the owner sends `<owner>/T<n> <status>: <title>` to the delegating machine's inbox, which wakes
-// that machine's lead. Delivery goes through the outbox, so an unreachable delegator gets it from the minute tick.
+// A delegated task reports to the machine that delegated it (docs/sardars.md): whenever its owner changes its status,
+// question, notes, commit or report, the owner sends the task as it is now to the delegating machine, where
+// `bin/toli delegation update` writes it back onto the `--for` task (src/records/delegation-sync.ts) and, for a new
+// outcome (done, held, dropped), wakes that machine's lead with `<owner>/T<n> <status>: <title>`. Delivery goes
+// through the outbox, so an unreachable delegator gets it from the minute tick; a repeat is applied once.
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, stamp, warn } from "../core/util.ts";
-import { sendToMachine } from "../jobs/outbox.ts";
+import { sendNow } from "../jobs/outbox.ts";
 import type { Status, Task } from "./backlog.ts";
+import type { HoldOption } from "./hold-options.ts";
 
-/** The statuses a delegator hears about: the task finished, needs the user, or was given up. */
-const REPORTED: readonly Status[] = ["done", "held", "dropped"];
+/** Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there. */
+export type DelegatedBy = { machine: string; task?: string; id: string; at: string };
+
+/** The last state of one delegated task, as its owner sent it (`delegation update`). */
+export type DelegateState = {
+    status: Status;
+    /** The owner's `updatedAt`: an update no newer than this one is a repeat and is skipped. */
+    updatedAt: string;
+    /** How many of the owner's notes are already copied onto the `--for` task. */
+    notes: number;
+    question?: string;
+    options?: HoldOption[];
+    recommend?: string;
+    blocks?: string;
+    commit?: string;
+};
+
+/** The delegation fields of a task (src/records/backlog.ts `Task`). */
+export type DelegationFields = {
+    /** Set on a task another machine's lead delegated here: its report goes back to that machine. */
+    delegatedBy?: DelegatedBy;
+    /** Fleet ids (`<machine>/T<n>`) of tasks this one was delegated as. */
+    delegatedTo?: string[];
+    /** Each delegated task's last reported state, by fleet id. */
+    delegates?: Record<string, DelegateState>;
+    /** `task escalate`: this hold is a delegated task's question; answering it here also answers it there. */
+    heldFrom?: string;
+};
+
+/** What travels to the delegator (JSON on `delegation update`'s stdin). */
+export type DelegationUpdate = {
+    owner: string;
+    id: string;
+    /** The delegator's own task this one works for, when the delegation named one. */
+    forTask?: string;
+    task: Pick<Task, "status" | "title" | "updatedAt" | "notes"> &
+        Partial<Pick<Task, "question" | "options" | "recommend" | "blocks" | "commit">>;
+    /** The task's report file, read on the owner. */
+    report: string | null;
+    /** The wake the delegator's lead gets for a new outcome. */
+    message: { title: string; body: string };
+};
+
+/** The statuses a delegator is woken for: the task finished, has a question, or was given up. */
+export const REPORTED: readonly Status[] = ["done", "held", "dropped"];
 const REPORT_LIMIT = 4000;
 
 /** `<machine>/T<n>`: a task id unique across the fleet. */
@@ -25,10 +71,16 @@ export function splitFleetId(id: string): { machine: string | null; id: string }
     return { machine: id.slice(0, slash), id: id.slice(slash + 1).toUpperCase() };
 }
 
-/** Whether a change from `before` to `after` is one the delegator must hear about. */
+/** Whether a change from `before` to `after` is one the delegator must get: anything its `--for` task mirrors. */
 export function reportDue(before: Task, after: Task): boolean {
-    if (after.delegatedBy === undefined || !REPORTED.includes(after.status)) return false;
-    return before.status !== after.status || (after.status === "held" && before.question !== after.question);
+    if (after.delegatedBy === undefined) return false;
+    return (
+        before.status !== after.status ||
+        before.question !== after.question ||
+        before.notes.length !== after.notes.length ||
+        before.commit !== after.commit ||
+        before.report !== after.report
+    );
 }
 
 function reportText(task: Task): string | null {
@@ -52,14 +104,17 @@ export function delegationReport(owner: string, task: Task): { title: string; bo
         ...(task.report === undefined ? [] : [`- report (on ${owner}): ${task.report}`]),
     ];
     if (task.status === "held") {
-        lines.push("", "## Question for the user", "", task.question ?? "");
+        lines.push("", "## Question", "", task.question ?? "");
         for (const [index, option] of (task.options ?? []).entries())
             lines.push(`${index + 1}. ${option.choice} => ${option.outcome}`);
         if (task.recommend !== undefined) lines.push(`Recommended: ${task.recommend}`);
         if (task.blocks !== undefined) lines.push(`Blocks: ${task.blocks}`);
         lines.push(
             "",
-            `Record the user's answer with \`bin/toli task answer ${id} "<his words>"\` (it goes to ${owner}).`,
+            `You delegated this work, so you answer it: \`bin/toli task answer ${id} "<answer>"\` (it goes to ${owner},`,
+            `whose lead resumes the work at once). Only a question that needs the user (push, merge, release, money,`,
+            `security, a destructive step, or his taste) goes to him: \`bin/toli task escalate ${id}\` puts it in your`,
+            "Needs-you queue, and his answer there goes to the owner too.",
         );
     }
     const notes = task.notes.slice(-3);
@@ -69,7 +124,30 @@ export function delegationReport(owner: string, task: Task): { title: string; bo
     return { title: `${id} ${task.status}: ${task.title}`, body: lines.join("\n") };
 }
 
-/** Send the report for `task` to its delegator; a failure is a warning (the outbox keeps it for the tick). */
+/** The update for `task` as it is now, owned by `owner`. */
+export function delegationUpdate(owner: string, task: Task): DelegationUpdate {
+    const { status, title, updatedAt, notes, question, options, recommend, blocks, commit } = task;
+    return {
+        owner,
+        id: task.id,
+        ...(task.delegatedBy?.task === undefined ? {} : { forTask: task.delegatedBy.task }),
+        task: {
+            status,
+            title,
+            updatedAt,
+            notes,
+            ...(question === undefined ? {} : { question }),
+            ...(options === undefined ? {} : { options }),
+            ...(recommend === undefined ? {} : { recommend }),
+            ...(blocks === undefined ? {} : { blocks }),
+            ...(commit === undefined ? {} : { commit }),
+        },
+        report: reportText(task),
+        message: delegationReport(owner, task),
+    };
+}
+
+/** Send `task` as it is now to its delegator; a failure is a warning (the outbox keeps it for the tick). */
 export function reportToDelegator(task: Task): void {
     const by = task.delegatedBy;
     if (by === undefined) return;
@@ -79,7 +157,8 @@ export function reportToDelegator(task: Task): void {
         warn(`${task.id}: delegator ${by.machine} is not in config/fleet.json; its report was not sent`);
         return;
     }
-    const { title, body } = delegationReport(owner, task);
-    const sent = sendToMachine(owner, target, title, body, `report-${task.id}-${task.status}-${stamp(now())}`);
+    const update = delegationUpdate(owner, task);
+    const id = `update-${task.id}-${stamp(now())}`;
+    const sent = sendNow(owner, target, "update", update.message.title, JSON.stringify(update), id);
     if (!sent.delivered) warn(`${task.id}: report to ${by.machine} queued (${sent.error}); the minute tick retries`);
 }
