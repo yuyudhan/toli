@@ -8,6 +8,16 @@ one. See docs/releasing.md.
 
 ### Changed
 
+- Queues rank by queued tasks plus running and waiting jawans per jawan slot (`capacity.maxRuns`); active tasks with
+  no jawan here (a lead's bookkeeping, delegated work) are no longer queue, and `fleet queues` shows queued, running,
+  active and held separately with the load per slot. `bin/toli lead full [--reason ...] [--until 2h] | --clear |
+--status` (or `task handback ... --full`) marks a machine full: `pick`, `fleet queues` and the balancing offers
+  pass it over until it clears. `bin/toli task handback <id> --reason "..."` gives delegated work back: the
+  delegator's `--for` task is queued again, never dropped, and delegating or linking for a done or dropped task
+  reopens it.
+- Workers take `config/fleet.json` from the coordinator: `bin/toli self sync` (and `bin/toli fleet sync`) reads the
+  coordinator's `bin/toli fleet export` (each machine as `user@host`) and rewrites the list, keeping the worker's own
+  ssh names for machines it already lists.
 - One lead per machine (docs/sardars.md). Every machine runs its own lead: `bin/toli lead install|uninstall|status|
 run|attach` keeps its lead conversation served by a launchd agent, systemd user service or crontab line, taking
   wakes in headless turns whenever no lead session is open. Leads hand each other work with `bin/toli delegate

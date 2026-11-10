@@ -93,8 +93,9 @@ On the new machine, in the directory where the clone should live:
   machine config, project clones, fleet reachability and availability, scheduler) in plain words; fixes that need
   more than Malik's own action go to a jawan.
 - On the coordinator, add the new machine to `config/fleet.json` so `--fleet`, `--all`, `fleet status`,
-  `fleet queues`, `pick`, `delegate` and `talk` reach it. Every machine that should pick, delegate or talk needs the
-  full fleet list in its own `config/fleet.json`.
+  `fleet queues`, `pick`, `delegate` and `talk` reach it. Workers take the list from the coordinator with their
+  next `bin/toli self sync` (or `bin/toli fleet sync` now); never keep a worker's list by hand (docs/fleet.md, "The
+  fleet list").
 - Re-add the projects cloned on this machine with `/add-project` (`skill://toli-projects`).
 - Machine helpers are per machine and never synced: `local/` is gitignored. If this machine needs any (disk cleanup,
   VPN reconnect), follow `skill://toli-helpers`; a copied `local/` from another machine is installed with

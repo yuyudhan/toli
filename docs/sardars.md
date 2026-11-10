@@ -135,15 +135,25 @@ Rules that keep the list consistent without locks across machines:
 
 ## Queues decide where work goes
 
-    bin/toli fleet queues [--json]       # every machine's queue, shortest first
+    bin/toli fleet queues [--json]       # every machine's queue, lightest per jawan slot first
+    bin/toli lead full [--reason "..."] [--until 2h] | --clear | --status
     bin/toli pick [--project <p>] [--json]
 
-Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, and
-running and queued jawan runs). The queue depth is queued + active tasks plus queued jawan runs. `pick` and
-`fleet queues` rank machines by queue depth, shortest first; on equal depth a machine with the project's clone wins,
-then this machine, then name order. CPU load, memory and disk are shown for information and are never a reason to
-pass a machine over: a machine busy with builds but with an empty queue gets work first. Only an unreachable machine,
-or one without the project's clone when its URL is unknown here, is left out.
+Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, running and
+queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks plus running and queued jawan
+runs: active tasks with no jawan here (a lead's bookkeeping, work delegated elsewhere) are not queue. `pick` and
+`fleet queues` rank machines by depth per jawan slot (`capacity.maxRuns`), lightest first; on equal load a machine
+with the project's clone wins, then this machine, then name order. CPU load, memory and disk are shown for
+information and are never a reason to pass a machine over: a machine busy with builds but with an empty queue gets
+work first. Left out: an unreachable machine, a full one (below), or one without the project's clone when its URL is
+unknown here.
+
+**A full machine.** A lead whose machine cannot take more (builds killed for memory, a long job running) says so:
+`bin/toli lead full --reason "<why>" [--until 30m|2h|<ISO time>]`, ended by `--until` or `bin/toli lead full
+--clear` (`--status` shows it). `bin/toli task handback T<n> --reason "<why>" --full` hands work back and marks the
+machine full for two hours. While full, `pick` and every other lead's balancing pass it over (no offers go to it,
+no work is asked of it), `fleet queues` shows `full: <why>`, and it asks no one for work itself; it may still offer
+its own queued work away.
 
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer

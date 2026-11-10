@@ -2,7 +2,8 @@ import { Args } from "../core/args.ts";
 import { loadFleet, remoteToliCommand, sshArgs } from "../core/config.ts";
 import { out, printJson, runAsync } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
-import { type Queue, queueText } from "./queue.ts";
+import { type Full, fullText } from "./full.ts";
+import { perSlot, type Queue, queueText } from "./queue.ts";
 import { type FleetEntry, localResources, type Resources } from "./resources.ts";
 
 /** Line shown by `resources`, `fleet status`, `digest --fleet` and doctor. */
@@ -23,8 +24,17 @@ export function availabilityLine(entry: FleetEntry): string {
     return `${name}: ${state} (${detail})`;
 }
 
-/** A machine that may take the work; `depth` is its queue depth, null when its toli is too old to report one. */
-export type Candidate = { machine: string; local: boolean; hasClone: boolean; depth: number | null };
+/**
+ * A machine that may take the work; `depth` is its queue depth and `load` that depth per jawan slot (what ranks it),
+ * both null when its toli is too old to report a queue.
+ */
+export type Candidate = {
+    machine: string;
+    local: boolean;
+    hasClone: boolean;
+    depth: number | null;
+    load: number | null;
+};
 
 export type Rejection = { machine: string; reasons: string[] };
 
@@ -85,6 +95,22 @@ export function parseResources(text: string): Resources {
                 throw new Error(`field queue.${key} is not a count`);
             return part;
         };
+        const rawFull: unknown = parts.get("full");
+        let full: Full | undefined;
+        if (rawFull !== undefined) {
+            if (typeof rawFull !== "object" || rawFull === null) throw new Error("field queue.full is not an object");
+            const f = new Map(Object.entries(rawFull));
+            const reason = f.get("reason");
+            const since = f.get("since");
+            const until = f.get("until");
+            if (
+                typeof reason !== "string" ||
+                typeof since !== "string" ||
+                (until !== null && typeof until !== "string")
+            )
+                throw new Error("field queue.full needs reason, since and until");
+            full = { reason, since, until };
+        }
         queue = {
             queued: count("queued"),
             active: count("active"),
@@ -92,6 +118,7 @@ export function parseResources(text: string): Resources {
             jawansRunning: count("jawansRunning"),
             jawansQueued: count("jawansQueued"),
             depth: count("depth"),
+            ...(full === undefined ? {} : { full }),
         };
     }
     return {
@@ -168,11 +195,12 @@ export async function fleetStatus(): Promise<FleetEntry[]> {
 }
 
 /**
- * Rank machines for one unit of work by queue depth, shortest first; on equal depth a machine with the project's
- * clone wins, then this machine, then name order. A machine whose toli reports no queue ranks after every known
- * queue. Load, memory, disk and `available` never pass a machine over: a machine busy with builds but with an empty
- * queue gets work first. Only an unreachable machine, or (with a project) one without the clone when the project's
- * URL is not known here, is rejected.
+ * Rank machines for one unit of work by queue depth per jawan slot (queued tasks + running and waiting jawans, over
+ * `capacity.maxRuns`), lightest first; on equal load a machine with the project's clone wins, then this machine, then
+ * name order. A machine whose toli reports no queue ranks after every known queue. Load, memory, disk and `available`
+ * never pass a machine over: a machine busy with builds but with an empty queue gets work first. Rejected: an
+ * unreachable machine, one whose lead said it is full (`lead full`), or (with a project) one without the clone when
+ * the project's URL is not known here.
  */
 export function rankMachines(entries: FleetEntry[], project?: { name: string; urlKnown: boolean }): PickResult {
     const candidates: Candidate[] = [];
@@ -185,6 +213,11 @@ export function rankMachines(entries: FleetEntry[], project?: { name: string; ur
             });
             continue;
         }
+        const full = entry.resources.queue?.full;
+        if (full !== undefined) {
+            rejected.push({ machine: entry.machine, reasons: [fullText(full)] });
+            continue;
+        }
         const hasClone = project !== undefined && entry.resources.projects.includes(project.name);
         if (project && !hasClone && !project.urlKnown) {
             rejected.push({
@@ -193,19 +226,22 @@ export function rankMachines(entries: FleetEntry[], project?: { name: string; ur
             });
             continue;
         }
+        const depth = entry.resources.queue?.depth ?? null;
         candidates.push({
             machine: entry.machine,
             local: entry.local,
             hasClone,
-            depth: entry.resources.queue?.depth ?? null,
+            depth,
+            load: depth === null ? null : perSlot(depth, entry.resources.maxRuns),
         });
     }
     candidates.sort((a, b) => {
-        if (a.depth !== b.depth) {
-            if (a.depth === null) return 1;
-            if (b.depth === null) return -1;
-            return a.depth - b.depth;
+        if (a.load !== b.load) {
+            if (a.load === null) return 1;
+            if (b.load === null) return -1;
+            return a.load - b.load;
         }
+        if (a.depth !== b.depth) return (a.depth ?? 0) - (b.depth ?? 0);
         if (a.hasClone !== b.hasClone) return a.hasClone ? -1 : 1;
         if (a.local !== b.local) return a.local ? -1 : 1;
         return a.machine < b.machine ? -1 : a.machine > b.machine ? 1 : 0;

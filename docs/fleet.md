@@ -17,14 +17,16 @@ machine's lead ([sardars.md](sardars.md)).
   `talk` messages for other machines) and the per-minute ticker retries them. On a worker, `bin/toli doctor` warns
   while results wait there; a backlog that does not drain means `ssh <coordinator ssh> true` fails from the worker.
   When the coordinator's ssh name changes (a VPN peer re-registered under a new name), re-run `bin/toli init` on
-  every worker with the new `--coordinator-ssh` and update the coordinator's entry in each `config/fleet.json`.
+  every worker with the new `--coordinator-ssh`.
 
 Set the role once per machine (the "set up toli" flow asks for it, [setup.md](setup.md)):
 
     bin/toli init --name <machine> --role coordinator
     bin/toli init --name <machine> --role worker --coordinator-ssh <host> --coordinator-root <path>
 
-List every machine in `config/fleet.json` on each machine that should see, pick, delegate to or talk to the others:
+### The fleet list
+
+The coordinator's `config/fleet.json` is the fleet list; list every machine there:
 
 ```json
 {
@@ -32,22 +34,30 @@ List every machine in `config/fleet.json` on each machine that should see, pick,
 }
 ```
 
-The machines reach each other over plain `ssh` (`<host>` is anything `ssh` accepts, including an alias from
-`~/.ssh/config`). Each machine's `data/projects.json` lists only the clones on that machine; a project may be cloned
-on several.
+Workers take it from the coordinator: every `bin/toli self sync` on a worker (and `bin/toli fleet sync` by hand)
+reads the coordinator's `bin/toli fleet export` over ssh and rewrites its own `config/fleet.json`, so a machine added
+or removed on the coordinator reaches every worker with its next sync. The machines reach each other over plain
+`ssh` (`<host>` is anything `ssh` accepts, including an alias from `~/.ssh/config`). An alias only exists where it
+is configured, so the export gives each machine as `user@host` resolved through the coordinator's ssh config; a
+worker reaches the coordinator by its own `coordinator.ssh` and keeps the ssh name it already has for a machine it
+lists (edit a worker's entry to point at an alias that works there; the next sync keeps it). A worker whose
+coordinator is unreachable keeps its list and says why. Each machine's `data/projects.json` lists only the clones on
+that machine; a project may be cloned on several.
 
 ## Capacity and picking a machine
 
     bin/toli resources [--json]               # this machine: queue, load, memory/disk, runs, build slots, clones
     bin/toli fleet status [--json]            # every machine, probed over ssh in parallel; unreachable is not fatal
-    bin/toli fleet queues [--json]            # every machine's queue depth, shortest first
+    bin/toli fleet queues [--json]            # every machine's queue, lightest per jawan slot first
     bin/toli pick [--project <p>] [--json]    # the machine for one unit of work; exit 2 with reasons when none
 
-`pick` and `fleet queues` rank machines by queue depth (queued and active tasks plus queued jawan runs), shortest
-first; on equal depth a machine with the project's clone wins, then this machine, then name order. Only an
-unreachable machine, or one without the project's clone when its URL is unknown here, is left out; when none is
-left, `pick` exits 2. Every `lead.balanceMinutes` the lead service compares the queues and wakes its lead with an
-offer or an ask for work ([sardars.md](sardars.md#queues-decide-where-work-goes)).
+`pick` and `fleet queues` rank machines by queue per jawan slot: queued tasks plus running and waiting jawan runs,
+over `capacity.maxRuns` (active tasks with no jawan here, such as a lead's bookkeeping or work delegated elsewhere,
+are not queue). Lightest first; on equal load a machine with the project's clone wins, then this machine, then name
+order. Left out: an unreachable machine, one whose lead said it is full (`bin/toli lead full`), or one without the
+project's clone when its URL is unknown here; when none is left, `pick` exits 2. Every `lead.balanceMinutes` the
+lead service compares the queues and wakes its lead with an offer or an ask for work
+([sardars.md](sardars.md#queues-decide-where-work-goes)).
 
 The thresholds in `config/machine.json` (defaults shown; `maxRuns` defaults to `max(1, floor(cpus / 4))`) are shown
 for information and never pass a machine over. Free disk is never a threshold either. Under `diskKeepGB`, the disk

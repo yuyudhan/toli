@@ -61,14 +61,14 @@ const USAGE = `usage: bin/toli <command> [args]
   task wait <id> --on "<what it waits on>"
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
   task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
-  task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..."
+  task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..." [--full]
   delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
   delegation receive|update|link (JSON on stdin)
   talk <machine> ["<words>"]
   share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
   share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
   share receive (JSON on stdin)
-  lead install|uninstall | status [--json] | run [--once] | attach
+  lead install|uninstall | status [--json] | run [--once] | attach | full [--reason "..."] [--until 30m|2h|<time>] | full --clear|--status
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
   branch <project> <branch>
@@ -101,6 +101,7 @@ const USAGE = `usage: bin/toli <command> [args]
   disk alert
   fleet status [--json]
   fleet queues [--json]
+  fleet export | sync
   fleet check [--json] [--wake] [--local]
   pick [--project <name>] [--json]
   exec [--task <id>] (prompt on stdin; runs here only)

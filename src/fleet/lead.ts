@@ -12,6 +12,7 @@ import { headlessOmpFlags } from "../harness/omp-args.ts";
 import { liveSession } from "../harness/session.ts";
 import { sessionFile } from "../jawans/launch.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
+import { fullCommand } from "./full.ts";
 import { installLeadService, leadStatus, printStatus, uninstallLeadService } from "./lead-service.ts";
 import { attachPidLocked, type LeadAttach, type LeadState, leadLock, readLeadState, turnPid } from "./lead-state.ts";
 import { balancePass } from "./queues.ts";
@@ -247,10 +248,15 @@ export async function attachLead(): Promise<number> {
     }
 }
 
-const USAGE = "usage: toli lead install|uninstall|status [--json]|run [--once]|attach";
+const USAGE =
+    "usage: toli lead install|uninstall|status [--json]|run [--once]|attach|full [--reason ...] [--until 2h] [--clear|--status]";
 
 export async function leadCommand(argv: string[]): Promise<number> {
     const [sub, ...rest] = argv;
+    if (sub === "full") {
+        fullCommand(rest);
+        return 0;
+    }
     const args = new Args(rest, { booleans: ["json", "once"] });
     args.maxPositional(0);
     switch (sub) {

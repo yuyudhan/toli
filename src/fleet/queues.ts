@@ -21,7 +21,7 @@ import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
 import { fleetStatus, rankMachines } from "./pick.ts";
-import { type Queue, queueText } from "./queue.ts";
+import { perSlot, type Queue, queueText } from "./queue.ts";
 import type { FleetEntry } from "./resources.ts";
 
 const DEFAULT_BALANCE_MINUTES = 30;
@@ -46,34 +46,49 @@ export function balanceGap(machine: Machine): number {
 }
 
 /** One machine in `fleet queues`; `queue` is null when it is unreachable or its toli reports none. */
-type QueueRow = { machine: string; local: boolean; reachable: boolean; queue: Queue | null; reasons: string[] };
+type QueueRow = {
+    machine: string;
+    local: boolean;
+    reachable: boolean;
+    queue: Queue | null;
+    /** Queue depth per jawan slot: what ranks it. */
+    load: number | null;
+    reasons: string[];
+};
 
 /** A machine with a known queue, for comparing depths. */
 type Known = { machine: string; local: boolean; queue: Queue };
 
-/** Every machine, shortest queue first (the pick ranking without a project), unreachable ones last. */
+/** Every machine, lightest queue per slot first (the pick ranking without a project), full and unreachable last. */
 function queueRows(entries: FleetEntry[]): QueueRow[] {
     const ranking = rankMachines(entries);
     const order = [...ranking.candidates, ...ranking.rejected].map((entry) => entry.machine);
     return order.flatMap((name) => {
         const entry = entries.find((candidate) => candidate.machine === name);
         if (entry === undefined) return [];
+        const queue = entry.resources?.queue ?? null;
         return [
             {
                 machine: entry.machine,
                 local: entry.local,
                 reachable: entry.resources !== null,
-                queue: entry.resources?.queue ?? null,
+                queue,
+                load: queue === null || entry.resources === null ? null : perSlot(queue.depth, entry.resources.maxRuns),
                 reasons: entry.resources === null ? entry.reasons : [],
             },
         ];
     });
 }
 
-/** The rows whose queue is known, still shortest first. */
+/**
+ * The rows whose queue is known, still lightest first. A full machine (`lead full`) is left out, so no offer goes to
+ * it and no work is asked of it; this machine stays in even when full (it may still offer its work away).
+ */
 function knownQueues(rows: QueueRow[]): Known[] {
     return rows.flatMap((row) =>
-        row.queue === null ? [] : [{ machine: row.machine, local: row.local, queue: row.queue }],
+        row.queue === null || (row.queue.full !== undefined && !row.local)
+            ? []
+            : [{ machine: row.machine, local: row.local, queue: row.queue }],
     );
 }
 
@@ -103,7 +118,8 @@ function queueSuggestion(rows: QueueRow[], gap: number): string | null {
 function rowLine(row: QueueRow): string {
     const name = `${row.machine}${row.local ? " (this machine)" : ""}`;
     if (!row.reachable) return `${name}: ${row.reasons.join("; ") || "unreachable"}`;
-    return `${name}: ${row.queue === null ? "queue unknown (its toli reports no queue)" : queueText(row.queue)}`;
+    if (row.queue === null) return `${name}: queue unknown (its toli reports no queue)`;
+    return `${name}: ${queueText(row.queue)}, ${row.load} per jawan slot`;
 }
 
 /** `toli fleet queues [--json]`: every machine's queue, shortest first, then a suggested delegation if one is due. */
@@ -185,6 +201,7 @@ export async function balancePass(): Promise<string | null> {
     const deepest = deepestQueue(others);
     if (self === undefined || shortest === undefined || deepest === undefined) return null;
     const depth = self.queue.depth;
+    if (depth === 0 && self.queue.full !== undefined) return null;
     if (depth >= shortest.queue.depth + gap) {
         const lines = delegateLines(shortest.machine);
         if (lines.length === 0) return null;

@@ -9,6 +9,7 @@ import { Args } from "../core/args.ts";
 import { fleetMachine, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, readJson, stamp, ToliError, withLock, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
+import { fullText, HANDBACK_FULL_MINUTES, setFull } from "../fleet/full.ts";
 import { sendNow } from "../jobs/outbox.ts";
 import { loadBacklog, type Task, updateTask } from "./backlog.ts";
 import { type DelegateState, type DelegationUpdate, fleetId, REPORTED, splitFleetId } from "./delegation-report.ts";
@@ -235,11 +236,12 @@ export function workOnBy(task: Task, fid: string): void {
 }
 
 /**
- * `task handback <id> --reason "..."`: give a task another machine delegated here back to it (overloaded, not cloned,
- * wrong machine). It is dropped here; the delegator's `--for` task goes back to queued with the reason, never dropped.
+ * `task handback <id> --reason "..." [--full]`: give a task another machine delegated here back to it (overloaded,
+ * not cloned, wrong machine). It is dropped here; the delegator's `--for` task goes back to queued with the reason,
+ * never dropped. `--full` also marks this machine full for two hours (`lead full`), so no lead offers it more work.
  */
 function handback(argv: string[]): void {
-    const args = new Args(argv, { values: ["reason"] });
+    const args = new Args(argv, { values: ["reason"], booleans: ["full"] });
     args.maxPositional(1);
     const reason = args.str("reason")?.trim();
     if (!reason) throw new ToliError('task handback needs --reason "..."');
@@ -254,6 +256,7 @@ function handback(argv: string[]): void {
         delete entry.waitingOn;
     });
     out(`${task.id}\thanded back to ${task.delegatedBy?.machine}: ${reason}`);
+    if (args.bool("full")) out(fullText(setFull(`handed back ${task.id}: ${reason}`, HANDBACK_FULL_MINUTES)));
 }
 
 /** `task link`, `task escalate` and `task handback`; returns whether `sub` was one of them. */

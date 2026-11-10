@@ -90,8 +90,8 @@ describe("pick ranks by queue depth", () => {
         expect(box.ok(["pick", "--project", "x"], { env: ENV })).toBe("m2");
     });
 
-    test("on equal depth the machine with the clone wins, then this machine", () => {
-        const box = withTasks(queued(1, { projects: ["x"] }), 1);
+    test("on equal load per slot the machine with the clone wins, then this machine", () => {
+        const box = withTasks(queued(1, { projects: ["x"], maxRuns: 50 }), 1);
         // Both hold the clone: this machine wins.
         expect(box.ok(["pick", "--project", "x"], { env: ENV })).toBe("m1");
         // Without its clone (the URL is still registered here) m1 loses to the clone holder...
@@ -117,8 +117,10 @@ describe("fleet queues", () => {
     test("lists every machine shortest first, unreachable last, and suggests a delegation past the gap", () => {
         const box = withTasks(queued(0), 3);
         const lines = box.ok(["fleet", "queues"], { env: ENV }).split("\n");
-        expect(lines[0]).toBe("m2: queue 0 (0/0/0, jawans 0+0)");
-        expect(lines[1]).toBe("m1 (this machine): queue 3 (3/0/0, jawans 0+0)");
+        expect(lines[0]).toBe("m2: queue 0 (0 queued, 0 running + 0 waiting; 0 active, 0 held), 0 per jawan slot");
+        expect(lines[1]).toBe(
+            "m1 (this machine): queue 3 (3 queued, 0 running + 0 waiting; 0 active, 0 held), 0.06 per jawan slot",
+        );
         expect(lines[2]).toStartWith("m3: unreachable: ssh host3 exited 255");
         expect(lines[3]).toBe(
             "suggestion: m1's queue (3) is 3 deeper than m2's (0); on m1, hand queued work over with " +
@@ -146,6 +148,62 @@ describe("fleet queues", () => {
         expect(box.toli(["fleet", "queues"], { env: ENV }).stderr).toContain(
             "lead.balanceGap must be a positive integer",
         );
+    });
+});
+
+describe("what counts as queue, and full machines", () => {
+    test("active tasks are not queue: a coordinator's bookkeeping does not make it look deep", () => {
+        const box = withTasks(queued(1), 3);
+        for (const id of ["T1", "T2", "T3"]) box.ok(["task", "start", id, "--agent", "elsewhere"]);
+        const resources = JSON.parse(box.ok(["resources", "--json"], { env: ENV })) as { queue: { depth: number } };
+        expect(resources.queue).toMatchObject({ queued: 0, active: 3, depth: 0 });
+        expect(box.ok(["pick"], { env: ENV })).toBe("m1");
+    });
+
+    test("lead full marks this machine full until --clear or --until, published in resources --json", () => {
+        const box = withTasks(queued(0), 0);
+        expect(box.ok(["lead", "full", "--status"])).toBe("not full: this machine takes work");
+        expect(
+            box.ok(["lead", "full", "--reason", "earlyoom", "--until", "2h"], { env: { TOLI_NOW: T0 } }),
+        ).toStartWith("full: earlyoom (until 2026-11-10T11:00:00.000Z)");
+        const at = (now: string): unknown =>
+            (
+                JSON.parse(box.ok(["resources", "--json"], { env: { ...ENV, TOLI_NOW: now } })) as {
+                    queue: { full?: unknown };
+                }
+            ).queue.full;
+        expect(at("2026-11-10T10:59:00.000Z")).toMatchObject({ reason: "earlyoom", until: "2026-11-10T11:00:00.000Z" });
+        expect(at("2026-11-10T11:00:00.000Z")).toBeUndefined();
+        box.ok(["lead", "full", "--reason", "again"]);
+        expect(box.ok(["lead", "full", "--status"])).toBe("full: again (until lead full --clear)");
+        expect(box.ok(["lead", "full", "--clear"])).toBe("not full: this machine takes work again");
+        expect(box.ok(["lead", "full", "--status"])).toBe("not full: this machine takes work");
+        expect(box.toli(["lead", "full", "--until", "soon"]).stderr).toContain(
+            '--until takes "30m", "2h" or an ISO time',
+        );
+    });
+
+    test("a full machine gets no offer and no pick, and fleet queues says it is full", async () => {
+        const full = { reason: "earlyoom kills builds", since: T0, until: null };
+        const box = withTasks(
+            remoteSnapshot("m2", {
+                queue: { queued: 0, active: 0, held: 0, jawansRunning: 0, jawansQueued: 0, depth: 0, full },
+            }),
+            4,
+        );
+        expect(await pass(box, T0)).toBeNull();
+        expect(queueItems(box)).toEqual([]);
+        expect(box.ok(["pick"], { env: ENV })).toBe("m1");
+        const output = box.ok(["fleet", "queues"], { env: ENV });
+        expect(output).toContain("m2: full: earlyoom kills builds; queue 0");
+        expect(output).not.toContain("suggestion");
+    });
+
+    test("a full machine with an empty queue asks no one for work", async () => {
+        const box = fleet(queued(5));
+        box.ok(["lead", "full", "--reason", "oom"]);
+        expect(await pass(box, T0)).toBeNull();
+        expect(inboxSends(box)).toEqual([]);
     });
 });
 

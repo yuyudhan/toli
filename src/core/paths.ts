@@ -112,6 +112,8 @@ export const paths = {
     /** The last copy of each other machine's own task list (`bin/toli task list --fleet`, src/records/fleet-tasks.ts). */
     fleetTasksDir: () => join(repoRoot(), "state", "fleet-tasks"),
     fleetTasksCopy: (machine: string) => join(repoRoot(), "state", "fleet-tasks", `${machine}.json`),
+    /** `bin/toli lead full`: this machine takes no more work until then (src/fleet/full.ts). */
+    leadFull: () => join(repoRoot(), "state", "lead", "full.json"),
     /** The last update seen from each delegated task (`delegation update`, src/records/delegation-sync.ts). */
     delegatesSeen: () => join(repoRoot(), "state", "delegates.json"),
     /** Learnings shared between leads, sent and received, with each lead's answer (`bin/toli share`, src/fleet/share.ts). */
