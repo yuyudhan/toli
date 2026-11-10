@@ -236,3 +236,20 @@ than toli's root; they are never guarded.
 `bin/toli harness status` (and `bin/toli doctor`) shows which CLIs are installed, their versions, and their login
 state where the CLI can report it without starting a session. omp is required on every machine: scheduled jobs run
 in headless omp.
+
+### Service environment
+
+The lead service, the tick and the helpers (launchd agent, systemd user service or crontab line) start toli with
+little more than PATH, and `bin/toli exec` over ssh runs in a non-login shell, so a provider key exported in the shell
+profile (e.g. `ANTHROPIC_API_KEY`) would be missing there. Before toli starts a harness (a jawan's supervisor, a lead
+turn, a scheduled job, `exec`), it runs the user's login shell once (`$SHELL -i -l -c`, the same profile files an ssh
+login reads; when `$SHELL` is cron's `/bin/sh`, the shell the user database names) and adds every variable the process
+lacks. What the process already has wins, PATH included: services keep the PATH they were installed with. The values
+stay in memory and reach only the harness's process tree; nothing is written to a plist, unit file, crontab, log or
+disk, so a profile change reaches the next harness start without reinstalling a service. `TOLI_LOGIN_ENV=1` marks a
+process that already has it (children skip the capture); `TOLI_LOGIN_ENV=off` turns it off. A capture that fails or
+takes over 15 s is warned about in the service's log and the harness starts with the environment it has.
+
+`bin/toli doctor`'s `service-env` check runs the login shell from a service's environment and warns, by name only,
+about each `*_API_KEY`, `*_AUTH_TOKEN` or `*_OAUTH_TOKEN` variable set in your shell that the login profile does not
+export (set only in a terminal session, or in a file the login shell does not read): export it in the profile.

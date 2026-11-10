@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { isGitRepo } from "../core/git.ts";
+import { captureLoginEnv, credentialNames, LOGIN_ENV_FLAG, loginShell } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, readJson, run } from "../core/util.ts";
 import { leadServiceStatus } from "../fleet/lead-service.ts";
@@ -14,6 +15,7 @@ import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
 import { syncShims } from "../harness/sync.ts";
+import { schedulePath } from "../jobs/os-scheduler.ts";
 import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
@@ -205,10 +207,53 @@ function harnessChecks(): Check[] {
     return checks;
 }
 
+/**
+ * Whether the harness credentials in this shell (`*_API_KEY`, `*_AUTH_TOKEN`, `*_OAUTH_TOKEN` variables) reach what
+ * the lead service, the tick and the helpers start: the user's login shell is run from a service's environment
+ * (HOME, USER, SHELL, PATH) and each name set here but not there is a warning. Names only, never values.
+ */
+export function serviceEnvCheck(env: Record<string, string | undefined> = process.env): Check {
+    if (env[LOGIN_ENV_FLAG] === "off")
+        return { level: "ok", name: "service-env", detail: `not checked (${LOGIN_ENV_FLAG}=off)` };
+    const base: Record<string, string | undefined> = {
+        HOME: env.HOME,
+        USER: env.USER,
+        LOGNAME: env.LOGNAME,
+        TMPDIR: env.TMPDIR,
+        SHELL: loginShell(env),
+        PATH: schedulePath(),
+    };
+    const capture = captureLoginEnv(base);
+    if ("error" in capture)
+        return {
+            level: "warn",
+            name: "service-env",
+            detail: `${capture.shell} -i -l ${capture.error}: jawans started by services get no profile variables`,
+        };
+    const here = credentialNames(env);
+    const seen = new Set(credentialNames(capture.env));
+    const missing = here.filter((name) => !seen.has(name));
+    if (missing.length > 0)
+        return {
+            level: "warn",
+            name: "service-env",
+            detail: `${nameList(missing)} set in this shell but not by the login profile of ${capture.shell}: jawans the lead service, tick or helpers start will not see ${missing.length === 1 ? "it" : "them"} (export ${missing.length === 1 ? "it" : "them"} in the shell profile)`,
+        };
+    return {
+        level: "ok",
+        name: "service-env",
+        detail:
+            seen.size === 0
+                ? `no credential variables set; ${capture.shell} login profile loads for service-started jawans`
+                : `services see ${nameList([...seen].sort())} via the ${capture.shell} login profile`,
+    };
+}
+
 export async function runChecks(): Promise<Check[]> {
     const checks: Check[] = [
         { level: "ok", name: "bun", detail: `${Bun.version} (${process.execPath})` },
         ...harnessChecks(),
+        serviceEnvCheck(),
         toolCheck("git", ["git", "--version"], "fail"),
         ...forgeChecks(),
     ];

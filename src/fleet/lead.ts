@@ -4,6 +4,7 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
+import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
@@ -107,6 +108,8 @@ async function runTurn(claim: Claim): Promise<number> {
             writeSync(logFd, `${program}: command not found\n`);
             return 127;
         }
+        // The service starts toli with PATH alone; omp needs the login profile's provider keys.
+        adoptLoginEnv();
         const proc = Bun.spawn([resolved, ...argv.slice(1)], {
             cwd: root,
             env: process.env,

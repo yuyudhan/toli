@@ -11,6 +11,7 @@ import { closeSync, existsSync, fstatSync, openSync, readFileSync, writeFileSync
 import { availableParallelism, constants } from "node:os";
 import { relative } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
+import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, warn } from "../core/util.ts";
 import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../fleet/resources.ts";
@@ -297,6 +298,8 @@ export async function superviseRun(id: string): Promise<void> {
         startedAt: initial.startedAt,
         title: `jawan ${initial.harness}${initial.task === null ? "" : ` ${initial.task}`}`,
     });
+    // Started by the lead service or the tick, the harness would lack the profile's provider keys.
+    adoptLoginEnv();
     const env = jawanEnv(
         process.env,
         id,
