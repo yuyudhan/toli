@@ -170,6 +170,13 @@ Tests never touch the host's scheduler: `TOLI_DRY_RUN=1` is the sandbox default,
 session", and `TOLI_PLATFORM`, `TOLI_SCHEDULER`, `TOLI_LAUNCH_AGENTS_DIR`, `TOLI_SYSTEMD_USER_DIR` and `TOLI_PROC_DIR`
 select a platform, scheduler, unit directories and `/proc` fixtures on any host.
 
+Tests never touch this checkout's git repository either. The preload (`tests/setup.ts`, `tests/repo-guard.ts`) drops
+every inherited `GIT_*` variable (a git hook exports `GIT_DIR`, so a run under `pre-push` once wrote its temp repos'
+commits and tags into the real one), sets `GIT_CEILING_DIRECTORIES` to the OS temp dir and gives the run its own temp
+`HOME`, before any test file loads. It also snapshots the real repository's refs and fails the run at the end when a
+tag was created, moved or deleted, a branch deleted, or a branch gained a commit by the test author
+(`test@example.com`); commits other agents land on `develop` meanwhile are not counted.
+
 ## File layout
 
 Tracked (shared by all machines):
