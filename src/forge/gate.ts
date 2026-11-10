@@ -233,6 +233,7 @@ async function runGateProcess(file: string): Promise<void> {
     } finally {
         closeSync(logFd);
     }
+    const spawnedAtMs = Date.now();
     const { promise: exited, resolve: done } = Promise.withResolvers<{
         code: number | null;
         signal: NodeJS.Signals | null;
@@ -245,7 +246,9 @@ async function runGateProcess(file: string): Promise<void> {
     const stop = (status: GateStatus, reason: string): void => {
         if (stopped !== null || child.pid === undefined) return;
         stopped = { status, reason };
-        stopping.push(stopTree(child.pid, STOP_GRACE_MS));
+        // A reaped root's pid may already be someone else's: only a live (or unreaped) gate is stopped.
+        if (child.exitCode === null && child.signalCode === null)
+            stopping.push(stopTree({ pid: child.pid, spawnedAtMs }, STOP_GRACE_MS));
     };
     for (const signal of ["SIGTERM", "SIGINT"] as const)
         process.on(signal, () => stop("killed", `its runner got ${signal}`));

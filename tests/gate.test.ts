@@ -210,19 +210,22 @@ describe("gate", () => {
         expect(readFileSync(record?.log ?? "", "utf8")).not.toContain("never");
     });
 
-    test("a stopped gate's child that ignores SIGTERM is killed before the gate is recorded stopped", () => {
+    test("a stopped gate's child that ignores SIGTERM is killed; a process started alongside survives", () => {
         const { box } = setup();
         const pidFile = join(box.root, "survivor");
         const body = `(trap "" TERM; exec sleep 300) & echo $! > "${pidFile}"; wait`;
         const stubborn = recipe(box, "stubborn", body);
+        const alongside = Bun.spawn(["sleep", "300"], { stdout: "ignore", stderr: "ignore" });
         const result = box.toli(["gate", "run", "app", "--recipe", stubborn, "--stall", "1"], { env: FAST });
         const survivor = Number(readFileSync(pidFile, "utf8").trim());
         try {
             expect(records(box).find((entry) => entry.recipe === stubborn)).toMatchObject({ status: "stalled" });
             expect(result.code).toBe(1);
             expect(pidAlive(survivor)).toBe(false);
+            expect(pidAlive(alongside.pid)).toBe(true);
         } finally {
             if (pidAlive(survivor)) process.kill(survivor, "SIGKILL");
+            alongside.kill("SIGKILL");
         }
     });
 

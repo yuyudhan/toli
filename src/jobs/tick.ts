@@ -12,7 +12,7 @@ import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
-import { HARNESS_STOP_GRACE_MS, stopTree } from "../jawans/stop.ts";
+import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
@@ -64,15 +64,15 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     let stalled = false;
     try {
         const attempt = async (chosen: string | null): Promise<{ code: number; output: string }> => {
-            let pid: number | null = null;
+            let root: StopRoot | null = null;
             const stopping: Promise<number[]>[] = [];
             const stopWatch = watchStall(
-                () => ({ pid, logPath: null, sessionDir, cwd: paths.root() }),
+                () => ({ pid: root?.pid ?? null, logPath: null, sessionDir, cwd: paths.root() }),
                 stall,
                 runMinuteMs(),
                 () => {
                     stalled = true;
-                    if (pid !== null) stopping.push(stopTree(pid, HARNESS_STOP_GRACE_MS));
+                    if (root !== null) stopping.push(stopTree(root, HARNESS_STOP_GRACE_MS));
                 },
             );
             try {
@@ -81,7 +81,7 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
                     {
                         cwd: paths.root(),
                         onStart: (started) => {
-                            pid = started;
+                            root = { pid: started, spawnedAtMs: Date.now() };
                         },
                     },
                 );

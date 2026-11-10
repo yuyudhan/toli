@@ -145,6 +145,7 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
         env,
         stdio: [command.stdin === null ? "ignore" : "pipe", logFd, logFd],
     });
+    const spawnedAtMs = Date.now();
     const { promise: exited, resolve: done } = Promise.withResolvers<ChildExit>();
     child.once("error", (error) => done({ code: null, signal: null, error: error.message }));
     child.once("exit", (code, signal) => done({ code, signal, error: null }));
@@ -159,7 +160,9 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
     let stalled = false;
     const stopping: Promise<number[]>[] = [];
     const stop = (): void => {
-        if (childPid !== null && stopping.length === 0) stopping.push(stopTree(childPid, HARNESS_STOP_GRACE_MS));
+        // A reaped harness's pid may already be someone else's: only a live (or unreaped) one is stopped.
+        if (childPid === null || stopping.length > 0 || child.exitCode !== null || child.signalCode !== null) return;
+        stopping.push(stopTree({ pid: childPid, spawnedAtMs }, HARNESS_STOP_GRACE_MS));
     };
     const timer =
         run.maxMinutes === null

@@ -25,7 +25,7 @@ import { recordRun, sessionFile } from "../jawans/launch.ts";
 import { continuePrompt, hasReport, usedTimeLimit } from "../jawans/limits.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { loadRun, runMinuteMs, updateRun } from "../jawans/runs.ts";
-import { HARNESS_STOP_GRACE_MS, stopTree } from "../jawans/stop.ts";
+import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { keepDiskBeforeWork } from "./disk.ts";
 import {
@@ -141,17 +141,17 @@ export async function execCommand(argv: string[]): Promise<number> {
     ): Promise<ExecAttempt> => {
         const offset = existsSync(jawan.logPath) ? statSync(jawan.logPath).size : 0;
         const launched = Date.now();
-        let pid: number | null = null;
+        let root: StopRoot | null = null;
         let stalled = false;
         const stopping: Promise<number[]>[] = [];
         const stopWatch = watchStall(
-            () => ({ pid, logPath: jawan.logPath, sessionDir, cwd: paths.root() }),
+            () => ({ pid: root?.pid ?? null, logPath: jawan.logPath, sessionDir, cwd: paths.root() }),
             stall,
             runMinuteMs(),
             () => {
                 stalled = true;
                 warn(`exec: ${stallText(stall)}; stopping omp`);
-                if (pid !== null) stopping.push(stopTree(pid, HARNESS_STOP_GRACE_MS));
+                if (root !== null) stopping.push(stopTree(root, HARNESS_STOP_GRACE_MS));
             },
         );
         try {
@@ -167,7 +167,7 @@ export async function execCommand(argv: string[]): Promise<number> {
                     ...(timeoutMs === undefined ? {} : { timeoutMs }),
                     env: { [ISSUED_BY_ENV]: from, [ISSUED_TASK_ENV]: task ?? undefined },
                     onStart: (started) => {
-                        pid = started;
+                        root = { pid: started, spawnedAtMs: Date.now() };
                         updateRun(jawan.id, (record) => {
                             record.pid = started;
                         });

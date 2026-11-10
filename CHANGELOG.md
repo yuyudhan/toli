@@ -50,7 +50,8 @@ one. See docs/releasing.md.
   run's whole tree, its own process group included, and SIGKILL after the grace (10 s for a gate, 30 s for omp) to
   whatever outlives it; the run is recorded stopped only once all are gone. Before, a gate cleared its SIGKILL as
   soon as its shell died, so a child ignoring SIGTERM ran on; a supervised run did the same, and `bin/toli exec`
-  and scheduled jobs signalled omp alone.
+  and scheduled jobs signalled omp alone. Only processes descending from the run are signalled: each is known by
+  pid and start time, so a pid reused by another process (another jawan's build, the user's apps) is never touched.
 - A gate, a commit and a push never take lost git output for an answer. On a loaded machine a git child that
   succeeded has handed back no stdout: a gate then ran at an empty sha and was recorded failed ("HEAD moved"), and an
   empty `git status` could make a dirty checkout look clean. Commit shas are now read with one check (a full sha, read
