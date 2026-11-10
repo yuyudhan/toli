@@ -18,8 +18,7 @@ import { findProject } from "../projects/projects.ts";
 import type { Workspace } from "../projects/strategy.ts";
 import { answerWake } from "./answer-wake.ts";
 import { recordDecision } from "./decisions.ts";
-import { type DelegationFields, reportDue, reportToDelegator } from "./delegation-report.ts";
-import { delegationTaskCommand, forwardEscalatedAnswer } from "./delegation-sync.ts";
+import { reportDue, reportToDelegator } from "./delegation-report.ts";
 import { listFleet, routeToOwner } from "./fleet-tasks.ts";
 import {
     HOLD_OPTIONS_MAX,
@@ -30,6 +29,9 @@ import {
     parseOption,
 } from "./hold-options.ts";
 import { briefPath } from "./stale.ts";
+
+/** Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there. */
+export type DelegatedBy = { machine: string; task?: string; id: string; at: string };
 
 /** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
 export type TaskWorkspace = { strategy: Workspace; path: string; branch: string | null; base: string | null };
@@ -85,7 +87,11 @@ export type Task = {
     updatedAt: string;
     startedAt?: string;
     doneAt?: string;
-} & DelegationFields;
+    /** Set on a task another machine's lead delegated here: its report goes back to that machine. */
+    delegatedBy?: DelegatedBy;
+    /** Fleet ids (`<machine>/T<n>`) of tasks this one was delegated as. */
+    delegatedTo?: string[];
+};
 
 export type BacklogFile = { nextId: number; tasks: Task[] };
 
@@ -314,7 +320,6 @@ function hold(argv: string[]): void {
         if (reversible) entry.reversible = true;
         else delete entry.reversible;
         delete entry.staleSurfacedAt;
-        delete entry.heldFrom;
         delete entry.waitingOn;
         delete entry.answer;
     });
@@ -333,7 +338,6 @@ function answer(argv: string[]): void {
     const reply = args.pos(1, "answer");
     const from = args.str("from");
     if (from !== undefined) requireName("machine", from);
-    let heldFrom: string | undefined;
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
         const chosen = matchOption(entry.options ?? [], reply);
@@ -342,15 +346,12 @@ function answer(argv: string[]): void {
         const via = from === undefined ? "" : ` (recorded by ${from}'s lead)`;
         entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}${via}`);
         entry.status = entry.startedAt === undefined ? "queued" : "active";
-        heldFrom = entry.heldFrom;
-        delete entry.heldFrom;
     });
     out(describe(task));
     if (isValidName(task.project)) recordDecision(task, reply);
     const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
     out(`unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${brief})`);
     for (const line of answerWake(task, loadBacklog().tasks)) out(line);
-    forwardEscalatedAnswer(heldFrom, reply);
 }
 
 function drop(argv: string[]): void {
@@ -365,7 +366,7 @@ function drop(argv: string[]): void {
 /** Run one `task` subcommand; only `list --fleet` returns a promise (callers await it), so the rest throw synchronously. */
 export function taskCommand(argv: string[]): Promise<void> | undefined {
     const [sub, ...rest] = argv;
-    if (sub !== undefined && (routeToOwner(sub, rest) || delegationTaskCommand(sub, rest))) return;
+    if (sub !== undefined && routeToOwner(sub, rest)) return;
     switch (sub) {
         case "add":
             add(rest);
@@ -391,6 +392,6 @@ export function taskCommand(argv: string[]): Promise<void> | undefined {
             drop(rest);
             break;
         default:
-            throw new ToliError("usage: toli task add|list|start|wait|done|hold|answer|drop|link|escalate");
+            throw new ToliError("usage: toli task add|list|start|wait|done|hold|answer|drop");
     }
 }
