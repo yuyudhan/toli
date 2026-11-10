@@ -36,11 +36,17 @@ Work the backlog under the normal rules; being away never loosens them, and Sard
 
     Then move on to the next task. Never guess on his behalf.
 
-- Scheduled jobs run in the background as usual (`skill://toli-schedule`); their results arrive as `[toli wake]`
-  messages and wait for the report.
+- Scheduled jobs run in the background as usual (`skill://toli-schedule`) and never skip because Malik is away;
+  their results arrive as `[toli wake]` messages and wait for the report.
+- Oversight never pauses: the tick posts every active task whose run ended with nobody re-dispatching it, and the
+  hourly `bin/toli fleet check --wake` names idle machines with queued work for their clones. On such a wake, or on
+  an `answer recorded for T<n>` wake, dispatch every task it names in the same turn (spread over the idle machines),
+  putting any recorded answer in the brief. A ship task that stopped waiting on an answer is re-dispatched once the
+  answer exists; never leave it `active` with no live run.
 - Nothing needs writing down along the way: jawans record their own outcomes (`task done` with commit or report,
   `task hold` with the question), so nothing is lost if the session ends.
-- When the queue is empty and no jawans are running, stop. Do not invent work.
+- When the queue is empty, no task is active without a live run, and no jawans are running, stop. Do not invent
+  work.
 
 ## Coming back
 

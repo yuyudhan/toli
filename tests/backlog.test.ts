@@ -143,6 +143,8 @@ describe("task commands in process", () => {
         expect(task(["answer", "T1", "1"]).split("\n")).toEqual([
             "T1\tactive\talpha\tscout\tDraft plan\t(agent: jawan-1)",
             "unblocked: dispatch T1 now (toli-dispatch skill; put the answer in its brief, data/projects/alpha/briefs/T1.md)",
+            "waiting on T1: T2 (alpha, queued): Ship it - named in T1's blocks; re-dispatch it now",
+            expect.stringMatching(/^wake posted: data\/inbox\/.*-m1\.md$/),
         ]);
         const decisions = readFileSync(join(box.root, "data", "projects", "alpha", "decisions.md"), "utf8");
         expect(decisions).toStartWith("# alpha decisions\n");

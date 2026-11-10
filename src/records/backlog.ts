@@ -6,6 +6,7 @@ import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJ
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { findProject } from "../projects/projects.ts";
 import type { Workspace } from "../projects/strategy.ts";
+import { answerWake, briefPath } from "./stale.ts";
 
 /** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
 export type TaskWorkspace = { strategy: Workspace; path: string; branch: string | null; base: string | null };
@@ -49,10 +50,14 @@ export type Task = {
     /** When the digest last re-surfaced this hold as stale (once per hold). */
     staleSurfacedAt?: string;
     answer?: string;
+    /** When the user's answer was recorded (`task answer`). */
+    answeredAt?: string;
     report?: string;
     commit?: string;
     /** The jawan working on it: a harness agent id (`task start --agent`) or a `bin/toli spawn` run id. */
     agent?: string;
+    /** When `agent` was last recorded; a run that finished after it is the recorded jawan's (src/records/stale.ts). */
+    dispatchedAt?: string;
     workspace?: TaskWorkspace;
     createdAt: string;
     updatedAt: string;
@@ -163,7 +168,10 @@ function start(argv: string[]): void {
             throw new ToliError(`${entry.id} is ${entry.status}`);
         entry.status = "active";
         entry.startedAt ??= now().toISOString();
-        if (agent !== undefined) entry.agent = agent;
+        if (agent !== undefined) {
+            entry.agent = agent;
+            entry.dispatchedAt = now().toISOString();
+        }
     });
     out(describe(task));
 }
@@ -275,7 +283,10 @@ function hold(argv: string[]): void {
     out(describe(task));
 }
 
-/** `task answer <id> "<answer>"`: record the user's words verbatim, release the task, and say it is ready to dispatch. */
+/**
+ * `task answer <id> "<answer>"`: record the user's words verbatim, release the task, say it is ready to dispatch, and
+ * name (and post as a wake) every task waiting on it, so the lead re-dispatches them in the same turn.
+ */
 function answer(argv: string[]): void {
     const args = new Args(argv);
     args.maxPositional(2);
@@ -284,14 +295,16 @@ function answer(argv: string[]): void {
         if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
         const chosen = matchOption(entry.options ?? [], reply);
         entry.answer = reply;
+        entry.answeredAt = now().toISOString();
         entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}`);
         entry.status = entry.startedAt === undefined ? "queued" : "active";
     });
     out(describe(task));
     if (isValidName(task.project)) recordDecision(task, reply);
     out(
-        `unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, data/projects/${task.project}/briefs/${task.id}.md)`,
+        `unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`})`,
     );
+    for (const line of answerWake(task, loadBacklog().tasks)) out(line);
 }
 
 /** Append the held question, its options, and the user's verbatim answer to `data/projects/<p>/decisions.md`. */

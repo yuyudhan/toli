@@ -30,6 +30,7 @@ import { type InboxItem, listInbox } from "./inbox.ts";
 import { type Needs, needsQueue, renderNeeds, takeStaleHolds } from "./needs.ts";
 import { type NextAction, nextActions } from "./next.ts";
 import { type PushRecord, pushLine, recentPushes } from "./push-log.ts";
+import { findStaleTasks } from "./stale.ts";
 
 export type ProjectDigest = {
     name: string;
@@ -139,8 +140,8 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
     const urls = new Map(loadProjects().map((project) => [project.name, project.url]));
     const missingHarnesses = configuredHarnesses().filter((harness) => harnessPath(harness) === null);
     const runs = activeRuns();
-    const live = new Set(runs.map((entry) => entry.id));
     const needs = needsQueue(tasks);
+    const stale = findStaleTasks(tasks);
     return {
         machine: machine.name,
         role: machine.role,
@@ -166,9 +167,7 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
             setupSteps: setupItems.filter((item) => item.status === "missing").map((item) => item.title),
             setupSnoozed: setupSnoozed(setupItems),
             missingHarnesses,
-            unattended: backlog.inFlight.filter(
-                (task) => task.agent === undefined || (task.agent.startsWith("j-") && !live.has(task.agent)),
-            ),
+            stale,
         }),
     };
 }

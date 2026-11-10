@@ -76,13 +76,18 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
 
 Every request becomes a task (`data/backlog.json`). `start` records which jawan carries it; `hold` parks it on a
 question for you, with 2-4 options (each with what happens next), a recommendation, and what it blocks; `answer`
-records your reply verbatim in the project's `decisions.md` and prints `unblocked: dispatch T<n>`
-([how-it-works.md](how-it-works.md#a-request-start-to-finish)). `needs` is the Needs-you queue: every held task,
-grouped by project, blocking and oldest first, with a one-line reply hint each; the digest opens with the same list,
-flags holds with no question, and re-surfaces a hold unanswered for `needs.staleDays` days (`config/machine.json`,
-default 7) once. `hold --reversible` marks a hold whose recommended option is safe to undo, so an installation may
-apply it when the hold stays unanswered past its own timeout (recorded with `task answer`); it needs `--recommend`
-and is refused when the hold mentions push, merge, main, MR/PR, tag, release, a destructive step, security or money.
+records your reply verbatim in the project's `decisions.md`, prints `unblocked: dispatch T<n>`, and names every task
+waiting on it (those its hold's `--blocks` names, holds whose question names it, and the project's active tasks no
+live run works on), each with its brief, and posts the same as one inbox item, so the lead re-dispatches them all in
+the same turn ([how-it-works.md](how-it-works.md#a-request-start-to-finish)). An active task whose recorded run
+ended `oversight.staleTaskMinutes` ago (default 15) heads the digest's Next block with the run's last report line
+and any answer recorded since; the tick posts it to the inbox once ([fleet.md](fleet.md#oversight)). `needs` is the
+Needs-you queue: every held task, grouped by project, blocking and oldest first, with a one-line reply hint each; the
+digest opens with the same list, flags holds with no question, and re-surfaces a hold unanswered for
+`needs.staleDays` days (`config/machine.json`, default 7) once. `hold --reversible` marks a hold whose recommended
+option is safe to undo, so an installation may apply it when the hold stays unanswered past its own timeout
+(recorded with `task answer`); it needs `--recommend` and is refused when the hold mentions push, merge, main,
+MR/PR, tag, release, a destructive step, security or money.
 
 ### Landing work
 
@@ -185,12 +190,17 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     disk keep [--dry-run] [--floor <GB>] [--json]
     disk alert
     fleet status [--json]
+    fleet check [--json] [--wake] [--local]
     pick [--project <name>] [--json]
     exec [--from <machine>] [--task <id>] (prompt on stdin)
     remote <machine|auto> "<prompt>" [--project <name>] [--task T<n>] [--max-time <minutes>] [--tier <t>] [--work <w>]
 
 - `sync`: `git pull --ff-only` here, or on every machine with `--all`.
 - `resources`, `fleet status`, `pick`: capacity of this machine, of all machines, and the best one for a task.
+- `fleet check`: idle machines (no active run) with queued work for a project cloned there, and active tasks no
+  live run works on, on every reachable machine; `--wake` posts the findings as one inbox item; `--local` reports
+  this machine's own backlog (what the coordinator reads over ssh). The coordinator's tick runs it every
+  `oversight.fleetCheckMinutes` (default 60), away mode included ([fleet.md](fleet.md#oversight)).
 - `build-slot -- <command...>`: run a heavy build in one of this machine's heavy-build slots (`capacity.buildSlots`),
   waiting while all are busy; jawans' cargo goes through it on its own ([fleet.md](fleet.md#heavy-build-slots)).
 - `disk keep`: free rebuildable build output, oldest first, when the disk is under its floor (`capacity.diskKeepGB`,

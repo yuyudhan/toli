@@ -80,6 +80,12 @@ export type Machine = {
     defaults?: { workspace?: string };
     /** The Needs-you queue (`bin/toli needs`): a hold unanswered for `staleDays` (default 7) is re-surfaced once. */
     needs?: { staleDays?: number };
+    /**
+     * Oversight of work nobody is doing (src/records/stale.ts): an active task whose recorded run ended
+     * `staleTaskMinutes` ago (default 15) is raised to the lead; the coordinator's tick runs `bin/toli fleet check
+     * --wake` every `fleetCheckMinutes` (default 60) to name idle machines and such tasks, away mode included.
+     */
+    oversight?: { staleTaskMinutes?: number; fleetCheckMinutes?: number };
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

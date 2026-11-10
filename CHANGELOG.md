@@ -29,6 +29,19 @@ one. See docs/releasing.md.
 
 ### Added
 
+- No idle nights. An active task whose recorded run ended `oversight.staleTaskMinutes` ago (default 15) and that
+  nobody re-dispatched (a `bin/toli spawn` run that finished, a `bin/toli remote --task` run whose saved output
+  finished, or no jawan at all) now heads the digest's Next block with the run's last report line and whether an
+  answer was recorded since, and the tick posts it to the inbox once per ended run. `bin/toli remote --task` records
+  `- task: T<n>` in its saved output for this.
+- `bin/toli task answer` names every task waiting on the answer (those the hold's `--blocks` names, holds whose
+  question names it, and the project's active tasks with no live run), each with its brief, and posts them as one
+  inbox wake, so the lead re-dispatches all of them in the same turn.
+- `bin/toli fleet check [--json] [--wake] [--local]`: idle machines (no active run) with queued work for a project
+  cloned there, and active tasks with no live run, on every reachable machine, in one batched message. The
+  coordinator's tick runs `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), away mode included,
+  so no job prompt can silence it; the toli-afk and toli-schedule skills say jobs never skip while the user is away.
+  See docs/fleet.md#oversight.
 - `bin/toli resume <run> [--note "<text>"] [--max-time <minutes>] [--now]`: the lead continues any finished run in
   its own omp session.
 - `bin/toli gate run|check|status <project> --recipe "<command>"`: a long gate (a verify, a push gate) runs once

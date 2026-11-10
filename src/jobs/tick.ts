@@ -4,6 +4,7 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { runDueFleetCheck } from "../fleet/oversight.ts";
 import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
 import { harnessConfig } from "../harness/harness.ts";
 import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
@@ -14,7 +15,9 @@ import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
+import { loadBacklog } from "../records/backlog.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
+import { surfaceStaleTasks } from "../records/stale.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
 import {
     type BegunRun,
@@ -208,6 +211,20 @@ export async function tick(): Promise<void> {
         for (const note of drainQueue({ diskKept: true })) log(note);
     } catch (error) {
         log(`queued jawan runs not started: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // Oversight never pauses (away mode included): active tasks no live run works on are posted once per ended run,
+    // and the coordinator's fleet check names idle machines with waiting work (src/records/stale.ts, fleet/oversight.ts).
+    try {
+        const stale = surfaceStaleTasks(loadBacklog().tasks);
+        if (stale) log(stale);
+    } catch (error) {
+        log(`stale task check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+        const fleet = await runDueFleetCheck();
+        if (fleet) log(fleet);
+    } catch (error) {
+        log(`fleet check failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     const session = liveSession();
     if (session) {

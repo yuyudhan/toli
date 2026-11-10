@@ -92,6 +92,11 @@ export const paths = {
     /** The update check's last result and the versions the user was told about (src/release/update-check.ts). */
     updateCheck: () => join(repoRoot(), "state", "update-check.json"),
     updateCheckLog: () => join(repoRoot(), "logs", "update-check.log"),
+    /** Which stale active tasks the tick already posted, per ended run (src/records/stale.ts). */
+    staleTasksState: () => join(repoRoot(), "state", "stale-tasks.json"),
+    /** When the tick last started `bin/toli fleet check --wake` (src/fleet/oversight.ts). */
+    fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
+    fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
     runsDir: () => join(repoRoot(), "state", "runs"),
     runRecord: (runId: string) => join(repoRoot(), "state", "runs", `${runId}.json`),

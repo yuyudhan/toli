@@ -2,9 +2,9 @@
 // kept apart from digest.ts so tests can call it in-process without loading every record and job module.
 import type { Harness } from "../harness/harness.ts";
 import { SPECS } from "../harness/harness.ts";
-import type { Task } from "./backlog.ts";
 import type { Digest, ProjectDigest } from "./digest.ts";
 import type { Needs } from "./needs.ts";
+import { redispatchCommand, type StaleTask, staleLine } from "./stale.ts";
 
 export type NextAction = { action: string; command: string };
 
@@ -25,15 +25,18 @@ export type NextInput = {
     /** The user snoozed setup (`bin/toli setup snooze`): the setup action stays a quiet one-liner. */
     setupSnoozed: boolean;
     missingHarnesses: Harness[];
-    /** Active tasks with no recorded jawan, or whose `bin/toli spawn` run has ended. */
-    unattended: Task[];
+    /** Active tasks no live run works on (src/records/stale.ts): listed first, nothing else re-dispatches them. */
+    stale: StaleTask[];
 };
 
 const NEXT_LIST_LIMIT = 5;
 
 /** Concrete recommended actions for the lead, most urgent first, each naming the exact skill or command. */
 export function nextActions(input: NextInput): NextAction[] {
-    const actions: NextAction[] = [];
+    const actions: NextAction[] = input.stale.slice(0, NEXT_LIST_LIMIT).map((task) => ({
+        action: staleLine(task),
+        command: redispatchCommand(task),
+    }));
     const items = input.needs.groups.flatMap((group) => group.items);
     const asked = items.filter((item) => item.question !== null);
     if (asked.length > 0)
@@ -58,11 +61,6 @@ export function nextActions(input: NextInput): NextAction[] {
         actions.push({
             action: `Tell the user ${project.name} is off its working branch ${project.branch} (on ${project.status?.branch ?? "?"})`,
             command: "never switch it yourself; the user may switch back or change it with bin/toli project set",
-        });
-    for (const task of input.unattended.slice(0, NEXT_LIST_LIMIT))
-        actions.push({
-            action: `${task.id} (${task.project}) is active but no running jawan is recorded on it${task.agent ? ` (last: ${task.agent})` : ""}`,
-            command: `dispatch one and record it (bin/toli task start ${task.id} --agent <id>, or bin/toli spawn --task ${task.id} --brief <file>), or hold/drop it`,
         });
     for (const task of input.backlog.queued.slice(0, NEXT_LIST_LIMIT))
         actions.push({

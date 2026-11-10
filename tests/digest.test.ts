@@ -154,7 +154,7 @@ describe("digest", () => {
             setupSteps: [],
             setupSnoozed: false,
             missingHarnesses: [],
-            unattended: [],
+            stale: [],
         };
         expect(nextActions(empty)).toEqual([
             { action: "Nothing pending", command: "greet the user and wait for a request" },
