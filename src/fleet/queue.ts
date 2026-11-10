@@ -1,6 +1,6 @@
 // A machine's work queue (docs/sardars.md): what ranks machines for new work, published in `resources --json`.
-import { listRuns, RUNNING } from "../jawans/runs.ts";
-import { loadBacklog } from "../records/backlog.ts";
+import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
+import { loadBacklog, type Task } from "../records/backlog.ts";
 import { currentFull, type Full } from "./full.ts";
 
 /**
@@ -19,12 +19,30 @@ export type Queue = {
     full?: Full;
 };
 
+/**
+ * The queued tasks that wait for a jawan: no run of this machine (running or waiting for a slot) works on them and
+ * no other machine has them (an open delegation). Only these count as queue and only these are offered to another lead.
+ */
+export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun[] = listRuns()): Task[] {
+    const working = new Set(
+        runs
+            .filter((entry) => entry.status === "queued" || RUNNING.includes(entry.status))
+            .flatMap((entry) => (entry.task === null ? [] : [entry.task])),
+    );
+    const delegatedAway = (task: Task): boolean =>
+        (task.delegatedTo ?? []).some((id) => {
+            const state = task.delegates?.[id];
+            return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
+        });
+    return tasks.filter((task) => task.status === "queued" && !working.has(task.id) && !delegatedAway(task));
+}
+
 /** This machine's queue, from its own backlog and jawan run records. */
 export function localQueue(): Queue {
     const tasks = loadBacklog().tasks;
     const count = (status: string): number => tasks.filter((task) => task.status === status).length;
     const runs = listRuns();
-    const queued = count("queued");
+    const queued = waitingTasks(tasks, runs).length;
     const jawansRunning = runs.filter((entry) => RUNNING.includes(entry.status)).length;
     const jawansQueued = runs.filter((entry) => entry.status === "queued").length;
     const full = currentFull();

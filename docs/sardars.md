@@ -140,8 +140,9 @@ Rules that keep the list consistent without locks across machines:
     bin/toli pick [--project <p>] [--json]
 
 Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, running and
-queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks plus running and queued jawan
-runs: active tasks with no jawan here (a lead's bookkeeping, work delegated elsewhere) are not queue. `pick` and
+queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a jawan plus running
+and queued jawan runs: a queued task a run already works on, or one delegated to another machine and still open there,
+is not counted again, and active tasks with no jawan here (a lead's bookkeeping, work delegated elsewhere) are not queue. `pick` and
 `fleet queues` rank machines by depth per jawan slot (`capacity.maxRuns`), lightest first; on equal load a machine
 with the project's clone wins, then this machine, then name order. CPU load, memory and disk are shown for
 information and are never a reason to pass a machine over: a machine busy with builds but with an empty queue gets
@@ -157,7 +158,8 @@ its own queued work away.
 
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer
-(`delegate queued work to <machine>`); when this machine's queue is empty and another's is at least the gap deep, it
+(`delegate queued work to <machine>`, listing only queued tasks no jawan works on and no other machine has); when
+this machine's queue is empty and another's is at least the gap deep, it
 asks that machine's lead for work (a `talk` message naming its empty queue). Each offer or ask is sent once per
 period. Thresholds live in `config/machine.json`:
 
@@ -172,6 +174,12 @@ A jawan started by `bin/toli spawn` posts its outcome to its own machine's inbox
 started before this change) is adopted: the minute tick posts its outcome to the inbox of the machine it ran on, once
 (`state/lead/adopt.json` marks from when). Job results still reach the coordinator, which keeps the fleet view; work
 results reach other machines only through a delegated task's report.
+
+On Linux each jawan runs in its own systemd scope (`toli-jawan-<run id>.scope` under the user manager, started with
+`systemd-run --user --scope`), not in the lead service's cgroup, so systemd-oomd or a restart of `toli-lead.service`
+takes the lead alone, and an OOM kill takes one jawan, never the lead and all of them. Without systemd-run or a user
+manager the jawan starts as before. On macOS each jawan's supervisor runs in its own session and process group, which
+launchd leaves alone when it stops or restarts the lead's job.
 
 ## Sharing learnings between leads
 

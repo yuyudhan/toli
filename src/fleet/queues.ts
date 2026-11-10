@@ -17,11 +17,10 @@ import {
     writeJsonAtomic,
 } from "../core/util.ts";
 import { sendToMachine } from "../jobs/outbox.ts";
-import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
 import { fleetStatus, rankMachines } from "./pick.ts";
-import { perSlot, type Queue, queueText } from "./queue.ts";
+import { perSlot, type Queue, queueText, waitingTasks } from "./queue.ts";
 import type { FleetEntry } from "./resources.ts";
 
 const DEFAULT_BALANCE_MINUTES = 30;
@@ -166,10 +165,9 @@ function recordSent(sent: BalanceSent): void {
     });
 }
 
-/** The delegate command for each of this machine's queued tasks, with its brief when it has one. */
+/** The delegate command for each of this machine's tasks waiting for a jawan, with its brief when it has one. */
 function delegateLines(target: string): string[] {
-    return loadBacklog()
-        .tasks.filter((task) => task.status === "queued")
+    return waitingTasks()
         .map((task) => {
             const brief = briefPath(task.project, task.id);
             return [

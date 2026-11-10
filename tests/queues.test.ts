@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { balancePass } from "../src/fleet/queues.ts";
 import { ENV, fleet, remoteSnapshot, sshLog } from "./fleet-fixture.ts";
@@ -230,6 +230,31 @@ describe("balancePass", () => {
         expect(queueItems(box)).toHaveLength(1);
         expect(await pass(box, "2026-11-10T09:30:00.000Z")).toBe("queue: offered work to m2 (m1 4, m2 0)");
         expect(queueItems(box)).toHaveLength(2);
+    });
+
+    test("offers and counts only queued tasks no jawan works on and no other machine has", async () => {
+        const box = withTasks(queued(0), 5);
+        // T4 has a jawan here (its run holds a slot); T5 was delegated to m2 and is still open there.
+        const jawans = join(box.root, "state", "jawans");
+        mkdirSync(jawans, { recursive: true });
+        const run = { id: "j-1", task: "T4", status: "running", supervisorPid: process.pid, pid: process.pid };
+        writeFileSync(join(jawans, "j-1.json"), JSON.stringify({ ...run, startedAt: T0 }));
+        const backlogPath = join(box.root, "data", "backlog.json");
+        const backlog = JSON.parse(readFileSync(backlogPath, "utf8")) as {
+            tasks: { id: string; delegatedTo?: string[]; delegates?: Record<string, { status: string }> }[];
+        };
+        const t5 = backlog.tasks.find((task) => task.id === "T5");
+        if (t5 === undefined) throw new Error("no T5");
+        t5.delegatedTo = ["m2/T1"];
+        t5.delegates = { "m2/T1": { status: "queued" } };
+        writeFileSync(backlogPath, JSON.stringify(backlog));
+
+        expect(await pass(box, T0)).toBe("queue: offered work to m2 (m1 4, m2 0)");
+        const [offer] = queueItems(box);
+        expect(offer).toContain("T3: bin/toli delegate m2 'task 3'");
+        expect(offer).not.toContain("T4:");
+        expect(offer).not.toContain("T5:");
+        expect(box.ok(["fleet", "queues"], { env: ENV })).toContain("m1 (this machine): queue 4 (3 queued, 1 running");
     });
 
     test("asks the deepest queue's lead for work over ssh when this machine's queue is empty, once per period", async () => {

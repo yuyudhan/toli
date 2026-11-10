@@ -18,6 +18,10 @@ one. See docs/releasing.md.
 - Workers take `config/fleet.json` from the coordinator: `bin/toli self sync` (and `bin/toli fleet sync`) reads the
   coordinator's `bin/toli fleet export` (each machine as `user@host`) and rewrites the list, keeping the worker's own
   ssh names for machines it already lists.
+- On Linux each jawan runs in its own systemd scope (`systemd-run --user --scope --unit toli-jawan-<run id>`), so an
+  OOM kill of the lead service or of one jawan no longer takes every jawan the lead spawned.
+- Queue depth and the balancing offer count only queued tasks waiting for a jawan: a queued task a run already works
+  on, or one delegated elsewhere and still open, is neither counted twice nor offered to another lead.
 - One lead per machine (docs/sardars.md). Every machine runs its own lead: `bin/toli lead install|uninstall|status|
 run|attach` keeps its lead conversation served by a launchd agent, systemd user service or crontab line, taking
   wakes in headless turns whenever no lead session is open. Leads hand each other work with `bin/toli delegate
@@ -100,6 +104,12 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
 
 ### Fixed
 
+- Jawans, lead turns and scheduled jobs started by the lead service, the tick or a helper get the user's login
+  environment: before a harness starts, toli runs the login shell once (`$SHELL -i -l -c`) and adds the variables the
+  service lacks, so provider keys exported in the shell profile (e.g. `ANTHROPIC_API_KEY`) reach them. Before, a
+  launchd agent or systemd service passed PATH alone and every jawan it spawned failed with no API key. Nothing is
+  stored: values stay in memory, PATH stays the service's. `bin/toli doctor` warns (names only) about a credential
+  variable set in the shell but not by the login profile (docs/harnesses.md "Service environment").
 - `bin/toli push` refuses, pushing nothing, when it has no `--word` and the project has no standing push grant on
   this machine (hard rule 1). Before, a push with neither went through and was only logged with `word=null`. The
   message names both ways on: `--word "<the user's word>"`, or `bin/toli project set <p> --standing-push yes`.
