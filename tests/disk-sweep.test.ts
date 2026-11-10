@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
 import { atimeVerdict, sweepStaleArtifacts } from "../src/fleet/stale-sweep.ts";
-import { age, agedTarget, artifact, buildOutput, holdLock } from "./disk-fixture.ts";
+import { age, agedTarget, artifact, buildOutput, dfLine, holdLock, keeperBox, setCapacity } from "./disk-fixture.ts";
 import { sandbox, tempDir, withProject } from "./helpers.ts";
 
 // The keeper tests build a sandbox with git repos and several bin/toli runs: on a loaded machine that alone can take
@@ -62,7 +62,7 @@ describe("sweeping stale artifacts out of a target in use", () => {
         expect(atimeVerdict("darwin", ["apfs", "noatime", "strictatime"], 180).atime).toBe(false);
     });
 
-    test("disk keep sweeps a target a build keeps locked, at capacity.diskSweepStaleMinutes", () => {
+    test("under the emergency level disk keep sweeps a target a build keeps locked, at capacity.diskSweepStaleMinutes", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const clone = realpathSync(withProject(box, "alpha"));
@@ -93,6 +93,35 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
             expect(report.swept[0]?.bytes).toBeGreaterThanOrEqual(4 * 4096);
             for (const path of stale) expect(existsSync(path)).toBe(false);
             for (const path of [...fresh, lock]) expect(existsSync(path)).toBe(true);
+        } finally {
+            release();
+        }
+    });
+
+    test("over the emergency level disk keep never touches a target a build keeps locked, however old", () => {
+        const box = keeperBox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const clone = realpathSync(withProject(box, "alpha"));
+        buildOutput(box, clone);
+        const target = join(clone, "target");
+        const { lock, stale, fresh } = agedTarget(target, 240);
+        setCapacity(box, { diskSweepStaleMinutes: 60 });
+        box.stub("docker", "exit 1");
+        box.stub("sccache", "exit 2");
+        // 20 GB free of 200 GB: under the floor (50), over the emergency level (6).
+        box.stub("df", `kb=${20 * 1048576}\n${dfLine(200)}`);
+        const release = holdLock(lock);
+        try {
+            const keep = ["disk", "keep", "--floor", "50", "--json"];
+            const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
+            const lines = report.lines.join("\n");
+            expect(report.emergencyGB).toBe(6);
+            expect(report.lastResort).toBe(false);
+            expect(lines).toContain(`kept ${target}: a build holds ${lock}`);
+            expect(lines).toContain(`kept ${target} in use: free 20.0 GB is over the emergency level 6.0 GB`);
+            expect(report.swept).toEqual([]);
+            expect(lines).not.toContain("stale artifacts");
+            for (const path of [...stale, ...fresh, lock]) expect(existsSync(path)).toBe(true);
         } finally {
             release();
         }
@@ -132,8 +161,8 @@ describe("the disk keeper on a full disk", () => {
         expect(readFileSync(logs, "utf8")).toBe("not a folder\n");
     });
 
-    test("when the keeper cannot start, the fallback still sweeps stale artifacts and nothing crashes", () => {
-        const box = sandbox();
+    test("when the keeper cannot start, the fallback still sweeps stale artifacts out of an idle target, no crash", () => {
+        const box = keeperBox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const clone = realpathSync(withProject(box, "alpha"));
         buildOutput(box, clone);
@@ -146,5 +175,25 @@ describe("the disk keeper on a full disk", () => {
         expect(result.stdout).toContain(`swept 4 stale artifacts from ${join(clone, "target")}`);
         for (const path of stale) expect(existsSync(path)).toBe(false);
         for (const path of [...fresh, lock]) expect(existsSync(path)).toBe(true);
+    });
+
+    test("the fallback keeps a target in use whole: a build holding its lock", () => {
+        const box = keeperBox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const clone = realpathSync(withProject(box, "alpha"));
+        buildOutput(box, clone);
+        const target = join(clone, "target");
+        const { lock, stale, fresh } = agedTarget(target, 240);
+        box.stub("df", "exit 1");
+        const release = holdLock(lock);
+        try {
+            const result = box.toli(["disk", "keep"], { env: { TOLI_DRY_RUN: "0" } });
+            expect(result.code).toBe(1);
+            expect(result.stdout).toContain(`kept ${target}: in use (a build holds ${lock})`);
+            expect(result.stdout).not.toContain("stale artifacts from");
+            for (const path of [...stale, ...fresh, lock]) expect(existsSync(path)).toBe(true);
+        } finally {
+            release();
+        }
     });
 });

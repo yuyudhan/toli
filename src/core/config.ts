@@ -44,8 +44,9 @@ export type CapacityConfig = {
      */
     stallMinutes?: number;
     /**
-     * Minutes a gate (`bin/toli gate run`) may go without new log output before it is stopped as stalled; a gate
-     * that keeps printing has no time limit (src/forge/gate.ts; default 30).
+     * Minutes a gate (`bin/toli gate run`) may go without progress (new log output, a checkout change or CPU use in
+     * its process tree) before it is stopped as stalled; a gate that keeps working has no time limit
+     * (src/forge/gate.ts; default 30).
      */
     gateStallMinutes?: number;
 };

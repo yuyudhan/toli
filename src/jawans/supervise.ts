@@ -21,12 +21,11 @@ import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
 import { deadlineSection, hasReport, onlyHarnessErrors, usedTimeLimit } from "./limits.ts";
 import { stallText, watchStall } from "./progress.ts";
-import { type JawanRun, killGroup, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
+import { type JawanRun, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
+import { HARNESS_STOP_GRACE_MS, stopTree } from "./stop.ts";
 
 /** Grace after the harness's own time limit before the supervisor kills the process group. */
 export const KILL_GRACE_MINUTES = 10;
-/** After stopping a stalled run with SIGTERM, how long before its process group gets SIGKILL. */
-const STALL_KILL_GRACE_MS = 30_000;
 const OUTPUT_TAIL = 4000;
 
 function tail(path: string, limit: number): string {
@@ -100,10 +99,13 @@ function postOutcome(machine: Machine, run: JawanRun): void {
     });
 }
 
-/** Start queued runs into free slots; one that cannot start has its failure posted. Returns one note per run. */
-export function drainQueue(): string[] {
+/**
+ * Start queued runs into free slots; one that cannot start has its failure posted. Returns one note per run.
+ * `diskKept`: the caller has seen to the disk already (the minute tick), so no inline keeper runs first.
+ */
+export function drainQueue(options: { diskKept?: boolean } = {}): string[] {
     const machine = loadMachine();
-    const { started, failed } = startQueued();
+    const { started, failed } = startQueued(options);
     for (const { run } of failed) postOutcome(machine, run);
     return [
         ...started.map((run) => `jawan ${run.id}: started from the queue`),
@@ -143,6 +145,7 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
         env,
         stdio: [command.stdin === null ? "ignore" : "pipe", logFd, logFd],
     });
+    const spawnedAtMs = Date.now();
     const { promise: exited, resolve: done } = Promise.withResolvers<ChildExit>();
     child.once("error", (error) => done({ code: null, signal: null, error: error.message }));
     child.once("exit", (code, signal) => done({ code, signal, error: null }));
@@ -155,32 +158,38 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
         });
     let timedOut = false;
     let stalled = false;
+    const stopping: Promise<number[]>[] = [];
+    const stop = (): void => {
+        // A reaped harness's pid may already be someone else's: only a live (or unreaped) one is stopped.
+        if (childPid === null || stopping.length > 0 || child.exitCode !== null || child.signalCode !== null) return;
+        stopping.push(stopTree({ pid: childPid, spawnedAtMs }, HARNESS_STOP_GRACE_MS));
+    };
     const timer =
         run.maxMinutes === null
             ? undefined
             : setTimeout(
                   () => {
                       timedOut = true;
-                      if (childPid !== null) killGroup(childPid, "SIGTERM");
+                      stop();
                   },
                   (run.maxMinutes + KILL_GRACE_MINUTES) * minuteMs,
               );
     const stopWatch = watchStall(
         () => ({ pid: childPid, logPath: run.logPath, sessionDir: run.sessionDir ?? null, cwd: run.cwd }),
-        (run.stallMinutes ?? DEFAULT_STALL_MINUTES) * minuteMs,
+        run.stallMinutes ?? DEFAULT_STALL_MINUTES,
+        minuteMs,
         () => {
             stalled = true;
             writeSync(logFd, `\n[toli] ${stallText(run.stallMinutes ?? DEFAULT_STALL_MINUTES)}: stopping the run\n`);
-            if (childPid === null) return;
-            killGroup(childPid, "SIGTERM");
-            setTimeout(() => {
-                if (child.exitCode === null && child.signalCode === null) killGroup(childPid, "SIGKILL");
-            }, STALL_KILL_GRACE_MS).unref();
+            stop();
         },
     );
     const exit = await exited;
     clearTimeout(timer);
     stopWatch();
+    // A harness that exits on SIGTERM can leave children that ignore it: the attempt ends once all of them are gone.
+    const survivors = (await Promise.all(stopping)).flat();
+    if (survivors.length > 0) writeSync(logFd, `\n[toli] pid ${survivors.join(", ")} outlived SIGKILL\n`);
     const elapsedMs = Date.now() - launchedAt;
     const output = existsSync(run.logPath) ? readFileSync(run.logPath).subarray(offset).toString("utf8") : "";
     return { exit, timedOut, stalled, elapsedMs, output };

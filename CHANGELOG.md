@@ -30,7 +30,7 @@ one. See docs/releasing.md.
   per commit. A pass is recorded under `state/gates/` with its sha, recipe and log, and a later run or push of the
   same commit skips it and says why. A gate runs as a detached process that outlives the jawan, hook or ssh session
   that started it; the next caller attaches to it instead of starting another. It has no time limit: it is stopped
-  only after printing nothing for `capacity.gateStallMinutes` (default 30). `bin/toli push --gate "<recipe>"` runs
+  only after making no progress for `capacity.gateStallMinutes` (default 30). `bin/toli push --gate "<recipe>"` runs
   the gate first. toli's own pre-push hook skips a commit that already passed and records a clean-tree run for the
   pushed commit (a checkout that differs from it is checked as before, unrecorded). See docs/delivery.md.
 - Heavy-build slots: each machine runs at most `capacity.buildSlots` heavy cargo builds at once (default cores / 6,
@@ -41,6 +41,17 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A gate that works silently (cargo linking hundreds of test binaries before any test prints) is no longer stopped
+  as stalled. Its stall check now is the jawan one: it counts the gate as stuck only when its log did not grow, its
+  checkout did not change and its process tree burned under 10 CPU seconds for the stall minutes. Before, it watched
+  the log alone and killed a busy `just verify all` after 30 minutes without output. A real hang is still stopped
+  after the same time.
+- A stopped gate or jawan run leaves no processes behind. A stall (and a jawan's time limit) sends SIGTERM to the
+  run's whole tree, its own process group included, and SIGKILL after the grace (10 s for a gate, 30 s for omp) to
+  whatever outlives it; the run is recorded stopped only once all are gone. Before, a gate cleared its SIGKILL as
+  soon as its shell died, so a child ignoring SIGTERM ran on; a supervised run did the same, and `bin/toli exec`
+  and scheduled jobs signalled omp alone. Only processes descending from the run are signalled: each is known by
+  pid and start time, so a pid reused by another process (another jawan's build, the user's apps) is never touched.
 - A gate, a commit and a push never take lost git output for an answer. On a loaded machine a git child that
   succeeded has handed back no stdout: a gate then ran at an empty sha and was recorded failed ("HEAD moved"), and an
   empty `git status` could make a dirty checkout look clean. Commit shas are now read with one check (a full sha, read
@@ -69,6 +80,20 @@ one. See docs/releasing.md.
   with them is resumed instead of recorded done.
 - A killed jawan whose shell harness exits 128 + n (`exit 143`) is recorded as killed by that signal (SIGTERM), as a
   harness that dies by the signal itself is.
+- `bin/toli commit toli --merge <ref>` no longer moves the live runtime to the merge: the merged code has not passed
+  `just check` yet, so the runtime stays on the previous commit and the commit says to run `just check`, then
+  `bin/toli self sync`. Before, a merge put a machine's live session on code whose check had not run. Other commits
+  still refresh the runtime themselves.
+- The minute tick never waits on the disk keeper: under the floor it only starts the background keeper
+  (`bin/toli disk keep`, detached, the same tiers and emergency rule) and goes on, and the tick's queue drain runs no
+  keeper of its own. Before, the tick ran the keeper inline, and on an I/O-starved disk one run held the tick up for
+  about an hour. Jawan starts still run it inline first.
+- The disk keeper never touches a build folder in use while free space is over the emergency level (max(5 GB, 3% of
+  the disk)): no wipe between build steps and no sweep of its old artifacts, even under the floor. Before, a sweep of
+  artifacts unused for 180 min ran inside a `target/` whose build held cargo's lock, and a 54-minute build was lost.
+  Under the emergency level the busy-target wipe, the sweep and the last resort run as before. The fallback sweep
+  (free disk unreadable) skips targets in use too. `bin/toli disk keep --wait` is gone: the background keeper no
+  longer waits to wipe busy targets, and a jawan start no longer starts one after its inline run.
 
 ## v0.3.1 - 2026-11-09
 

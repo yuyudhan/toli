@@ -1,8 +1,10 @@
 // Gates: a project's long verification command (e.g. `just verify all`) run at most once per commit. A record per
 // HEAD sha and recipe lives in state/gates/<project>/; a passed one is never run again, a running one is attached to,
 // never started twice. The gate itself runs under a detached runner (`bin/toli gate runner <record>`) that outlives
-// its caller (a jawan ending, a hook timing out, ssh dropping) and has no time limit: it only stops a gate whose log
-// stopped growing for the stall minutes (config/machine.json capacity.gateStallMinutes).
+// its caller (a jawan ending, a hook timing out, ssh dropping) and has no time limit: it only stops a gate that made no
+// progress for the stall minutes (config/machine.json capacity.gateStallMinutes): its log did not grow, its checkout
+// did not change and its process tree burned almost no CPU (the jawan stall check, src/jawans/progress.ts). A build
+// that links silently for a long time keeps its gate alive through its CPU use.
 import { type ChildProcess, spawn as spawnChild } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -11,7 +13,9 @@ import { type Machine, machineSettings } from "../core/config.ts";
 import { checkoutDirty, git, headSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, printJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
-import { killGroup, runMinuteMs } from "../jawans/runs.ts";
+import { watchStall } from "../jawans/progress.ts";
+import { runMinuteMs } from "../jawans/runs.ts";
+import { stopTree } from "../jawans/stop.ts";
 import { toliSelfCheckout } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import {
@@ -30,12 +34,12 @@ import {
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 const TASK_FLAG = "task";
 const DEFAULT_STALL_MINUTES = 30;
-/** After SIGTERM, how long a stopped gate's process group gets before SIGKILL. */
+/** After SIGTERM, how long a stopped gate's processes get before SIGKILL. */
 const STOP_GRACE_MS = 10_000;
 /** How often an attached caller re-reads the record and the log. */
 const FOLLOW_POLL_MS = 250;
 
-/** `capacity.gateStallMinutes`: minutes without new gate output before the runner stops the gate. */
+/** `capacity.gateStallMinutes`: minutes without gate progress (output, file change or CPU use) before it is stopped. */
 function gateStallMinutes(machine: Partial<Machine>): number {
     const raw = machine.capacity?.gateStallMinutes;
     if (raw === undefined) return DEFAULT_STALL_MINUTES;
@@ -210,14 +214,14 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
     return final;
 }
 
-/** The detached runner: run the recipe in its own process group, stop it only when its log stops growing. */
+/** The detached runner: run the recipe in its own process group, stop it only when it stops making progress. */
 async function runGateProcess(file: string): Promise<void> {
     const record = readRecord(file);
     if (record === null) throw new ToliError(`gate record ${file} is gone`);
     // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
     process.on("SIGHUP", () => {});
-    const stallMs = record.stallMinutes * runMinuteMs();
-    const pollMs = Math.max(50, Math.min(1000, stallMs / 10));
+    const minuteMs = runMinuteMs();
+    const pollMs = Math.max(50, Math.min(1000, (record.stallMinutes * minuteMs) / 10));
     const logFd = openSync(record.log, "a");
     let child: ChildProcess;
     try {
@@ -229,6 +233,7 @@ async function runGateProcess(file: string): Promise<void> {
     } finally {
         closeSync(logFd);
     }
+    const spawnedAtMs = Date.now();
     const { promise: exited, resolve: done } = Promise.withResolvers<{
         code: number | null;
         signal: NodeJS.Signals | null;
@@ -237,41 +242,49 @@ async function runGateProcess(file: string): Promise<void> {
     child.on("exit", (code, signal) => done({ code, signal }));
     child.on("error", (error) => done({ code: 127, signal: null, error: error.message }));
     let stopped: { status: GateStatus; reason: string } | null = null;
-    let forceTimer: NodeJS.Timeout | undefined;
+    const stopping: Promise<number[]>[] = [];
     const stop = (status: GateStatus, reason: string): void => {
         if (stopped !== null || child.pid === undefined) return;
         stopped = { status, reason };
-        const group = child.pid;
-        killGroup(group, "SIGTERM");
-        forceTimer = setTimeout(() => killGroup(group, "SIGKILL"), STOP_GRACE_MS);
+        // A reaped root's pid may already be someone else's: only a live (or unreaped) gate is stopped.
+        if (child.exitCode === null && child.signalCode === null)
+            stopping.push(stopTree({ pid: child.pid, spawnedAtMs }, STOP_GRACE_MS));
     };
     for (const signal of ["SIGTERM", "SIGINT"] as const)
         process.on(signal, () => stop("killed", `its runner got ${signal}`));
     let size = statSync(record.log).size;
-    let grewAt = Date.now();
-    const watch = setInterval(() => {
+    const output = setInterval(() => {
         const current = statSync(record.log).size;
-        if (current !== size) {
-            size = current;
-            grewAt = Date.now();
-            updateRecord(file, (entry) => {
-                entry.lastOutputAt = now().toISOString();
-            });
-        } else if (Date.now() - grewAt >= stallMs) {
-            const reason = `no new output for ${record.stallMinutes} minutes; stopped it`;
+        if (current === size) return;
+        size = current;
+        updateRecord(file, (entry) => {
+            entry.lastOutputAt = now().toISOString();
+        });
+    }, pollMs);
+    const stopWatch = watchStall(
+        () => ({ pid: child.pid ?? null, logPath: record.log, sessionDir: null, cwd: record.dir }),
+        record.stallMinutes,
+        minuteMs,
+        () => {
+            const reason = `no new output, file change or CPU use for ${record.stallMinutes} minutes; stopped it`;
             logDecision(record, "stall", `${record.recipe} at ${short(record.sha)}: ${reason}`);
             stop("stalled", reason);
-        }
-    }, pollMs);
+        },
+    );
     const result = await exited;
-    clearInterval(watch);
-    clearTimeout(forceTimer);
+    clearInterval(output);
+    stopWatch();
+    // The recipe's shell may die on SIGTERM while a child that ignores it runs on: the record waits until all are gone.
+    const survivors = (await Promise.all(stopping)).flat();
     const final = updateRecord(file, (entry) => {
         entry.endedAt = now().toISOString();
         entry.exitCode = result.code;
         if (stopped !== null) {
             entry.status = stopped.status;
-            entry.reason = stopped.reason;
+            entry.reason =
+                survivors.length === 0
+                    ? stopped.reason
+                    : `${stopped.reason}; pid ${survivors.join(", ")} outlived SIGKILL`;
         } else if (result.error !== undefined) {
             entry.status = "failed";
             entry.reason = `could not run it: ${result.error}`;

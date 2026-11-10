@@ -135,3 +135,30 @@ describe("the disk keeper's pause marker", () => {
         expect(report.pausedBy).toBe(process.pid);
     });
 });
+
+describe("the disk keeper in the minute tick", () => {
+    keeperTest("the tick leaves the keeping to a detached keeper, so a slow keeper step never holds it up", () => {
+        const box = keeperBox();
+        const [alpha = ""] = clones(box, ["alpha"]);
+        setCapacity(box, { diskKeepGB: 20 });
+        // 1 GB free on a 1000 GB disk, under the floor (20) and the emergency level, and a keeper step that takes
+        // 15 s, as every step does on an I/O-starved disk.
+        box.stub("df", `kb=1048576\n${dfLine(1000)}`);
+        box.stub("docker", "sleep 15; exit 1");
+        const env = { TOLI_DRY_RUN: "0" };
+        const started = Date.now();
+        box.ok(["job", "tick"], { env });
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain(
+            "disk keeper: free 1.0 GB < floor 20.0 GB: started in the background",
+        );
+        // The detached keeper does the work the tick did not wait for, with the same rules.
+        const log = join(box.root, "logs", "disk.log");
+        const deadline = Date.now() + 90_000;
+        const finished = (): boolean => existsSync(log) && readFileSync(log, "utf8").includes("done, still under");
+        while (!finished() && Date.now() < deadline) Bun.sleepSync(200);
+        expect(finished()).toBe(true);
+        expect(existsSync(join(alpha, "target"))).toBe(false);
+        expect(existsSync(join(alpha, "web", "node_modules", "pkg", "index.js"))).toBe(true);
+    });
+});

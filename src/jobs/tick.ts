@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, pidAlive, readJson, runCombined, ToliError } from "../core/util.ts";
+import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
 import { harnessConfig } from "../harness/harness.ts";
@@ -12,6 +12,7 @@ import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
+import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
@@ -63,13 +64,15 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     let stalled = false;
     try {
         const attempt = async (chosen: string | null): Promise<{ code: number; output: string }> => {
-            let pid: number | null = null;
+            let root: StopRoot | null = null;
+            const stopping: Promise<number[]>[] = [];
             const stopWatch = watchStall(
-                () => ({ pid, logPath: null, sessionDir, cwd: paths.root() }),
-                stall * runMinuteMs(),
+                () => ({ pid: root?.pid ?? null, logPath: null, sessionDir, cwd: paths.root() }),
+                stall,
+                runMinuteMs(),
                 () => {
                     stalled = true;
-                    if (pid !== null && pidAlive(pid)) process.kill(pid, "SIGTERM");
+                    if (root !== null) stopping.push(stopTree(root, HARNESS_STOP_GRACE_MS));
                 },
             );
             try {
@@ -78,12 +81,15 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
                     {
                         cwd: paths.root(),
                         onStart: (started) => {
-                            pid = started;
+                            root = { pid: started, spawnedAtMs: Date.now() };
                         },
                     },
                 );
             } finally {
                 stopWatch();
+                // omp's children that ignore SIGTERM end with it: the attempt is over once none is left.
+                const survivors = (await Promise.all(stopping)).flat();
+                if (survivors.length > 0) warn(`job ${name}: pid ${survivors.join(", ")} outlived SIGKILL`);
             }
         };
         result = await attempt(model);
@@ -193,12 +199,13 @@ export async function tick(): Promise<void> {
     if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
     for (const error of outbox.errors) log(`outbox: pending ${error}`);
     for (const note of failStaleRuns()) log(note);
-    // Low disk never stops work: free build output first (src/fleet/disk.ts), every minute, before anything starts.
-    const disk = keepDiskBeforeWork();
+    // Low disk never stops work: under the floor the tick starts the disk keeper detached (src/fleet/disk.ts) and goes
+    // on, so a keeper slowed by a starved disk never holds up a tick. The queue drain below leaves the disk to it.
+    const disk = keepDiskBeforeWork("detached");
     if (disk) log(disk);
     // Queued jawan runs start as slots free; the finishing run's supervisor does this too, this catches the rest.
     try {
-        for (const note of drainQueue()) log(note);
+        for (const note of drainQueue({ diskKept: true })) log(note);
     } catch (error) {
         log(`queued jawan runs not started: ${error instanceof Error ? error.message : String(error)}`);
     }

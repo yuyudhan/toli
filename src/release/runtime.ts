@@ -12,8 +12,9 @@
 //
 // `bin/toli self sync` snapshots the checkout's HEAD, runs the snapshot once (`self status --json`, which loads every
 // command module and proves the snapshot serves this checkout) and only then repoints state/runtime; a snapshot that
-// does not load is refused and the live session keeps the previous one. `bin/toli commit toli` and `bin/toli upgrade`
-// sync after they move HEAD. TOLI_DEV=1 (or TOLI_ROOT, which the tests set) makes bin/toli run the working tree.
+// does not load is refused and the live session keeps the previous one. `bin/toli commit toli` (but a `--merge`, whose
+// merged code has not passed `just check` yet) and `bin/toli upgrade` sync after they move HEAD. TOLI_DEV=1 (or
+// TOLI_ROOT, which the tests set) makes bin/toli run the working tree.
 import { createHash } from "node:crypto";
 import {
     existsSync,

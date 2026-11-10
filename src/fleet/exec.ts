@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, pidAlive, readStdin, requireName, runTee, stamp, type TeeResult, ToliError, warn } from "../core/util.ts";
+import { now, readStdin, requireName, runTee, stamp, type TeeResult, ToliError, warn } from "../core/util.ts";
 import { harnessConfig, parseWork, type WorkType } from "../harness/harness.ts";
 import {
     briefTier,
@@ -25,6 +25,7 @@ import { recordRun, sessionFile } from "../jawans/launch.ts";
 import { continuePrompt, hasReport, usedTimeLimit } from "../jawans/limits.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { loadRun, runMinuteMs, updateRun } from "../jawans/runs.ts";
+import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
 import { keepDiskBeforeWork } from "./disk.ts";
 import {
@@ -140,15 +141,17 @@ export async function execCommand(argv: string[]): Promise<number> {
     ): Promise<ExecAttempt> => {
         const offset = existsSync(jawan.logPath) ? statSync(jawan.logPath).size : 0;
         const launched = Date.now();
-        let pid: number | null = null;
+        let root: StopRoot | null = null;
         let stalled = false;
+        const stopping: Promise<number[]>[] = [];
         const stopWatch = watchStall(
-            () => ({ pid, logPath: jawan.logPath, sessionDir, cwd: paths.root() }),
-            stall * runMinuteMs(),
+            () => ({ pid: root?.pid ?? null, logPath: jawan.logPath, sessionDir, cwd: paths.root() }),
+            stall,
+            runMinuteMs(),
             () => {
                 stalled = true;
                 warn(`exec: ${stallText(stall)}; stopping omp`);
-                if (pid !== null && pidAlive(pid)) process.kill(pid, "SIGTERM");
+                if (root !== null) stopping.push(stopTree(root, HARNESS_STOP_GRACE_MS));
             },
         );
         try {
@@ -164,7 +167,7 @@ export async function execCommand(argv: string[]): Promise<number> {
                     ...(timeoutMs === undefined ? {} : { timeoutMs }),
                     env: { [ISSUED_BY_ENV]: from, [ISSUED_TASK_ENV]: task ?? undefined },
                     onStart: (started) => {
-                        pid = started;
+                        root = { pid: started, spawnedAtMs: Date.now() };
                         updateRun(jawan.id, (record) => {
                             record.pid = started;
                         });
@@ -175,6 +178,9 @@ export async function execCommand(argv: string[]): Promise<number> {
             return { ...result, output, stalled, elapsedMs: Date.now() - launched };
         } finally {
             stopWatch();
+            // omp's children that ignore SIGTERM end with it: the attempt is over once none is left.
+            const survivors = (await Promise.all(stopping)).flat();
+            if (survivors.length > 0) warn(`exec: pid ${survivors.join(", ")} outlived SIGKILL`);
         }
     };
     /** How the attempt stopped without a report, in words; null when it finished or reported. */

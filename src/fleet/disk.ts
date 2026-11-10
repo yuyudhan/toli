@@ -9,25 +9,25 @@
 //      while no jawan of the project runs);
 //   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune -af`; never volumes);
 //   4. sccache's local cache entries past its own cap;
-//   5. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
-//      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open. A target
-//      that stays in use (builds back to back) is swept instead: every artifact in it unused for
-//      capacity.diskSweepStaleMinutes (default 180) goes, lock or no lock (src/fleet/stale-sweep.ts);
-//   6. last resort, only under the emergency level (max(5 GB, 3% of the disk), at most the floor) after 1 to 5: every
-//      `target/` left, in use or not, then every `node_modules/` (but a main clone's) and `dist/` and Playwright's
-//      browser cache. All of it rebuilds itself; a build cut off fails once and compiles again. Between the floor and
-//      the emergency level only idle output goes, so a disk a little under its floor never cuts a build off.
+//   5. under the emergency level only (max(5 GB, 3% of the disk), at most the floor): `target/` folders of busy
+//      checkouts, between build steps: under cargo's own locks, with no cargo running in its workspace (cargo test
+//      runs its test binaries after dropping the locks) and no file in it open. A target that stays in use (builds
+//      back to back) is swept instead: every artifact in it unused for capacity.diskSweepStaleMinutes (default 180)
+//      goes, lock or no lock (src/fleet/stale-sweep.ts);
+//   6. last resort, under the emergency level after 1 to 5: every `target/` left, in use or not, then every
+//      `node_modules/` (but a main clone's) and `dist/` and Playwright's browser cache. All of it rebuilds itself; a
+//      build cut off fails once and compiles again. Over the emergency level build output in use is never touched, not
+//      even a sweep of its old artifacts, so a disk a little under its floor never costs a build its output.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
-// touched. Every action goes to logs/disk.log. It runs inline before every jawan start and from the minute tick.
+// touched. Every action goes to logs/disk.log. It runs inline before every jawan start; the minute tick starts it
+// detached (disk-state.ts keepDiskDetached), so a keeper slowed by a starved disk never holds the tick up.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
 // state/disk-keep.pause; the keeper deletes nothing while that pid is alive and the file was touched within 2 h (a
 // longer job touches it again). It ignores the file once the pid is dead, and drops it, logged once, once it is older.
-// A keeper already waiting for a busy target to pause checks the marker again before every try.
 // On a full disk it still works: it writes nothing before it has freed something (log lines wait in memory; a keeper
 // lock it cannot write is done without), no failed write stops it, and when the keeper fails anyway the fallback
-// sweeps stale artifacts out of every target, writing nothing first.
+// sweeps stale artifacts out of every target nothing uses, writing nothing first.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { cpus } from "node:os";
 import { dirname } from "node:path";
 import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
@@ -55,18 +55,12 @@ import {
     GIB,
     gb,
     KEEPER_LOCK,
+    keepDiskDetached,
+    machineFloor,
     PAUSE_EXPIRY_MS,
     releaseKeeper,
-    startBackgroundKeeper,
 } from "./disk-state.ts";
-import {
-    capacityFor,
-    diskEmergencyGB,
-    diskKeepFloor,
-    diskSweepStaleMinutes,
-    measureDisk,
-    measureVolume,
-} from "./resources.ts";
+import { diskEmergencyGB, diskSweepStaleMinutes, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep, sweepLine, sweepStaleArtifacts } from "./stale-sweep.ts";
 
 export type KeepOptions = {
@@ -74,8 +68,6 @@ export type KeepOptions = {
     floorGB?: number;
     /** Plan only: report what would go, counting each folder's size as freed. Also on with TOLI_DRY_RUN=1. */
     dryRun?: boolean;
-    /** How long to wait for a busy target's builds to pause (tier 5); 0 tries once. */
-    lockWaitMs?: number;
     /** Also print each line (the CLI); every line goes to logs/disk.log either way. */
     echo?: boolean;
 };
@@ -123,10 +115,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
     if (typeof volume === "string") throw new ToliError(`cannot read free disk: ${volume}`);
     const freeBeforeGB = volume.freeGB;
     // An explicit floor is the caller's choice; the configured one is capped so a small disk is never emptied.
-    const floor =
-        options.floorGB === undefined
-            ? diskKeepFloor(capacityFor(machine, Math.max(1, cpus().length)).diskKeepGB, volume.totalGB)
-            : { floorGB: options.floorGB };
+    const floor = options.floorGB === undefined ? machineFloor(machine, volume.totalGB) : { floorGB: options.floorGB };
     const floorGB = floor.floorGB;
     const report: KeepReport = {
         floorGB,
@@ -246,7 +235,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             }
         };
         // 1 and 2: idle checkouts. The target wipe still takes cargo's locks once, for builds run from elsewhere.
-        idleTier(["target"], (dir) => wipeOutcome(dir.path, 0));
+        idleTier(["target"], (dir) => wipeOutcome(dir.path));
         idleTier(["node_modules", "dist"], (dir) => {
             const open = openBelow(dir.path);
             if (open.length > 0) return `open files, e.g. ${open.join(", ")}`;
@@ -256,16 +245,22 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         // 3 and 4: machine-wide caches.
         if (!enough()) pruneDocker(dryRun, say);
         if (!enough()) trimSccache(dryRun, say);
-        // 5: every target still here, busy ones included, between build steps: "a run is active" never means
-        // "do nothing". Builds pause between cargo invocations; the wipe takes such a pause under cargo's locks. A
-        // target with no pause right now (builds back to back) has its stale artifacts swept instead, lock or not.
+        // 5: under the emergency level only, every target still here, busy ones included, between build steps.
+        // Builds pause between cargo invocations; the wipe takes such a pause under cargo's locks. A target with no
+        // pause right now (builds back to back) has its stale artifacts swept instead, lock or not. Over the
+        // emergency level a target in use is never touched: losing a long build's output costs more than the space.
         const busy = dirs.filter((dir) => dir.kind === "target" && !done.has(dir.path));
         for (const dir of busy) {
             if (enough()) break;
+            if (free() >= report.emergencyGB) {
+                const level = `the emergency level ${gb(report.emergencyGB)}`;
+                say(`kept ${dir.path} in use: free ${gb(free())} is over ${level}`);
+                continue;
+            }
             const why = kept.get(dir.path);
             if (why?.tried !== true) {
                 say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps`);
-                remove(dir.path, () => wipeOutcome(dir.path, 0));
+                remove(dir.path, () => wipeOutcome(dir.path));
             }
             if (done.has(dir.path) || enough()) continue;
             const swept = sweepStaleArtifacts(dir.path, staleMinutes, dryRun);
@@ -298,18 +293,6 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 for (const path of browsers) if (!enough()) force(path);
             }
         }
-        // The background keeper then waits for a pause in what is still busy, for up to waitMs per target.
-        const waitMs = options.lockWaitMs ?? 0;
-        if (waitMs > 0 && !report.lastResort) {
-            for (const dir of busy) {
-                if (enough()) break;
-                if (done.has(dir.path)) continue;
-                const why = kept.get(dir.path)?.reason ?? "no reason recorded";
-                const wait = `waiting up to ${Math.round(waitMs / 60_000)} min for a pause`;
-                say(`${dir.path} is in use (${why}): wiping it between build steps, ${wait}`);
-                remove(dir.path, () => wipeOutcome(dir.path, waitMs));
-            }
-        }
         report.freeAfterGB = free();
         say(
             report.freeAfterGB >= floorGB
@@ -324,8 +307,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
     return report;
 }
 
-function wipeOutcome(target: string, waitMs: number): string | null {
-    const outcome = wipeTargetBetweenBuilds(target, waitMs, () => {
+function wipeOutcome(target: string): string | null {
+    const outcome = wipeTargetBetweenBuilds(target, 0, () => {
         const pause = diskPause();
         return pause === null ? null : `paused by pid ${pause.pid} (state/disk-keep.pause)`;
     });
@@ -343,33 +326,28 @@ function forceDelete(path: string): string | null {
 }
 
 /**
- * Before work starts (each jawan launch, each tick): free disk inline without waiting on busy builds, then leave a
- * background keeper waiting for them if that was not enough. Never throws: disk never stops work.
+ * Before work starts (each jawan launch): free disk inline. `detached` (the minute tick) only starts the background
+ * keeper, to do all of it. Never throws: disk never stops work.
  */
-export function keepDiskBeforeWork(): string | null {
+export function keepDiskBeforeWork(mode: "inline" | "detached" = "inline"): string | null {
+    if (mode === "detached") return keepDiskDetached(envDryRun());
     let report: KeepReport;
     try {
-        report = keepDisk({ lockWaitMs: 0 });
+        report = keepDisk();
     } catch (error) {
         fallbackSweep(error, false, envDryRun());
         return `disk keeper failed: ${describe(error)}; swept stale artifacts instead (logs/disk.log)`;
     }
     if (!report.ran) return null;
-    try {
-        if (!report.dryRun && report.freeAfterGB < report.floorGB) startBackgroundKeeper();
-    } catch (error) {
-        return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)}; background keeper not started: ${describe(error)}`;
-    }
     const cut = report.lastResort ? "; build output in use was deleted too, so a build may need running again" : "";
     return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (${floorText(report)})${cut}`;
 }
 
-/** `toli disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]`. */
+/** `toli disk keep [--dry-run] [--floor <GB>] [--json]`. */
 export function diskCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
-    if (sub !== "keep")
-        throw new ToliError("usage: toli disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]");
-    const args = new Args(rest, { booleans: ["dry-run", "json"], values: ["floor", "wait"] });
+    if (sub !== "keep") throw new ToliError("usage: toli disk keep [--dry-run] [--floor <GB>] [--json]");
+    const args = new Args(rest, { booleans: ["dry-run", "json"], values: ["floor"] });
     args.maxPositional(0);
     const number = (name: string): number | undefined => {
         const raw = args.str(name);
@@ -379,7 +357,6 @@ export function diskCommand(argv: string[]): void {
         return value;
     };
     const floorGB = number("floor");
-    const waitMinutes = number("wait");
     const json = args.bool("json");
     const dryRun = args.bool("dry-run");
     let report: KeepReport;
@@ -387,7 +364,6 @@ export function diskCommand(argv: string[]): void {
         report = keepDisk({
             dryRun,
             ...(floorGB === undefined ? {} : { floorGB }),
-            lockWaitMs: (waitMinutes ?? 0) * 60_000,
             echo: !json,
         });
     } catch (error) {

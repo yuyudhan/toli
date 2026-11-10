@@ -1,6 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pidAlive } from "../src/core/util.ts";
 import { GIT_ENV, type Sandbox, sandbox, TOLI_BIN, withProject } from "./helpers.ts";
 
 // Gates run real detached runners and wait on them; on a loaded machine one test can take tens of seconds.
@@ -170,7 +171,8 @@ describe("gate", () => {
         const ok = box.ok(["gate", "run", "app", "--recipe", steady, "--stall", "1"], { env: FAST });
         expect(ok).toContain("passed");
         commitFile(box, dir, "a.txt");
-        const silent = recipe(box, "silent", "echo started; sleep 30; echo never");
+        // `&&`: a shell signalled with its group can still run the next line once sleep died (macOS sh, under load).
+        const silent = recipe(box, "silent", "echo started; sleep 30 && echo never");
         const started = Date.now();
         const stalled = box.toli(["gate", "run", "app", "--recipe", silent, "--stall", "1"], { env: FAST });
         expect(Date.now() - started).toBeLessThan(20_000);
@@ -181,6 +183,50 @@ describe("gate", () => {
         expect(record?.reason).toContain("no new output");
         expect(readFileSync(record?.log ?? "", "utf8")).not.toContain("never");
         expect(gatesLog(box)).toMatch(/ app [0-9a-f]{12} stall: /);
+    });
+
+    test("a silent gate whose processes burn CPU outlives the stall limit; an idle silent one is still stopped", () => {
+        const { box, dir } = setup();
+        // The default stall limit (30 minutes, the CPU rule's 10 seconds about 0.6% of a core) squeezed into three
+        // seconds: a 100 ms minute. A one-minute limit would ask a sixth of a core, which a loaded machine can deny.
+        const minutes = { TOLI_RUN_MINUTE_MS: "100" };
+        // Seven seconds of silent CPU from one process (a build linking quietly), over twice the three-second limit.
+        const burn = `"${process.execPath}" -e 'const end = Date.now() + 7000; while (Date.now() < end) {}'`;
+        const busy = recipe(box, "busy", `${burn}; echo linked`);
+        const ok = box.toli(["gate", "run", "app", "--recipe", busy, "--stall", "30"], { env: minutes });
+        // The whole record on a mismatch: its status, reason and timestamps say how the run ended.
+        expect(records(box).find((entry) => entry.recipe === busy)).toMatchObject({ status: "passed", exitCode: 0 });
+        expect(ok.stderr).not.toContain("stalled");
+        expect(ok.code).toBe(0);
+        commitFile(box, dir, "a.txt");
+        const idle = recipe(box, "idle", "sleep 30 && echo never");
+        const started = Date.now();
+        const stalled = box.toli(["gate", "run", "app", "--recipe", idle, "--stall", "30"], { env: minutes });
+        const record = records(box).find((entry) => entry.recipe === idle);
+        expect({ record, ms: Date.now() - started }).toMatchObject({ record: { status: "stalled" } });
+        expect(Date.now() - started).toBeLessThan(20_000);
+        expect(stalled.code).toBe(1);
+        expect(record?.reason).toContain("CPU use");
+        expect(readFileSync(record?.log ?? "", "utf8")).not.toContain("never");
+    });
+
+    test("a stopped gate's child that ignores SIGTERM is killed; a process started alongside survives", () => {
+        const { box } = setup();
+        const pidFile = join(box.root, "survivor");
+        const body = `(trap "" TERM; exec sleep 300) & echo $! > "${pidFile}"; wait`;
+        const stubborn = recipe(box, "stubborn", body);
+        const alongside = Bun.spawn(["sleep", "300"], { stdout: "ignore", stderr: "ignore" });
+        const result = box.toli(["gate", "run", "app", "--recipe", stubborn, "--stall", "1"], { env: FAST });
+        const survivor = Number(readFileSync(pidFile, "utf8").trim());
+        try {
+            expect(records(box).find((entry) => entry.recipe === stubborn)).toMatchObject({ status: "stalled" });
+            expect(result.code).toBe(1);
+            expect(pidAlive(survivor)).toBe(false);
+            expect(pidAlive(alongside.pid)).toBe(true);
+        } finally {
+            if (pidAlive(survivor)) process.kill(survivor, "SIGKILL");
+            alongside.kill("SIGKILL");
+        }
     });
 
     test("a second run attaches to the running gate, and the runner outlives a killed caller", async () => {

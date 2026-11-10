@@ -9,22 +9,25 @@ is 17.5 GB, and `bin/toli disk keep` says so: `floor 17.5 GB (15% of 117.0 GB di
 it)` (`--json`: `floorGB`, `floorNote`, `diskTotalGB`; the same text reaches `logs/disk.log` whenever the keeper
 runs or skips).
 
-**A full disk means delete the build folders.** Every `target/` folder can go at any time, even one a running build
-uses: cargo builds it again. If free space is still under the emergency level after the normal steps (max(5 GB, 3%
-of the disk), never above the floor; `--json`: `emergencyGB`), the keeper deletes every `target/` folder in the
-clones and task worktrees, in use or not, then the rest of the build output (step 6). Between the floor and the
-emergency level it deletes only what the normal steps allow, so a disk a little under its floor never costs a
-running build its output. A Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep` and
-never asks first.
+**A full disk means delete the build folders.** Every `target/` folder can go when the disk is nearly full, even one a
+running build uses: cargo builds it again. If free space is still under the emergency level after the idle steps
+(max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper wipes or sweeps busy targets
+between build steps (step 5), then deletes every `target/` folder in the clones and task worktrees, in use or not,
+then the rest of the build output (step 6). Over the emergency level a build folder in use is never touched, not even
+a sweep of its old artifacts, so a disk a little under its floor never costs a running build its output. A Sardar or
+jawan on any machine that finds its disk full runs `bin/toli disk keep` and never asks first.
 
-    bin/toli disk keep [--dry-run] [--floor <GB>] [--wait <minutes>] [--json]
+    bin/toli disk keep [--dry-run] [--floor <GB>] [--json]
 
 ## When it runs
 
-- Before every jawan starts (`bin/toli spawn`, queued runs, automatic continuations) and before every `bin/toli exec`.
-  It runs inline and does not wait on busy builds. If that leaves the disk under the floor, it starts a background
-  `bin/toli disk keep --wait 30`, and the run starts anyway.
-- Every minute from the tick (`bin/toli schedule install`), the same way.
+- Before every jawan starts (`bin/toli spawn`, queued runs a finishing run starts, automatic continuations) and
+  before every `bin/toli exec`. It runs inline, and the run starts anyway.
+- Every minute from the tick (`bin/toli schedule install`), detached: the tick only reads free disk and, under the
+  floor, starts a background `bin/toli disk keep` to do all of it (every step below, the last resort included), then
+  goes on.
+  The tick's own queue drain runs no keeper. A slow keeper (on an I/O-starved disk one run can take an hour) so never
+  holds up a tick. Nothing starts while a keeper runs or a live pause holds it; in a dry run nothing starts.
 - By hand, with `bin/toli disk keep`. `--dry-run` (or `TOLI_DRY_RUN=1`) lists what would go and counts each folder's
   size as freed. `--floor` overrides the floor and is not capped (it is the caller's choice), so a dry run with a high
   floor shows the whole plan.
@@ -56,7 +59,7 @@ It stops as soon as free space is back at the floor: no margin on top, since eve
 that is one a build would have reused, and the keeper runs again before the next jawan starts and every minute
 anyway. Within each step it takes the least recently used folders first (by the newest modification time of the
 folder and its direct children: a build rewrites `target/debug`, `node_modules/.bin`), so the output of the work
-going on now goes last. Steps 1 to 5 spare build output in use; step 6, under the emergency level only, does not.
+going on now goes last. Steps 1 to 4 spare build output in use; steps 5 and 6, under the emergency level only, do not.
 
 1. Whole `target/` folders of project checkouts that nothing uses. A checkout is all registered projects' clones
    plus their git worktrees. Nothing uses it when no running jawan works in it (or, for a main clone, on its
@@ -68,7 +71,9 @@ going on now goes last. Steps 1 to 5 spare build output in use; step 6, under th
 3. Docker: `docker builder prune -af`, then `docker image prune -af`. It never touches volumes or containers.
 4. sccache: when its local cache is over its own cap, the oldest entries until it is back under the cap. A missing
    entry is only a cache miss.
-5. Every `target/` still left, busy checkouts included, between build steps. A busy target is never simply skipped.
+5. Only under the emergency level (see 6): every `target/` still left, busy checkouts included, between build steps.
+   Over that level a target in use is left whole (`kept <target> in use: free X GB is over the emergency level Y GB`):
+   its build may have run for an hour, and the disk is not yet full.
    The keeper takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; cargo holds
    them while it compiles) and then checks that no process uses the target. Cargo releases its locks before it runs
    the test binaries, so the locks alone are not enough. The target is in use when, from the process table (`ps`,
@@ -99,13 +104,12 @@ going on now goes last. Steps 1 to 5 spare build output in use; step 6, under th
     runs or maps (lsof; `/proc` on Linux). Cargo rebuilds an artifact it finds missing; a build already running that
     needs one swept from under it fails once and rebuilds it when run again.
 
-    The inline keeper tries the wipe once and then sweeps; the background keeper also retries the wipe for up to 30
-    minutes per target and checks `state/disk-keep.pause` again before every try, so a job that writes the pause while
-    the keeper waits is not cut off.
+    The keeper tries the wipe once and then sweeps; it checks `state/disk-keep.pause` before the wipe, so a job that
+    writes the pause is not cut off.
 
 6. The last resort, only when free space is still under the emergency level after steps 1 to 5: max(5 GB, 3% of the
    disk), never above the floor (6.8 GB on a 228 GB disk, 14 GB on a 468 GB one). Under the floor but over that
-   level the keeper stops after step 5 (`done, still under the floor`) and build output in use stays. Under it,
+   level the keeper stops after step 4 (`done, still under the floor`) and build output in use stays. Under it,
    every `target/` folder still there, in use or not, held lock or not, is deleted outright (`free X GB is under the
 emergency level Y GB: deleting every build folder left, in use or not`). Then, until free space reaches the
    floor, every `node_modules/` (never a main clone's, see 2) and `dist/` left (Vite's cache is
@@ -114,8 +118,7 @@ emergency level Y GB: deleting every build folder left, in use or not`). Then, u
    Linux; `playwright install` fetches them again). Docker's build cache already went in step 3. Each deletion is
    logged with what it freed (`deleted <path>, freed X GB`), and an in-use folder first with why it was in use
    (`<path> is in use (...): deleting it anyway`); `--json` sets `lastResort`. A build that loses its target fails
-   once and compiles again; the message before a jawan start says so. The background keeper does not wait on busy
-   targets after this.
+   once and compiles again; the message before a jawan start says so.
 
 ## On a full disk
 
@@ -125,9 +128,10 @@ memory until the first deletion (then go to `logs/disk.log`), `bin/toli disk` ru
 `freeing without the keeper lock`). A write that fails never stops it. It runs no shell and expands no glob, so it
 behaves the same under any login shell (a zsh loop over `*/target` aborts with `no matches found` when one pattern
 matches nothing). If the keeper fails anyway (free disk unreadable, a broken `config/machine.json`), a fallback
-sweeps the stale artifacts out of every target as above, with no lock and no free-disk reading, then the command
-exits 1 with the reason instead of a crash. The keeper run before every jawan start and from the tick falls back the
-same way.
+sweeps the stale artifacts out of every target nothing uses, as above, with no lock and no free-disk reading. Since it
+cannot tell whether the disk is under the emergency level, a target in use stays whole (`kept <target>: in use
+(...)`). Then the command exits 1 with the reason instead of a crash. The keeper run before every jawan start and
+from the tick falls back the same way.
 
 If `bin/toli` itself cannot run, delete the git-ignored `target/` folders by hand with `find` from the toli checkout
 (no glob, nothing written; a tracked folder named `target` is not ignored, so it stays), then run `bin/toli disk keep`:
