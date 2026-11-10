@@ -1,6 +1,7 @@
 import { spyOn } from "bun:test";
 import {
     chmodSync,
+    cpSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
@@ -166,18 +167,31 @@ esac`,
     };
 }
 
-/** A bare "origin" repo with one commit on main, plus `projects/<name>` registered via `toli project add`. */
+/** The bare seed origin withProject copies, built once per run. */
+let seedOrigin: string | null = null;
+
+/**
+ * A bare "origin" repo with one commit on main, plus `projects/<name>` registered via `toli project add`. The origin
+ * is a copy of one seed repo built on the first call: building it costs five git processes, which add up to seconds
+ * per test on a loaded machine, and a copy spawns nothing. Each copy is its own repo, so pushes stay per test.
+ */
 export function withProject(box: Sandbox, name: string): string {
+    if (seedOrigin === null) {
+        const dir = tempDir("seed-origin");
+        const bare = join(dir, "origin.git");
+        const seed = join(dir, "seed");
+        mkdirSync(bare);
+        mkdirSync(seed);
+        box.git(bare, ["init", "--bare", "--initial-branch=main"]);
+        box.git(seed, ["init", "--initial-branch=main"]);
+        writeFileSync(join(seed, "README"), "seed\n");
+        box.git(seed, ["add", "README"]);
+        box.git(seed, ["commit", "-m", "seed"]);
+        box.git(seed, ["push", bare, "main"]);
+        seedOrigin = bare;
+    }
     const origin = join(box.root, ".origin", `${name}.git`);
-    const seed = join(box.root, ".seed", name);
-    mkdirSync(origin, { recursive: true });
-    mkdirSync(seed, { recursive: true });
-    box.git(origin, ["init", "--bare", "--initial-branch=main"]);
-    box.git(seed, ["init", "--initial-branch=main"]);
-    writeFileSync(join(seed, "README"), "seed\n");
-    box.git(seed, ["add", "README"]);
-    box.git(seed, ["commit", "-m", "seed"]);
-    box.git(seed, ["push", origin, "main"]);
+    cpSync(seedOrigin, origin, { recursive: true });
     box.ok(["project", "add", name, origin]);
     return join(box.root, "projects", name);
 }

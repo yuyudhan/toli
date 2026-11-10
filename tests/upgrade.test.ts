@@ -1,5 +1,5 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
     describeInstalled,
@@ -9,47 +9,12 @@ import {
     versionCommand,
 } from "../src/release/upgrade.ts";
 import { commandIn, type Sandbox, sandbox, tempDir } from "./helpers.ts";
+import { releaseInstall as releaseCheckout } from "./release-fixture.ts";
 
-// Each test builds a release repo with ~20 git processes plus several bin/toli runs (~1.5 s idle); under a loaded
-// machine that can pass Bun's 5 s default, so this file allows 20 s per test.
-setDefaultTimeout(20_000);
-
-const FAKE_TOLI = '#!/bin/sh\necho "fake toli $*"\n';
-
-function changelog(versions: string[]): string {
-    const sections = versions.map((version) => `## ${version} - 2026-10-30\n\n### Added\n\n- Feature of ${version}\n`);
-    return `# Changelog\n\n${sections.join("\n")}`;
-}
-
-/**
- * The sandbox root as a release install: an `origin` bare repo with tags v0.1.0, v0.2.0 and the pre-release
- * v0.3.0-rc.1, and the root checked out detached at v0.1.0. bin/toli in the release is a stub that echoes its args.
- */
+/** The sandbox root as a release install detached at v0.1.0 (tests/release-fixture.ts), with a private data file. */
 function releaseInstall(): Sandbox {
     const box = sandbox();
-    const origin = join(box.root, ".origin", "toli.git");
-    const seed = join(box.root, ".seed");
-    mkdirSync(origin, { recursive: true });
-    mkdirSync(join(seed, "bin"), { recursive: true });
-    box.git(origin, ["init", "--bare", "--initial-branch=main"]);
-    box.git(seed, ["init", "--initial-branch=main"]);
-    writeFileSync(join(seed, ".gitignore"), "/data/\n/.stubs/\n/.origin/\n/.seed/\n");
-    writeFileSync(join(seed, "bin", "toli"), FAKE_TOLI);
-    chmodSync(join(seed, "bin", "toli"), 0o755);
-    const released: string[] = [];
-    for (const version of ["v0.1.0", "v0.2.0", "v0.3.0-rc.1"]) {
-        released.unshift(version);
-        writeFileSync(join(seed, "package.json"), `{ "version": "${version.slice(1)}" }\n`);
-        writeFileSync(join(seed, "CHANGELOG.md"), changelog(released));
-        box.git(seed, ["add", "-A"]);
-        box.git(seed, ["commit", "-m", `Release ${version}`]);
-        box.git(seed, ["tag", "--annotate", version, "--message", version]);
-    }
-    box.git(seed, ["push", "--quiet", origin, "main", "--tags"]);
-    box.git(box.root, ["init", "--initial-branch=main"]);
-    box.git(box.root, ["remote", "add", "origin", origin]);
-    box.git(box.root, ["fetch", "--quiet", "origin", "refs/tags/v0.1.0:refs/tags/v0.1.0"]);
-    box.git(box.root, ["checkout", "--quiet", "--detach", "v0.1.0"]);
+    releaseCheckout(box, "v0.1.0");
     mkdirSync(join(box.root, "data"));
     writeFileSync(join(box.root, "data", "preferences.md"), "private\n");
     return box;

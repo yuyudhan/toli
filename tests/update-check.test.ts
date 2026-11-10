@@ -1,53 +1,21 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkDue, type UpdateState } from "../src/release/update-check.ts";
 import { type Sandbox, sandbox } from "./helpers.ts";
-
-// Each test builds a release repo with ~20 git processes plus several bin/toli runs; allow 20 s per test.
-setDefaultTimeout(20_000);
+import { releaseInstall as releaseCheckout } from "./release-fixture.ts";
 
 const NOW = "2026-11-01T09:00:00.000Z";
 const DAY_MS = 86_400_000;
 const later = (days: number): string => new Date(Date.parse(NOW) + days * DAY_MS).toISOString();
 
-function changelog(versions: string[]): string {
-    const sections = versions.map((version) => `## ${version} - 2026-10-30\n\n### Added\n\n- Feature of ${version}\n`);
-    return `# Changelog\n\n${sections.join("\n")}`;
-}
-
 /**
- * The sandbox root as a release install: an `origin` bare repo with tags v0.1.0, v0.2.0 and the pre-release
- * v0.3.0-rc.1, the root checked out detached at `installed`, and a `git` wrapper that logs every ls-remote.
+ * The sandbox root as a release install checked out detached at `installed` (tests/release-fixture.ts), with a
+ * `git` wrapper that logs every ls-remote.
  */
 function releaseInstall(installed = "v0.1.0"): Sandbox {
     const box = sandbox();
-    const origin = join(box.root, ".origin", "toli.git");
-    const seed = join(box.root, ".seed");
-    mkdirSync(origin, { recursive: true });
-    mkdirSync(join(seed, "bin"), { recursive: true });
-    box.git(origin, ["init", "--bare", "--initial-branch=main"]);
-    box.git(seed, ["init", "--initial-branch=main"]);
-    writeFileSync(
-        join(seed, ".gitignore"),
-        "/data/\n/state/\n/config/\n/logs/\n/.stubs/\n/.origin/\n/.seed/\n/ls-remote.log\n",
-    );
-    writeFileSync(join(seed, "bin", "toli"), '#!/bin/sh\necho "fake toli $*"\n');
-    chmodSync(join(seed, "bin", "toli"), 0o755);
-    const released: string[] = [];
-    for (const version of ["v0.1.0", "v0.2.0", "v0.3.0-rc.1"]) {
-        released.unshift(version);
-        writeFileSync(join(seed, "package.json"), `{ "version": "${version.slice(1)}" }\n`);
-        writeFileSync(join(seed, "CHANGELOG.md"), changelog(released));
-        box.git(seed, ["add", "-A"]);
-        box.git(seed, ["commit", "-m", `Release ${version}`]);
-        box.git(seed, ["tag", "--annotate", version, "--message", version]);
-    }
-    box.git(seed, ["push", "--quiet", origin, "main", "--tags"]);
-    box.git(box.root, ["init", "--initial-branch=main"]);
-    box.git(box.root, ["remote", "add", "origin", origin]);
-    box.git(box.root, ["fetch", "--quiet", "origin", `refs/tags/${installed}:refs/tags/${installed}`]);
-    box.git(box.root, ["checkout", "--quiet", "--detach", installed]);
+    releaseCheckout(box, installed);
     const realGit = Bun.which("git");
     if (realGit === null) throw new Error("git not found");
     // ls-remote is logged, and takes 2 s while a `slow` file exists in the root.
@@ -251,6 +219,7 @@ describe("robustness", () => {
         expect(state(box).changelog).toContain("Feature of v0.2.0");
     });
 
+    // Like the tick test above: the detached check (here with a 2 s ls-remote) can take tens of seconds under load.
     test("the tick claims a due check before it returns, so the next tick does not start another", () => {
         const box = releaseInstall();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
@@ -258,9 +227,9 @@ describe("robustness", () => {
         box.ok(["job", "tick"], { now: NOW });
         expect(state(box).lastAttempt).toBe(NOW);
         box.ok(["job", "tick"], { now: NOW });
-        const deadline = Date.now() + 10_000;
+        const deadline = Date.now() + 60_000;
         while (state(box).lastChecked === undefined && Date.now() < deadline) Bun.sleepSync(100);
         expect(state(box).latest).toBe("v0.2.0");
         expect(lsRemoteCalls(box)).toBe(1);
-    });
+    }, 90_000);
 });
