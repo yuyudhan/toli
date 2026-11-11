@@ -9,7 +9,7 @@ Everything in this directory is gitignored: it never reaches the toli repo or it
 
 - scripts/        helper programs (any language) that the lead's workers write on request
 - helpers.json    the registry: each helper's exec, args and schedule
-- hooks/          optional executables toli runs itself: post-init, pre-tick, post-tick
+- hooks/          optional executables toli runs itself: post-init, pre-tick, post-tick, task-end
 
 Install a registered helper with \`bin/toli helper install <name>\` and check it with
 \`bin/toli helper status\`. The format and commands are in docs/helpers.md.
@@ -24,16 +24,16 @@ export function seedLocal(): void {
     if (!existsSync(paths.helpersConfig())) writeFileSync(paths.helpersConfig(), '{\n    "helpers": []\n}\n');
 }
 
-export type HookName = "post-init" | "pre-tick" | "post-tick";
+export type HookName = "post-init" | "pre-tick" | "post-tick" | "task-end";
 
 const HOOK_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
- * Run local/hooks/<name> when it exists and is executable, with the toli root as $1 and as cwd. A hook is
- * optional: absence is silent, and a non-executable file, a failure or a timeout is reported on stderr but never
- * fails the command that ran it. Hook output goes to stderr so it cannot corrupt a command's stdout.
+ * Run local/hooks/<name> when it exists and is executable, with the toli root as $1 (then `args`) and the root as
+ * cwd. A hook is optional: absence is silent, and a non-executable file, a failure or a timeout is reported on
+ * stderr but never fails the command that ran it. Hook output goes to stderr so it cannot corrupt a command's stdout.
  */
-export function runHook(name: HookName): void {
+export function runHook(name: HookName, args: string[] = []): void {
     const file = join(paths.localHooksDir(), name);
     try {
         if (!existsSync(file) || !statSync(file).isFile()) return;
@@ -43,7 +43,7 @@ export function runHook(name: HookName): void {
             warn(`toli: local/hooks/${name} is not executable; skipped (chmod +x to enable it)`);
             return;
         }
-        const result = run([file, paths.root()], { cwd: paths.root(), timeoutMs: HOOK_TIMEOUT_MS });
+        const result = run([file, paths.root(), ...args], { cwd: paths.root(), timeoutMs: HOOK_TIMEOUT_MS });
         const output = `${result.stdout}${result.stderr}`.trimEnd();
         if (output !== "") warn(output);
         if (result.code !== 0) warn(`toli: local/hooks/${name} exited ${result.code}; continuing`);

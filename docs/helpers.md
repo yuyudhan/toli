@@ -96,11 +96,18 @@ does not survive logout (or run `loginctl enable-linger $USER` so it does).
 Optional executables in `local/hooks/` that toli runs itself, with the toli root as `$1` and as the working
 directory:
 
-| Hook        | Runs                                                  |
-| ----------- | ----------------------------------------------------- |
-| `post-init` | after `bin/toli init`                                 |
-| `pre-tick`  | before every scheduler tick (`bin/toli job tick`)     |
-| `post-tick` | after every scheduler tick, even when the tick failed |
+| Hook        | Runs                                                                                           |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| `post-init` | after `bin/toli init`                                                                          |
+| `pre-tick`  | before every scheduler tick (`bin/toli job tick`)                                              |
+| `post-tick` | after every scheduler tick, even when the tick failed                                          |
+| `task-end`  | when a task becomes done or dropped, and again when a jawan run ends on an already-closed task |
+
+`task-end` also gets the task as arguments: `$2` the task id (`T12`), `$3` its status (`done` or `dropped`), `$4` its
+project. It is for a machine's own leftover cleaners (a task's worktree, temp dirs, test databases, build output);
+toli knows none of those. It can run twice for one task (the status change, then the run's end), so it must be
+idempotent, and it must check that it is the right moment (e.g. skip a task another job still uses). It runs in the
+foreground of `bin/toli task done|drop`, so keep it quick.
 
 A missing hook is skipped. A hook that is not executable is skipped with a note. A failing or slow hook (5-minute
 limit) is reported on stderr and never fails the toli command. Hook output goes to stderr (the tick log), never to

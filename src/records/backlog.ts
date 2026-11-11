@@ -31,6 +31,8 @@ import {
 } from "./hold-options.ts";
 import { pinTaskCommand } from "./pin.ts";
 import { briefPath } from "./stale.ts";
+import { isClosed, runTaskEnd } from "./task-end.ts";
+import { parseShape } from "./task-shape.ts";
 
 /** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
 export type TaskWorkspace = { strategy: Workspace; path: string; branch: string | null; base: string | null };
@@ -109,7 +111,8 @@ export function updateBacklog<T>(fn: (backlog: BacklogFile) => T): T {
 
 /**
  * Mutate one task by id under the backlog lock and return a copy of the result. A delegated task that becomes done,
- * held or dropped reports to its delegator once the lock is released (src/records/delegation-report.ts).
+ * held or dropped reports to its delegator once the lock is released (src/records/delegation-report.ts); a task that
+ * becomes done or dropped then runs the `task-end` hook (src/records/task-end.ts).
  */
 export function updateTask(id: string, fn: (task: Task) => void): Task {
     const { before, after } = updateBacklog((backlog) => {
@@ -121,13 +124,8 @@ export function updateTask(id: string, fn: (task: Task) => void): Task {
         return { before: copy, after: { ...task } };
     });
     if (reportDue(before, after)) reportToDelegator(after);
+    if (!isClosed(before.status) && isClosed(after.status)) runTaskEnd(after);
     return after;
-}
-
-function parseShape(value: string | undefined, fallback: Shape): Shape {
-    if (value === undefined) return fallback;
-    if (value !== "ship" && value !== "scout") throw new ToliError("--shape must be ship or scout");
-    return value;
 }
 
 function describe(task: Task): string {

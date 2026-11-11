@@ -18,7 +18,9 @@ import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../f
 import { harnessConfig, headlessCommand } from "../harness/harness.ts";
 import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.ts";
 import { isLiveStack } from "../projects/projects.ts";
+import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
+import { runTaskEnd } from "../records/task-end.ts";
 import { autoResume } from "./continue.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
@@ -277,6 +279,17 @@ async function retryAfterLimit(
     return await runAttempt(id, env, logFd, minuteMs);
 }
 
+/** A run that ends on a task already done or dropped (the jawan closed it itself) runs the task-end hook once more. */
+function endTaskOfRun(run: JawanRun): void {
+    if (run.task === null) return;
+    try {
+        const task = loadBacklog().tasks.find((entry) => entry.id === run.task);
+        if (task !== undefined) runTaskEnd(task);
+    } catch (error) {
+        warn(`task-end hook after ${run.id} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
 export async function superviseRun(id: string): Promise<void> {
     const machine = loadMachine();
     const initial = loadRun(id);
@@ -368,6 +381,7 @@ export async function superviseRun(id: string): Promise<void> {
             }
         }
         postOutcome(machine, finished);
+        endTaskOfRun(finished);
     } finally {
         closeSync(logFd);
         removeRun(id);
