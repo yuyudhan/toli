@@ -46,9 +46,10 @@ jawan to:
 1. **Scope.** From the integration branch, list what is new since the last tag:
    `git -C projects/<p> log --oneline <last-tag>..<integration-branch>` (find the last tag with
    `git describe --tags --abbrev=0 <main-branch>`). Collect the issue keys from commit subjects/bodies and branch names.
-2. **Issue check** (when the recipe names a tracker). For each key, read the issue with the tools the recipe names
-   (for Jira, e.g. the Atlassian MCP `getJiraIssue`, or `searchJiraIssuesUsingJql` for the fix version) to confirm its
-   status and title. Flag keys that are not in the expected state and issues in the release that have no commit.
+2. **Issue check** (when the recipe names a tracker). Find the release's issues with the tracker's MCP tools (search by
+   fix version or key; if the server exposes operations through a discover step, discover the search operation first),
+   then read each issue to confirm its status and title. Don't assume fixed tool names: they differ between MCP server
+   versions. Flag keys that are not in the expected state and issues in the release that have no commit.
 3. **Version and notes.** Propose the next version per the recipe. Write the release notes file in the format the
    recipe gives (user-facing words, grouped by area, issue key per item, post-deploy steps), update any index file,
    and commit it on the integration branch with `bin/toli commit` so the tagged commit contains the notes.
@@ -73,9 +74,9 @@ The brief quotes his word and asks the jawan to:
 7. **Staging smoke.** After the deploy the recipe describes, run its smoke checks against staging (headless browser
    for UI, read-only requests for APIs), and save evidence (screenshots, responses) under `data/projects/<project>/reports/`.
 8. **Issue updates** (when the recipe names a tracker). Move each issue in the release to the state the recipe names
-   and set the fix version or milestone if it uses one, with the tools it names (for Jira, e.g.
-   `getTransitionsForJiraIssue`, `transitionJiraIssue`, `editJiraIssue`). Add a short comment with the tag and notes
-   link only when the recipe asks for it.
+   and set the fix version or milestone if it uses one, with the tracker's MCP tools (discovering the transition and
+   edit operations first if the server needs it). Add a short comment with the tag and notes link only when the
+   recipe asks for it.
 9. **Report**, then `bin/toli task done <id> --note "<tag>"`.
 
 ## Report to Malik
