@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GIT_ENV, tempDir } from "./helpers.ts";
 
@@ -44,5 +44,21 @@ describe("install.sh", () => {
         const expected = join(realpathSync(base), "real", "new", "toli");
         expect(output).toContain(`Cloning toli v1.2.3 into ${expected}\n`);
         expect(output).toContain(`toli v1.2.3 is installed in ${expected}\n`);
+    });
+
+    test("an unreachable release repository fails with one error line and creates nothing", () => {
+        const base = tempDir("install");
+        mkdirSync(join(base, "work"));
+        const proc = Bun.spawnSync(["sh", INSTALL_SH, "--dir", "toli", "--yes"], {
+            cwd: join(base, "work"),
+            env: { ...process.env, ...GIT_ENV, TOLI_REPO_URL: `file://${join(base, "missing.git")}` },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const errors = proc.stderr.toString().trimEnd().split("\n");
+        expect(proc.exitCode).toBe(1);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toStartWith(`toli install: cannot list tags at file://${join(base, "missing.git")} (`);
+        expect(readdirSync(join(base, "work"))).toEqual([]);
     });
 });

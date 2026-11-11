@@ -15,6 +15,8 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `install.sh` reports an unreachable release repository (offline, a wrong `TOLI_REPO_URL`) in one
+  `toli install: cannot list tags at ... (<git's reason>)` line instead of git's own lines followed by its own.
 - An answered hold is dispatched once, by the lead that answered it. `bin/toli task answer` run by this machine's
   own lead posts no inbox wake (only an answer forwarded from another machine's lead does), an answered task is not
   stale until `oversight.staleTaskMinutes` after the answer, and a headless lead turn (`TOLI_LEAD_TURN=headless`)

@@ -97,7 +97,11 @@ yes_no() { # <prompt> <default y|n>; succeeds on yes
 command -v git >/dev/null 2>&1 || die "git is required: install it first (macOS: xcode-select --install; Debian/Ubuntu/WSL2: sudo apt install git; Fedora: sudo dnf install git)"
 
 # Release tags, newest first: vX.Y.Z only (pre-releases install only when named with --version).
-tags="$(git ls-remote --tags --refs "$TOLI_REPO_URL")" || die "cannot list tags at $TOLI_REPO_URL"
+# git's own error (offline, no such repository) goes into the one error line rather than its own lines.
+if ! tags="$(git ls-remote --tags --refs "$TOLI_REPO_URL" 2>&1)"; then
+    reason="$(printf '%s\n' "$tags" | sed -n 's/^fatal: //p' | sed -n 1p)"
+    die "cannot list tags at $TOLI_REPO_URL (${reason:-git ls-remote failed}); check the network and run the command again"
+fi
 tags="$(printf '%s\n' "$tags" | sed -n 's|.*refs/tags/||p')"
 if [ -n "$version" ]; then
     printf '%s\n' "$tags" | grep -qxF -- "$version" || die "no tag $version at $TOLI_REPO_URL"
