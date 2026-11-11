@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
 import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
@@ -39,6 +39,13 @@ function startMerge(dir: string): void {
 
 const parents = (dir: string, sha: string): string[] =>
     git(dir, ["rev-list", "--parents", "-n", "1", sha]).split(" ").slice(1);
+
+/** Move `main` by one empty commit the way another committer would, leaving the shared index and working tree. */
+function moveMain(dir: string): string {
+    const moved = git(dir, ["commit-tree", "main^{tree}", "-p", "main", "-m", "other: moved"]);
+    git(dir, ["update-ref", "refs/heads/main", moved]);
+    return moved;
+}
 
 describe("bin/toli commit with a git merge in progress (MERGE_HEAD)", () => {
     test("a commit without --merge is refused instead of recording one parent and dropping the merged one", () => {
@@ -98,4 +105,71 @@ describe("bin/toli commit with a git merge in progress (MERGE_HEAD)", () => {
         expect(git(dir, ["show", `${named.sha}:new.txt`])).toBe("new, edited after the merge");
         expect(git(dir, ["status", "--porcelain"])).toBe("");
     });
+
+    test("an adopted merge keeps every refusal (secrets, lock files, reverts, the commit-msg hook, a branch moved twice) and commits only named paths", () => {
+        const { dir, before, upstream } = diverged(false);
+        startMerge(dir);
+        const land = (paths: string[]) => () => safeCommit({ dir, paths, merge: upstream, message: "Merge upstream" });
+        const untouched = (tip: string) => {
+            expect(head(dir)).toBe(tip);
+            expect(existsSync(join(dir, ".git", "MERGE_HEAD"))).toBe(true);
+        };
+
+        // A random GitHub token shape, generated per run, for gitleaks to find.
+        const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        const generated = Array.from(crypto.getRandomValues(new Uint8Array(36)), (byte) => alphabet[byte % 62]);
+        writeFileSync(join(dir, "config.txt"), `ghp_${generated.join("")}\n`);
+        expect(land(["config.txt"])).toThrow("gitleaks found a secret");
+        untouched(before);
+        rmSync(join(dir, "config.txt"));
+
+        writeFileSync(join(dir, "bun.lock"), '{\n  "lockfileVersion": 1,\n<<<<<<< HEAD\n}\n');
+        expect(land(["bun.lock"])).toThrow("the staged bun.lock does not parse");
+        untouched(before);
+        rmSync(join(dir, "bun.lock"));
+
+        // Undoing main's own recent "three main" line on top of the merge is still a revert.
+        writeFileSync(join(dir, "shared.txt"), "one upstream\ntwo\nthree\n");
+        expect(land(["shared.txt"])).toThrow(`would revert shared.txt lines from ${before.slice(0, 7)}`);
+        untouched(before);
+        git(dir, ["checkout", "--", "shared.txt"]);
+
+        const hook = join(dir, ".git", "hooks", "commit-msg");
+        writeFileSync(hook, "#!/bin/sh\necho 'merges need a ticket' >&2\nexit 1\n");
+        chmodSync(hook, 0o755);
+        expect(land([])).toThrow("the commit-msg hook");
+        untouched(before);
+        rmSync(hook);
+
+        let moved = before;
+        expect(() =>
+            safeCommit(
+                { dir, paths: [], merge: upstream, message: "Merge upstream" },
+                {
+                    beforeUpdateRef: () => {
+                        moved = moveMain(dir);
+                    },
+                },
+            ),
+        ).toThrow("the branch moved twice");
+        untouched(moved);
+
+        // Moved once, it retries from the new tip; unnamed local edits outside the merge stay out of the commit.
+        writeFileSync(join(dir, "mine.txt"), "mine, not named\n");
+        writeFileSync(join(dir, "stray.txt"), "untracked, not named\n");
+        const merged = safeCommit(
+            { dir, paths: [], merge: upstream, message: "Merge upstream" },
+            {
+                beforeUpdateRef: (attempt) => {
+                    if (attempt === 1) moved = moveMain(dir);
+                },
+            },
+        );
+        expect(merged.attempts).toBe(2);
+        expect(parents(dir, merged.sha)).toEqual([moved, upstream]);
+        expect(git(dir, ["show", `${merged.sha}:mine.txt`])).toBe("mine on main");
+        expect(git(dir, ["ls-tree", "--name-only", merged.sha])).toBe("mine.txt\nnew.txt\nshared.txt");
+        expect(existsSync(join(dir, ".git", "MERGE_HEAD"))).toBe(false);
+        expect(git(dir, ["status", "--porcelain"])).toBe("M mine.txt\n?? stray.txt");
+    }, 180_000);
 });
