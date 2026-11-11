@@ -61,6 +61,10 @@ The public repository is https://github.com/yuyudhan/toli. Its URL is set in two
 - `install.sh`: the `TOLI_REPO_URL` default near the top;
 - `src/release/release.ts`: the `TOLI_REPO_URL` constant (used by `bin/toli upgrade` when the clone has no `origin`).
 
-Both accept a `TOLI_REPO_URL` environment variable instead. README.md and docs/install.md serve the installer from
-`https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh`: it always installs the latest release tag (or the
-`--version` named), so the script on `main` is the one to fetch.
+Both accept a `TOLI_REPO_URL` environment variable instead. README.md and docs/install.md lead with
+`https://yuyudhan.github.io/toli/install`, which the site's `sync-installers` workflow (yuyudhan/yuyudhan.github.io,
+every 15 minutes) keeps equal to `install.sh` at the latest GitHub release's tag, checked against GitHub's blob of that
+file at the tag. After `just release`, publish it at once with
+`gh workflow run sync-installers.yml -R yuyudhan/yuyudhan.github.io`. The fallback
+`https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh` serves the same script, since `main` moves only at a
+release. Either way the script installs the latest release tag (or the `--version` named).

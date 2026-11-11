@@ -2,6 +2,11 @@
 
 **One lead you talk to, a crew of agents that do the work, and proof before anything is called done.**
 
+    curl -fsSL https://yuyudhan.github.io/toli/install | sh
+
+Clones the latest toli release into a folder you choose (it asks) and checks it; needs `git` and `bun`.
+[Other ways to install](docs/install.md).
+
 toli turns the coding agent you already use into a small team. You talk to one session, the lead (Sardar). It never
 does the work itself, so it is always free to listen; it writes each request down and sends jawans (background
 subagents) to do it, in parallel, while you keep talking.
@@ -33,11 +38,14 @@ flowchart LR
 
 ## Quickstart (60 seconds)
 
-    curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh
+    curl -fsSL https://yuyudhan.github.io/toli/install | sh
 
 The installer asks where to put toli, clones the latest release, and checks it. To install a specific release:
 
-    curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh -s -- --version v0.1.0
+    curl -fsSL https://yuyudhan.github.io/toli/install | sh -s -- --version v0.1.0
+
+That address serves the latest release's `install.sh` byte for byte; the same script is at
+`https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh` if the short address is unreachable.
 
 Then open your agent in the toli folder (`omp`, `claude`, `codex`, `cursor-agent`, `grok`, or `pi`) and say:
 

@@ -6,6 +6,13 @@ one. See docs/releasing.md.
 
 ## v0.4.3 - unreleased
 
+### Changed
+
+- A short install command, first in README.md and docs/install.md:
+  `curl -fsSL https://yuyudhan.github.io/toli/install | sh`. That address serves `install.sh` of the latest
+  release byte for byte (the site's sync job checks it against GitHub's copy at the release tag); the
+  raw.githubusercontent.com URL stays documented as the fallback.
+
 ### Fixed
 
 - An answered hold is dispatched once, by the lead that answered it. `bin/toli task answer` run by this machine's

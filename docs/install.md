@@ -32,6 +32,14 @@ and disk from `df -Pk` ([fleet.md](fleet.md) for the thresholds); macOS uses `vm
 
 ## One-line install
 
+    curl -fsSL https://yuyudhan.github.io/toli/install | sh
+
+That address serves `install.sh` of the latest release byte for byte: the site's sync job
+(yuyudhan/yuyudhan.github.io, `sync-installers`, every 15 minutes) downloads it from the release
+tag and publishes it only when it matches GitHub's copy at that tag, starts with `#!/bin/sh` and
+parses with `sh -n`. If the short address is unreachable, use the repository copy (main is the
+latest release):
+
     curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh
 
 The installer:
@@ -66,7 +74,7 @@ script), pass `--yes`.
 
 With the pipe, pass options after `sh -s --`:
 
-    curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh -s -- --version v0.1.0 --dir ~/toli
+    curl -fsSL https://yuyudhan.github.io/toli/install | sh -s -- --version v0.1.0 --dir ~/toli
 
 ## Which version is installed
 

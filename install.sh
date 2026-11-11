@@ -1,7 +1,8 @@
 #!/bin/sh
 # toli installer: clones a tagged toli release into a directory you choose.
 #
-#   curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh
+#   curl -fsSL https://yuyudhan.github.io/toli/install | sh
+#   curl -fsSL https://raw.githubusercontent.com/yuyudhan/toli/main/install.sh | sh   (the same script)
 #   sh install.sh [--dir <path>] [--version vX.Y.Z] [--yes]
 #
 # The release repository is TOLI_REPO_URL (environment) or the public repository below. Answers are read from
