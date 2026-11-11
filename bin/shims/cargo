@@ -4,7 +4,8 @@
 # `bin/toli build-slot` (src/fleet/build-slots.ts); light ones (`--version`, `metadata`, `fmt`, ...) and any cargo
 # run inside a slot already (TOLI_BUILD_SLOT set) go straight to the real cargo: the first cargo on PATH that is not
 # this folder's or another copy of this shim (its second line starts "# toli's cargo shim"), so a shim never calls
-# itself or another shim.
+# itself or another shim. It marks its environment (TOLI_CARGO_SHIM_ACTIVE) for whatever it execs, so a wrapper placed
+# after it that looks for its own real cargo (kalki-queue's build-guard) knows to skip this shim instead of looping.
 shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127
 
 real=""
@@ -30,6 +31,9 @@ if [ -z "$real" ]; then
     echo "toli: cargo not found on PATH (outside $shims)" >&2
     exit 127
 fi
+
+TOLI_CARGO_SHIM_ACTIVE=1
+export TOLI_CARGO_SHIM_ACTIVE
 
 [ -n "${TOLI_BUILD_SLOT:-}" ] && exec "$real" "$@"
 
