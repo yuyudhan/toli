@@ -114,7 +114,7 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
 
 ### Landing work
 
-    commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>] [--allow-revert <sha>]... [-- <path>...]
+    commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [-- <path>...]
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
     forge <project> [--json]
@@ -127,7 +127,8 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
     pr status <project> [<id>] [--task T<n>] [--json] | list <project> [--json]
     pr merge <project> <id> [--method merge|squash|rebase]
 
-- `commit` builds a private index from the branch tip and commits only the named paths and `--patch` hunks; it
+- `commit` builds a private index from the branch tip and commits only the named paths and `--patch` hunks (`--patch`
+  repeats; the files apply in the order given, and one that does not apply is named and commits nothing); it
   refuses secrets (gitleaks), lock files that do not parse, a revert of one of the last 20 commits, the wrong branch,
   a branch that moved twice meanwhile, and a message the project's `commit-msg` hook rejects, and strips AI trailers.
   `toli` as the project commits toli itself on `develop`

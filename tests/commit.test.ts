@@ -338,7 +338,12 @@ describe("bin/toli commit (R23 safe commits)", () => {
         writeFileSync(join(dir, "f.txt"), `${edited.join("\n")}\n`);
         const full = git(dir, ["diff", "f.txt"]);
         const firstHunk = `${full.split("\n@@").slice(0, 2).join("\n@@")}\n`;
-        const committed = safeCommit({ dir, paths: [], patch: firstHunk, message: "First hunk" });
+        const committed = safeCommit({
+            dir,
+            paths: [],
+            patches: [{ name: "first.patch", diff: firstHunk }],
+            message: "First hunk",
+        });
         const blob = git(dir, ["show", `${committed.sha}:f.txt`]);
         expect(blob).toContain("line 2 changed");
         expect(blob).not.toContain("line 29 changed");

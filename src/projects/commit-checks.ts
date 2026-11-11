@@ -379,11 +379,16 @@ export function checkReverts(
     }
 }
 
-/** The files a patch touches (both sides of renames). */
-export function patchFiles(attempt: Attempt, patch: string): string[] {
-    return attempt
-        .gitOk(["apply", "--numstat", "-z", "-"], patch)
-        .split("\0")
-        .flatMap((field) => field.split("\t").slice(2))
-        .filter(Boolean);
+/**
+ * Apply each `--patch` diff to the attempt's index in order, naming one that fails; returns every file they touch
+ * (both sides of renames).
+ */
+export function applyPatches(attempt: Attempt, patches: { name: string; diff: string }[]): string[] {
+    return patches.flatMap((patch) => {
+        const files = attempt.gitOk(["apply", "--numstat", "-z", "-"], patch.diff).split("\0");
+        const applied = attempt.git(["apply", "--cached", "-"], patch.diff);
+        if (applied.code !== 0)
+            throw new ToliError(`--patch ${patch.name} does not apply: ${(applied.stderr || applied.stdout).trim()}`);
+        return files.flatMap((field) => field.split("\t").slice(2)).filter(Boolean);
+    });
 }

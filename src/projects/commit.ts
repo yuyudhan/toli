@@ -24,13 +24,13 @@ import { activeRuntime, syncRuntime } from "../release/runtime.ts";
 import {
     Attempt,
     absentPaths,
+    applyPatches,
     checkLockFiles,
     checkResolved,
     checkReverts,
     commitMsgHook,
     isLockFile,
     parseHunks,
-    patchFiles,
     scanLeaks,
 } from "./commit-checks.ts";
 import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
@@ -52,8 +52,8 @@ export type CommitRequest = {
     dir: string;
     /** Paths (relative to `dir`) whose working-tree state is committed whole, deletions included. */
     paths: string[];
-    /** A unified diff (`git diff` output) whose hunks are committed; the working tree is not read for it. */
-    patch?: string;
+    /** Unified diffs (`git diff` output) whose hunks are committed, applied in order; the working tree is not read for them. */
+    patches?: CommitPatch[];
     message: string;
     /** Commits (sha prefixes) this commit may revert on purpose. */
     allowRevert?: string[];
@@ -65,6 +65,9 @@ export type CommitRequest = {
      */
     resolved?: boolean;
 };
+
+/** One `--patch` file: its name as given (for errors) and its diff. */
+export type CommitPatch = { name: string; diff: string };
 
 /** `files`: every path changed against the first parent; `merged`: those the merge brought in (not named). */
 export type Committed = {
@@ -155,8 +158,7 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
         const deleted = absentPaths(attempt, request.paths, merge);
         const added = request.paths.filter((file) => !deleted.includes(file));
         if (added.length > 0) attempt.gitOk(["add", "--all", "--", ...added]);
-        const fromPatch = request.patch === undefined ? [] : patchFiles(attempt, request.patch);
-        if (request.patch !== undefined) attempt.gitOk(["apply", "--cached", "-"], request.patch);
+        const fromPatch = applyPatches(attempt, request.patches ?? []);
         const tree = attempt.gitOk(["write-tree"]);
         const files = gitOk(dir, ["diff", "--name-only", "--no-renames", parent, tree]).split("\n").filter(Boolean);
         if (files.length === 0 && merge === null)
@@ -239,7 +241,7 @@ function attemptCommit(request: CommitRequest, attemptNo: number, hooks: CommitH
  * untouched.
  */
 export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Committed {
-    if (request.paths.length === 0 && request.patch === undefined && request.merge === undefined)
+    if (request.paths.length === 0 && (request.patches ?? []).length === 0 && request.merge === undefined)
         throw new ToliError(
             'commit needs paths after -- or --patch <file>: toli commit <project> -m "..." -- <path>...',
         );
@@ -331,8 +333,9 @@ function commitDir(name: string, taskId: string | undefined): string {
 }
 
 /**
- * `toli commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]
- * [--allow-revert <sha>]... [-- <path>...]`; repeated `-m` values become separate paragraphs, as with `git commit`.
+ * `toli commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]...
+ * [--allow-revert <sha>]... [-- <path>...]`; repeated `-m` values become separate paragraphs, as with `git commit`,
+ * and repeated `--patch` files all apply, in the order given.
  */
 export function commitCommand(argv: string[]): void {
     const args = new Args(argv, {
@@ -345,13 +348,14 @@ export function commitCommand(argv: string[]): void {
     if (paragraphs.length === 0) throw new ToliError('commit needs -m "<message>"');
     const message = stripAiTrailers(paragraphs.join("\n\n"));
     if (message.trim() === "") throw new ToliError("commit message is empty after removing AI trailers");
-    const patchFile = args.str("patch");
-    const patch = patchFile === undefined ? undefined : readFileSync(resolve(process.cwd(), patchFile), "utf8");
+    const patches = args
+        .all("patch")
+        .map((name) => ({ name, diff: readFileSync(resolve(process.cwd(), name), "utf8") }));
     const merge = args.str("merge");
     const committed = safeCommit({
         dir,
         paths: args.rest.filter((file) => file !== ""),
-        ...(patch === undefined ? {} : { patch }),
+        patches,
         ...(merge === undefined ? {} : { merge }),
         resolved: args.bool("resolved"),
         message,

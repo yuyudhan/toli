@@ -18,7 +18,7 @@ Jawans edit toli in this checkout, on `develop`, many at once; there are no work
 ```sh
 just check                                                   # format check, lint, typecheck, tests
 bin/toli commit toli -m "Fix the digest's footer" -- src/records/digest.ts tests/digest.test.ts
-bin/toli commit toli -m "Fix one hunk" --patch my.diff       # only the hunks in my.diff
+bin/toli commit toli -m "Fix one hunk" --patch my.diff       # only the hunks in my.diff (--patch repeats)
 bin/toli commit app -m "Merge feature" --merge feature        # a clean two-parent merge, nothing else named
 bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   # conflicts resolved in the tree
 ```

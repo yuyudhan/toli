@@ -40,6 +40,30 @@ describe("toli commit", () => {
         expect(box.git(dir, ["rev-list", "--count", "origin/main..main"])).toBe("1");
     });
 
+    test("repeated --patch flags all apply, in order, in one commit; a conflicting one commits nothing", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const dir = withProject(box, "app");
+        const newFile = (name: string, line: string) =>
+            `diff --git a/${name} b/${name}\nnew file mode 100644\n--- /dev/null\n+++ b/${name}\n@@ -0,0 +1 @@\n+${line}\n`;
+        const patchA = join(box.root, "a.patch");
+        const patchB = join(box.root, "b.patch");
+        writeFileSync(patchA, newFile("a.txt", "a"));
+        writeFileSync(patchB, newFile("b.txt", "b"));
+        const sha = box.ok(["commit", "app", "-m", "Add a and b", "--patch", patchA, "--patch", patchB]);
+        expect(box.git(dir, ["show", "--name-only", "--format=", sha])).toBe("a.txt\nb.txt");
+
+        const before = box.git(dir, ["rev-parse", "HEAD"]);
+        const patchC = join(box.root, "c.patch");
+        const clash = join(box.root, "clash.patch");
+        writeFileSync(patchC, newFile("c.txt", "c"));
+        writeFileSync(clash, newFile("c.txt", "other c"));
+        const refused = box.toli(["commit", "app", "-m", "Clash", "--patch", patchC, "--patch", clash]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain(`--patch ${clash} does not apply`);
+        expect(box.git(dir, ["rev-parse", "HEAD"])).toBe(before);
+    });
+
     test("repeated -m flags become paragraphs, like git", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
