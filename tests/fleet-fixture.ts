@@ -1,7 +1,7 @@
 // A coordinator sandbox with a stubbed fleet (ssh, vm_stat), shared by the fleet and remote tests.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, SSH_STUB_ARGS, sandbox } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, sandbox, withProject } from "./helpers.ts";
 
 /** Thresholds loose enough that this test host is always available, whatever its real load and memory. */
 export const ROOMY = { maxRuns: 50, maxLoadPerCpu: 1000, minMemAvailableMB: 0 };
@@ -78,4 +78,39 @@ export function fleet(m2Snapshot: string, capacity: Record<string, number> = ROO
 export function sshLog(box: Sandbox): string {
     const path = join(box.root, ".ssh.log");
     return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+type BacklogTask = { id: string; status: string; [field: string]: unknown };
+
+/** Rewrite the sandbox's backlog tasks in place (fields no command sets directly). */
+export function editBacklog(box: Sandbox, change: (tasks: BacklogTask[]) => void): void {
+    const path = join(box.root, "data", "backlog.json");
+    const backlog: { tasks: BacklogTask[] } = JSON.parse(readFileSync(path, "utf8"));
+    change(backlog.tasks);
+    writeFileSync(path, JSON.stringify(backlog));
+}
+
+/** A `bin/toli spawn` run record `id` on `task`, running under this (live) test process. */
+export function liveRun(box: Sandbox, id: string, task: string): void {
+    const jawans = join(box.root, "state", "jawans");
+    mkdirSync(jawans, { recursive: true });
+    const startedAt = "2026-11-10T09:00:00.000Z";
+    const run = { id, task, status: "running", supervisorPid: process.pid, pid: process.pid, startedAt };
+    writeFileSync(join(jawans, `${id}.json`), JSON.stringify(run));
+}
+
+/** The sandbox machine's queue as `resources --json` publishes it. */
+export function resourcesQueue(box: Sandbox): Record<string, unknown> {
+    const resources: { queue: Record<string, unknown> } = JSON.parse(box.ok(["resources", "--json"], { env: ENV }));
+    return resources.queue;
+}
+
+/** Project `local-only`, cloned here with no git URL registered (another machine cannot clone it), and a task on it. */
+export function withLocalOnlyTask(box: Sandbox): void {
+    withProject(box, "local-only");
+    const path = join(box.root, "data", "projects.json");
+    const registry: { projects: { name: string; url: string }[] } = JSON.parse(readFileSync(path, "utf8"));
+    for (const project of registry.projects) if (project.name === "local-only") project.url = "";
+    writeFileSync(path, JSON.stringify(registry));
+    box.ok(["task", "add", "local-only", "bound here"]);
 }

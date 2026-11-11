@@ -1,8 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { balancePass } from "../src/fleet/queues.ts";
-import { ENV, fleet, remoteSnapshot, sshLog } from "./fleet-fixture.ts";
+import {
+    ENV,
+    editBacklog,
+    fleet,
+    liveRun,
+    remoteSnapshot,
+    resourcesQueue,
+    sshLog,
+    withLocalOnlyTask,
+} from "./fleet-fixture.ts";
 import { GIT_ENV, type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 type Pick = {
@@ -152,12 +161,54 @@ describe("fleet queues", () => {
 });
 
 describe("what counts as queue, and full machines", () => {
-    test("active tasks are not queue: a coordinator's bookkeeping does not make it look deep", () => {
+    test("active tasks with no jawan here are not queue: a coordinator's bookkeeping does not make it look deep", () => {
         const box = withTasks(queued(1), 3);
-        for (const id of ["T1", "T2", "T3"]) box.ok(["task", "start", id, "--agent", "elsewhere"]);
-        const resources = JSON.parse(box.ok(["resources", "--json"], { env: ENV })) as { queue: { depth: number } };
-        expect(resources.queue).toMatchObject({ queued: 0, active: 3, depth: 0 });
+        // T1 is bookkeeping (no jawan), T2 waits on a push, T3 was delegated to m2 and works through its fleet id.
+        box.ok(["task", "start", "T1"]);
+        box.ok(["task", "start", "T2", "--agent", "PushSub"]);
+        box.ok(["task", "wait", "T2", "--on", "the push"]);
+        editBacklog(box, (tasks) => {
+            const t3 = tasks.find((task) => task.id === "T3");
+            if (t3 === undefined) throw new Error("no T3");
+            Object.assign(t3, {
+                status: "active",
+                agent: "m2/T1",
+                delegatedTo: ["m2/T1"],
+                delegates: { "m2/T1": { status: "active" } },
+            });
+        });
+        expect(resourcesQueue(box)).toMatchObject({ queued: 0, active: 3, jawansRunning: 0, depth: 0 });
         expect(box.ok(["pick"], { env: ENV })).toBe("m1");
+    });
+
+    test("two active tasks with native subagent ids count as two running jawans, one per distinct agent", () => {
+        const box = withTasks(queued(0), 3);
+        box.ok(["task", "start", "T1", "--agent", "T11Sub"]);
+        box.ok(["task", "start", "T2", "--agent", "T12Sub"]);
+        box.ok(["task", "start", "T3", "--agent", "T12Sub"]); // the same subagent on a second task
+        expect(resourcesQueue(box)).toMatchObject({ queued: 0, active: 3, jawansRunning: 2, depth: 2 });
+        expect(box.ok(["fleet", "queues"], { env: ENV })).toContain("m1 (this machine): queue 2 (0 queued, 2 running");
+    });
+
+    test("an active task whose agent is a live spawn run counts once, as that run", () => {
+        const box = withTasks(queued(0), 2);
+        liveRun(box, "j-1", "T1");
+        box.ok(["task", "start", "T1", "--agent", "j-1"]);
+        // T2's subagent was recorded, then a spawn run took the task over: the run is its one jawan.
+        box.ok(["task", "start", "T2", "--agent", "T12Sub"]);
+        liveRun(box, "j-2", "T2");
+        expect(resourcesQueue(box)).toMatchObject({ active: 2, jawansRunning: 2, depth: 2 });
+    });
+
+    test("a held task counts nothing, even with its subagent still recorded", () => {
+        const box = withTasks(queued(0), 1);
+        box.ok(["task", "start", "T1", "--agent", "T11Sub"]);
+        editBacklog(box, (tasks) => {
+            const t1 = tasks.find((task) => task.id === "T1");
+            if (t1 === undefined) throw new Error("no T1");
+            t1.status = "held";
+        });
+        expect(resourcesQueue(box)).toMatchObject({ active: 0, held: 1, jawansRunning: 0, depth: 0 });
     });
 
     test("lead full marks this machine full until --clear or --until, published in resources --json", () => {
@@ -235,19 +286,13 @@ describe("balancePass", () => {
     test("offers and counts only queued tasks no jawan works on and no other machine has", async () => {
         const box = withTasks(queued(0), 5);
         // T4 has a jawan here (its run holds a slot); T5 was delegated to m2 and is still open there.
-        const jawans = join(box.root, "state", "jawans");
-        mkdirSync(jawans, { recursive: true });
-        const run = { id: "j-1", task: "T4", status: "running", supervisorPid: process.pid, pid: process.pid };
-        writeFileSync(join(jawans, "j-1.json"), JSON.stringify({ ...run, startedAt: T0 }));
-        const backlogPath = join(box.root, "data", "backlog.json");
-        const backlog = JSON.parse(readFileSync(backlogPath, "utf8")) as {
-            tasks: { id: string; delegatedTo?: string[]; delegates?: Record<string, { status: string }> }[];
-        };
-        const t5 = backlog.tasks.find((task) => task.id === "T5");
-        if (t5 === undefined) throw new Error("no T5");
-        t5.delegatedTo = ["m2/T1"];
-        t5.delegates = { "m2/T1": { status: "queued" } };
-        writeFileSync(backlogPath, JSON.stringify(backlog));
+        liveRun(box, "j-1", "T4");
+        editBacklog(box, (tasks) => {
+            const t5 = tasks.find((task) => task.id === "T5");
+            if (t5 === undefined) throw new Error("no T5");
+            t5.delegatedTo = ["m2/T1"];
+            t5.delegates = { "m2/T1": { status: "queued" } };
+        });
 
         expect(await pass(box, T0)).toBe("queue: offered work to m2 (m1 4, m2 0)");
         const [offer] = queueItems(box);
@@ -255,6 +300,36 @@ describe("balancePass", () => {
         expect(offer).not.toContain("T4:");
         expect(offer).not.toContain("T5:");
         expect(box.ok(["fleet", "queues"], { env: ENV })).toContain("m1 (this machine): queue 4 (3 queued, 1 running");
+    });
+
+    test("native subagent jawans count toward the depth that triggers an offer", async () => {
+        // m1's two slots run omp subagents on T1 and T2; only T3 waits. Depth 3 against m2's 0 is the gap.
+        const box = withTasks(queued(0), 3);
+        box.ok(["task", "start", "T1", "--agent", "T11Sub"]);
+        box.ok(["task", "start", "T2", "--agent", "T12Sub"]);
+        expect(await pass(box, T0)).toBe("queue: offered work to m2 (m1 3, m2 0)");
+        const [offer] = queueItems(box);
+        expect(offer).toContain("T3: bin/toli delegate m2 'task 3'");
+        expect(offer).not.toContain("T1:");
+        expect(offer).not.toContain("T2:");
+    });
+
+    test("never offers a task of a project the target has no clone of and cannot clone", async () => {
+        const box = withTasks(queued(0), 3);
+        withLocalOnlyTask(box);
+        expect(await pass(box, T0)).toBe("queue: offered work to m2 (m1 4, m2 0)");
+        const [offer] = queueItems(box);
+        expect(offer).toContain("T3: bin/toli delegate m2 'task 3'");
+        expect(offer).not.toContain("T4:");
+    });
+
+    test("offers a task of a project without a registered URL when the target has its clone", async () => {
+        const box = withTasks(queued(0, { projects: ["local-only"] }), 3);
+        withLocalOnlyTask(box);
+        expect(await pass(box, T0)).toBe("queue: offered work to m2 (m1 4, m2 0)");
+        expect(queueItems(box)[0]).toContain(
+            "T4: bin/toli delegate m2 'bound here' --brief <file> --project local-only",
+        );
     });
 
     test("asks the deepest queue's lead for work over ssh when this machine's queue is empty, once per period", async () => {

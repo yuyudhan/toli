@@ -4,10 +4,11 @@ import { loadBacklog, type Task } from "../records/backlog.ts";
 import { currentFull, type Full } from "./full.ts";
 
 /**
- * The machine's work queue: its own backlog's queued, active and held tasks, and its jawan runs holding a slot or
- * waiting for one. `depth` is the work waiting on or using its jawans: queued tasks + running jawans + queued runs.
- * Active tasks are not counted (a lead's bookkeeping tasks and work delegated elsewhere are active with no jawan
- * here). Machines rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its lead takes no more work.
+ * The machine's work queue: its own backlog's queued, active and held tasks, and its jawans. `depth` is the work
+ * waiting on or using its jawans: queued tasks + running jawans + queued runs. `jawansRunning` counts the `bin/toli
+ * spawn` runs holding a slot and the native harness subagents working on its tasks (`subagentJawans`). Other active
+ * tasks are not counted (a lead's bookkeeping tasks, work delegated elsewhere, a task waiting on something). Machines
+ * rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its lead takes no more work.
  */
 export type Queue = {
     queued: number;
@@ -19,22 +20,53 @@ export type Queue = {
     full?: Full;
 };
 
+/** The ids of the tasks a run of this machine works on, running or waiting for a slot. */
+function workedByRuns(runs: JawanRun[]): Set<string> {
+    return new Set(
+        runs
+            .filter((entry) => entry.status === "queued" || RUNNING.includes(entry.status))
+            .flatMap((entry) => (entry.task === null ? [] : [entry.task])),
+    );
+}
+
+/** An open delegation to another machine: one not dropped and not handed back. */
+function delegatedAway(task: Task): boolean {
+    return (task.delegatedTo ?? []).some((id) => {
+        const state = task.delegates?.[id];
+        return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
+    });
+}
+
 /**
  * The queued tasks that wait for a jawan: no run of this machine (running or waiting for a slot) works on them and
  * no other machine has them (an open delegation). Only these count as queue and only these are offered to another lead.
  */
 export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun[] = listRuns()): Task[] {
-    const working = new Set(
-        runs
-            .filter((entry) => entry.status === "queued" || RUNNING.includes(entry.status))
-            .flatMap((entry) => (entry.task === null ? [] : [entry.task])),
-    );
-    const delegatedAway = (task: Task): boolean =>
-        (task.delegatedTo ?? []).some((id) => {
-            const state = task.delegates?.[id];
-            return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
-        });
+    const working = workedByRuns(runs);
     return tasks.filter((task) => task.status === "queued" && !working.has(task.id) && !delegatedAway(task));
+}
+
+/**
+ * The native harness subagents working on this machine's tasks, one per distinct agent id: active tasks whose jawan
+ * was recorded with `task start --agent <id>` and is not a `bin/toli spawn` run (`j-...`, counted as a run while it
+ * lives). Left out: a task a live run works on (counted as that run), one waiting on something (`task wait`), and one
+ * delegated to another machine (its agent is the delegation's fleet id).
+ */
+export function subagentJawans(tasks: Task[], runs: JawanRun[]): number {
+    const working = workedByRuns(runs);
+    const agents = new Set(
+        tasks.flatMap((task) =>
+            task.status === "active" &&
+            task.agent !== undefined &&
+            !task.agent.startsWith("j-") &&
+            task.waitingOn === undefined &&
+            !working.has(task.id) &&
+            !delegatedAway(task)
+                ? [task.agent]
+                : [],
+        ),
+    );
+    return agents.size;
 }
 
 /** This machine's queue, from its own backlog and jawan run records. */
@@ -43,7 +75,7 @@ export function localQueue(): Queue {
     const count = (status: string): number => tasks.filter((task) => task.status === status).length;
     const runs = listRuns();
     const queued = waitingTasks(tasks, runs).length;
-    const jawansRunning = runs.filter((entry) => RUNNING.includes(entry.status)).length;
+    const jawansRunning = runs.filter((entry) => RUNNING.includes(entry.status)).length + subagentJawans(tasks, runs);
     const jawansQueued = runs.filter((entry) => entry.status === "queued").length;
     const full = currentFull();
     return {

@@ -17,6 +17,7 @@ import {
     writeJsonAtomic,
 } from "../core/util.ts";
 import { sendToMachine } from "../jobs/outbox.ts";
+import { loadProjects } from "../projects/projects.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
 import { fleetStatus, rankMachines } from "./pick.ts";
@@ -166,16 +167,23 @@ function recordSent(sent: BalanceSent): void {
 }
 
 /**
- * The delegate command for each of this machine's tasks waiting for a jawan that is not pinned here, with its brief
- * when it has one.
+ * The delegate command for each of this machine's tasks waiting for a jawan that can go to `target`, with its brief
+ * when it has one. A task bound to this machine stays out: pinned here (`task pin`), or of a project `target` has no
+ * clone of and whose git URL is not registered here (`target` could not clone it; the pick rule).
  */
-function delegateLines(target: string): string[] {
+function delegateLines(target: FleetEntry): string[] {
+    const cloned = new Set(target.resources?.projects ?? []);
+    const clonable = new Set(loadProjects().flatMap((project) => (project.url ? [project.name] : [])));
     return waitingTasks()
-        .filter((task) => task.pinned === undefined)
+        .filter(
+            (task) =>
+                task.pinned === undefined &&
+                (task.project === "" || cloned.has(task.project) || clonable.has(task.project)),
+        )
         .map((task) => {
             const brief = briefPath(task.project, task.id);
             return [
-                `  ${task.id}: bin/toli delegate ${target} ${shellQuote(task.title)}`,
+                `  ${task.id}: bin/toli delegate ${target.machine} ${shellQuote(task.title)}`,
                 `--brief ${brief === null ? "<file>" : shellQuote(brief)}`,
                 ...(task.project === "" ? [] : [`--project ${shellQuote(task.project)}`]),
             ].join(" ");
@@ -185,10 +193,10 @@ function delegateLines(target: string): string[] {
 /**
  * One balancing pass of the lead service, due every `lead.balanceMinutes` (the period is claimed under a lock, so
  * overlapping passes send nothing twice). Null when not due, when there is no other fleet machine, or when the queues
- * are within `lead.balanceGap` of each other. When this machine's depth is at least the gap above the shortest other
- * known queue and it has queued tasks to hand over, it posts an offer to its own inbox (waking its lead) with a
- * `bin/toli delegate` command per queued task; when its queue is empty and another machine's is at least the gap
- * deep, it asks that machine's lead for work. Returns the line to log.
+ * are within `lead.balanceGap` of each other. When this machine's depth (its native subagent jawans included) is at
+ * least the gap above the shortest other known queue and it has queued tasks that machine can take, it posts an offer
+ * to its own inbox (waking its lead) with a `bin/toli delegate` command per such task; when its queue is empty and
+ * another machine's is at least the gap deep, it asks that machine's lead for work. Returns the line to log.
  */
 export async function balancePass(): Promise<string | null> {
     const machine = loadMachine();
@@ -196,7 +204,8 @@ export async function balancePass(): Promise<string | null> {
     const minutes = balanceMinutes(machine);
     const gap = balanceGap(machine);
     if (!claimPeriod(minutes)) return null;
-    const rows = knownQueues(queueRows(await fleetStatus()));
+    const entries = await fleetStatus();
+    const rows = knownQueues(queueRows(entries));
     const self = rows.find((row) => row.local);
     const others = rows.filter((row) => !row.local);
     const shortest = others[0];
@@ -205,7 +214,8 @@ export async function balancePass(): Promise<string | null> {
     const depth = self.queue.depth;
     if (depth === 0 && self.queue.full !== undefined) return null;
     if (depth >= shortest.queue.depth + gap) {
-        const lines = delegateLines(shortest.machine);
+        const target = entries.find((entry) => entry.machine === shortest.machine);
+        const lines = target === undefined ? [] : delegateLines(target);
         if (lines.length === 0) return null;
         const body = [
             `${machine.name}'s queue is ${depth} deep; ${shortest.machine}'s is ${shortest.queue.depth}`,

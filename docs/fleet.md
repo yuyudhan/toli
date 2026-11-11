@@ -114,9 +114,10 @@ while one is running.
     bin/toli fleet queues [--json]            # every machine's queue, lightest per jawan slot first
     bin/toli pick [--project <p>] [--json]    # the machine for one unit of work; exit 2 with reasons when none
 
-`pick` and `fleet queues` rank machines by queue per jawan slot: queued tasks plus running and waiting jawan runs,
-over `capacity.maxRuns` (active tasks with no jawan here, such as a lead's bookkeeping or work delegated elsewhere,
-are not queue). Lightest first; on equal load a machine with the project's clone wins, then this machine, then name
+`pick` and `fleet queues` rank machines by queue per jawan slot: queued tasks plus running jawans (spawn runs and
+native subagents recorded with `task start --agent`) plus waiting runs, over `capacity.maxRuns` (active tasks with no
+jawan here, such as a lead's bookkeeping or work delegated elsewhere, and held tasks are not queue). Lightest first;
+on equal load a machine with the project's clone wins, then this machine, then name
 order. Left out: an unreachable machine, one whose lead said it is full (`bin/toli lead full`), or one without the
 project's clone when its URL is unknown here; when none is left, `pick` exits 2. Every `lead.balanceMinutes` the
 lead service compares the queues and wakes its lead with an offer or an ask for work

@@ -153,10 +153,14 @@ Rules that keep the list consistent without locks across machines:
     bin/toli lead full [--reason "..."] [--until 2h] | --clear | --status
     bin/toli pick [--project <p>] [--json]
 
-Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, running and
-queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a jawan plus running
-and queued jawan runs: a queued task a run already works on, or one delegated to another machine and still open there,
-is not counted again, and active tasks with no jawan here (a lead's bookkeeping, work delegated elsewhere) are not queue. `pick` and
+Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, running
+jawans, queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a jawan plus
+running jawans plus queued jawan runs. Running jawans are `bin/toli spawn` runs holding a slot and native harness
+subagents (omp `task`, Claude Code `Agent`) recorded with `bin/toli task start T<n> --agent <id>`: one per distinct
+agent id on an active task, unless a live spawn run works on that task (then only the run counts). A queued task a
+run already works on, or one delegated to another machine and still open there, is not counted again; active tasks
+with no jawan here (a lead's bookkeeping, work delegated elsewhere, a task waiting on something with `task wait`)
+and held tasks are not queue. `pick` and
 `fleet queues` rank machines by depth per jawan slot (`capacity.maxRuns`), lightest first; on equal load a machine
 with the project's clone wins, then this machine, then name order. CPU load, memory and disk are shown for
 information and are never a reason to pass a machine over: a machine busy with builds but with an empty queue gets
@@ -172,7 +176,8 @@ its own queued work away.
 
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer
-(`delegate queued work to <machine>`, listing only queued tasks no jawan works on and no other machine has); when
+(`delegate queued work to <machine>`, listing only queued tasks no jawan works on, no other machine has, and that
+machine can take: not pinned here, and of a project it has a clone of or whose git URL is registered here); when
 this machine's queue is empty and another's is at least the gap deep, it
 asks that machine's lead for work (a `talk` message naming its empty queue). Each offer or ask is sent once per
 period. Thresholds live in `config/machine.json`:
