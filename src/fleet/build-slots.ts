@@ -8,11 +8,13 @@
 // `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the session that started it.
 import {
     closeSync,
+    existsSync,
     mkdirSync,
     openSync,
     readdirSync,
     readFileSync,
     realpathSync,
+    rmSync,
     unlinkSync,
     writeFileSync,
 } from "node:fs";
@@ -179,8 +181,43 @@ export function buildMemoryMaxMB(machine: Machine, buildSlots: number, totalMB: 
 type BuildScope = { slot: number; memoryMaxMB: number };
 
 /**
+ * Spawn `argv` with this process's stdio plus `env`, passing termination signals on: its exit code (a child ended by
+ * a signal resolves to 128 + its number, as a shell reports it) and whether a signal was passed on meanwhile.
+ */
+async function spawnForwarding(
+    argv: string[],
+    env: Record<string, string>,
+): Promise<{ code: number; signalled: boolean }> {
+    const child = Bun.spawn(argv, {
+        env: { ...process.env, ...env },
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+    });
+    let signalled = false;
+    const handlers = FORWARDED_SIGNALS.map(
+        (signal) =>
+            [
+                signal,
+                () => {
+                    signalled = true;
+                    child.kill(signal);
+                },
+            ] as const,
+    );
+    for (const [signal, handler] of handlers) process.on(signal, handler);
+    try {
+        return { code: await child.exited, signalled };
+    } finally {
+        for (const [signal, handler] of handlers) process.off(signal, handler);
+    }
+}
+
+/**
  * Run `command` with this process's stdio plus `env`, passing termination signals on; resolves to its exit code.
- * With `scope` it runs in its own systemd scope where the host has one (src/jawans/scope.ts `inBuildScope`).
+ * With `scope` it runs in its own systemd scope where the host has one (src/jawans/scope.ts `inBuildScope`). When
+ * systemd-run is there but cannot make the scope (no user session bus over ssh, no lingering), the build never
+ * started: it runs once more without a scope, after one warning line. A build that ran keeps its own exit code.
  */
 async function runInSlot(command: string[], env: Record<string, string>, scope: BuildScope | null): Promise<number> {
     const [program, ...args] = command;
@@ -190,25 +227,19 @@ async function runInSlot(command: string[], env: Record<string, string>, scope: 
         warn(`toli: ${program}: command not found`);
         return 127;
     }
-    const scoped =
-        scope === null
-            ? { argv: [resolved, ...args], env: {} }
-            : inBuildScope(scope.slot, scope.memoryMaxMB, [resolved, ...args]);
-    const child = Bun.spawn(scoped.argv, {
-        env: { ...process.env, ...scoped.env, ...env },
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-    });
-    const handlers = FORWARDED_SIGNALS.map((signal) => [signal, () => child.kill(signal)] as const);
-    for (const [signal, handler] of handlers) process.on(signal, handler);
-    try {
-        // A child ended by a signal resolves to 128 + its number, as a shell reports it. systemd-run --scope execs
-        // the command, so the child is the build itself either way.
-        return await child.exited;
-    } finally {
-        for (const [signal, handler] of handlers) process.off(signal, handler);
-    }
+    const argv: [string, ...string[]] = [resolved, ...args];
+    if (scope === null) return (await spawnForwarding(argv, env)).code;
+    mkdirSync(paths.buildSlotsDir(), { recursive: true });
+    const startedFile = join(paths.buildSlotsDir(), `scope-${process.pid}.started`);
+    rmSync(startedFile, { force: true });
+    const scoped = inBuildScope(scope.slot, scope.memoryMaxMB, argv, startedFile);
+    if (scoped === null) return (await spawnForwarding(argv, env)).code;
+    const run = await spawnForwarding(scoped.argv, { ...scoped.env, ...env });
+    const started = existsSync(startedFile);
+    rmSync(startedFile, { force: true });
+    if (started || run.signalled) return run.code;
+    warn(`toli: systemd-run could not start the build's scope (exit ${run.code}), running it without a memory cap`);
+    return (await spawnForwarding(argv, env)).code;
 }
 
 /** `path` with its symlinks resolved, or null when it does not exist. */

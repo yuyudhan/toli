@@ -164,7 +164,10 @@ started it. The cap is `capacity.buildMemoryMax` in MB (default three quarters o
 slots: 16384 with 64 GB and 3 slots, so every slot at its cap still leaves a quarter for the rest; 0: no cap, still its
 own scope). The build's exit code, or the signal that killed it, is reported as without a scope. A nested build
 (inside a slot, or in a process already in a `toli-build-*` scope) stays in its parent's scope; without
-`systemd-run` or a user manager (crontab-only boxes, containers, macOS) the build starts as before.
+`systemd-run` or a user manager (crontab-only boxes, containers, macOS) the build starts as before. Inside the scope
+`/bin/sh` creates `state/build-slots/scope-<pid>.started` and then execs the build; when systemd-run exits without it
+(it could not make the scope: no user session bus over ssh, no lingering), the build never ran, so it runs once
+without a scope after one warning line. A build that ran and failed reports its own exit code and is not run again.
 `TOLI_BUILD_SCOPE=off` turns the scope off. `systemctl --user list-units 'toli-build-*'` lists the running ones.
 
 `bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH and sets its

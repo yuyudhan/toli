@@ -200,11 +200,22 @@ describe("each heavy build in its own systemd scope", () => {
         expect(inToliBuildCgroup("")).toBe(false);
     });
 
+    /** A systemd-run that logs its arguments and execs the command after `--`, as one that makes the scope does. */
+    const workingSystemdRun = (scopeLog: string): string =>
+        [
+            `printf '%s\\n' "$*" >> "${scopeLog}"`,
+            'while [ "$#" -gt 0 ]; do arg=$1; shift; [ "$arg" = "--" ] && break; done',
+            'exec "$@"',
+        ].join("\n");
+
     /**
-     * Linux with a user manager (a fake runtime dir with its private socket), a systemd-run that logs its arguments
-     * and execs the command after `--`, a `cgroup` for this process (/proc/self/cgroup) and a memory cap of 512 MB.
+     * Linux with a user manager (a fake runtime dir with its private socket), a systemd-run stub (by default
+     * `workingSystemdRun`), a `cgroup` for this process (/proc/self/cgroup) and a memory cap of 512 MB.
      */
-    function scopeBox(cgroup: string): { box: Sandbox; log: string; scopeLog: string; env: Record<string, string> } {
+    function scopeBox(
+        cgroup: string,
+        systemdRun = workingSystemdRun,
+    ): { box: Sandbox; log: string; scopeLog: string; env: Record<string, string> } {
         const { box, log } = slotBox(1, 3);
         const config = join(box.root, "config", "machine.json");
         const parsed = JSON.parse(readFileSync(config, "utf8")) as { capacity: Record<string, number> };
@@ -216,14 +227,7 @@ describe("each heavy build in its own systemd scope", () => {
         mkdirSync(join(proc, "self"), { recursive: true });
         writeFileSync(join(proc, "self", "cgroup"), cgroup);
         const scopeLog = join(box.root, ".systemd-run.log");
-        box.stub(
-            "systemd-run",
-            [
-                `printf '%s\\n' "$*" >> "${scopeLog}"`,
-                'while [ "$#" -gt 0 ]; do arg=$1; shift; [ "$arg" = "--" ] && break; done',
-                'exec "$@"',
-            ].join("\n"),
-        );
+        box.stub("systemd-run", systemdRun(scopeLog));
         const env = { TOLI_PLATFORM: "linux", TOLI_BUILD_SCOPE: "", XDG_RUNTIME_DIR: runtime, TOLI_PROC_DIR: proc };
         return { box, log, scopeLog, env };
     }
@@ -239,12 +243,22 @@ describe("each heavy build in its own systemd scope", () => {
         const shimmed = await start(box, [CARGO_SHIM, "test", "-q"], { ...env, STUB_LABEL: "b" }).done;
         expect([direct.code, shimmed.code]).toEqual([0, 0]);
         const [first, second] = scopeLines(scopeLog);
-        const prefix = /^--user --scope --collect --quiet --unit=toli-build-1-\d+\.scope -p MemoryMax=512M -- /;
+        // Inside the scope /bin/sh marks that the scope was made (state/build-slots/scope-<pid>.started), then execs
+        // the build.
+        const marker = `/bin/sh -c : > "$0" && exec "$@" ${join(box.root, "state", "build-slots")}/scope-`;
+        const prefix = /^--user --scope --collect --quiet --unit=toli-build-1-(\d+)\.scope -p MemoryMax=512M -- /;
         // build-slot resolves `cargo` on PATH (the shim, first there); the shim passes the real cargo.
-        expect(first).toMatch(prefix);
-        expect(first).toEndWith(`-- ${join(paths.buildShimsDir(), "cargo")} build`);
-        expect(second).toMatch(prefix);
-        expect(second).toEndWith(`-- ${join(box.stubs, "cargo")} test -q`);
+        for (const [line, build] of [
+            [first, `${join(paths.buildShimsDir(), "cargo")} build`],
+            [second, `${join(box.stubs, "cargo")} test -q`],
+        ]) {
+            const pid = prefix.exec(line ?? "")?.[1];
+            expect(pid).toBeDefined();
+            expect(line).toEndWith(`-- ${marker}${pid}.started ${build}`);
+        }
+        expect(
+            existsSync(join(box.root, "state", "build-slots", `scope-${prefix.exec(first ?? "")?.[1]}.started`)),
+        ).toBe(false);
         expect(runs(log).find((run) => run.label === "a")).toMatchObject({ slot: "1", jobs: "3", args: "build" });
         expect(runs(log).find((run) => run.label === "b")).toMatchObject({ slot: "1", args: "test -q" });
     }, 30_000);
@@ -255,6 +269,41 @@ describe("each heavy build in its own systemd scope", () => {
         const killed = await start(box, toliArgs("build-slot", "--", "sh", "-c", "kill -TERM $$"), env).done;
         expect([failed.code, killed.code]).toEqual([3, 143]);
         expect(scopeLines(scopeLog)).toHaveLength(2);
+    }, 30_000);
+
+    test("a build whose scope systemd-run cannot make runs once without it, after one warning", async () => {
+        // As systemd-run fails over ssh without a user session bus: before running the command, exit 1.
+        const noBus = (scopeLog: string): string =>
+            [
+                `printf '%s\\n' "$*" >> "${scopeLog}"`,
+                "echo 'Failed to connect to bus: No medium found' >&2",
+                "exit 1",
+            ].join("\n");
+        const { box, log, scopeLog, env } = scopeBox(terminal, noBus);
+        const built = await start(box, toliArgs("build-slot", "--", "cargo", "build"), { ...env, STUB_LABEL: "a" })
+            .done;
+        expect(built.code).toBe(0);
+        expect(scopeLines(scopeLog)).toHaveLength(1);
+        expect(runs(log).map((run) => [run.label, run.slot, run.jobs, run.args])).toEqual([["a", "1", "3", "build"]]);
+        const warnings = built.stderr.split("\n").filter((line) => line.includes("could not start the build's scope"));
+        expect(warnings).toEqual([
+            "toli: systemd-run could not start the build's scope (exit 1), running it without a memory cap",
+        ]);
+
+        // A build that fails runs once, unscoped after the failed scope as in a working one, with its own exit code.
+        const counter = join(box.root, ".attempts");
+        const failing = toliArgs("build-slot", "--", "sh", "-c", `echo x >> '${counter}'; exit 3`);
+        const failed = await start(box, failing, env).done;
+        expect(failed.code).toBe(3);
+        expect(readFileSync(counter, "utf8")).toBe("x\n");
+        const working = scopeBox(terminal);
+        const workingCounter = join(working.box.root, ".attempts");
+        const inScope = toliArgs("build-slot", "--", "sh", "-c", `echo x >> '${workingCounter}'; exit 3`);
+        const scopedFail = await start(working.box, inScope, working.env).done;
+        expect(scopedFail.code).toBe(3);
+        expect(readFileSync(workingCounter, "utf8")).toBe("x\n");
+        expect(scopedFail.stderr).not.toContain("could not start");
+        expect(scopeLines(working.scopeLog)).toHaveLength(1);
     }, 30_000);
 
     test("no scope inside a toli build scope, without a user manager, off Linux or with TOLI_BUILD_SCOPE=off", async () => {

@@ -95,18 +95,24 @@ export function buildScopeArgv(systemdRun: string, unit: string, memoryMaxMB: nu
     return [systemdRun, "--user", "--scope", "--collect", "--quiet", `--unit=${unit}`, ...limit, "--", ...argv];
 }
 
+/** A heavy build's scoped command line, and the file its command creates once systemd-run has made the scope. */
+export type BuildScoped = Scoped & { startedFile: string };
+
 /**
  * The argv and extra environment that start heavy build `argv` in its own systemd scope, `toli-build-<slot>-<pid>`,
  * capped at `memoryMaxMB`: on Linux when systemd-run and a user manager are there and this process is not inside a
- * toli build scope already (a nested build stays in its parent's); else unchanged. `TOLI_BUILD_SCOPE=off` turns it
- * off (tests). `systemd-run --scope` execs the command itself, so the pid spawned is the build's, and its exit code
- * or killing signal is the build's.
+ * toli build scope already (a nested build stays in its parent's); else null. `TOLI_BUILD_SCOPE=off` turns it off
+ * (tests). Inside the scope `/bin/sh` creates `startedFile` and then execs the build, so the pid in the scope is the
+ * build's and its exit code or killing signal is the build's; a missing `startedFile` after systemd-run exits means
+ * the scope was never made (no user session bus over ssh, no lingering) and the build never ran.
  */
-export function inBuildScope(slot: number, memoryMaxMB: number, argv: Argv): Scoped {
+export function inBuildScope(slot: number, memoryMaxMB: number, argv: Argv, startedFile: string): BuildScoped | null {
     const scope = userScope("TOLI_BUILD_SCOPE");
-    if (scope === null || inToliBuildCgroup(ownCgroup())) return { argv, env: {} };
+    if (scope === null || inToliBuildCgroup(ownCgroup())) return null;
+    const marked: Argv = ["/bin/sh", "-c", ': > "$0" && exec "$@"', startedFile, ...argv];
     return {
-        argv: buildScopeArgv(scope.systemdRun, buildScopeUnit(slot, process.pid), memoryMaxMB, argv),
+        argv: buildScopeArgv(scope.systemdRun, buildScopeUnit(slot, process.pid), memoryMaxMB, marked),
         env: { XDG_RUNTIME_DIR: scope.runtimeDir },
+        startedFile,
     };
 }
