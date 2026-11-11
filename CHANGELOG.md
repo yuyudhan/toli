@@ -6,6 +6,12 @@ one. See docs/releasing.md.
 
 ## v0.4.2 - unreleased
 
+### Added
+
+- A `task-end` hook: `local/hooks/task-end` runs when a task becomes done or dropped (and again when a jawan run ends
+  on an already-closed task), with the task id, its status and its project as arguments, for a machine's own
+  leftover cleaners (docs/helpers.md#hooks).
+
 ### Fixed
 
 - A machine that pulls its messages gets each reply within about a minute even while fleet machines are down (it took
@@ -20,6 +26,10 @@ one. See docs/releasing.md.
 - An async call (`runAsync`) no longer hangs after its program exits or is killed while something else holds its
   output open, as a shared ssh connection's master does for a client it served on a stalled link: output still open
   2 s after the exit is cut off.
+- `bin/toli commit` applies every `--patch` file when the flag repeats, in the order given, instead of just one; a
+  file that does not apply is named and nothing is committed.
+- The cargo shim marks its environment (`TOLI_CARGO_SHIM_ACTIVE`) for what it runs, so a cargo wrapper placed after
+  it on PATH can skip it instead of calling it back in a loop.
 
 ## v0.4.1 - 2026-11-10
 
