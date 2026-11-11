@@ -349,3 +349,43 @@ describe("one live jawan per task", () => {
         stop(box, [first.id, other.id]);
     });
 });
+
+describe("a machine marked full", () => {
+    const HEADLESS = { TOLI_LEAD_TURN: "headless" };
+
+    function full(): Sandbox {
+        const box = coordinator();
+        withProject(box, "alpha");
+        box.ok(["task", "add", "alpha", "look around", "--shape", "scout"]);
+        box.stub("omp", "true");
+        box.ok(["lead", "full", "--reason", "coordination only"]);
+        return box;
+    }
+
+    test("starts no jawan from a headless lead turn, whatever woke it, and points to delegation", () => {
+        const box = full();
+        const refused = box.toli(["spawn", "--harness", "omp", "--task", "T1", "--brief", brief(box)], {
+            env: HEADLESS,
+        });
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("refusing to spawn: this machine is full: coordination only");
+        expect(refused.stderr).toContain("bin/toli delegate <machine>");
+        expect(box.toli(["resume", "j-20260101-000000-dead"], { env: HEADLESS }).stderr).toContain(
+            "refusing to resume: this machine is full",
+        );
+        expect(runs(box)).toEqual([]);
+        expect(box.ok(["task", "list"])).toBe("T1\tqueued\talpha\tscout\tlook around");
+    });
+
+    test("leaves the user's own lead free to dispatch, and a headless turn free once the mark is cleared", async () => {
+        const box = full();
+        const own = spawnJson(box, ["--harness", "omp", "--task", "T1", "--brief", brief(box)]);
+        expect(own.task).toBe("T1");
+        await waitFor(box, own.id, (run) => run.inbox !== null);
+        box.ok(["lead", "full", "--clear"]);
+        const headless = box.ok(["spawn", "--harness", "omp", "--task", "T1", "--brief", brief(box), "--json"], {
+            env: HEADLESS,
+        });
+        expect((JSON.parse(headless) as Run).task).toBe("T1");
+    });
+});

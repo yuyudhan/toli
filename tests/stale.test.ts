@@ -171,8 +171,7 @@ describe("active tasks with no live run", () => {
 });
 
 describe("answers reach the waiting work", () => {
-    test("task answer names every task waiting on the hold, with briefs, and posts it as a wake", () => {
-        const box = coordinator();
+    function heldDecision(box: Sandbox): void {
         for (const title of ["pick db", "build store", "migrate", "report"]) box.ok(["task", "add", "alpha", title]);
         box.ok(["task", "hold", "T1", "--question", "postgres or sqlite?", "--blocks", "T2 and the T3 migration"]);
         box.ok(["task", "hold", "T4", "--question", "resume when T1 is decided"]);
@@ -180,13 +179,31 @@ describe("answers reach the waiting work", () => {
         mkdirSync(briefs, { recursive: true });
         writeFileSync(join(briefs, "T1.md"), "brief");
         writeFileSync(join(briefs, "T2-store.md"), "brief");
+    }
 
+    const printedLines = [
+        "unblocked: dispatch T1 now (toli-dispatch skill; put the answer in its brief, data/projects/alpha/briefs/T1.md)",
+        "waiting on T1: T2 (alpha, queued): build store - named in T1's blocks; re-dispatch it now (brief: data/projects/alpha/briefs/T2-store.md)",
+        "waiting on T1: T3 (alpha, queued): migrate - named in T1's blocks; re-dispatch it now",
+        "waiting on T1: T4 (alpha, held): report - its hold names T1; re-dispatch it now",
+    ];
+
+    test("the lead's own answer names every task waiting on the hold, with briefs, and posts no wake", () => {
+        const box = coordinator();
+        heldDecision(box);
         const printed = box.ok(["task", "answer", "T1", "postgres"]).split("\n");
+        expect(printed.slice(1)).toEqual(printedLines);
+        // That lead dispatches in this turn; a wake arriving after it would make it dispatch the same tasks again.
+        expect(inbox(box)).toEqual([]);
+        expect(box.ok(["wake"])).toBe("nothing new");
+    });
+
+    test("an answer forwarded by another machine's lead posts the wake, since no lead here ran the command", () => {
+        const box = coordinator();
+        heldDecision(box);
+        const printed = box.ok(["task", "answer", "T1", "postgres", "--from", "m2"]).split("\n");
         expect(printed.slice(1)).toEqual([
-            "unblocked: dispatch T1 now (toli-dispatch skill; put the answer in its brief, data/projects/alpha/briefs/T1.md)",
-            "waiting on T1: T2 (alpha, queued): build store - named in T1's blocks; re-dispatch it now (brief: data/projects/alpha/briefs/T2-store.md)",
-            "waiting on T1: T3 (alpha, queued): migrate - named in T1's blocks; re-dispatch it now",
-            "waiting on T1: T4 (alpha, held): report - its hold names T1; re-dispatch it now",
+            ...printedLines,
             expect.stringMatching(/^wake posted: data\/inbox\/.*-m1\.md$/),
         ]);
         const [wake] = inbox(box);
@@ -198,6 +215,28 @@ describe("answers reach the waiting work", () => {
         const wakeText = box.ok(["wake"]);
         expect(wakeText).toContain("[toli wake] 1 new result arrived.");
         expect(wakeText).toContain("answer recorded for T1");
+    });
+
+    test("an answered task whose old run ended is not stale until the grace minutes after the answer", () => {
+        const box = coordinator();
+        box.ok(["task", "add", "alpha", "integrate and push"]);
+        box.ok(["task", "start", "T1", "--agent", "remote:m2:bg_7"], { now: START });
+        legacyRemoteRecord(box, "T1", "2026-03-04T08:20:00.000Z", "waiting on the answer to question 45");
+        box.ok(["task", "hold", "T1", "--question", "budget 45 ms or 20 ms?"], { now: "2026-03-04T08:21:00.000Z" });
+        box.ok(["task", "answer", "T1", "45 ms"], { now: "2026-03-04T09:00:00.000Z" });
+
+        // The run ended 41 minutes ago, but the lead is dispatching the answer right now: no digest line, no wake.
+        const stale = (): string[] => inbox(box).filter((item) => item.includes("no live run"));
+        expect(box.ok(["digest"], { now: "2026-03-04T09:01:00.000Z" })).not.toContain("T1 (alpha) is active");
+        box.ok(["job", "tick"], { now: "2026-03-04T09:01:00.000Z" });
+        expect(stale()).toEqual([]);
+
+        // Still nobody dispatched it 15 minutes after the answer: now it is raised, once.
+        box.ok(["job", "tick"], { now: "2026-03-04T09:16:00.000Z" });
+        expect(stale()).toHaveLength(1);
+        expect(stale()[0]).toContain("- T1 (alpha) is active but its run remote:m2:bg_7 ended 56m ago");
+        box.ok(["job", "tick"], { now: "2026-03-04T09:17:00.000Z" });
+        expect(stale()).toHaveLength(1);
     });
 });
 

@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.4.3 - unreleased
+
+### Fixed
+
+- An answered hold is dispatched once, by the lead that answered it. `bin/toli task answer` run by this machine's
+  own lead posts no inbox wake (only an answer forwarded from another machine's lead does), an answered task is not
+  stale until `oversight.staleTaskMinutes` after the answer, and a headless lead turn (`TOLI_LEAD_TURN=headless`)
+  refuses `bin/toli spawn` and `resume` on a machine marked `lead full`, pointing to `bin/toli delegate`.
+
 ## v0.4.2 - 2026-11-11
 
 ### Added

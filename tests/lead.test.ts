@@ -164,6 +164,7 @@ function lead(): Lead {
 for word in "$@"; do [ "$prev" = "--session-dir" ] && dir="$word"; prev="$word"; done
 n=$(ls "${calls}" | wc -l | tr -d ' ')
 printf '%s\\n' "$@" > "${calls}/$n"
+printf '%s\\n' "$TOLI_LEAD_TURN" >> "${join(box.root, ".turn-env")}"
 [ -f "${join(box.root, ".fail")}" ] && exit 1
 mkdir -p "$dir" && touch "$dir/conversation.jsonl"
 exit 0`,
@@ -232,6 +233,22 @@ describe("lead run --once", () => {
         const [, retry] = calls(setup);
         expect(retry).toContain("build body");
         expect(existsSync(pending)).toBe(false);
+    });
+
+    test("the turn runs marked headless, and on a full machine its prompt says to delegate instead of spawning", () => {
+        const setup = lead();
+        const { box } = setup;
+        deliver(box, "message from m2", "first body");
+        once(box);
+        box.ok(["lead", "full", "--reason", "coordination only"]);
+        deliver(box, "message from m2", "second body");
+        once(box);
+        const [first, second] = calls(setup);
+        expect(first).not.toContain("start no jawan here");
+        expect(second).toContain(
+            "This machine is full: coordination only (until lead full --clear): start no jawan here",
+        );
+        expect(readFileSync(join(box.root, ".turn-env"), "utf8")).toBe("headless\nheadless\n");
     });
 
     test("a live interactive session makes the pass skip and take nothing", () => {

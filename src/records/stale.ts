@@ -162,7 +162,10 @@ function latestOfChain(run: JawanRun, runs: JawanRun[]): JawanRun {
     }
 }
 
-/** The active tasks in `tasks` that no live run works on (or that wait on something, `task wait`), oldest end first. */
+/**
+ * The active tasks in `tasks` that no live run works on (or that wait on something, `task wait`), oldest end first. A
+ * task answered less than the grace minutes ago is not among them: its lead is dispatching it.
+ */
 export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
     const graceMs = input.minutes * 60_000;
     const found: StaleTask[] = [];
@@ -173,6 +176,10 @@ export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
         const named = task.agent === undefined ? undefined : input.runs.find((entry) => entry.id === task.agent);
         const latest = named === undefined ? undefined : latestOfChain(named, input.runs);
         if (latest !== undefined && ACTIVE.includes(latest.status)) continue;
+        // The lead dispatches an answered task in the turn that recorded the answer. The grace minutes run from the
+        // answer too, however long ago its old run ended, so the tick never tells the lead to re-dispatch what it is
+        // dispatching right now.
+        if (task.answeredAt !== undefined && input.at.getTime() - Date.parse(task.answeredAt) < graceMs) continue;
         const base = {
             waitingOn: null,
             id: task.id,

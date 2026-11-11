@@ -14,7 +14,7 @@ import { liveSession } from "../harness/session.ts";
 import { sessionFile } from "../jawans/launch.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
-import { fullCommand } from "./full.ts";
+import { currentFull, fullCommand, fullText, LEAD_TURN_ENV } from "./full.ts";
 import { installLeadService, leadStatus, printStatus, uninstallLeadService } from "./lead-service.ts";
 import { attachPidLocked, type LeadAttach, type LeadState, leadLock, readLeadState, turnPid } from "./lead-state.ts";
 import { balancePass } from "./queues.ts";
@@ -40,6 +40,7 @@ function logLine(line: string): void {
  */
 export function headlessPrompt(machine: string, wake: string): string {
     const user = persona().user;
+    const full = currentFull();
     return [
         `[toli lead ${machine}] headless turn`,
         "",
@@ -48,6 +49,11 @@ export function headlessPrompt(machine: string, wake: string): string {
         "[toli] Headless rules for this turn:",
         `- You are this machine's lead between conversations. Nobody reads this reply live; ${user} reads it when he attaches (\`bin/toli lead attach\`), so keep it to what happened and what waits on him.`,
         "- Dispatch jawans ONLY with `bin/toli spawn --task T<n> --brief <file>`: it returns at once and the result arrives as a later wake. Never use native or harness subagents, and never wait for or poll a jawan.",
+        ...(full === null
+            ? []
+            : [
+                  `- This machine is ${fullText(full)}: start no jawan here (\`bin/toli spawn\` refuses in this turn). Delegate each task to the shortest queue with \`bin/toli delegate <machine> "<title>" --brief <file>\` (\`bin/toli fleet queues\`).`,
+              ]),
         `- Never ask questions: a decision for ${user} is \`bin/toli task hold <id> --question "..."\` (the Needs-you queue).`,
         '- Work for another machine goes by `bin/toli delegate <machine> "<title>" --brief <file>`, never `bin/toli remote`. Reply to another machine\'s lead with `bin/toli talk <machine> "<words>"`.',
         `- A delegated task's question (\`<machine>/T<n> held\`) is yours to answer: \`bin/toli task answer <machine>/T<n> "<answer>"\`. Only one that needs ${user} (push, merge, release, money, security, destructive, taste) goes to \`bin/toli task escalate <machine>/T<n>\`.`,
@@ -113,7 +119,7 @@ async function runTurn(claim: Claim): Promise<number> {
         adoptLoginEnv();
         const proc = Bun.spawn([resolved, ...argv.slice(1)], {
             cwd: root,
-            env: process.env,
+            env: { ...process.env, [LEAD_TURN_ENV]: "headless" },
             stdin: "ignore",
             stdout: logFd,
             stderr: logFd,

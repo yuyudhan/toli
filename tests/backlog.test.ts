@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type BacklogFile, loadBacklog, taskCommand } from "../src/records/backlog.ts";
 import { irreversibleTopic, matchOption } from "../src/records/hold-options.ts";
@@ -145,8 +145,8 @@ describe("task commands in process", () => {
             "T1\tactive\talpha\tscout\tDraft plan\t(agent: jawan-1)",
             "unblocked: dispatch T1 now (toli-dispatch skill; put the answer in its brief, data/projects/alpha/briefs/T1.md)",
             "waiting on T1: T2 (alpha, queued): Ship it - named in T1's blocks; re-dispatch it now",
-            expect.stringMatching(/^wake posted: data\/inbox\/.*-m1\.md$/),
         ]);
+        expect(existsSync(join(box.root, "data", "inbox"))).toBe(false);
         const decisions = readFileSync(join(box.root, "data", "projects", "alpha", "decisions.md"), "utf8");
         expect(decisions).toStartWith("# alpha decisions\n");
         expect(decisions).toContain("T1: Draft plan");

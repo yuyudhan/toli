@@ -34,10 +34,13 @@ export function waitingOn(answered: Task, tasks: Task[], stale: StaleTask[]): Wa
 }
 
 /**
- * `task answer`'s wake: every task waiting on `answered` is named with its brief, and the inbox gets the answered
- * task plus those, so the lead re-dispatches all of them in the same turn. Returns the lines to print.
+ * `task answer`'s dispatch list: every task waiting on `answered` is named with its brief. The caller prints the lines,
+ * so the lead that ran the command dispatches them in that same turn. `post`: also put them in the inbox as one wake
+ * (`[toli wake]`), for a lead that did not run the command. Never post for a lead's own answer: its own turn already
+ * dispatches, and a wake arriving after that tells it to dispatch the same tasks a second time. Returns the lines to
+ * print.
  */
-export function answerWake(answered: Task, tasks: Task[]): string[] {
+export function answerWake(answered: Task, tasks: Task[], post: boolean): string[] {
     const waiting = waitingOn(
         answered,
         tasks,
@@ -57,6 +60,7 @@ export function answerWake(answered: Task, tasks: Task[]): string[] {
                       task.id,
                   ),
               );
+    if (!post) return lines;
     const path = addInboxItem(
         fromName(),
         `answer recorded for ${answered.id}: ${waiting.length === 0 ? "dispatch it" : `${waiting.length + 1} tasks to dispatch`}`,

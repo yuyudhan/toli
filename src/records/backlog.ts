@@ -325,9 +325,10 @@ function hold(argv: string[]): void {
 
 /**
  * `task answer <id> "<answer>" [--from <machine>]`: record the user's words verbatim, release the task, say it is
- * ready to dispatch, and name (and post as a wake) every task waiting on it, so the lead re-dispatches them in the
- * same turn. `--from`: the answer was forwarded by another machine's lead (`task answer <this machine>/T<n>` there),
- * which the task's notes record; the wake posted here makes this machine's lead dispatch it.
+ * ready to dispatch, and name every task waiting on it, so the lead that ran this dispatches them in the same turn.
+ * It posts no wake: that wake reaches the lead after it dispatched and makes it dispatch the same tasks again (a task
+ * nobody dispatched stays queued, or is raised by the tick, src/records/stale.ts). `--from`: another machine's lead
+ * forwarded the answer (`task answer <this machine>/T<n>` there); no lead here ran this, so a wake is posted.
  */
 function answer(argv: string[]): void {
     const args = new Args(argv, { values: ["from"] });
@@ -351,7 +352,7 @@ function answer(argv: string[]): void {
     if (isValidName(task.project)) recordDecision(task, reply);
     const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
     out(`unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${brief})`);
-    for (const line of answerWake(task, loadBacklog().tasks)) out(line);
+    for (const line of answerWake(task, loadBacklog().tasks, from !== undefined)) out(line);
     forwardEscalatedAnswer(heldFrom, reply);
 }
 

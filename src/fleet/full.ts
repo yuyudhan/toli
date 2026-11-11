@@ -53,6 +53,25 @@ export function fullText(full: Full | null): string {
     return `full: ${full.reason} (${full.until === null ? "until lead full --clear" : `until ${full.until}`})`;
 }
 
+/** Set on the omp of the lead service's headless turn (src/fleet/lead.ts): nobody watches that turn. */
+export const LEAD_TURN_ENV = "TOLI_LEAD_TURN";
+
+/**
+ * Refuse starting a jawan from a headless lead turn while this machine is marked full: the mark says it takes no more
+ * work (a coordination-only machine says so for good), and an unattended turn acting on a wake, such as an answer
+ * recorded for a task, would otherwise start the work here anyway. The user's own lead is never refused: dispatching
+ * on a full machine, as for a task it already holds, stays its call.
+ */
+export function refuseHeadlessSpawnWhenFull(action: string): void {
+    if (process.env[LEAD_TURN_ENV] !== "headless") return;
+    const full = currentFull();
+    if (full === null) return;
+    throw new ToliError(
+        `refusing to ${action}: this machine is ${fullText(full)}, so a headless lead turn starts no jawan here. ` +
+            'Delegate it to the shortest queue instead: bin/toli delegate <machine> "<title>" --brief <file> (bin/toli fleet queues)',
+    );
+}
+
 /** `lead full [--reason "..."] [--until 30m|2h|<ISO time>] | --clear | --status [--json]`. */
 export function fullCommand(argv: string[]): void {
     const args = new Args(argv, { values: ["reason", "until"], booleans: ["clear", "status", "json"] });

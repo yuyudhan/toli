@@ -190,7 +190,9 @@ Nothing may sit idle silently, away mode (`/afk`) included. Two checks run from 
   recorded at all. A task delegated with `--for` counts as active with the fleet id as its jawan. A harness subagent
   id toli cannot look up counts as live until such a record shows its run ended. The digest's Next block lists stale
   tasks first, with the run's last report line and any answer recorded since; every tick posts newly stale ones to
-  the inbox once per ended run, so the lead gets a `[toli wake]` naming them. Recording a new jawan
+  the inbox once per ended run, so the lead gets a `[toli wake]` naming them. A task answered less than the grace
+  minutes ago is not stale: its lead dispatches it in the turn that recorded the answer (`task answer` posts no wake
+  of its own; only an answer forwarded from another machine's lead does). Recording a new jawan
   (`task start --agent`, `spawn --task`) clears it. A task is live while the run it names, or the latest run of that
   run's resume or replace chain, is queued or running, even when that run carries no task id (`task start --agent`
   also records the task on a run spawned without `--task`).
