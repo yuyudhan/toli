@@ -59,6 +59,11 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    replace the conflicted ones, every conflicted path must be named and free of conflict markers, and every check
    above runs on the result (`--resolved` on a clean merge is refused). After the branch moves it checks the merged
    files out into the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
+   A `git merge` already in progress in the checkout (MERGE_HEAD) lands the same way, with `--merge <its sha>` (or
+   `--merge MERGE_HEAD`), plus `--resolved -- <conflicted paths>` when it had conflicts: the merge-tree result is the
+   start, merged files not named must match it in the working tree (name a file to commit your edit of it), and after
+   the branch moves `git merge --quit` ends the merge. Any other commit is refused while a merge is in progress, since
+   it would record one parent and drop the merged one; so is an octopus merge.
 
 For toli, it then refreshes the installed runtime (below), so the live session runs the new commit from the next
 `bin/toli` call. A `--merge` commit does not: the merged code has not passed `just check` in this checkout yet, so

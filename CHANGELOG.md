@@ -24,6 +24,10 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli commit` no longer lands a `git merge` in progress (MERGE_HEAD) as a one-parent commit, which left the
+  merged commit out of the history so later merges conflicted again. Such a commit is now refused, naming the merge;
+  `--merge <its sha>` (or `--merge MERGE_HEAD`, with `--resolved -- <conflicted paths>` after conflicts) adopts the
+  merge from the working tree, records both parents and ends the merge (T1105).
 - `bin/toli build-slot` (and so the cargo shim) serves waiters in arrival order: each waiter holds a numbered ticket
   in `state/build-slots/queue/` and only the oldest live one takes a freed slot, so a later build never passes an
   earlier one; a waiter that dies leaves the line.
