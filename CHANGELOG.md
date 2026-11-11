@@ -12,6 +12,11 @@ one. See docs/releasing.md.
   own lead posts no inbox wake (only an answer forwarded from another machine's lead does), an answered task is not
   stale until `oversight.staleTaskMinutes` after the answer, and a headless lead turn (`TOLI_LEAD_TURN=headless`)
   refuses `bin/toli spawn` and `resume` on a machine marked `lead full`, pointing to `bin/toli delegate`.
+- `bin/toli upgrade` no longer ends running jawans. The lead's systemd unit uses `KillMode=process`, so stopping or
+  restarting it ends only `lead run`, and an upgrade now ends by running `bin/toli lead install` and
+  `bin/toli schedule install` from the new code for the services that are installed (systemd units the shell cannot
+  reach are named and left alone). The first upgrade from v0.4.2 or older runs the old code's steps: run both
+  commands by hand after it (docs/install.md#upgrading).
 
 ## v0.4.2 - 2026-11-11
 

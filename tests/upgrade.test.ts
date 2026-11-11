@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
     describeInstalled,
@@ -8,7 +8,7 @@ import {
     upgradeBlockers,
     versionCommand,
 } from "../src/release/upgrade.ts";
-import { commandIn, type Sandbox, sandbox, tempDir } from "./helpers.ts";
+import { commandIn, type Sandbox, sandbox, tempDir, withSystemd } from "./helpers.ts";
 import { releaseInstall as releaseCheckout } from "./release-fixture.ts";
 
 /** The sandbox root as a release install detached at v0.1.0 (tests/release-fixture.ts), with a private data file. */
@@ -94,6 +94,48 @@ describe("bin/toli upgrade", () => {
         const result = box.toli(["upgrade"]);
         expect(result.code).toBe(1);
         expect(result.stderr).toContain('HEAD is on branch "main"');
+    });
+});
+
+describe("bin/toli upgrade and the installed services", () => {
+    const stepsOf = (output: string): string[] => output.split("\n").filter((line) => line.startsWith("bin/toli "));
+
+    /** A release install whose lead service and tick are installed under a systemd stub, then switched off. */
+    function withServices(): { box: Sandbox; env: Record<string, string>; units: string } {
+        const box = releaseInstall();
+        const { env, units } = withSystemd(box);
+        box.ok(["lead", "install"], { env });
+        box.ok(["schedule", "install"], { env });
+        rmSync(join(box.root, ".active"));
+        return { box, env, units };
+    }
+
+    test("installs the lead service and the tick again, from the new code, once migrate and harness sync ran", () => {
+        const { box, env } = withServices();
+        const output = box.ok(["upgrade"], { env });
+        expect(stepsOf(output)).toEqual([
+            "bin/toli migrate",
+            "bin/toli harness sync",
+            "bin/toli lead install",
+            "bin/toli schedule install",
+        ]);
+        expect(output).toContain("fake toli lead install");
+        expect(output).toContain("toli upgraded: v0.1.0 -> v0.2.0");
+    });
+
+    test("installs nothing that was not installed", () => {
+        const box = releaseInstall();
+        expect(stepsOf(box.ok(["upgrade"]))).toEqual(["bin/toli migrate", "bin/toli harness sync"]);
+    });
+
+    test("systemd units this shell cannot reach (ssh without a user bus) are named and left as they are", () => {
+        const { box, env, units } = withServices();
+        box.stub("systemctl", 'echo "Failed to connect to bus: No medium found" >&2; exit 1');
+        const output = box.ok(["upgrade"], { env });
+        expect(output).toContain(
+            `toli: systemd units exist (${join(units, "toli-lead.service")}, ${join(units, "toli-tick.timer")}) but \`systemctl --user\` is not reachable from this shell`,
+        );
+        expect(stepsOf(output)).toEqual(["bin/toli migrate", "bin/toli harness sync"]);
     });
 });
 

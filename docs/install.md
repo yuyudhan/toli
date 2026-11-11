@@ -88,6 +88,12 @@ Off a release tag (a development clone on `develop`) it prints `0.2.0 (untagged:
 - refuses a tag that does not exist on the remote, listing the ones that do;
 - fetches just that tag (shallow installs stay shallow) and checks it out, detached;
 - runs `bin/toli migrate` and `bin/toli harness sync` from the new code;
+- installs again, from the new code, the lead service and the tick when they are installed (`bin/toli lead install`,
+  `bin/toli schedule install`: unit written, enabled, running), so a service that was off comes back on and no
+  running jawan is stopped (the lead unit stops only its own process, [sardars.md](sardars.md)). Where systemd units
+  exist but `systemctl --user` is not reachable from the shell (ssh without a user bus) it names them and leaves them
+  alone: run both commands from a login shell. An upgrade run by the code of an older release lacks this step: run
+  both commands after it;
 - prints the CHANGELOG.md sections between your old version and the new one.
 
 Your `data/`, `state/`, `config/`, `logs/`, `projects/`, and `local/` are gitignored, so the checkout never touches

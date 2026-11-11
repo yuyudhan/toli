@@ -35,7 +35,7 @@ export function plistPath(): string {
     return join(launchAgentsDir(), `${LABEL}.plist`);
 }
 
-function tickUnitFiles(): { service: string; timer: string } {
+export function tickUnitFiles(): { service: string; timer: string } {
     const base = join(systemdUserDir(), TICK_UNIT);
     return { service: `${base}.service`, timer: `${base}.timer` };
 }

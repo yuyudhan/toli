@@ -67,10 +67,13 @@ digest shows it once as `Update: toli vX.Y.Z is out ...` with its CHANGELOG sect
 - Tell Malik once, in plain words: the new version, the few changes that matter to him, and that it updates only on
   his word. Never raise the same version again; the digest will not either.
 - He confirms: dispatch a jawan (start a task first) whose brief quotes his word and runs `bin/toli upgrade`, which
-  checks out the release and runs `bin/toli migrate` and `bin/toli harness sync`, then `bin/toli lead install` so
-  this machine's lead service runs (each machine's Sardar does the same on its own machine); it reports the output,
-  and any refusal (local edits to tracked files) verbatim. Relay the result and that a session restart loads the new
-  contract and skills.
+  checks out the release, runs `bin/toli migrate` and `bin/toli harness sync`, and installs this machine's lead
+  service and tick again where they are installed (each machine's Sardar does the same on its own machine), without
+  stopping any running jawan. An upgrade run by the code of an older release does not do that last step, and one
+  that prints that systemd units are unreachable from the shell skipped it: check `bin/toli lead status` and, when
+  the service is not running, run `bin/toli lead install` and `bin/toli schedule install` from a login shell. It
+  reports the output, and any refusal (local edits to tracked files) verbatim. Relay the result and that a session
+  restart loads the new contract and skills.
 - On a development clone (the notice says `development clone on branch <b>`) `upgrade` refuses: the jawan updates
   it with git instead (fetch the tag, fast-forward or merge into `<b>`), stopping on any conflict.
 - He says "not now" or "skip this one": `bin/toli update snooze vX.Y.Z`. "Stop checking": `bin/toli update off`

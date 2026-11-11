@@ -197,8 +197,12 @@ results reach other machines only through a delegated task's report.
 On Linux each jawan runs in its own systemd scope (`toli-jawan-<run id>.scope` under the user manager, started with
 `systemd-run --user --scope`), not in the lead service's cgroup, so systemd-oomd or a restart of `toli-lead.service`
 takes the lead alone, and an OOM kill takes one jawan, never the lead and all of them. Without systemd-run or a user
-manager the jawan starts as before. On macOS each jawan's supervisor runs in its own session and process group, which
-launchd leaves alone when it stops or restarts the lead's job.
+manager the jawan starts as before, in the lead service's cgroup; the unit is `KillMode=process`, so even then stopping
+or restarting it (`lead install`, `bin/toli upgrade`, the loop exiting for a newer runtime) ends only `lead run`, never
+the supervisors, jawans and headless turn left running. A machine whose unit predates `KillMode=process` gets it from
+the next `lead install` (the new unit is loaded before that restart stops the old process). On macOS each jawan's
+supervisor runs in its own session and process group, which launchd leaves alone when it stops or restarts the lead's
+job.
 
 ## Sharing learnings between leads
 

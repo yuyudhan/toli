@@ -228,6 +228,7 @@ runs): `git -C <root> fetch --tags origin && git -C <root> checkout --detach vX.
 
 Both refuse when tracked files have local changes. In chat: `/sync-toli` (this machine) or `/sync-toli --all`. So
 after a release, `sync --all` on the coordinator pulls `develop` there and upgrades every worker to the new tag
-(checkout, `migrate`, `harness sync`, runtime); each worker's running jawans finish on the runtime they started with
+(checkout, `migrate`, `harness sync`, runtime, and a reinstall of the lead service and tick wherever they are
+installed); each worker's running jawans finish on the runtime they started with and are not stopped
 ([install.md](install.md#upgrading)). A new tag alone changes nothing: the update notice tells the owner, and workers
 move on his word.

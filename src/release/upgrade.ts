@@ -14,6 +14,7 @@ import {
     toliRepoUrl,
 } from "./release.ts";
 import { activeRuntime, removeRuntimePointer, syncRuntime } from "./runtime.ts";
+import { serviceRefresh } from "./services.ts";
 
 export type Installed = {
     /** The release tag HEAD sits exactly on, or null on an untagged commit. */
@@ -86,9 +87,10 @@ export function upgradeBlockers(root: string): string[] {
 
 /**
  * `bin/toli upgrade [vX.Y.Z|--latest] [--check]`: list the remote's release tags, show current vs target, and
- * (without --check) check the target tag out, then run `migrate` and `harness sync` from the new code and print the
- * CHANGELOG sections in between. Private dirs (data/, state/, config/, logs/, projects/, local/) are gitignored, so
- * the checkout never touches them.
+ * (without --check) check the target tag out, then run `migrate` and `harness sync` from the new code, install again
+ * the lead service and the tick when they are installed (src/release/services.ts: enabled and running on the new
+ * code, no jawan stopped) and print the CHANGELOG sections in between. Private dirs (data/, state/, config/, logs/,
+ * projects/, local/) are gitignored, so the checkout never touches them.
  */
 export async function upgradeCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { booleans: ["check", "latest"] });
@@ -161,8 +163,11 @@ export async function upgradeCommand(argv: string[]): Promise<number> {
         }
     }
 
-    // The new code runs in fresh processes: this one still holds the old modules.
-    for (const step of [["migrate"], ["harness", "sync"]]) {
+    // The new code runs in fresh processes: this one still holds the old modules. The installed services come last,
+    // so their units are written by the new code too.
+    const services = serviceRefresh();
+    for (const note of services.notes) out(`toli: ${note}`);
+    for (const step of [["migrate"], ["harness", "sync"], ...services.steps]) {
         out(`bin/toli ${step.join(" ")}`);
         const code = await runInherit([paths.toliBin(), ...step], { cwd: root });
         if (code !== 0) {

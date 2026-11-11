@@ -60,7 +60,13 @@ export function renderLeadPlist(): string {
     });
 }
 
-/** The systemd user service: a long-running `lead run`, restarted whenever it exits. */
+/**
+ * The systemd user service: a long-running `lead run`, restarted whenever it exits. `KillMode=process`: stopping or
+ * restarting the unit (`lead install`, `bin/toli upgrade`, the loop exiting for a newer runtime, a crash) ends only
+ * `lead run`. The default (`control-group`) would also kill everything left in the unit's cgroup: a headless turn's
+ * omp and every jawan supervisor started without its own scope (no systemd-run or user manager, or a machine whose
+ * lead was installed before jawans got scopes), taking running work down with the service.
+ */
 export function renderLeadUnit(): string {
     const log = systemdPath(paths.leadLog());
     return [
@@ -73,6 +79,7 @@ export function renderLeadUnit(): string {
         `Environment=${systemdEnv("PATH", schedulePath())}`,
         `ExecStart=${serviceProgram().map(systemdWord).join(" ")}`,
         "Restart=always",
+        "KillMode=process",
         "RestartSec=10",
         `StandardOutput=append:${log}`,
         `StandardError=append:${log}`,

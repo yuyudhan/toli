@@ -53,6 +53,18 @@ describe("lead install", () => {
         expect(systemd.calls()).toContain("--user disable --now toli-lead.service");
     });
 
+    test("systemd: the unit ends only `lead run` when stopped, and is loaded before the restart that stops the old one", () => {
+        const box = sandbox();
+        const systemd = withSystemd(box);
+        box.ok(["lead", "install"], { env: systemd.env });
+        // A restart, a crash or the loop exiting for a newer runtime must not kill the jawan supervisors and the turn
+        // left in the unit's cgroup.
+        expect(readFileSync(join(systemd.units, "toli-lead.service"), "utf8")).toContain("KillMode=process\n");
+        const calls = systemd.calls();
+        expect(calls.indexOf("--user daemon-reload")).toBeGreaterThan(-1);
+        expect(calls.indexOf("--user daemon-reload")).toBeLessThan(calls.indexOf("--user restart toli-lead.service"));
+    });
+
     test("crontab fallback: one tagged per-minute `lead run --once` line, kept once across reinstalls", () => {
         const box = sandbox();
         const file = withCrontab(box, "0 3 * * * /usr/bin/backup\n");
