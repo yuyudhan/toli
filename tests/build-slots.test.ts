@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import type { Machine } from "../src/core/config.ts";
 import { paths } from "../src/core/paths.ts";
+import { buildMemoryMaxMB } from "../src/fleet/build-slots.ts";
 import { capacityFor, type Resources } from "../src/fleet/resources.ts";
 import { jawanEnv } from "../src/jawans/env.ts";
+import { buildScopeArgv, buildScopeUnit, inToliBuildCgroup } from "../src/jawans/scope.ts";
 import { GIT_ENV, type Sandbox, sandbox, TOLI_BIN } from "./helpers.ts";
 
 const machine = { name: "m1", role: "coordinator" as const };
@@ -99,12 +102,23 @@ type Started = {
     done: Promise<{ code: number; stderr: string }>;
 };
 
-/** Start `argv` (a toli command or the shim) asynchronously, with the sandbox's environment and the shim on PATH. */
+/**
+ * Start `argv` (a toli command or the shim) asynchronously, with the sandbox's environment and the shim on PATH. Builds
+ * start without a systemd scope unless `env` turns it on (`TOLI_BUILD_SCOPE: ""`), so no test creates a real unit.
+ */
 function start(box: Sandbox, argv: string[], env: Record<string, string> = {}): Started {
     const path = [paths.buildShimsDir(), box.stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin"];
     const proc = Bun.spawn(argv, {
         cwd: box.root,
-        env: { ...process.env, ...GIT_ENV, PATH: path.join(":"), TOLI_ROOT: box.root, TOLI_BUILD_SLOT: "", ...env },
+        env: {
+            ...process.env,
+            ...GIT_ENV,
+            PATH: path.join(":"),
+            TOLI_ROOT: box.root,
+            TOLI_BUILD_SLOT: "",
+            TOLI_BUILD_SCOPE: "off",
+            ...env,
+        },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
@@ -231,5 +245,129 @@ describe("build slots", () => {
         expect(result.code).toBe(0);
         expect(runs(log).find((run) => run.label === "b")).toMatchObject({ slot: "1" });
         expect(JSON.parse(box.ok(["resources", "--json"]))).toMatchObject({ buildSlotsBusy: 0 });
+    }, 30_000);
+});
+
+describe("each heavy build in its own systemd scope", () => {
+    test("the scope argv: its unit, the memory cap (none at 0), then the command after --", () => {
+        expect(buildScopeUnit(2, 4242)).toBe("toli-build-2-4242.scope");
+        expect(buildScopeArgv("/usr/bin/systemd-run", "toli-build-2-4242.scope", 4096, ["/bin/cargo", "-v"])).toEqual([
+            "/usr/bin/systemd-run",
+            "--user",
+            "--scope",
+            "--collect",
+            "--quiet",
+            "--unit=toli-build-2-4242.scope",
+            "-p",
+            "MemoryMax=4096M",
+            "--",
+            "/bin/cargo",
+            "-v",
+        ]);
+        expect(buildScopeArgv("systemd-run", "toli-build-0-7.scope", 0, ["make"])).toEqual([
+            "systemd-run",
+            "--user",
+            "--scope",
+            "--collect",
+            "--quiet",
+            "--unit=toli-build-0-7.scope",
+            "--",
+            "make",
+        ]);
+    });
+
+    test("the memory cap defaults to three quarters of the RAM split over the slots; 0 means no cap", () => {
+        expect(buildMemoryMaxMB(machine, 3, 65_536)).toBe(16_384);
+        expect(buildMemoryMaxMB(machine, 1, 16_000)).toBe(12_000);
+        expect(buildMemoryMaxMB({ ...machine, capacity: { buildMemoryMax: 8192 } }, 3, 65_536)).toBe(8192);
+        expect(buildMemoryMaxMB({ ...machine, capacity: { buildMemoryMax: 0 } }, 3, 65_536)).toBe(0);
+        // config/machine.json as read from disk: any JSON value may sit where a number belongs.
+        for (const bad of ["-1", "1.5", '"8G"']) {
+            const read = JSON.parse(
+                `{ "name": "m1", "role": "coordinator", "capacity": { "buildMemoryMax": ${bad} } }`,
+            );
+            expect(() => buildMemoryMaxMB(read as Machine, 3, 65_536)).toThrow("non-negative integer");
+        }
+    });
+
+    test("a process already inside a toli build scope is recognised from its cgroup", () => {
+        const slice = "0::/user.slice/user-1000.slice/user@1000.service/app.slice";
+        expect(inToliBuildCgroup(`${slice}/toli-build-1-4242.scope\n`)).toBe(true);
+        expect(inToliBuildCgroup(`${slice}/toli-build-0-7.scope/child\n`)).toBe(true);
+        expect(inToliBuildCgroup(`${slice}/toli-jawan-r1.scope\n`)).toBe(false);
+        expect(inToliBuildCgroup(`${slice}/vte-spawn-1234.scope\n`)).toBe(false);
+        expect(inToliBuildCgroup("")).toBe(false);
+    });
+
+    /**
+     * Linux with a user manager (a fake runtime dir with its private socket), a systemd-run that logs its arguments
+     * and execs the command after `--`, a `cgroup` for this process (/proc/self/cgroup) and a memory cap of 512 MB.
+     */
+    function scopeBox(cgroup: string): { box: Sandbox; log: string; scopeLog: string; env: Record<string, string> } {
+        const { box, log } = slotBox(1, 3);
+        const config = join(box.root, "config", "machine.json");
+        const parsed = JSON.parse(readFileSync(config, "utf8")) as { capacity: Record<string, number> };
+        writeFileSync(config, JSON.stringify({ ...parsed, capacity: { ...parsed.capacity, buildMemoryMax: 512 } }));
+        const runtime = join(box.root, ".run-user");
+        mkdirSync(join(runtime, "systemd"), { recursive: true });
+        writeFileSync(join(runtime, "systemd", "private"), "");
+        const proc = join(box.root, ".proc");
+        mkdirSync(join(proc, "self"), { recursive: true });
+        writeFileSync(join(proc, "self", "cgroup"), cgroup);
+        const scopeLog = join(box.root, ".systemd-run.log");
+        box.stub(
+            "systemd-run",
+            [
+                `printf '%s\\n' "$*" >> "${scopeLog}"`,
+                'while [ "$#" -gt 0 ]; do arg=$1; shift; [ "$arg" = "--" ] && break; done',
+                'exec "$@"',
+            ].join("\n"),
+        );
+        const env = { TOLI_PLATFORM: "linux", TOLI_BUILD_SCOPE: "", XDG_RUNTIME_DIR: runtime, TOLI_PROC_DIR: proc };
+        return { box, log, scopeLog, env };
+    }
+
+    const terminal = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/vte-spawn-1.scope\n";
+    const scopeLines = (scopeLog: string): string[] =>
+        existsSync(scopeLog) ? readFileSync(scopeLog, "utf8").trim().split("\n") : [];
+
+    test("build-slot and the cargo shim run the build in toli-build-<slot>-<pid> capped at buildMemoryMax", async () => {
+        const { box, log, scopeLog, env } = scopeBox(terminal);
+        const direct = await start(box, toliArgs("build-slot", "--", "cargo", "build"), { ...env, STUB_LABEL: "a" })
+            .done;
+        const shimmed = await start(box, [CARGO_SHIM, "test", "-q"], { ...env, STUB_LABEL: "b" }).done;
+        expect([direct.code, shimmed.code]).toEqual([0, 0]);
+        const [first, second] = scopeLines(scopeLog);
+        const prefix = /^--user --scope --collect --quiet --unit=toli-build-1-\d+\.scope -p MemoryMax=512M -- /;
+        // build-slot resolves `cargo` on PATH (the shim, first there); the shim passes the real cargo.
+        expect(first).toMatch(prefix);
+        expect(first).toEndWith(`-- ${join(paths.buildShimsDir(), "cargo")} build`);
+        expect(second).toMatch(prefix);
+        expect(second).toEndWith(`-- ${join(box.stubs, "cargo")} test -q`);
+        expect(runs(log).find((run) => run.label === "a")).toMatchObject({ slot: "1", jobs: "3", args: "build" });
+        expect(runs(log).find((run) => run.label === "b")).toMatchObject({ slot: "1", args: "test -q" });
+    }, 30_000);
+
+    test("a failing or killed build in its scope reports as it would outside one", async () => {
+        const { box, scopeLog, env } = scopeBox(terminal);
+        const failed = await start(box, toliArgs("build-slot", "--", "sh", "-c", "exit 3"), env).done;
+        const killed = await start(box, toliArgs("build-slot", "--", "sh", "-c", "kill -TERM $$"), env).done;
+        expect([failed.code, killed.code]).toEqual([3, 143]);
+        expect(scopeLines(scopeLog)).toHaveLength(2);
+    }, 30_000);
+
+    test("no scope inside a toli build scope, without a user manager, off Linux or with TOLI_BUILD_SCOPE=off", async () => {
+        const nested = scopeBox("0::/user.slice/user-1000.slice/user@1000.service/app.slice/toli-build-1-9.scope\n");
+        const inside = await start(nested.box, toliArgs("build-slot", "--", "sh", "-c", "exit 3"), nested.env).done;
+        expect(inside.code).toBe(3);
+        expect(scopeLines(nested.scopeLog)).toEqual([]);
+
+        const { box, scopeLog, env } = scopeBox(terminal);
+        const noManager = { ...env, XDG_RUNTIME_DIR: join(box.root, ".no-manager") };
+        for (const variant of [noManager, { ...env, TOLI_PLATFORM: "darwin" }, { ...env, TOLI_BUILD_SCOPE: "off" }]) {
+            const result = await start(box, toliArgs("build-slot", "--", "sh", "-c", "exit 4"), variant).done;
+            expect(result.code).toBe(4);
+        }
+        expect(scopeLines(scopeLog)).toEqual([]);
     }, 30_000);
 });

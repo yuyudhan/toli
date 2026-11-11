@@ -41,6 +41,11 @@ export type CapacityConfig = {
     /** Heavy cargo builds that may run at once; the rest wait for a slot (src/fleet/build-slots.ts; default cpus / 6). */
     buildSlots?: number;
     /**
+     * Memory cap, in MB, of each heavy build's own systemd user scope on Linux (`MemoryMax`, src/fleet/build-slots.ts;
+     * default three quarters of the RAM split evenly over the build slots; 0: no cap, still its own scope).
+     */
+    buildMemoryMax?: number;
+    /**
      * Resumes of the same session per run chain when a jawan run stalls or hits an explicit `--max-time` without a
      * report (default 3; 0 turns resuming off).
      */

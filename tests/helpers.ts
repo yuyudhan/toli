@@ -89,8 +89,9 @@ export function sandbox(): Sandbox {
         PATH: path,
         TOLI_ROOT: root,
         TOLI_DRY_RUN: "1",
-        // Jawans start without a systemd scope, so tests on a Linux host never create real units.
+        // Jawans and heavy builds start without a systemd scope, so tests on a Linux host never create real units.
         TOLI_JAWAN_SCOPE: "off",
+        TOLI_BUILD_SCOPE: "off",
         // Harnesses start without the host user's login shell (src/core/login-env.ts); a test turns it on.
         TOLI_LOGIN_ENV: "off",
         // The disk keeper's last resort deletes Playwright's browsers: never the host's.

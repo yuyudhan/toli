@@ -154,6 +154,17 @@ on `state/build-slots/<n>.lock` held by the `build-slot` process, so a holder th
 slot at once. Inside a slot already (`TOLI_BUILD_SLOT` set), it runs the command at once: a nested build never waits
 on its own slot.
 
+On Linux with a systemd user manager, each build also runs in its own user scope,
+`toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with
+`systemd-run --user --scope --collect -p MemoryMax=<cap>`. An out-of-memory kill (the kernel at the cap, or
+systemd-oomd under memory pressure) then takes that one build, not the terminal, tmux server or lead session that
+started it. The cap is `capacity.buildMemoryMax` in MB (default three quarters of the RAM split evenly over the build
+slots: 16384 with 64 GB and 3 slots, so every slot at its cap still leaves a quarter for the rest; 0: no cap, still its
+own scope). The build's exit code, or the signal that killed it, is reported as without a scope. A nested build
+(inside a slot, or in a process already in a `toli-build-*` scope) stays in its parent's scope; without
+`systemd-run` or a user manager (crontab-only boxes, containers, macOS) the build starts as before.
+`TOLI_BUILD_SCOPE=off` turns the scope off. `systemctl --user list-units 'toli-build-*'` lists the running ones.
+
 `bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH and sets its
 `CARGO_BUILD_JOBS` to `capacity.cargoJobs`. The shim sends the heavy cargo commands (`build`, `check`, `test`,
 `clippy`, `nextest`, `run`, `bench`, `doc`, `install`, `rustc`, `rustdoc` and their one-letter aliases) through

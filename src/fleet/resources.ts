@@ -13,13 +13,20 @@ import { availabilityLine } from "./pick.ts";
 import { localQueue, type Queue } from "./queue.ts";
 
 /**
- * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskKeep`, `diskSweepStaleMinutes`, `diskBuildTools`
- * and `gateStallMinutes` are not ones (see their readers below, in src/fleet/disk-alert.ts and src/forge/gate.ts).
+ * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskKeep`, `diskSweepStaleMinutes`, `diskBuildTools`,
+ * `gateStallMinutes` and `buildMemoryMax` are not ones (see their readers below, in src/fleet/disk-alert.ts,
+ * src/forge/gate.ts and src/fleet/build-slots.ts).
  */
 export type Capacity = Required<
     Omit<
         CapacityConfig,
-        "autoResume" | "stallMinutes" | "diskKeep" | "diskSweepStaleMinutes" | "diskBuildTools" | "gateStallMinutes"
+        | "autoResume"
+        | "stallMinutes"
+        | "diskKeep"
+        | "diskSweepStaleMinutes"
+        | "diskBuildTools"
+        | "gateStallMinutes"
+        | "buildMemoryMax"
     >
 >;
 

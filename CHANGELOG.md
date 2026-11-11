@@ -6,6 +6,13 @@ one. See docs/releasing.md.
 
 ## v0.4.3 - unreleased
 
+### Added
+
+- On Linux with a systemd user manager, each `bin/toli build-slot` build (and so each heavy cargo command through
+  the shim) runs in its own `toli-build-<slot>-<pid>.scope` capped at `capacity.buildMemoryMax` MB (default three
+  quarters of the RAM split over the build slots; 0: no cap), so an out-of-memory kill takes that build, not the
+  session that started it. macOS, hosts without `systemd-run` and `TOLI_BUILD_SCOPE=off` start builds as before.
+
 ### Changed
 
 - A short install command, first in README.md and docs/install.md:
