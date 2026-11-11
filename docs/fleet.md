@@ -168,13 +168,19 @@ own scope). The build's exit code, or the signal that killed it, is reported as 
 `TOLI_BUILD_SCOPE=off` turns the scope off. `systemctl --user list-units 'toli-build-*'` lists the running ones.
 
 `bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH and sets its
-`CARGO_BUILD_JOBS` to `capacity.cargoJobs`. The shim sends the heavy cargo commands (`build`, `check`, `test`,
-`clippy`, `nextest`, `run`, `bench`, `doc`, `install`, `rustc`, `rustdoc` and their one-letter aliases) through
-`bin/toli build-slot`, and runs everything else (`cargo --version`, `metadata`, `fmt`, ...) and any cargo inside a
-slot straight away, with the first real cargo on PATH after the shim. `[build] jobs` in `~/.cargo/config.toml` holds
-the same per-slot number so native subagents and hand-run cargo get it too (`bin/toli doctor` warns when the two
-differ). `bin/toli resources` shows the slots as `builds <busy>/<total>` (`buildSlots` and `buildSlotsBusy` in
-`--json`).
+`CARGO_BUILD_JOBS` to `capacity.cargoJobs`. A lead session started in toli's root gets the same two variables for
+itself, so the native subagents it starts (omp `task`, Claude Code's Agent tool), which inherit its environment, build
+the same way: omp's toli extension adopts them into the omp process when it loads (any omp that is not a
+`bin/toli spawn` jawan), and Claude Code's SessionStart hook writes them to `CLAUDE_ENV_FILE`, which Claude sources
+before every Bash command; both read them from `bin/toli hook lead-build-env`. The shim sends the heavy cargo
+commands (`build`, `check`, `test`, `clippy`, `nextest`, `run`, `bench`, `doc`, `install`, `rustc`, `rustdoc` and
+their one-letter aliases) through `bin/toli build-slot`, and runs everything else (`cargo --version`, `metadata`,
+`fmt`, ...) and any cargo inside a slot straight away, with the first real cargo on PATH after the shim. A build
+started in a live-stack project's checkout ([projects.md](projects.md#live-stack-mode)) skips the slots, as that
+project's jawans run without the shim. `[build] jobs` in `~/.cargo/config.toml` holds the same per-slot number so
+hand-run cargo gets it too
+(`bin/toli doctor` warns when the two differ). `bin/toli resources` shows the slots as `builds <busy>/<total>`
+(`buildSlots` and `buildSlotsBusy` in `--json`).
 
 ## Work on another machine
 

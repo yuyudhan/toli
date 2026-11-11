@@ -25,6 +25,11 @@ one. See docs/releasing.md.
 - `bin/toli build-slot` (and so the cargo shim) serves waiters in arrival order: each waiter holds a numbered ticket
   in `state/build-slots/queue/` and only the oldest live one takes a freed slot, so a later build never passes an
   earlier one; a waiter that dies leaves the line.
+- Native subagent jawans (omp `task`, Claude Code's Agent tool) build through the heavy-build slots like
+  `bin/toli spawn` jawans: a lead session gets toli's cargo shim first on PATH and `CARGO_BUILD_JOBS` (omp's
+  extension adopts them when it loads, Claude Code's SessionStart hook writes them to `CLAUDE_ENV_FILE`; new
+  `bin/toli hook lead-build-env`), and its subagents inherit them. A build in a live-stack project's checkout skips
+  the slots, as that project's jawans do.
 - `install.sh` reports an unreachable release repository (offline, a wrong `TOLI_REPO_URL`) in one
   `toli install: cannot list tags at ... (<git's reason>)` line instead of git's own lines followed by its own.
 - An answered hold is dispatched once, by the lead that answered it. `bin/toli task answer` run by this machine's

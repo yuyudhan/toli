@@ -115,7 +115,7 @@ const USAGE = `usage: bin/toli <command> [args]
   runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
   harness sync [--check] [--json] | status [--json]
-  hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin)
+  hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin) | lead-build-env
   guidance
   version [--json]
   upgrade [vX.Y.Z|--latest] [--check]

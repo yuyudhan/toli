@@ -6,14 +6,24 @@
 // ticket may take a free slot. Jawans reach it through the cargo shim in bin/shims, first on their PATH
 // (src/jawans/env.ts). On Linux with a user manager each build runs in its own systemd scope capped at
 // `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the session that started it.
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    closeSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    realpathSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { ToliError, warn } from "../core/util.ts";
 import { inBuildScope } from "../jawans/scope.ts";
+import { loadProjects } from "../projects/projects.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { capacityFor } from "./resources.ts";
 
@@ -201,11 +211,36 @@ async function runInSlot(command: string[], env: Record<string, string>, scope: 
     }
 }
 
+/** `path` with its symlinks resolved, or null when it does not exist. */
+function realOrNull(path: string): string | null {
+    try {
+        return realpathSync(path);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether `cwd` lies in a live-stack project's checkout (docs/projects.md "Live-stack mode"): the machine's one build
+ * there is its running stack's, so a build started in it (a lead's native subagent's, through the shim) skips the
+ * slots, as that project's `bin/toli spawn` jawans do by running without the shim.
+ */
+function inLiveStackCheckout(cwd: string): boolean {
+    const here = realOrNull(cwd);
+    if (here === null) return false;
+    return loadProjects().some((project) => {
+        if (project.liveStack !== true) return false;
+        const checkout = realOrNull(paths.projectDir(project.name));
+        return checkout !== null && (here === checkout || here.startsWith(`${checkout}${sep}`));
+    });
+}
+
 /**
  * `bin/toli build-slot -- <command...>`: run the command in a heavy-build slot with `CARGO_BUILD_JOBS` at one slot's
  * share and `TOLI_BUILD_SLOT` set, waiting (never failing) in arrival order while every slot is busy, in its own
  * memory-capped systemd scope where the host has one. Inside a slot already (`TOLI_BUILD_SLOT` set) it runs the
- * command at once and in its parent's scope, so a nested build never waits on its own slot.
+ * command at once and in its parent's scope, so a nested build never waits on its own slot; in a live-stack
+ * project's checkout it runs it at once without a slot or scope.
  */
 export async function buildSlotCommand(argv: string[]): Promise<number> {
     const args = new Args(argv);
@@ -218,6 +253,7 @@ export async function buildSlotCommand(argv: string[]): Promise<number> {
     const capacity = capacityFor(machine, availableParallelism());
     const memoryMaxMB = buildMemoryMaxMB(machine, capacity.buildSlots, Math.floor(totalmem() / MB));
     const jobs = { CARGO_BUILD_JOBS: String(capacity.cargoJobs) };
+    if (inLiveStackCheckout(process.cwd())) return await runInSlot(command, jobs, null);
     const lock = flock();
     if (lock === null) {
         warn("toli: flock(2) unavailable, running without a heavy-build slot");

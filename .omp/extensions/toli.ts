@@ -27,7 +27,11 @@
 // Headless runs (omp -p: the ticker, the lead service's turns, spawned jawans) and subagent
 // sessions load this file too; they must not claim jobs, take results, get the
 // lead guidance or the guard, so everything is gated on the main TUI session.
-import { execFile, spawn } from "node:child_process";
+// One thing is not: when the extension loads in any omp that is not a `bin/toli spawn`
+// jawan, it puts the lead's build variables (`bin/toli hook lead-build-env`: the cargo shim
+// first on PATH, CARGO_BUILD_JOBS) into this process's environment, before any shell starts,
+// so the bash tool and every native subagent (omp `task`) build through the heavy-build slots.
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CliHealth } from "../../src/harness/cli-health.ts";
@@ -82,6 +86,27 @@ function runToli(args: string[]): Promise<string> {
     return promise;
 }
 
+/**
+ * Adopt the lead's build variables into this process's environment (see the header). A spawned jawan's supervisor
+ * set its own (a live-stack project's without the shim), so it is left alone; a failing CLI leaves it unchanged.
+ */
+function adoptLeadBuildEnv(): void {
+    if (process.env.TOLI_ROLE === "jawan") return;
+    try {
+        const vars = JSON.parse(
+            execFileSync(TOLI_BIN, ["hook", "lead-build-env"], {
+                cwd: REPO_ROOT,
+                timeout: CLI_TIMEOUT_MS,
+                encoding: "utf8",
+                stdio: ["ignore", "pipe", "ignore"],
+            }),
+        ) as Record<string, string>;
+        Object.assign(process.env, vars);
+    } catch {
+        // A broken CLI is reported by the tick (src/harness/cli-health.ts); builds then run as before.
+    }
+}
+
 /** Start `bin/toli job run-due` detached: it outlives this session and logs to logs/tick.log. */
 function startDueJobs(ctx: Context, names: string[]): void {
     const child = spawn(TOLI_BIN, ["job", "run-due"], { cwd: REPO_ROOT, detached: true, stdio: "ignore" });
@@ -110,6 +135,7 @@ function isMainInteractiveSession(ctx: Context): boolean {
 
 export default function toliExtension(pi: ExtensionAPI): void {
     pi.setLabel("toli lead");
+    adoptLeadBuildEnv();
     // Set once `bin/toli session start` succeeded (retried by the tick until it does).
     let registered = false;
     let ticking = false;

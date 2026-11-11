@@ -32,8 +32,8 @@ export function cargoConfigPath(env: Record<string, string | undefined> = proces
 
 /**
  * Whether cargo's user config caps build jobs at the machine's `capacity.cargoJobs`, one heavy-build slot's share of
- * the cores. `bin/toli spawn` and `bin/toli build-slot` set `CARGO_BUILD_JOBS` themselves; this mirror covers native
- * subagents and any other cargo run on the machine.
+ * the cores. `bin/toli spawn`, `bin/toli build-slot` and a lead session (`bin/toli hook lead-build-env`, inherited by
+ * its native subagents) set `CARGO_BUILD_JOBS` themselves; this mirror covers every other cargo run on the machine.
  */
 export function cargoJobsCheck(configText: string | null, cargoJobs: number): Check {
     const want = `set \`[build] jobs = ${cargoJobs}\` in ${cargoConfigPath()} (capacity.cargoJobs in config/machine.json)`;

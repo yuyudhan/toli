@@ -1,9 +1,14 @@
 // `bin/toli hook <name>`: harness hook entry points. Claude Code runs these from .claude/settings.json
 // (written by `bin/toli harness sync`); each reads the hook's JSON on stdin. A hook never fails closed:
 // any internal error allows the call, so a toli bug can never block a jawan or the lead's bookkeeping.
-import { closeSync, openSync, readSync } from "node:fs";
+// `lead-build-env` is the omp extension's: it reads no stdin.
+import { appendFileSync, closeSync, openSync, readSync } from "node:fs";
+import { availableParallelism } from "node:os";
+import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { out, readStdin, ToliError, warn } from "../core/util.ts";
+import { out, readStdin, shellQuote, ToliError, warn } from "../core/util.ts";
+import { capacityFor } from "../fleet/resources.ts";
+import { leadBuildEnv } from "../jawans/env.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
 import { leadNoticeContext, takeSetupNotice } from "../setup/setup.ts";
 import { leadGuidance } from "./guidance.ts";
@@ -92,6 +97,27 @@ export function claudeSessionContext(input: ClaudeHookInput, env: Record<string,
     return notice === null ? null : leadNoticeContext(notice);
 }
 
+/**
+ * The build variables a lead session sets for itself and the native subagents it starts (src/jawans/env.ts
+ * `leadBuildEnv`), or null in a `bin/toli spawn` jawan, whose supervisor set its own (a live-stack project's without
+ * the shim).
+ */
+export function leadBuildVars(env: Record<string, string | undefined>): Record<string, string> | null {
+    if (env.TOLI_ROLE === "jawan") return null;
+    // Readable before `init`: an uninitialised machine gets the default capacity.
+    const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
+    return leadBuildEnv(env.PATH, capacityFor(machine, availableParallelism()).cargoJobs);
+}
+
+/** The lead's build variables as `export` lines for Claude Code's `CLAUDE_ENV_FILE`, sourced before each Bash call. */
+export function claudeBuildExports(env: Record<string, string | undefined>): string | null {
+    const vars = leadBuildVars(env);
+    if (vars === null) return null;
+    return Object.entries(vars)
+        .map(([name, value]) => `export ${name}=${shellQuote(value)}\n`)
+        .join("");
+}
+
 function guarded(name: string, body: () => void): void {
     try {
         body();
@@ -131,8 +157,19 @@ export function hookCommand(argv: string[]): void {
                 if (context === null) return;
                 out(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } }));
             });
+            if (name === "claude-session-start")
+                guarded(name, () => {
+                    const envFile = process.env.CLAUDE_ENV_FILE ?? "";
+                    const exports = claudeBuildExports(process.env);
+                    if (envFile !== "" && exports !== null) appendFileSync(envFile, exports);
+                });
+            return;
+        case "lead-build-env":
+            out(JSON.stringify(leadBuildVars(process.env) ?? {}));
             return;
         default:
-            throw new ToliError("usage: toli hook claude-pre-tool|claude-prompt|claude-session-start (JSON on stdin)");
+            throw new ToliError(
+                "usage: toli hook claude-pre-tool|claude-prompt|claude-session-start (JSON on stdin) | lead-build-env",
+            );
     }
 }

@@ -4,6 +4,25 @@ import { delimiter } from "node:path";
 import { paths } from "../core/paths.ts";
 import { LEAD_TURN_ENV } from "../fleet/full.ts";
 
+/** `path` without toli's cargo shim folder, so prepending it never repeats it. */
+function withoutShims(path: string | undefined): string[] {
+    const shims = paths.buildShimsDir();
+    return path ? path.split(delimiter).filter((dir) => dir !== shims) : [];
+}
+
+/**
+ * The build variables of a lead session (`bin/toli hook lead-build-env`): toli's cargo shim first on `path` and
+ * `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs`. The native harness subagents the lead starts (omp `task`,
+ * Claude Code's Agent tool) inherit them, so their heavy cargo commands queue for a heavy-build slot as a `bin/toli
+ * spawn` jawan's do.
+ */
+export function leadBuildEnv(path: string | undefined, cargoJobs: number): { PATH: string; CARGO_BUILD_JOBS: string } {
+    return {
+        PATH: [paths.buildShimsDir(), ...withoutShims(path)].join(delimiter),
+        CARGO_BUILD_JOBS: String(cargoJobs),
+    };
+}
+
 /**
  * The jawan's environment: the supervisor's, marked as a jawan run. One code folder, one build folder: a jawan
  * builds into its checkout's own build folder, so an inherited `CARGO_TARGET_DIR` is dropped. toli's cargo shim
@@ -30,8 +49,6 @@ export function jawanEnv(
     // A jawan the headless lead started is not that lead turn: it must never inherit its refusals.
     delete env[LEAD_TURN_ENV];
     env.CARGO_BUILD_JOBS = String(cargoJobs);
-    const shims = paths.buildShimsDir();
-    const inherited = base.PATH ? base.PATH.split(delimiter).filter((dir) => dir !== shims) : [];
-    env.PATH = (liveStack ? inherited : [shims, ...inherited]).join(delimiter);
+    env.PATH = liveStack ? withoutShims(base.PATH).join(delimiter) : leadBuildEnv(base.PATH, cargoJobs).PATH;
     return env;
 }

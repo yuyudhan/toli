@@ -38,13 +38,14 @@ export type Started = {
 };
 
 /**
- * Start `argv` (a toli command or the shim) asynchronously, with the sandbox's environment and the shim on PATH. Builds
- * start without a systemd scope unless `env` turns it on (`TOLI_BUILD_SCOPE: ""`), so no test creates a real unit.
+ * Start `argv` (a toli command or the shim) asynchronously in `cwd`, with the sandbox's environment and the shim on
+ * PATH. Builds start without a systemd scope unless `env` turns it on (`TOLI_BUILD_SCOPE: ""`), so no test creates a
+ * real unit.
  */
-export function start(box: Sandbox, argv: string[], env: Record<string, string> = {}): Started {
+export function start(box: Sandbox, argv: string[], env: Record<string, string> = {}, cwd = box.root): Started {
     const path = [paths.buildShimsDir(), box.stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin"];
     const proc = Bun.spawn(argv, {
-        cwd: box.root,
+        cwd,
         env: {
             ...process.env,
             ...GIT_ENV,

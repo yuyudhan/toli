@@ -96,6 +96,8 @@ export function sandbox(): Sandbox {
         TOLI_LOGIN_ENV: "off",
         // The disk keeper's last resort deletes Playwright's browsers: never the host's.
         PLAYWRIGHT_BROWSERS_PATH: join(root, ".playwright"),
+        // The Claude SessionStart hook appends the lead's build variables here: never to the host session's file.
+        CLAUDE_ENV_FILE: "",
         ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),
         ...options.env,
     });
