@@ -149,10 +149,12 @@ all slots busy use about every core once. Setting either key in `config/machine.
 
 `bin/toli build-slot -- <command>` takes a free slot, runs the command with `CARGO_BUILD_JOBS` at one slot's share and
 `TOLI_BUILD_SLOT` set to the slot's number, and frees the slot when the command ends. When every slot is busy it prints
-`waiting for a heavy-build slot (N busy)` once and waits for one; it never fails for lack of a slot. A slot is a lock
-on `state/build-slots/<n>.lock` held by the `build-slot` process, so a holder that is killed or crashes frees its
-slot at once. Inside a slot already (`TOLI_BUILD_SLOT` set), it runs the command at once: a nested build never waits
-on its own slot.
+`waiting for a heavy-build slot (N busy)` once and waits for one; it never fails for lack of a slot. Waiters are served
+in arrival order: each holds a numbered ticket in `state/build-slots/queue/` and only the oldest live one takes a slot
+that frees, so a later build never passes an earlier one. A slot is a lock on `state/build-slots/<n>.lock` held by the
+`build-slot` process, and a ticket is a lock held the same way, so a holder or waiter that is killed or crashes frees
+its slot or its place in line at once. Inside a slot already (`TOLI_BUILD_SLOT` set), it runs the command at once: a
+nested build never waits on its own slot.
 
 On Linux with a systemd user manager, each build also runs in its own user scope,
 `toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with
