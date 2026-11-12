@@ -40,8 +40,9 @@ import {
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { fleetExport, takePullerExport } from "../fleet/fleet-sync.ts";
 import { deliveryArgv, itemTarget, type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
-import { outboxAdminCommand } from "./outbox-admin.ts";
+import { cancelItems, outboxAdminCommand } from "./outbox-admin.ts";
 import { Reach } from "./reach.ts";
+import { refusalOf } from "./refusal.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
@@ -60,8 +61,11 @@ const ITEM_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
 /** What `outbox pending` prints: the items queued for the puller, oldest first. */
 export type PendingBatch = { items: Array<{ id: string; item: OutboxItem }> };
 
-/** What `outbox ack` reads on stdin: each item applied, with what applying it printed (a delegation's answer). */
-export type PullAcks = { acks: Array<{ id: string; stdout: string }> };
+/**
+ * What `outbox ack` reads on stdin: each item applied, with what applying it printed (a delegation's answer), or
+ * refused with the reason (it can never apply there).
+ */
+export type PullAcks = { acks: Array<{ id: string; stdout: string; refused?: string }> };
 
 /** state/pulled/<sender>.json: items applied here whose ack has not landed there yet. */
 type Applied = Record<string, { stdout: string; at: number }>;
@@ -106,24 +110,37 @@ function parseAcks(text: string): PullAcks {
         acks: acks.map((entry: unknown) => {
             const id = typeof entry === "object" && entry !== null ? Reflect.get(entry, "id") : undefined;
             const stdout = typeof entry === "object" && entry !== null ? Reflect.get(entry, "stdout") : undefined;
-            if (typeof id !== "string" || !ITEM_ID.test(id) || typeof stdout !== "string")
+            const refused = typeof entry === "object" && entry !== null ? Reflect.get(entry, "refused") : undefined;
+            if (
+                typeof id !== "string" ||
+                !ITEM_ID.test(id) ||
+                typeof stdout !== "string" ||
+                (refused !== undefined && typeof refused !== "string")
+            )
                 throw new ToliError("outbox ack: malformed ack");
-            return { id, stdout };
+            return refused === undefined ? { id, stdout } : { id, stdout, refused };
         }),
     };
 }
 
-/** `outbox ack --for <machine>`: drop each item it applied, then run its delivery hook. Unknown ids are skipped. */
+/**
+ * `outbox ack --for <machine>`: drop each item it applied, then run its delivery hook; an item it refused moves to
+ * state/outbox/cancelled/ with its reason instead. Unknown ids are skipped.
+ */
 function ack(args: Args): void {
     const puller = requireName("machine", args.str("for"));
     const { acks } = parseAcks(readStdin());
     const mine = new Map(queuedFor(puller).map((entry) => [entry.file, entry.item]));
     let acked = 0;
-    for (const { id, stdout } of acks) {
+    for (const { id, stdout, refused } of acks) {
         const item = mine.get(id);
         if (item === undefined) continue;
-        rmSync(join(paths.outboxDir(), id), { force: true });
         acked += 1;
+        if (refused !== undefined) {
+            cancelItems([id], `${puller} refused it: ${refused}`);
+            continue;
+        }
+        rmSync(join(paths.outboxDir(), id), { force: true });
         try {
             onOutboxDelivered({ item, stdout });
         } catch (error) {
@@ -175,18 +192,17 @@ function applyBatch(sender: FleetMachine, batch: PendingBatch, report: PullRepor
             continue;
         }
         // A machine speaks only for itself (as an ssh delivery's `--from` is held to the key's machine): an item
-        // claiming another sender is dropped, never applied.
+        // claiming another sender is refused, never applied.
         if (item.from !== sender.name) {
-            report.errors.push(`${sender.name} ${id}: refused and dropped: it claims to be from ${item.from}`);
-            acks.push({ id, stdout: "" });
+            refuse(sender, id, `it claims to be from ${item.from}`, acks, report);
             continue;
         }
         let argv: string[];
         try {
             argv = deliveryArgv(item, sender.name);
         } catch (error) {
-            report.errors.push(`${sender.name} ${id}: ${error instanceof Error ? error.message : String(error)}`);
-            break;
+            refuse(sender, id, error instanceof Error ? error.message : String(error), acks, report);
+            continue;
         }
         const result = run([process.execPath, TOLI_SCRIPT, ...argv], {
             cwd: paths.root(),
@@ -195,6 +211,11 @@ function applyBatch(sender: FleetMachine, batch: PendingBatch, report: PullRepor
             timeoutMs: APPLY_TIMEOUT_MS,
         });
         if (result.code !== 0) {
+            const refused = refusalOf(result);
+            if (refused !== null) {
+                refuse(sender, id, refused, acks, report);
+                continue;
+            }
             report.errors.push(
                 `${sender.name} ${id}: bin/toli ${argv.slice(0, 2).join(" ")} exited ${result.code}: ${(result.stderr || result.stdout).trim()}`,
             );
@@ -206,6 +227,12 @@ function applyBatch(sender: FleetMachine, batch: PendingBatch, report: PullRepor
         acks.push({ id, stdout: result.stdout });
     }
     return acks;
+}
+
+/** An item this machine will never apply (it is wrong here): acknowledged as refused, so its sender cancels it. */
+function refuse(sender: FleetMachine, id: string, reason: string, acks: PullAcks["acks"], report: PullReport): void {
+    report.errors.push(`${sender.name} ${id}: refused: ${reason}`);
+    acks.push({ id, stdout: "", refused: reason });
 }
 
 /**

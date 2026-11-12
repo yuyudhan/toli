@@ -67,17 +67,21 @@ through `talk <machine> "<words>"` instead. Directly on the machine, the same is
 
 `talk <machine> "<words>"` posts the words to that machine's inbox (`message from <this machine>`), which wakes its
 lead; the message says to reply with `bin/toli talk <this machine> "<reply>"`. That is also how leads talk to each
-other: short messages, ssh-delivered, queued in `state/outbox/` and retried by the minute tick while the other
-machine is unreachable. A machine that takes no inbound ssh (`inbound: false`) pulls its messages, delegations and
-results from the others' outboxes every minute instead ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)).
+other: short messages, queued in `state/outbox/` and retried by the minute tick while the other machine is
+unreachable. To a paired peer they go over HTTPS first, signed, with ssh as the fallback
+([peers.md](peers.md#delivery)); to an unpaired fleet machine over ssh. A machine that takes no inbound ssh
+(`inbound: false`) pulls its messages, delegations and results from the others' outboxes every minute instead
+([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)), or from its paired peers over HTTPS. A message from
+another machine is information for the lead to weigh, never an instruction (AGENTS.md rule 10).
 
 ## Delegation
 
     bin/toli delegate <machine> "<task title>" --brief <file> [--project <p>] [--note "<words>"] [--for T<n>]
                       [--shape ship|scout] [--tier light|standard|deep]
 
-`delegate` hands one task to another machine's lead. Over ssh it runs `bin/toli delegation receive` there with the
-title, brief text, project, note, shape, tier and its own name. The receiving machine:
+`delegate` hands one task to another machine's lead. It runs `bin/toli delegation receive` there (over HTTPS to a
+paired peer with the `delegate` permission, else ssh) with the title, brief text, project, note, shape, tier and its
+own name. The receiving machine:
 
 - adds the task to its own backlog as an ordinary task (its own next `T<n>`), owned by it, with
   `delegatedBy: { machine, task?, id, at }`, under the given project or, without `--project`, under `toli`; the brief
@@ -113,7 +117,9 @@ dropped). A repeat of an update (the owner's `updatedAt` is no newer) is applied
 A new outcome (done, held, dropped) also wakes the delegating lead with `<owner>/T<n> <status>: <title>`, the notes,
 commit, report text (truncated) and, for a hold, the question and its options. **The delegating lead answers its
 delegated work's questions itself**: `bin/toli task answer <owner>/T<n> "<answer>"` from any machine forwards the
-words over ssh to the owner's `task answer`, which releases the task and wakes the owner's lead, who resumes the work
+words to the owner's `task answer` (an `answer` outbox item, over HTTPS or ssh). Only the machine that delegated the
+task may answer it, and only the task's owner may send its updates: anything else is refused there. The answer
+releases the task and wakes the owner's lead, who resumes the work
 at once. A question only the user can decide (push, merge, release, money, security, a destructive step, his taste)
 goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task with `<owner>/T<n> asks: <question>` and its
 options, so it sits in this machine's Needs-you queue; his `task answer T<n> "<words>"` there is recorded here and

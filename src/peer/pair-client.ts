@@ -28,22 +28,30 @@ type Outgoing = {
     createdAt: number;
 };
 
-/** The certificate a host serves, read before any pin (Bun's fetch cannot hand it over). */
-export async function serverCertificate(host: string, port: number): Promise<string> {
+/**
+ * The certificate a host serves, read before any pin (Bun's fetch cannot hand it over). The deadline is a timer of
+ * its own: Bun's socket `timeout` never fires while a connect to an address nobody answers (127.0.0.2 on macOS, a
+ * dropped VPN peer) is still pending, so the read would hang.
+ */
+export async function serverCertificate(host: string, port: number, timeoutMs = CONNECT_MS): Promise<string> {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const socket = connect({ host, port, servername: TLS_NAME, rejectUnauthorized: false, timeout: CONNECT_MS });
+    const socket = connect({ host, port, servername: TLS_NAME, rejectUnauthorized: false });
+    const deadline = setTimeout(() => {
+        socket.destroy();
+        reject(new ToliError(`${hostPort(host, port)} did not answer within ${timeoutMs / 1000} s`));
+    }, timeoutMs);
     socket.once("secureConnect", () => {
         const raw = socket.getPeerCertificate(true).raw;
         socket.end();
         if (raw === undefined) reject(new ToliError(`${hostPort(host, port)} sent no certificate`));
         else resolve(certPem(raw));
     });
-    socket.once("timeout", () => {
-        socket.destroy();
-        reject(new ToliError(`${hostPort(host, port)} did not answer within ${CONNECT_MS / 1000} s`));
-    });
     socket.once("error", (error) => reject(new ToliError(`${hostPort(host, port)}: ${error.message}`)));
-    return await promise;
+    try {
+        return await promise;
+    } finally {
+        clearTimeout(deadline);
+    }
 }
 
 export type Hello = {
@@ -56,11 +64,15 @@ export type Hello = {
 };
 
 /** `GET /v1/hello` with the served certificate pinned, checked: the certificate is the one its key vouches for. */
-export async function fetchHello(host: string, port: number): Promise<{ hello: Hello; cert: string }> {
-    const cert = await serverCertificate(host, port);
+export async function fetchHello(
+    host: string,
+    port: number,
+    timeoutMs = CONNECT_MS,
+): Promise<{ hello: Hello; cert: string }> {
+    const cert = await serverCertificate(host, port, timeoutMs);
     const response = await fetch(`https://${hostPort(host, port)}/v1/hello`, {
         tls: { ca: cert, serverName: TLS_NAME },
-        signal: AbortSignal.timeout(CONNECT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
     });
     const value: unknown = await response.json();
     if (!isJsonObject(value)) throw new ToliError("hello: not a JSON object");

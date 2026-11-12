@@ -6,6 +6,7 @@ import { isJsonObject, out, pidAlive, printJson, readStdin, ToliError } from "..
 import { cancelItems, itemsFor } from "../jobs/outbox-admin.ts";
 import { bindAddresses } from "./bind.ts";
 import { rotateIdentity } from "./deliver.ts";
+import { scanCommand } from "./discover.ts";
 import { applyBatch } from "./envelope.ts";
 import { hasIdentity, initIdentity, loadIdentity, spokenFingerprint } from "./identity.ts";
 import { acceptRequest, declineRequest, loadRequests } from "./pair.ts";
@@ -29,7 +30,8 @@ const USAGE = `usage: toli peer init | status [--json] | list [--json] | apply (
   peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
   peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
   peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
-  peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate`;
+  peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
+  peer scan [--netbird] [--tailscale] [--subnet <cidr>] [--port <n>] [--json]`;
 
 const ACTOR_VALUES = ["by", "why"];
 
@@ -310,6 +312,9 @@ export async function peerCommand(argv: string[]): Promise<number> {
         case "allow":
         case "deny":
             grant(rest, sub === "allow");
+            return 0;
+        case "scan":
+            await scanCommand(rest);
             return 0;
         case "pull":
             await pullCommand(rest);

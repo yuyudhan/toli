@@ -84,7 +84,17 @@ function bodies(box: Sandbox): string[] {
 
 function outbox(box: Sandbox): string[] {
     const dir = join(box.root, "state", "outbox");
-    return existsSync(dir) ? readdirSync(dir).sort() : [];
+    return existsSync(dir)
+        ? readdirSync(dir)
+              .filter((file) => file.endsWith(".json"))
+              .sort()
+        : [];
+}
+
+/** Why each item `box` gave up on was cancelled (state/outbox/cancelled/). */
+function cancelledReasons(box: Sandbox): string[] {
+    const rows = JSON.parse(box.ok(["outbox", "list", "--cancelled", "--json"])) as Array<{ reason: string }>;
+    return rows.map((row) => row.reason);
 }
 
 /** Hosts this machine's ssh stub was called for (connection checks with `-G` / `-O` are not calls into a host). */
@@ -207,7 +217,7 @@ describe("a machine that takes no inbound ssh pulls its messages (T954)", () => 
         expect(existsSync(join(m1.root, "state", "pulled", "m2.json"))).toBe(false);
     });
 
-    test("an item that fails to apply holds the sender's later items until it applies", () => {
+    test("an item the puller refuses is cancelled once with the reason, and the sender's later items still apply", () => {
         const { m1, m2 } = fixture();
         queue(m2, "1-broken.json", {
             from: "m2",
@@ -217,30 +227,26 @@ describe("a machine that takes no inbound ssh pulls its messages (T954)", () => 
             queuedAt: 1,
         });
         queue(m2, "2-after.json", { from: "m2", title: "after", body: "comes second\n", queuedAt: 2 });
-        const failed = pull(m1);
-        expect(failed).toMatchObject({ pulled: 2, applied: 0, acked: 0 });
-        expect(failed.errors.join("\n")).toContain("m2 1-broken.json: bin/toli inbox add exited");
-        expect(inbox(m1)).toEqual([]);
-        expect(outbox(m2)).toEqual(["1-broken.json", "2-after.json"]);
-        queue(m2, "1-broken.json", {
-            from: "m2",
-            title: "broken",
-            body: "fixed\n",
-            to: { name: "m1", ssh: "host1", root: m1.root },
-            queuedAt: 1,
-        });
-        expect(pull(m1)).toEqual({ pulled: 2, applied: 2, acked: 2, held: [], errors: [] });
-        expect(inbox(m1).map((item) => item.title)).toEqual(["broken", "after"]);
+        const first = pull(m1);
+        expect(first).toMatchObject({ pulled: 2, applied: 1, acked: 2 });
+        expect(first.errors.join("\n")).toContain(
+            "m2 1-broken.json: refused: inbox add needs the message body on stdin",
+        );
+        expect(inbox(m1).map((item) => item.title)).toEqual(["after"]);
+        expect(outbox(m2)).toEqual([]);
+        expect(cancelledReasons(m2)).toEqual(["m1 refused it: inbox add needs the message body on stdin"]);
+        expect(pull(m1)).toEqual({ pulled: 0, applied: 0, acked: 0, held: [], errors: [] });
     });
 
-    test("an item claiming another sender is dropped, never applied", () => {
+    test("an item claiming another sender is refused, never applied, and its sender cancels it", () => {
         const { m1, m2 } = fixture();
         queue(m2, "spoof.json", { from: "m3", title: "message from m3", body: "not really\n", queuedAt: 1 });
         const report = pull(m1);
         expect(report).toMatchObject({ pulled: 1, applied: 0, acked: 1 });
-        expect(report.errors.join("\n")).toContain("m2 spoof.json: refused and dropped: it claims to be from m3");
+        expect(report.errors.join("\n")).toContain("m2 spoof.json: refused: it claims to be from m3");
         expect(inbox(m1)).toEqual([]);
         expect(outbox(m2)).toEqual([]);
+        expect(cancelledReasons(m2)).toEqual(["m1 refused it: it claims to be from m3"]);
     });
 
     test("an offline worker keeps its items for a later pull; the others still arrive", () => {

@@ -7,8 +7,9 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { paths } from "../core/paths.ts";
-import { isJsonObject, now, readJson, runAsync, withLock, writeJsonAtomic } from "../core/util.ts";
+import { isJsonObject, now, readJson, runAsync, waited, withLock, writeJsonAtomic } from "../core/util.ts";
 import type { OutboxKind } from "../jobs/outbox.ts";
+import { refusalOf } from "../jobs/refusal.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { fleetId, splitFleetId } from "../records/delegation-report.ts";
 import { addInboxItem, listInbox } from "../records/inbox.ts";
@@ -257,6 +258,9 @@ async function applyOne(peer: Peer, envelope: Envelope): Promise<Receipt> {
     });
     markReceiving();
     if (result.code !== 0 || result.timedOut) {
+        // A refusal by the command itself (the item is wrong here) is final, so the sender cancels it.
+        const refused = refusalOf(result);
+        if (refused !== null) return { id, status: "refused", reason: refused, stdout: "" };
         const why = result.timedOut ? "timed out" : `exited ${result.code}`;
         return {
             id,
@@ -312,12 +316,4 @@ export async function applyBatch(values: unknown[], self: string, admit: Admit =
                 `${count} messages ${peer} queued for this machine arrived in one batch (the oldest waited ${waited(now().getTime() - oldest)}). They are the items just before this one in the inbox, in the order they were sent.`,
             );
     return receipts;
-}
-
-/** A duration in the largest whole unit: `3 min`, `5 h`, `2 d`. */
-export function waited(ms: number): string {
-    const minutes = Math.max(0, Math.round(ms / 60_000));
-    if (minutes < 60) return `${minutes} min`;
-    const hours = Math.round(minutes / 60);
-    return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
 }

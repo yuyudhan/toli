@@ -8,7 +8,6 @@ import {
     sshArgs,
 } from "../core/config.ts";
 import { out, printJson, runAsync } from "../core/util.ts";
-import { askStatus } from "../peer/deliver.ts";
 import { httpPeer } from "../peer/transport.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { type Full, fullText } from "./full.ts";
@@ -173,6 +172,9 @@ async function probe(machine: FleetMachine): Promise<FleetEntry> {
     let httpsError = "";
     if (peer !== undefined) {
         try {
+            // Loaded here, not at the top: deliver.ts registers with the listener when it loads, and the listener's
+            // own imports reach this module (envelope -> backlog -> ... -> resources -> pick).
+            const { askStatus } = await import("../peer/deliver.ts");
             return reached(parseResources(JSON.stringify((await askStatus(peer)).value)));
         } catch (error) {
             httpsError = `HTTPS: ${firstLine(error instanceof Error ? error.message : String(error))}; `;

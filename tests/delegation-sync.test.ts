@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { brief, inbox, type Pair, pair, type Task, tasks } from "./delegate-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
@@ -28,6 +28,15 @@ function outboxBodies(box: Sandbox): string[] {
         const item: OutboxFile = JSON.parse(readFileSync(join(dir, file), "utf8"));
         return item.body;
     });
+}
+
+function outboxFiles(box: Sandbox): string[] {
+    const dir = join(box.root, "state", "outbox");
+    return existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : [];
+}
+
+function cancelled(box: Sandbox): Array<{ kind?: string; reason: string }> {
+    return JSON.parse(box.ok(["outbox", "list", "--cancelled", "--json"])) as Array<{ kind?: string; reason: string }>;
 }
 
 describe("delegated tasks write back to the --for task", () => {
@@ -185,13 +194,46 @@ describe("task link", () => {
         expect(parent(m1)).toMatchObject({ status: "done", commit: "d00d", delegatedTo: ["m2/T1"] });
     });
 
-    test("refuses a bare id and a task another machine delegated", () => {
+    test("refuses a bare id, a missing id, and a task another machine delegated", () => {
         const { m1, m2 } = pair();
         withProject(m1, "app");
         m1.ok(["task", "add", "app", "parent work"]);
         expect(m1.toli(["task", "link", "T1", "T2"]).stderr).toContain("task link needs another machine's task");
+        const empty = m1.toli(["task", "link", "T1", "m2/"]);
+        expect(empty.code).toBe(1);
+        expect(empty.stderr).toContain("task link needs another machine's task: <machine>/T<n>");
+        expect(outboxFiles(m1)).toEqual([]);
         m2.ok(["delegation", "receive"], { stdin: JSON.stringify({ id: "m3-1", from: "m3", title: "t", brief: "b" }) });
-        expect(m1.ok(["task", "link", "T1", "m2/T1"])).toContain("T1 linked to m2/T1 here; m2 gets the link");
+        const refused = m1.toli(["task", "link", "T1", "m2/T1"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("m2 refused the link: T1 was delegated by m3, not m1");
+        expect(outboxFiles(m1)).toEqual([]);
+        expect(cancelled(m1).map((item) => item.reason)).toEqual(["m2 refused it: T1 was delegated by m3, not m1"]);
+        expect(parent(m1).delegatedTo).toBeUndefined();
+        expect(tasks(m2)[0]?.delegatedBy).toMatchObject({ machine: "m3" });
+    });
+});
+
+describe("a message its receiver refuses", () => {
+    test("is refused once with the reason, never retried, and never holds up later messages to that machine", () => {
+        const { m1, m2, down, up } = pair();
+        withProject(m1, "app");
+        m1.ok(["task", "add", "app", "parent work"]);
+        m2.ok(["delegation", "receive"], { stdin: JSON.stringify({ id: "m3-1", from: "m3", title: "t", brief: "b" }) });
+        down();
+        expect(m1.ok(["task", "link", "T1", "m2/T1"])).toContain("m2 gets the link");
+        m1.ok(["talk", "m2", "after the link"]);
+        expect(outboxFiles(m1)).toHaveLength(2);
+        up();
+        m1.ok(["job", "tick"]);
+        expect(outboxFiles(m1)).toEqual([]);
+        expect(cancelled(m1).map((item) => [item.kind, item.reason])).toEqual([
+            ["link", "m2 refused it: T1 was delegated by m3, not m1"],
+        ]);
+        expect(inbox(m1).some((item) => item.title.startsWith("1 outbox item not sent: m2 refused it"))).toBe(true);
+        expect(inbox(m2).some((item) => item.title === "message from m1")).toBe(true);
+        m1.ok(["job", "tick"]);
+        expect(cancelled(m1)).toHaveLength(1);
     });
 });
 

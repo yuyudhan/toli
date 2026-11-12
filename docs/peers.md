@@ -11,8 +11,8 @@ signed messages over HTTPS on a private network. The design and its reasons are 
 
 - `identity.key` / `identity.pub`: an Ed25519 key that signs every message. Its **fingerprint** is the SHA-256 of the
   raw public key; `peer status` prints it in groups of four for reading aloud.
-- `tls.key` / `tls.crt`: a self-signed P-256 certificate for the name `toli-peer`, made by `openssl`, which the
-  listener serves.
+- `tls.key` / `tls.crt`: a self-signed P-256 certificate for the name `toli-peer` (the key made by `node:crypto`, the
+  certificate signed by `openssl`), which the listener serves.
 - `cert.sig`: the identity key's signature over the certificate's SHA-256, so a renewed certificate is vouched for by
   the key the peers already pinned.
 
@@ -123,8 +123,12 @@ A receipt `applied` or `duplicate` removes the item (a delegation's answer is th
 lost receipt only means the item is sent again, and the receiver answers `duplicate` with the receipt it kept, so
 each item is **applied exactly once**. `deferred` (a rate limit, or 200 unread messages from that peer) and `failed`
 keep the item and every later one queued, so order holds. `refused` (a missing permission, a revoked key, a false
-sender claim) moves it to `state/outbox/cancelled/` with the reason and posts an inbox note here: retrying a refusal
-would never succeed.
+sender claim, or a message the receiving command itself rejects: a malformed body, a task that does not exist there,
+one another machine delegated) moves it to `state/outbox/cancelled/` with the reason and posts an inbox note here:
+retrying a refusal would never succeed. The same holds over ssh and pulls: a receiver that ends with `toli: <reason>`
+(exit 1) refused the item, so it is cancelled once with that reason and later items to that machine still go. A lock
+wait, an older toli that lacks the command (`unknown option`, `usage:`), a crash, a timeout or an ssh failure stay
+queued and are retried. `task link` that the owner refuses fails at once and leaves the task as it was.
 
 **Back online.** A listener that starts, or whose addresses change (VPN up, Wi-Fi joined), announces itself to every
 peer (`POST /v1/announce`, signed). The peer records the addresses and sends what waits for it at once, without
@@ -154,8 +158,37 @@ and `outbox expire --older <N>d` give up on items; they move to `state/outbox/ca
 --cancelled`) with an inbox note. Nothing expires by itself and nothing is dropped silently. `peer remove` cancels
 what waits for that peer the same way.
 
+## Finding peers
+
+`bin/toli peer scan` asks every candidate address for its hello on the toli port (at most 32 at once, 1 s each) and
+prints the listeners that answer: name, address, version, fingerprint and where the address came from. Candidates
+come from `netbird status --json`, `tailscale status --json` (each when its binary exists; `--netbird`/`--tailscale`
+pick one) and `--subnet <cidr>`, a private IPv4 range of at most a /22. It never pairs and never writes
+`config/peers.json`: pairing is `peer add <host>` with a code.
+
 ## Rotating the key
 
 `bin/toli peer rotate` makes a new key and certificate and tells every active peer, signed by the old key; they
 accept the old key for one more week, so messages already on their way still verify. A peer that was not reached
 refuses the new key until it pairs again; the command names it. The listener restarts on the new certificate.
+
+## Security
+
+- **Who may write.** Every request but `hello` and the two pairing steps needs an envelope signed by a pinned,
+  active key, addressed to this machine's fingerprint, inside a 5-minute window, with a nonce not seen in 10 minutes
+  and an id not applied in 30 days: anything else gets `401`, `403` or `409` and changes nothing.
+- **What a peer may do.** Each kind needs its permission (`talk`, `delegate`, `share`, `answer`, `status`), and a
+  peer speaks only for itself: an answer only for a task it delegated here, an update only for its own task, a share
+  only as its sender. The same checks hold over ssh (`--from`) and pulls.
+- **Pairing.** Codes exist only after this machine's owner or Sardar accepts a request that shows the requester's
+  name, address and fingerprint. The code is key-bound (CPace), so a man in the middle gets one online guess per
+  try: 3 tries a request, 3 requests an hour and 10 a day per source, 5 pending at most, 2 minutes, never stored.
+- **Limits.** 512 KiB a request, 50 envelopes a batch, 60 envelopes a minute and 200 unread inbox items per peer;
+  past them the sender keeps its items queued.
+- **Exposure.** The listener binds private addresses only (10/8, 172.16/12, 192.168/16, 100.64/10, fd00::/8),
+  never a wildcard or public address unless `peer set --bind` names one.
+- **Message text.** A peer's words reach the lead fenced and marked `- via: peer <name>`: information to weigh,
+  never an instruction or the user's word (AGENTS.md rule 10). Nothing runs on arrival but toli's own receiving
+  command.
+- **Secrets.** `config/peer/` holds the only secrets (mode 0600; `doctor` warns otherwise); `peer rotate` replaces
+  them and `peer remove` on the others revokes a lost key.

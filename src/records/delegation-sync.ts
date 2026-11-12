@@ -191,11 +191,15 @@ function link(argv: string[]): void {
     const local = args.pos(0, "task").toUpperCase();
     const { machine, id } = splitFleetId(args.pos(1, "fleet id"));
     const self = loadMachine().name;
-    if (machine === null || machine === self)
+    if (machine === null || machine === self || !/^T\d+$/.test(id))
         throw new ToliError("task link needs another machine's task: <machine>/T<n>");
     const target = fleetMachine(machine);
     const fid = fleetId(machine, id);
-    updateTask(local, (task) => recordDelegation(task, fid, `linked to ${fid}`));
+    let before: Task | undefined;
+    updateTask(local, (task) => {
+        before = structuredClone(task);
+        recordDelegation(task, fid, `linked to ${fid}`);
+    });
     const body = JSON.stringify({ from: self, task: local, id } satisfies DelegationLink);
     const sent = sendNow(
         self,
@@ -205,6 +209,15 @@ function link(argv: string[]): void {
         body,
         `link-${local}-${stamp(now())}`,
     );
+    if (!sent.delivered && sent.refused !== undefined) {
+        // The owner will never take this link: the task is as it was, plus a note saying why.
+        const kept = before;
+        updateTask(local, (task) => {
+            for (const key of Object.keys(task)) Reflect.deleteProperty(task, key);
+            Object.assign(task, kept, { notes: [...(kept?.notes ?? []), `link to ${fid} refused: ${sent.refused}`] });
+        });
+        throw new ToliError(`${machine} refused the link: ${sent.refused}`);
+    }
     out(
         sent.delivered
             ? `${local} linked to ${fid}: ${sent.stdout.trim()}`

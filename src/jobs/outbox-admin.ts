@@ -7,8 +7,7 @@ import { join } from "node:path";
 import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
-import { waited } from "../peer/envelope.ts";
+import { now, out, printJson, readJson, ToliError, waited, withLock, writeJsonAtomic } from "../core/util.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
 

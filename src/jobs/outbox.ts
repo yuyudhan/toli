@@ -22,7 +22,9 @@ import { readJson, run, shellQuote, warn, writeJsonAtomic } from "../core/util.t
 import { recordStat } from "../peer/client.ts";
 import { flushSync, httpPeer, sshFallback } from "../peer/transport.ts";
 import { addInboxItem } from "../records/inbox.ts";
+import { cancelItems } from "./outbox-admin.ts";
 import { Reach } from "./reach.ts";
+import { refusalOf } from "./refusal.ts";
 
 /**
  * `inbox`: `bin/toli inbox add` on the target; `delegation`: `bin/toli delegation receive`; `update`: `bin/toli
@@ -231,6 +233,15 @@ export function deliverOutbox(
                 );
             }
         } else {
+            const refused = refusalOf(sent);
+            if (refused !== null) {
+                // The receiver answered: it is reachable, and this item alone is wrong. Later items still go.
+                reach.success(target.ssh);
+                renameSync(claimed, queued);
+                cancelItems([file], `${target.name ?? target.ssh} refused it: ${refused}`);
+                result.errors.push(`${file}: ${target.name ?? target.ssh} refused it: ${refused} (cancelled)`);
+                continue;
+            }
             renameSync(claimed, queued);
             result.pending += 1;
             const error = `ssh ${target.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`;
@@ -260,11 +271,12 @@ export function notify(machine: Machine, title: string, body: string, outboxId: 
  */
 export type SendResult =
     | { delivered: true; stdout: string }
-    | { delivered: false; pulled: boolean; error: string; cancelled?: true };
+    | { delivered: false; pulled: boolean; error: string; refused?: string };
 
 /** What a sender prints for an item not delivered: who picks it up next, or that it was refused. */
-export function queuedText(name: string, sent: { pulled: boolean; cancelled?: true }): string {
-    if (sent.cancelled) return `not sent: ${name} refused it (kept in state/outbox/cancelled/)`;
+export function queuedText(name: string, sent: { pulled: boolean; refused?: string }): string {
+    if (sent.refused !== undefined)
+        return `not sent: ${name} refused it: ${sent.refused} (kept in state/outbox/cancelled/)`;
     return sent.pulled
         ? `queued for ${name}, which pulls its messages from here every minute (it takes no inbound ssh)`
         : `queued for ${name} (unreachable); the minute tick retries`;
@@ -298,7 +310,7 @@ export function sendNow(
             return {
                 delivered: false,
                 pulled: false,
-                cancelled: true,
+                refused: receipt.reason ?? "no reason",
                 error: `${peer.name} refused it: ${receipt.reason ?? "no reason"} (kept in state/outbox/cancelled/)`,
             };
         if (receipt !== undefined || flushed?.unreachable === undefined)
@@ -330,6 +342,12 @@ export function sendNow(
     if (sent.code === 0) {
         rmSync(claimed, { force: true });
         return { delivered: true, stdout: sent.stdout };
+    }
+    const refused = refusalOf(sent);
+    if (refused !== null) {
+        renameSync(claimed, queued);
+        cancelItems([`${id}.json`], `${to.name ?? to.ssh} refused it: ${refused}`);
+        return { delivered: false, pulled: false, refused, error: `${to.name ?? to.ssh} refused it: ${refused}` };
     }
     renameSync(claimed, queued);
     const sshError = `ssh ${to.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`;

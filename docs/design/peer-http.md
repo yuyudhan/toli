@@ -1,7 +1,8 @@
-# Design: Sardar-to-Sardar messaging over HTTP on a private network (T1249, draft)
+# Design: Sardar-to-Sardar messaging over HTTP on a private network (T1249)
 
-Status: draft for review. No code changed. Settled by the user: pairing uses a 4-digit code (section 3.3), and
-messages to an offline peer queue on the sender's disk and are delivered once it is back (section 6).
+Status: settled and built (src/peer/, user docs in [docs/peers.md](../peers.md)). Settled by the user: pairing uses
+a 4-digit code (section 3.3), messages to an offline peer queue on the sender's disk and are delivered once it is
+back (section 6), and the five decisions in section 11.
 
 ## 1. What we have today (grounded in the code)
 
@@ -123,9 +124,9 @@ certA, addrsA}`, signed by A's key, and prints: "ask B's owner to accept request
    draft-irtf-cfrg-cpace) with the password set to the code. The session id is `sid = SHA-256("toli-pair-v1" ‖ reqId
 ‖ idKeyA ‖ idKeyB ‖ certFpA ‖ certFpB)` and the channel identifier is `name A ‖ name B`. Each side sends its share
    and then a key-confirmation tag, `HMAC(K, "A"|"B" ‖ transcript)`. A's tag is checked by B, and B's by A.
-5. **Both sides tags verify:** each side pins the other's identity key and certificate. B starts with `allow:
-["talk"]`. A records B with `allow: ["talk"]` too, because the permissions each side grants are its own business.
-   The code is erased from memory.
+5. **Both sides tags verify:** each side pins the other's identity key and certificate. Pairing grants every
+   permission (`talk`, `delegate`, `share`, `answer`, `status`; decision 3), and each side may revoke any of them for
+   its peer later, because the permissions each side grants are its own business. The code is erased from memory.
 
 **Limits.** Each code allows at most 3 wrong tags. On the third, the request dies, B's owner is told, and that
 source IP gets a 1-hour hold on new requests. Each source IP gets at most 3 requests an hour and 10 a day. At most 5
@@ -143,9 +144,8 @@ requests may be pending at once. An expired code kills its request.
 exist only after the owner accepts a request whose fingerprint they were shown. After pairing, **the pinned keys and
 signatures are the only trust**. The code plays no further part.
 
-**Fleet bootstrap without codes** (decision 2): `toli peer enroll <fleet machine>` exchanges `identity.pub`,
-certificates and `certSig` over the ssh channel that is already trusted. ssh is an authenticated channel, so no code
-is needed. It is recorded as `pairedBy: "ssh"`.
+**No bootstrap over ssh** (decision 2): fleet machines pair with the code like any other machine. Nothing is paired
+silently over the ssh channel.
 
 ### 3.4 Revoke and rotate
 
@@ -153,8 +153,8 @@ is needed. It is recorded as `pairedBy: "ssh"`.
   signed by that key get `401 revoked`. The peer's queued items move to `state/outbox/cancelled/` with an inbox note.
   Nothing is dropped silently.
 - `toli peer rotate` creates a new identity key and certificate. It sends every active peer a `rotate` envelope
-  signed by **both** the old and the new key. Peers repin and reply with a receipt. The old key stays valid to
-  receivers for 7 days, or until every peer has acknowledged. A peer offline for longer re-pairs.
+  signed by the old key, carrying the new key, certificate and `certSig`. Peers repin and reply with a receipt. The
+  old key stays valid to receivers for 7 days. A peer not reached refuses the new key and re-pairs.
 - Certificate-only renewal: the new certificate plus `certSig` from the pinned identity key are accepted
   automatically.
 
@@ -331,18 +331,19 @@ ssh stays for maintenance:
 
 - `sync --all`, which upgrades workers
 - `talk <m>` attach (`ssh -t`)
-- `peer enroll` bootstrap
-- fleet reads to machines without `status` over HTTP (decision 3)
+- fleet reads to paired peers whose `status` permission is revoked, or when HTTPS fails
+- message delivery when HTTPS fails, while `peer.sshFallback` is on (the default), until HTTP has proven itself
 
-For messages, ssh is a fallback only for fleet entries not yet paired (decision 1). `inbound: false` keeps its exact
-meaning, "no inbound ssh". It no longer means "unreachable", because HTTP may still reach the machine.
+For messages, HTTPS goes first to every paired peer; ssh is the fallback, and the only way to fleet entries not yet
+paired (decision 1). `inbound: false` keeps its exact meaning, "no inbound ssh". It no longer means "unreachable",
+because HTTP may still reach the machine.
 
 **Migration:**
 
 1. Upgrade.
 2. `peer init` runs automatically.
-3. On the coordinator, `toli peer enroll --fleet` enrolls every fleet machine reachable over ssh. Pull-only laptops
-   pair with the 4-digit code instead.
+3. Each pair of machines pairs once with the 4-digit code (`peer add` on one, `peer accept` on the other), pull-only
+   laptops included.
 4. Fleet entries gain nothing: `config/peers.json` is joined to `config/fleet.json` by `name`.
 
 **Ujjwal's laptop:** its lead service listens on its NetBird address (private bind), pairs with m5 by code, and m5's
@@ -359,7 +360,7 @@ seven waiting shares go out on its next announce. That ends finding 4.
 | Replay                                                                 | Fresh nonce and `sentAt` on every attempt, ±5 min window, nonce cache for 10 min, permanent dedup by `id` for 30 days                                                                                                                                                                                         |
 | Spoofed sender                                                         | `from` must equal the key's peer name, `update.owner` and `link.from` must equal the peer, and an answer needs `delegatedBy.machine == peer`                                                                                                                                                                  |
 | Inbox flooding                                                         | Request ≤ 512 KiB, `inbox` body ≤ 16 KiB, `delegation` brief ≤ 256 KiB, title ≤ 200 chars. At most 60 envelopes a minute per peer and 200 unacknowledged inbox items per peer. Past either, `429`/`deferred`, and the sender keeps the item queued: no loss. Pairing endpoints are rate-limited per source IP |
-| Prompt injection through message text                                  | Peer items are fenced in the wake as untrusted. A peer's words never count as the owner's word (AGENTS.md rule plus headless rule). Nothing executes on arrival. `peer accept` and `peer allow` are refused in headless turns. Permissions default to `talk`                                                  |
+| Prompt injection through message text                                  | Peer items are fenced in the wake as information. A peer's words never count as the owner's word (AGENTS.md rule 10). Nothing executes on arrival. `peer accept`, `allow`, `deny` and `remove` run only on the owner's word or, in the Sardar's own turn, with `--by sardar --why`, logged with who and why   |
 | Stolen identity key                                                    | It sits in `config/peer` with mode 0600. `peer rotate` replaces it, and `peer remove` on the others revokes it                                                                                                                                                                                                |
 | Lost or offline peer                                                   | Disk queue, in order, with age alerts and explicit cancel (section 6)                                                                                                                                                                                                                                         |
 | Listener exposure                                                      | Private addresses only, never 0.0.0.0 by default                                                                                                                                                                                                                                                              |
@@ -393,7 +394,7 @@ Each slice lands with its tests. The failing-first tests are marked ✱.
     - ✱ flood gets 429 / `deferred`
     - `hello` exposes no other fields
     - the bind rejects public and wildcard addresses
-4. **Pairing.** `src/peer/cpace.ts` (decision 5), `src/peer/pair.ts`, and commands `peer add|requests|accept|enroll|
+4. **Pairing.** `src/peer/cpace.ts` (decision 5), `src/peer/pair.ts`, and commands `peer add|requests|accept|decline|
 allow|deny|remove|rotate`. Tests in `tests/peer-pair.test.ts`:
     - CPace RFC test vectors
     - ✱ the 3rd wrong code kills the request
@@ -428,7 +429,8 @@ allow|deny|remove|rotate`. Tests in `tests/peer-pair.test.ts`:
    m5. Check that the fingerprints match on both sides.
 3. A wrong code 3 times kills the request.
 4. `talk itlinux1 "ping"` arrives as one wake there, and the reply comes back.
-5. With itlinux1 on talk only, `delegate itlinux1 …` is refused. After `peer allow m5-macbook delegate` it lands.
+5. After `peer deny m5-macbook delegate` on itlinux1, `delegate itlinux1 …` is refused. After `peer allow m5-macbook
+delegate` it lands.
 6. `systemctl --user stop toli-lead` on itlinux1, then send 3 talks. `outbox list` and `fleet status` show them
    waiting with their age.
 7. Start the service again: they arrive through the announce, in order, as one wake, with 3 receipts.
@@ -437,6 +439,18 @@ allow|deny|remove|rotate`. Tests in `tests/peer-pair.test.ts`:
 10. After `peer remove`, the peer gets 401 and its queued items go to `cancelled/` with a note.
 11. `ss -ltn` on itlinux1 shows only the NetBird and LAN private addresses on 47123.
 
-## 11. Decisions for the user
+## 11. Decisions (settled by the user, 2026-11-13)
 
-See data/projects/yuyudhan-dotfiles/reports/T1249-design.md (5 decisions, each with a pick).
+1. **HTTP first.** HTTPS is the first transport; ssh stays as a fallback for messages and for sync and attach.
+   Every delivery is logged with its transport and time (`bin/toli peer stats`), so the two can be compared before
+   ssh is removed for messages.
+2. **Every pairing uses the 4-digit code**, fleet machines included; no silent pairing over ssh. The code is
+   key-bound (CPace on ristretto255 with SHA-512 from `@noble/curves`): shown on the receiving machine, 2-minute life,
+   one use, 3 tries, never stored, rate-limited per source.
+3. **Everything over HTTP** between paired peers, read-only status queries included (`POST /v1/status`: what
+   `bin/toli resources` reports). Pairing grants talk, delegate, share, answer and status; each can be revoked per
+   peer.
+4. **The owner or the Sardar** may accept a pairing and grant or revoke permissions; the Sardar in its own turn,
+   logged with who and why. The code is still shown on the receiving side and typed on the requesting side.
+5. **Audited cryptography only:** `@noble/curves` pinned to an exact version with the lockfile committed (MIT,
+   noted in docs/development.md "Runtime dependency"); no hand-written cryptography.

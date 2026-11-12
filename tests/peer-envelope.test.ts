@@ -125,6 +125,20 @@ describe("applyEnvelope refusals", () => {
         expect(receipt?.reason).toBe("update for alice's task sent by mallory");
     });
 
+    test("a message the receiving command refuses gets a refused receipt with its reason, and the batch goes on", () => {
+        const recv = peerBox("recv");
+        const alice = sender();
+        pin(recv.box, [{ name: "alice", identity: alice }]);
+        const link = JSON.stringify({ from: "alice", task: "T9", id: "T42" });
+        const receipts = applyIn(recv.box, [
+            envelope(alice, "alice", recv.fingerprint, { kind: "link", body: link }),
+            envelope(alice, "alice", recv.fingerprint),
+        ]);
+        expect(receipts.map((receipt) => receipt.status)).toEqual(["refused", "applied"]);
+        expect(receipts[0]?.reason).toBe('unknown task "T42"');
+        expect(inboxFiles(recv.box.root)).toHaveLength(1);
+    });
+
     test("a duplicate id returns the stored receipt and is applied once", () => {
         const recv = peerBox("recv");
         const alice = sender();

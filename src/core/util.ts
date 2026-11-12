@@ -70,6 +70,14 @@ export function stamp(date: Date = now()): string {
     return date.toISOString().replace(/[:.]/g, "-");
 }
 
+/** A duration in the largest whole unit: `3 min`, `5 h`, `2 d`. */
+export function waited(ms: number): string {
+    const minutes = Math.max(0, Math.round(ms / 60_000));
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.round(minutes / 60);
+    return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
+}
+
 export function readJson<T>(path: string, fallback: T): T {
     if (!existsSync(path)) return fallback;
     const text = readFileSync(path, "utf8");
