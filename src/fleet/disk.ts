@@ -7,15 +7,18 @@
 //      there between jobs (a project's build queue) and cannot reinstall dependencies themselves, while cargo
 //      rebuilds a wiped `target/` on its own (that wipe matches the cargo-sweep helper's: under cargo's locks, only
 //      while no jawan of the project runs);
-//   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune`; never volumes), not
-//      while a pull or build runs and not every minute (docker-prune.ts);
+//   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune`), not while a pull or
+//      build runs and not every minute (docker-prune.ts);
 //   4. sccache's local cache entries past its own cap;
-//   5. under the emergency level only (max(5 GB, 3% of the disk), at most the floor): `target/` folders of busy
-//      checkouts, between build steps: under cargo's own locks, with no cargo running in its workspace (cargo test
-//      runs its test binaries after dropping the locks) and no file in it open. A target that stays in use (builds
-//      back to back) is kept whole: never a partial delete under a live build, whose up-to-date artifacts can sit
-//      unwritten for hours and still be linked;
-//   6. last resort, under the emergency level after 1 to 5: every `target/` left, in use or not, then every
+// Under the emergency level (max(5 GB, 3% of the disk), at most the floor) it goes on, re-checking free disk after
+// each item and stopping once it is over that level, so build output in use goes only when nothing idle is left:
+//   5. Docker volumes of idle build output (a compose stack's `target/` or `node_modules` cache) that no running
+//      container uses, never one whose name or mount point may hold data (docker-volumes.ts);
+//   6. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
+//      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open. A target
+//      that stays in use (builds back to back) is kept whole: never a partial delete under a live build, whose
+//      up-to-date artifacts can sit unwritten for hours and still be linked;
+//   7. last resort, under the emergency level after 1 to 6: the `target/` folders left, in use or not, then the
 //      `node_modules/` (but a main clone's) and `dist/` and Playwright's browser cache. All of it rebuilds itself; a
 //      build cut off fails once and compiles again. Over the emergency level build output in use is never touched, not
 //      even a sweep of its old artifacts, so a disk a little under its floor never costs a build its output.
@@ -63,6 +66,7 @@ import {
     releaseKeeper,
 } from "./disk-state.ts";
 import { pruneDocker } from "./docker-prune.ts";
+import { freeBuildVolumes } from "./docker-volumes.ts";
 import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep } from "./stale-sweep.ts";
 
@@ -77,7 +81,10 @@ export type KeepOptions = {
 
 export type KeepReport = {
     floorGB: number;
-    /** Free disk under which build output in use goes too (tier 6): max(5 GB, 3% of the disk), at most the floor. */
+    /**
+     * Free disk under which idle build volumes and build output in use go too (steps 5 to 7): max(5 GB, 3% of the
+     * disk), at most the floor.
+     */
     emergencyGB: number;
     /** Why the floor is under capacity.diskKeepGB, when the 15% cap lowered it. */
     floorNote?: string;
@@ -89,7 +96,7 @@ export type KeepReport = {
     ran: boolean;
     /** The live pid in state/disk-keep.pause that held the keeper off, if one did. */
     pausedBy?: number;
-    /** True when the last resort ran: under the emergency level, so build output in use went too (tier 6). */
+    /** True when the last resort ran: under the emergency level, so build output in use went too (step 7). */
     lastResort: boolean;
     /** False when capacity.diskKeep is false (or invalid): toli deletes nothing on its own, only this run by hand. */
     automatic: boolean;
@@ -197,12 +204,13 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         /** Folders deleted (or, in a dry run, counted as deleted), and why each other one was kept: in use, or tried. */
         const done = new Set<string>();
         const kept = new Map<string, { reason: string; tried: boolean }>();
-        const remove = (path: string, deleteIt: () => string | null): void => {
+        /** Delete `path` (`step` names the step, for the log), or record why it stays. */
+        const remove = (path: string, step: string, deleteIt: () => string | null): void => {
             if (dryRun) {
                 const size = sizeGB(path);
                 simulated += size;
                 done.add(path);
-                say(`would delete ${path} (${gb(size)})`);
+                say(`would delete ${path} (${gb(size)}, ${step})`);
                 return;
             }
             const before = free();
@@ -214,9 +222,13 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             }
             done.add(path);
             log.open();
-            say(`deleted ${path}, freed ${gb(Math.max(0, free() - before))}`);
+            say(`deleted ${path}, freed ${gb(Math.max(0, free() - before))} (${step})`);
         };
-        const idleTier = (kinds: BuildDir["kind"][], deleteIt: (dir: BuildDir) => string | null): void => {
+        const idleTier = (
+            step: number,
+            kinds: BuildDir["kind"][],
+            deleteIt: (dir: BuildDir) => string | null,
+        ): void => {
             const holders = currentHolders();
             for (const dir of dirs) {
                 if (enough()) return;
@@ -229,7 +241,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 }
                 let reason = checkoutUse(dir.checkout, holders, checkouts);
                 if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
-                if (reason === null) remove(dir.path, () => deleteIt(dir));
+                if (reason === null) remove(dir.path, `step ${step}: idle ${dir.kind}`, () => deleteIt(dir));
                 else {
                     kept.set(dir.path, { reason, tried: false });
                     say(`skipped ${dir.path}: ${reason}`);
@@ -237,8 +249,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             }
         };
         // 1 and 2: idle checkouts. The target wipe still takes cargo's locks once, for builds run from elsewhere.
-        idleTier(["target"], (dir) => wipeOutcome(dir.path));
-        idleTier(["node_modules", "dist"], (dir) => {
+        idleTier(1, ["target"], (dir) => wipeOutcome(dir.path));
+        idleTier(2, ["node_modules", "dist"], (dir) => {
             const open = openBelow(dir.path);
             if (open.length > 0) return `open files, e.g. ${open.join(", ")}`;
             rmSync(dir.path, { recursive: true, force: true });
@@ -250,7 +262,17 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             pruneDocker({ dryRun, freeGB: freeNow, emergency: freeNow < report.emergencyGB }, say);
         }
         if (!enough()) trimSccache(dryRun, say);
-        // 5: under the emergency level only, every target still here, busy ones included, between build steps.
+        // 5: under the emergency level only, Docker volumes of idle build output, before any build folder in use:
+        // the incident that made this a step lost a push gate's target while a stopped stack's 23 GB target volume
+        // stayed. Only until free disk is over the emergency level, like 6 and 7.
+        const over = (): boolean => free() >= report.emergencyGB;
+        if (!enough() && !over()) {
+            const simulate = (size: number): void => {
+                simulated += size;
+            };
+            if (freeBuildVolumes({ dryRun, free, over, simulate }, say) > 0) log.open();
+        }
+        // 6: under the emergency level only, every target still here, busy ones included, between build steps.
         // Builds pause between cargo invocations; the wipe takes such a pause under cargo's locks. A target with no
         // pause right now (builds back to back) stays whole: deleting part of it under a live build breaks that build
         // (cargo links rlibs it compiled hours ago). Over the emergency level a target in use is never touched:
@@ -258,7 +280,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         const busy = dirs.filter((dir) => dir.kind === "target" && !done.has(dir.path));
         for (const dir of busy) {
             if (enough()) break;
-            if (free() >= report.emergencyGB) {
+            if (over()) {
                 const level = `the emergency level ${gb(report.emergencyGB)}`;
                 say(`kept ${dir.path} in use: free ${gb(free())} is over ${level}`);
                 continue;
@@ -266,31 +288,34 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             const why = kept.get(dir.path);
             if (why?.tried !== true) {
                 say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps`);
-                remove(dir.path, () => wipeOutcome(dir.path));
+                remove(dir.path, "step 6: in use, between build steps", () => wipeOutcome(dir.path));
             }
         }
-        // 6: the last resort, under the emergency level after 1 to 5: every target left goes now, in use or not, then
+        // 7: the last resort, under the emergency level after 1 to 6: the targets left go now, in use or not, then
         // node_modules (never a main clone's, see 2) and dist (Vite's cache lives in node_modules/.vite) and
-        // Playwright's browsers, until the floor. Docker's build cache already went in 3. Only what buildDirs listed.
-        if (free() < report.emergencyGB) {
+        // Playwright's browsers, each only while free disk is still under the emergency level. Docker's build cache
+        // already went in 3, its idle build volumes in 5. Only what buildDirs listed.
+        if (!over()) {
             report.lastResort = true;
             const level = `the emergency level ${gb(report.emergencyGB)}`;
-            say(`free ${gb(free())} is under ${level}: deleting every build folder left, in use or not`);
+            say(
+                `free ${gb(free())} is under ${level}: deleting every build folder left, in use or not, until free space is over that level`,
+            );
             const force = (path: string): void => {
                 const why = kept.get(path)?.reason;
                 if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway`);
-                remove(path, () => forceDelete(path));
+                remove(path, "step 7: last resort", () => forceDelete(path));
             };
             const left = (dir: BuildDir): boolean =>
                 !done.has(dir.path) && ![...done].some((gone) => within(dir.path, gone)) && existsSync(dir.path);
-            for (const dir of dirs) if (dir.kind === "target" && left(dir)) force(dir.path);
+            for (const dir of dirs) if (dir.kind === "target" && !over() && left(dir)) force(dir.path);
             const mainDeps = (dir: BuildDir): boolean => dir.kind === "node_modules" && dir.checkout.main;
             for (const dir of dirs)
-                if (dir.kind !== "target" && !mainDeps(dir) && !enough() && left(dir)) force(dir.path);
-            if (!enough()) {
+                if (dir.kind !== "target" && !mainDeps(dir) && !over() && left(dir)) force(dir.path);
+            if (!over()) {
                 const browsers = playwrightBrowsers();
                 if (browsers.length === 0) say("playwright: no browser cache");
-                for (const path of browsers) if (!enough()) force(path);
+                for (const path of browsers) if (!over()) force(path);
             }
         }
         report.freeAfterGB = free();

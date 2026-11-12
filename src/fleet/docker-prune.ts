@@ -1,5 +1,6 @@
 // The disk keeper's Docker step (src/fleet/disk.ts, step 3): build cache and images no container uses, never volumes
-// or containers. A prune deletes what a pull or build in flight has fetched but not yet tagged or started, so it
+// or containers (idle build-output volumes go only under the emergency level, in step 5: docker-volumes.ts). A prune
+// deletes what a pull or build in flight has fetched but not yet tagged or started, so it
 //   - waits while a `docker pull`, `build`, `buildx`, `compose up` or `load` runs (a process on this machine), and
 //   - runs at most once per DOCKER_PRUNE_MIN_INTERVAL_MS; after a run that reclaimed 0 B it waits until free disk has
 //     dropped DOCKER_PRUNE_FREE_DROP_GB below its level then, or DOCKER_PRUNE_IDLE_RETRY_MS has passed,

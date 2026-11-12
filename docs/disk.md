@@ -11,10 +11,11 @@ runs or skips).
 
 **A full disk means delete the build folders.** Every `target/` folder can go when the disk is nearly full, even one a
 running build uses: cargo builds it again. If free space is still under the emergency level after the idle steps
-(max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper wipes busy targets between
-build steps (step 5), then deletes every `target/` folder in the clones and task worktrees, in use or not, then the
-rest of the build output (step 6). It never deletes part of a target a build uses: a target goes whole or not at
-all. Over the emergency level a build folder in use is never touched, so a disk a little under its floor never costs
+(max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper first removes Docker volumes
+of idle build output (step 5), then wipes busy targets between build steps (step 6), then deletes the `target/`
+folders in the clones and task worktrees, in use or not, then the rest of the build output (step 7), re-checking
+free space after each item and stopping once it is over the emergency level. It never deletes part of a target a
+build uses: a target goes whole or not at all. Over the emergency level a build folder in use is never touched, so a disk a little under its floor never costs
 a running build its output. A Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep` and
 never asks first.
 
@@ -73,17 +74,21 @@ It stops as soon as free space is back at the floor: no margin on top, since eve
 that is one a build would have reused, and the keeper runs again before the next jawan starts and every minute
 anyway. Within each step it takes the least recently used folders first (by the newest modification time of the
 folder and its direct children: a build rewrites `target/debug`, `node_modules/.bin`), so the output of the work
-going on now goes last. Steps 1 to 4 spare build output in use; steps 5 and 6, under the emergency level only, do not.
+going on now goes last. Steps 1 to 5 spare build output in use; steps 6 and 7, under the emergency level only, do
+not. Steps 5 to 7 run only under the emergency level and stop as soon as free space is over it, so build output in
+use goes only when nothing idle is left. Each item freed is logged with its size and its step (`deleted <path>, freed
+X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0 GB (step 5: idle build volume)`).
 
 1. Whole `target/` folders of project checkouts that nothing uses. A checkout is all registered projects' clones
    plus their git worktrees. Nothing uses it when no running jawan works in it (or, for a main clone, on its
    project) and no process has its working directory inside it. The wipe still takes cargo's locks and checks
-   that no process uses the target (see 5), so a build or test started from elsewhere is never cut off.
+   that no process uses the target (see 6), so a build or test started from elsewhere is never cut off.
 2. `node_modules/` and `dist/` of those idle checkouts, unless a process holds a file in them open. A project main
    clone's `node_modules/` is never deleted: builds run there between jobs (a project's build queue) and do not
    reinstall dependencies on their own, while cargo rebuilds a wiped `target/` by itself.
 3. Docker: `docker builder prune -af`, then `docker image prune -f` (dangling images only); under the emergency level
-   (see 6) `docker image prune -af`, every image no container uses. It never touches volumes or containers. A prune
+   (see 7) `docker image prune -af`, every image no container uses. This step never touches volumes or containers
+   (step 5 removes idle build-output volumes). A prune
    deletes what a pull or build in flight has fetched but not yet tagged or started (a `lease does not exist` or
    `lchown ... no such file` failure of `docker pull`), and an unused image a minute-old pull just left is gone before
    its container starts, so Docker is pruned only when it is due (`state/disk-docker-prune.json` holds when, free
@@ -100,7 +105,21 @@ going on now goes last. Steps 1 to 4 spare build output in use; steps 5 and 6, u
 
 4. sccache: when its local cache is over its own cap, the oldest entries until it is back under the cap. A missing
    entry is only a cache miss.
-5. Only under the emergency level (see 6): every `target/` still left, busy checkouts included, between build steps.
+5. Only under the emergency level (see 7): Docker volumes of idle build output, largest first (sizes from `docker
+system df -v`), until free space is over that level. A volume is build output only when its name says so (ends in
+   `target`, as `kalki_backend_target` or `app-target` do, or contains `cargo` or `node_modules`) or a container mounts
+   it at a `target` or `node_modules` folder or a `cargo` path (`/app/target`, `/usr/local/cargo/registry`). Never
+   one whose name or any mount point may hold data, whatever else matches: a name or mount point containing `pg`,
+   `postgres`, `sql`, `maria`, `mongo`, `redis`, `valkey`, `data`, `db`, `upload`, `media`, `minio`, `elastic`,
+   `opensearch`, `clickhouse`, `kafka`, `rabbit`, `backup`, `storage`, `vault` or `secret` (`kept docker volume
+<name>: ... may hold data`). Never one a running, paused, restarting or just-created container uses (`kept docker
+volume <name>: container <c> uses it (running)`); a stopped (`exited` or `dead`) container that still mounts it is
+   removed first (`docker rm`, never `-v`, so its other volumes stay; `compose up` creates it again), since Docker
+   refuses to remove a volume a container references. Like step 3 it never runs while a `docker pull`, `build`,
+   `buildx`, `compose up` or `load` runs (`docker volumes: skipped (pid N ... is running)`). Docker's build cache
+   already went in step 3. On macOS Docker Desktop keeps volumes in its VM disk image, so the host may get the space
+   back only later; the keeper logs what free space actually gained.
+6. Only under the emergency level (see 7): every `target/` still left, busy checkouts included, between build steps.
    Over that level a target in use is left whole (`kept <target> in use: free X GB is over the emergency level Y GB`):
    its build may have run for an hour, and the disk is not yet full.
    The keeper takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; cargo holds
@@ -122,20 +141,22 @@ going on now goes last. Steps 1 to 4 spare build output in use; steps 5 and 6, u
     A target that is in use right now (jawans building it back to back hold its lock all the time) is kept whole:
     the keeper never deletes part of a target under a live build. Cargo links up-to-date artifacts it compiled hours
     ago, so artifacts left unwritten for hours are not stale to a running build, and deleting them breaks it at link
-    time (`crate ... required in rlib format, but was not found`). Such a target goes only in step 6, whole. The
+    time (`crate ... required in rlib format, but was not found`). Such a target goes only in step 7, whole. The
     keeper tries the wipe once; it checks `state/disk-keep.pause` before the wipe, so a job that writes the pause is
     not cut off.
 
-6. The last resort, only when free space is still under the emergency level after steps 1 to 5: max(5 GB, 3% of the
+7. The last resort, only when free space is still under the emergency level after steps 1 to 6: max(5 GB, 3% of the
    disk), never above the floor (6.8 GB on a 228 GB disk, 14 GB on a 468 GB one). Under the floor but over that
    level the keeper stops after step 4 (`done, still under the floor`) and build output in use stays. Under it,
-   every `target/` folder still there, in use or not, held lock or not, is deleted outright (`free X GB is under the
-emergency level Y GB: deleting every build folder left, in use or not`). Then, until free space reaches the
-   floor, every `node_modules/` (never a main clone's, see 2) and `dist/` left (Vite's cache is
+   the `target/` folders still there, in use or not, held lock or not, are deleted outright, one at a time until
+   free space is over that level (`free X GB is under the emergency level Y GB: deleting every build folder left, in
+use or not, until free space is over that level`). Then, while it is still under that level, the `node_modules/`
+   (never a main clone's, see 2) and `dist/` left (Vite's cache is
    `node_modules/.vite`, so it goes with them) and Playwright's downloaded browsers (the `chromium-1140`-style folders
    in `PLAYWRIGHT_BROWSERS_PATH`, else `~/Library/Caches/ms-playwright` on macOS and `~/.cache/ms-playwright` on
-   Linux; `playwright install` fetches them again). Docker's build cache already went in step 3. Each deletion is
-   logged with what it freed (`deleted <path>, freed X GB`), and an in-use folder first with why it was in use
+   Linux; `playwright install` fetches them again). Docker's build cache already went in step 3, its idle build
+   volumes in step 5. Each deletion is logged with what it freed (`deleted <path>, freed X GB (step 7: last
+resort)`), and an in-use folder first with why it was in use
    (`<path> is in use (...): deleting it anyway`); `--json` sets `lastResort`. A build that loses its target fails
    once and compiles again; the message before a jawan start says so.
 
@@ -171,7 +192,9 @@ If `bin/toli` itself cannot run, delete the git-ignored `target/` folders by han
 A candidate is only a folder named `target`, `node_modules` or `dist` that git lists as ignored and wholly untracked
 (`git ls-files --others --ignored --exclude-standard --directory`). So it never touches sources, git data, tracked
 `dist/` folders, or uncommitted work. Beyond those folders it deletes only Playwright's browser builds and sccache
-entries. It never removes Docker volumes or containers, and nothing outside this account's registered checkouts and
+entries. Of Docker's volumes it removes only the idle build-output ones of step 5 (the name and mount patterns
+there), with the stopped containers that mount them; never a volume that may hold data or one a running container
+uses, and nothing outside this account's registered checkouts and
 its own caches.
 
 ## Settings
