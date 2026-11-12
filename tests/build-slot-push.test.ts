@@ -4,7 +4,18 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { holdSlot, runs, slotBox, until } from "./build-slot-fixture.ts";
+import {
+    CARGO_SHIM,
+    holdSlot,
+    noBusSystemdRun,
+    runs,
+    scopeBox,
+    scopeLines,
+    slotBox,
+    TERMINAL_CGROUP,
+    toliArgs,
+    until,
+} from "./build-slot-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
 
 // Each test runs a real detached gate runner or git push behind a real slot holder.
@@ -75,5 +86,58 @@ describe("a push check in one heavy-build slot", () => {
             args: "test verify push",
         });
         expect(readFileSync(threads, "utf8").trim()).toBe("2 3");
+    });
+
+    /** systemd-run's logged line for one scope: unit toli-build-1-<pid> capped at scopeBox's 512 MB. */
+    const SCOPE_LINE =
+        /^--user --scope --collect --quiet --unit=toli-build-1-\d+\.scope -p MemoryMax=512M -- \/bin\/sh /;
+
+    test("on Linux a gate's recipe runs in its slot's memory-capped scope; a cargo or build-slot in it rides on the slot", async () => {
+        const { box, log, scopeLog, env } = scopeBox(TERMINAL_CGROUP);
+        withProject(box, "app");
+        const quoted = (argv: string[]): string => argv.map((arg) => `'${arg}'`).join(" ");
+        // One slot only: the shim's cargo and `bin/toli build-slot` inside the gate must not wait for a second one.
+        const recipe = `STUB_LABEL=b ${quoted([CARGO_SHIM, "build"])} && STUB_LABEL=c ${quoted(toliArgs("build-slot", "--", "cargo", "test"))}`;
+        const gate = await box.toliAsync(["gate", "run", "app", "--recipe", recipe], { env: { ...env, ...UNCAPPED } });
+        expect(gate.code).toBe(0);
+        const [line, ...more] = scopeLines(scopeLog);
+        expect(more).toEqual([]);
+        expect(line).toMatch(SCOPE_LINE);
+        expect(line).toEndWith(` sh -c ${recipe}`);
+        expect(runs(log).map((run) => [run.label, run.slot, run.jobs, run.args])).toEqual([
+            ["b", "1", "3", "build"],
+            ["c", "1", "3", "test"],
+        ]);
+    });
+
+    test("a gate whose scope systemd-run cannot make runs its recipe once without it, after one warning", async () => {
+        const { box, log, scopeLog, env } = scopeBox(TERMINAL_CGROUP, noBusSystemdRun);
+        withProject(box, "app");
+        const gate = await box.toliAsync(["gate", "run", "app", "--recipe", "cargo build"], {
+            env: { ...env, ...UNCAPPED, STUB_LABEL: "g" },
+        });
+        expect(gate.code).toBe(0);
+        expect(scopeLines(scopeLog)).toHaveLength(1);
+        expect(runs(log).map((run) => [run.label, run.slot, run.jobs, run.args])).toEqual([["g", "1", "3", "build"]]);
+        const warnings = gateLogs(box)
+            .split("\n")
+            .filter((text) => text.includes("could not start the build's scope"));
+        expect(warnings).toEqual([
+            "toli: systemd-run could not start the build's scope (exit 1), running it without a memory cap",
+        ]);
+    });
+
+    test("on Linux a push with a pre-push hook runs in its slot's memory-capped scope", async () => {
+        const { box, log, scopeLog, env } = scopeBox(TERMINAL_CGROUP);
+        const dir = withProject(box, "app");
+        box.ok(["project", "set", "app", "--standing-push", "yes"]);
+        writeFileSync(join(dir, ".git", "hooks", "pre-push"), "#!/bin/sh\nexec cargo build\n", { mode: 0o755 });
+        const push = await box.toliAsync(["push", "app"], { env: { ...env, ...UNCAPPED, STUB_LABEL: "p" } });
+        expect(push.code).toBe(0);
+        const [line, ...more] = scopeLines(scopeLog);
+        expect(more).toEqual([]);
+        expect(line).toMatch(SCOPE_LINE);
+        expect(line).toContain(` -C ${dir} push -u origin `);
+        expect(runs(log).find((run) => run.label === "p")).toMatchObject({ slot: "1", jobs: "3", args: "build" });
     });
 });

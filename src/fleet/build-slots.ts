@@ -6,7 +6,7 @@
 // ticket may take a free slot. Jawans reach it through the cargo shim in bin/shims, first on their PATH
 // (src/jawans/env.ts); a gate's runner (src/forge/gate.ts) and `bin/toli push` with a pre-push hook (src/forge/forge.ts)
 // hold one for their whole run, so a project's push check gets one slot's share even when it calls cargo directly.
-// On Linux with a user manager each build runs in its own systemd scope capped at
+// On Linux with a user manager each build (and each such push check) runs in its own systemd scope capped at
 // `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the session that started it.
 import {
     closeSync,
@@ -26,7 +26,7 @@ import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { ToliError, warn } from "../core/util.ts";
-import { inBuildScope } from "../jawans/scope.ts";
+import { type Argv, inBuildScope } from "../jawans/scope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { capacityFor } from "./resources.ts";
@@ -180,7 +180,7 @@ export function buildMemoryMaxMB(machine: Machine, buildSlots: number, totalMB: 
 }
 
 /** Where a build runs: its slot's number (0 without a slot) and its scope's memory cap in MB (0: none). */
-type BuildScope = { slot: number; memoryMaxMB: number };
+export type BuildScope = { slot: number; memoryMaxMB: number };
 
 /** What a command run in a slot gets: the variables to add to its environment, and its scope (null: none). */
 export type HeldSlot = { env: Record<string, string>; scope: BuildScope | null };
@@ -234,12 +234,51 @@ async function spawnForwarding(
 }
 
 /**
- * Run `command` with this process's stdio plus `env`, passing termination signals on; resolves to its exit code.
- * With `scope` it runs in its own systemd scope where the host has one (src/jawans/scope.ts `inBuildScope`). When
- * systemd-run is there but cannot make the scope (no user session bus over ssh, no lingering), the build never
- * started: it runs once more without a scope, after one warning line. A build that ran keeps its own exit code.
+ * A command to start in a held slot's scope: the argv and extra environment to spawn, and `scopeFailed`, to ask once
+ * it exited whether systemd-run never made the scope (so the command never ran).
  */
-async function runInSlot(command: string[], env: Record<string, string>, scope: BuildScope | null): Promise<number> {
+export type ScopeLaunch = { argv: Argv; env: Record<string, string>; scopeFailed: () => boolean };
+
+/**
+ * Start `argv` in its own systemd scope for `scope` where the host has one (src/jawans/scope.ts `inBuildScope`), else
+ * unchanged. Inside the scope `/bin/sh` creates this process's `state/build-slots/scope-<pid>.started` marker and execs
+ * the command; `scopeFailed` reads and removes it.
+ */
+export function launchInScope(scope: BuildScope | null, argv: Argv): ScopeLaunch {
+    const unscoped: ScopeLaunch = { argv, env: {}, scopeFailed: () => false };
+    if (scope === null) return unscoped;
+    mkdirSync(paths.buildSlotsDir(), { recursive: true });
+    const startedFile = join(paths.buildSlotsDir(), `scope-${process.pid}.started`);
+    rmSync(startedFile, { force: true });
+    const scoped = inBuildScope(scope.slot, scope.memoryMaxMB, argv, startedFile);
+    if (scoped === null) return unscoped;
+    return {
+        argv: scoped.argv,
+        env: scoped.env,
+        scopeFailed: () => {
+            const started = existsSync(startedFile);
+            rmSync(startedFile, { force: true });
+            return !started;
+        },
+    };
+}
+
+/** The one warning line before a command whose scope systemd-run could not make runs again without it. */
+export function scopeFailedWarning(code: number): string {
+    return `toli: systemd-run could not start the build's scope (exit ${code}), running it without a memory cap`;
+}
+
+/**
+ * Run `command` with this process's stdio plus `env`, passing termination signals on; resolves to its exit code.
+ * With `scope` it runs in its own systemd scope where the host has one (`launchInScope`). When systemd-run is there
+ * but cannot make the scope (no user session bus over ssh, no lingering), the command never started: it runs once
+ * more without a scope, after one warning line. A command that ran keeps its own exit code.
+ */
+export async function runInSlot(
+    command: string[],
+    env: Record<string, string>,
+    scope: BuildScope | null,
+): Promise<number> {
     const [program, ...args] = command;
     if (program === undefined) throw new ToliError("usage: bin/toli build-slot -- <command...>");
     const resolved = program.includes("/") ? program : Bun.which(program, { PATH: process.env.PATH ?? "" });
@@ -247,18 +286,11 @@ async function runInSlot(command: string[], env: Record<string, string>, scope: 
         warn(`toli: ${program}: command not found`);
         return 127;
     }
-    const argv: [string, ...string[]] = [resolved, ...args];
-    if (scope === null) return (await spawnForwarding(argv, env)).code;
-    mkdirSync(paths.buildSlotsDir(), { recursive: true });
-    const startedFile = join(paths.buildSlotsDir(), `scope-${process.pid}.started`);
-    rmSync(startedFile, { force: true });
-    const scoped = inBuildScope(scope.slot, scope.memoryMaxMB, argv, startedFile);
-    if (scoped === null) return (await spawnForwarding(argv, env)).code;
-    const run = await spawnForwarding(scoped.argv, { ...scoped.env, ...env });
-    const started = existsSync(startedFile);
-    rmSync(startedFile, { force: true });
-    if (started || run.signalled) return run.code;
-    warn(`toli: systemd-run could not start the build's scope (exit ${run.code}), running it without a memory cap`);
+    const argv: Argv = [resolved, ...args];
+    const launch = launchInScope(scope, argv);
+    const run = await spawnForwarding(launch.argv, { ...launch.env, ...env });
+    if (!launch.scopeFailed() || run.signalled) return run.code;
+    warn(scopeFailedWarning(run.code));
     return (await spawnForwarding(argv, env)).code;
 }
 

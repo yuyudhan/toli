@@ -6,7 +6,7 @@ import { currentBranch, git, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "../core/util.ts";
-import { withBuildSlot } from "../fleet/build-slots.ts";
+import { runInSlot, withBuildSlot } from "../fleet/build-slots.ts";
 import { type Forge, findProject, loadProjects, type Project, projectCloneDir } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import { appendPush, pushAttribution, pushLine } from "../records/push-log.ts";
@@ -240,9 +240,10 @@ function hasPrePushHook(dir: string): boolean {
  * origin's branch is recorded in this machine's push log (src/records/push-log.ts), attributed with `--by`/`--for`/
  * `--word` (or the issuing machine and task `bin/toli exec` put in the environment). With `--gate "<recipe>"` the
  * gate runs first (cached per commit, src/forge/gate.ts) and the push happens only once it passed at HEAD; the push's
- * hooks get TOLI_GATE_SHA and TOLI_GATE_RECIPE. A project with a pre-push hook pushes in one heavy-build slot
- * (src/fleet/build-slots.ts), since the hook may run the long check itself: its cargo gets one slot's share of the
- * cores even through `just` without toli's cargo shim, and a `bin/toli gate run` it starts rides on that slot.
+ * hooks get TOLI_GATE_SHA and TOLI_GATE_RECIPE. A project with a pre-push hook pushes in one heavy-build slot and its
+ * memory-capped scope (src/fleet/build-slots.ts), since the hook may run the long check itself: its cargo gets one
+ * slot's share of the cores even through `just` without toli's cargo shim, and a `bin/toli gate run` it starts rides
+ * on that slot.
  */
 export async function pushCommand(argv: string[]): Promise<void> {
     const args = new Args(argv, { values: [TASK_FLAG, "by", "for", "word", "gate"] });
@@ -275,7 +276,7 @@ export async function pushCommand(argv: string[]): Promise<void> {
     const old = before.stdout.trim().split(/\s+/)[0] || null;
     const push = ["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`];
     const code = hasPrePushHook(dir)
-        ? await withBuildSlot(dir, ({ env }) => runInherit(push, { env: { ...gateEnv, ...env } }))
+        ? await withBuildSlot(dir, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
         : await runInherit(push, { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push -u origin ${branch} failed (exit ${code})`);
     const pushed = headSha(dir, ref);

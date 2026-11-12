@@ -7,8 +7,20 @@ import { buildMemoryMaxMB } from "../src/fleet/build-slots.ts";
 import { capacityFor, type Resources } from "../src/fleet/resources.ts";
 import { jawanEnv } from "../src/jawans/env.ts";
 import { buildScopeArgv, buildScopeUnit, inToliBuildCgroup } from "../src/jawans/scope.ts";
-import { CARGO_SHIM, holdSlot, type Run, runs, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
-import type { Sandbox } from "./helpers.ts";
+import {
+    CARGO_SHIM,
+    holdSlot,
+    noBusSystemdRun,
+    type Run,
+    runs,
+    scopeBox,
+    scopeLines,
+    slotBox,
+    start,
+    TERMINAL_CGROUP,
+    toliArgs,
+    until,
+} from "./build-slot-fixture.ts";
 
 const machine = { name: "m1", role: "coordinator" as const };
 
@@ -200,44 +212,8 @@ describe("each heavy build in its own systemd scope", () => {
         expect(inToliBuildCgroup("")).toBe(false);
     });
 
-    /** A systemd-run that logs its arguments and execs the command after `--`, as one that makes the scope does. */
-    const workingSystemdRun = (scopeLog: string): string =>
-        [
-            `printf '%s\\n' "$*" >> "${scopeLog}"`,
-            'while [ "$#" -gt 0 ]; do arg=$1; shift; [ "$arg" = "--" ] && break; done',
-            'exec "$@"',
-        ].join("\n");
-
-    /**
-     * Linux with a user manager (a fake runtime dir with its private socket), a systemd-run stub (by default
-     * `workingSystemdRun`), a `cgroup` for this process (/proc/self/cgroup) and a memory cap of 512 MB.
-     */
-    function scopeBox(
-        cgroup: string,
-        systemdRun = workingSystemdRun,
-    ): { box: Sandbox; log: string; scopeLog: string; env: Record<string, string> } {
-        const { box, log } = slotBox(1, 3);
-        const config = join(box.root, "config", "machine.json");
-        const parsed = JSON.parse(readFileSync(config, "utf8")) as { capacity: Record<string, number> };
-        writeFileSync(config, JSON.stringify({ ...parsed, capacity: { ...parsed.capacity, buildMemoryMax: 512 } }));
-        const runtime = join(box.root, ".run-user");
-        mkdirSync(join(runtime, "systemd"), { recursive: true });
-        writeFileSync(join(runtime, "systemd", "private"), "");
-        const proc = join(box.root, ".proc");
-        mkdirSync(join(proc, "self"), { recursive: true });
-        writeFileSync(join(proc, "self", "cgroup"), cgroup);
-        const scopeLog = join(box.root, ".systemd-run.log");
-        box.stub("systemd-run", systemdRun(scopeLog));
-        const env = { TOLI_PLATFORM: "linux", TOLI_BUILD_SCOPE: "", XDG_RUNTIME_DIR: runtime, TOLI_PROC_DIR: proc };
-        return { box, log, scopeLog, env };
-    }
-
-    const terminal = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/vte-spawn-1.scope\n";
-    const scopeLines = (scopeLog: string): string[] =>
-        existsSync(scopeLog) ? readFileSync(scopeLog, "utf8").trim().split("\n") : [];
-
     test("build-slot and the cargo shim run the build in toli-build-<slot>-<pid> capped at buildMemoryMax", async () => {
-        const { box, log, scopeLog, env } = scopeBox(terminal);
+        const { box, log, scopeLog, env } = scopeBox(TERMINAL_CGROUP);
         const direct = await start(box, toliArgs("build-slot", "--", "cargo", "build"), { ...env, STUB_LABEL: "a" })
             .done;
         const shimmed = await start(box, [CARGO_SHIM, "test", "-q"], { ...env, STUB_LABEL: "b" }).done;
@@ -264,7 +240,7 @@ describe("each heavy build in its own systemd scope", () => {
     }, 30_000);
 
     test("a failing or killed build in its scope reports as it would outside one", async () => {
-        const { box, scopeLog, env } = scopeBox(terminal);
+        const { box, scopeLog, env } = scopeBox(TERMINAL_CGROUP);
         const failed = await start(box, toliArgs("build-slot", "--", "sh", "-c", "exit 3"), env).done;
         const killed = await start(box, toliArgs("build-slot", "--", "sh", "-c", "kill -TERM $$"), env).done;
         expect([failed.code, killed.code]).toEqual([3, 143]);
@@ -272,14 +248,7 @@ describe("each heavy build in its own systemd scope", () => {
     }, 30_000);
 
     test("a build whose scope systemd-run cannot make runs once without it, after one warning", async () => {
-        // As systemd-run fails over ssh without a user session bus: before running the command, exit 1.
-        const noBus = (scopeLog: string): string =>
-            [
-                `printf '%s\\n' "$*" >> "${scopeLog}"`,
-                "echo 'Failed to connect to bus: No medium found' >&2",
-                "exit 1",
-            ].join("\n");
-        const { box, log, scopeLog, env } = scopeBox(terminal, noBus);
+        const { box, log, scopeLog, env } = scopeBox(TERMINAL_CGROUP, noBusSystemdRun);
         const built = await start(box, toliArgs("build-slot", "--", "cargo", "build"), { ...env, STUB_LABEL: "a" })
             .done;
         expect(built.code).toBe(0);
@@ -296,7 +265,7 @@ describe("each heavy build in its own systemd scope", () => {
         const failed = await start(box, failing, env).done;
         expect(failed.code).toBe(3);
         expect(readFileSync(counter, "utf8")).toBe("x\n");
-        const working = scopeBox(terminal);
+        const working = scopeBox(TERMINAL_CGROUP);
         const workingCounter = join(working.box.root, ".attempts");
         const inScope = toliArgs("build-slot", "--", "sh", "-c", `echo x >> '${workingCounter}'; exit 3`);
         const scopedFail = await start(working.box, inScope, working.env).done;
@@ -312,7 +281,7 @@ describe("each heavy build in its own systemd scope", () => {
         expect(inside.code).toBe(3);
         expect(scopeLines(nested.scopeLog)).toEqual([]);
 
-        const { box, scopeLog, env } = scopeBox(terminal);
+        const { box, scopeLog, env } = scopeBox(TERMINAL_CGROUP);
         const noManager = { ...env, XDG_RUNTIME_DIR: join(box.root, ".no-manager") };
         for (const variant of [noManager, { ...env, TOLI_PLATFORM: "darwin" }, { ...env, TOLI_BUILD_SCOPE: "off" }]) {
             const result = await start(box, toliArgs("build-slot", "--", "sh", "-c", "exit 4"), variant).done;

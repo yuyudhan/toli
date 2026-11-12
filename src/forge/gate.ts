@@ -5,23 +5,20 @@
 // progress for the stall minutes (config/machine.json capacity.gateStallMinutes): its log did not grow, its checkout
 // did not change and its process tree burned almost no CPU (the jawan stall check, src/jawans/progress.ts). A build
 // that links silently for a long time keeps its gate alive through its CPU use.
-import { type ChildProcess, spawn as spawnChild } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { spawn as spawnChild } from "node:child_process";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import { type Machine, machineSettings } from "../core/config.ts";
 import { checkoutDirty, git, headSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, printJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
-import { withBuildSlot } from "../fleet/build-slots.ts";
-import { watchStall } from "../jawans/progress.ts";
-import { runMinuteMs } from "../jawans/runs.ts";
-import { stopTree } from "../jawans/stop.ts";
+import { launchInScope, scopeFailedWarning, withBuildSlot } from "../fleet/build-slots.ts";
+import type { Argv } from "../jawans/scope.ts";
 import { toliSelfCheckout } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import {
     type GateRecord,
-    type GateStatus,
     logDecision,
     outcomeText,
     readRecord,
@@ -30,13 +27,12 @@ import {
     short,
     updateRecord,
 } from "./gate-record.ts";
+import { superviseRecipe } from "./gate-supervise.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 const TASK_FLAG = "task";
 const DEFAULT_STALL_MINUTES = 30;
-/** After SIGTERM, how long a stopped gate's processes get before SIGKILL. */
-const STOP_GRACE_MS = 10_000;
 /** How often an attached caller re-reads the record and the log. */
 const FOLLOW_POLL_MS = 250;
 
@@ -215,86 +211,42 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
     return final;
 }
 
-/** The detached runner: in one heavy-build slot (cargo via `just` too), run the recipe; stop it only when it stalls. */
+/**
+ * The detached runner: in one heavy-build slot (cargo via `just` too) and that slot's memory-capped systemd scope where
+ * the host has one, run the recipe; stop it only when it stalls. A recipe whose scope systemd-run could not make never
+ * ran: it runs once more without the scope, after one warning line in the log.
+ */
 async function runGateProcess(file: string): Promise<void> {
     const record = readRecord(file);
     if (record === null) throw new ToliError(`gate record ${file} is gone`);
     // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
     process.on("SIGHUP", () => {});
-    await withBuildSlot(record.dir, async ({ env: slotEnv }) => {
-        const minuteMs = runMinuteMs();
-        const pollMs = Math.max(50, Math.min(1000, (record.stallMinutes * minuteMs) / 10));
-        const logFd = openSync(record.log, "a");
-        let child: ChildProcess;
-        try {
-            child = spawnChild("sh", ["-c", record.recipe], {
-                cwd: record.dir,
-                detached: true,
-                env: { ...process.env, ...slotEnv },
-                stdio: ["ignore", logFd, logFd],
-            });
-        } finally {
-            closeSync(logFd);
+    await withBuildSlot(record.dir, async ({ env: slotEnv, scope }) => {
+        const recipe: Argv = ["sh", "-c", record.recipe];
+        const env = { ...process.env, ...slotEnv };
+        const launch = launchInScope(scope, recipe);
+        let run = await superviseRecipe(file, record, launch.argv, { ...env, ...launch.env });
+        if (launch.scopeFailed() && run.stopped === null) {
+            appendFileSync(record.log, `${scopeFailedWarning(run.end.code ?? 1)}\n`);
+            run = await superviseRecipe(file, record, recipe, env);
         }
-        const spawnedAtMs = Date.now();
-        const { promise: exited, resolve: done } = Promise.withResolvers<{
-            code: number | null;
-            signal: NodeJS.Signals | null;
-            error?: string;
-        }>();
-        child.on("exit", (code, signal) => done({ code, signal }));
-        child.on("error", (error) => done({ code: 127, signal: null, error: error.message }));
-        let stopped: { status: GateStatus; reason: string } | null = null;
-        const stopping: Promise<number[]>[] = [];
-        const stop = (status: GateStatus, reason: string): void => {
-            if (stopped !== null || child.pid === undefined) return;
-            stopped = { status, reason };
-            // A reaped root's pid may already be someone else's: only a live (or unreaped) gate is stopped.
-            if (child.exitCode === null && child.signalCode === null)
-                stopping.push(stopTree({ pid: child.pid, spawnedAtMs }, STOP_GRACE_MS));
-        };
-        for (const signal of ["SIGTERM", "SIGINT"] as const)
-            process.on(signal, () => stop("killed", `its runner got ${signal}`));
-        let size = statSync(record.log).size;
-        const output = setInterval(() => {
-            const current = statSync(record.log).size;
-            if (current === size) return;
-            size = current;
-            updateRecord(file, (entry) => {
-                entry.lastOutputAt = now().toISOString();
-            });
-        }, pollMs);
-        const stopWatch = watchStall(
-            () => ({ pid: child.pid ?? null, logPath: record.log, sessionDir: null, cwd: record.dir }),
-            record.stallMinutes,
-            minuteMs,
-            () => {
-                const reason = `no new output, file change or CPU use for ${record.stallMinutes} minutes; stopped it`;
-                logDecision(record, "stall", `${record.recipe} at ${short(record.sha)}: ${reason}`);
-                stop("stalled", reason);
-            },
-        );
-        const result = await exited;
-        clearInterval(output);
-        stopWatch();
-        // The recipe's shell may die on SIGTERM while a child that ignores it runs on: the record waits until all are gone.
-        const survivors = (await Promise.all(stopping)).flat();
+        const { end, stopped, survivors } = run;
         const final = updateRecord(file, (entry) => {
             entry.endedAt = now().toISOString();
-            entry.exitCode = result.code;
+            entry.exitCode = end.code;
             if (stopped !== null) {
                 entry.status = stopped.status;
                 entry.reason =
                     survivors.length === 0
                         ? stopped.reason
                         : `${stopped.reason}; pid ${survivors.join(", ")} outlived SIGKILL`;
-            } else if (result.error !== undefined) {
+            } else if (end.error !== undefined) {
                 entry.status = "failed";
-                entry.reason = `could not run it: ${result.error}`;
-            } else if (result.signal !== null) {
+                entry.reason = `could not run it: ${end.error}`;
+            } else if (end.signal !== null) {
                 entry.status = "killed";
-                entry.reason = `it was killed by ${result.signal}`;
-            } else if (result.code !== 0) {
+                entry.reason = `it was killed by ${end.signal}`;
+            } else if (end.code !== 0) {
                 entry.status = "failed";
             } else {
                 // A pass counts only if the checkout still was exactly the commit when the gate ended.

@@ -165,8 +165,9 @@ A project's push check takes one slot for its whole run the same way, because it
 (`bin/toli gate run`, `bin/toli push --gate`, [delivery.md](delivery.md#gates-long-checks-run-once-per-commit)) runs
 the recipe in a slot, and `bin/toli push` in a project with a pre-push hook runs `git push`, and so the hook, in one.
 Cargo reads the slot's variables from the environment however it is reached, and a cargo, `build-slot` or gate the
-check starts runs inside that slot at once. A gate's recipe runs without the memory-capped scope below (its runner
-watches the recipe's own process tree for stalls). A live-stack project's checkout skips the slot here too.
+check starts runs inside that slot at once. On Linux the whole check (the gate's recipe, or `git push` and so its
+hook) also runs in the slot's memory-capped scope below, so every cargo it starts shares that one cap; the runner
+still watches the recipe's own process tree for stalls. A live-stack project's checkout skips the slot here too.
 
 On Linux with a systemd user manager, each build also runs in its own user scope,
 `toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with

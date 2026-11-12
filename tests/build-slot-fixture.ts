@@ -1,6 +1,7 @@
-// Shared fixture of the heavy-build slot tests (tests/build-slots.test.ts, tests/build-slot-queue.test.ts): a sandbox
-// with a stub cargo that logs each run, and helpers that start real `bin/toli build-slot` processes.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+// Shared fixture of the heavy-build slot tests (tests/build-slots.test.ts, tests/build-slot-queue.test.ts,
+// tests/build-slot-push.test.ts): a sandbox with a stub cargo that logs each run, helpers that start real
+// `bin/toli build-slot` processes, and a fake Linux user manager whose systemd-run logs each scope it makes.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { paths } from "../src/core/paths.ts";
 import { GIT_ENV, type Sandbox, sandbox, TOLI_BIN } from "./helpers.ts";
@@ -107,3 +108,49 @@ export async function holdSlot(box: Sandbox, log: string): Promise<Started> {
     await until("the holding build", () => runs(log).some((run) => run.label === "a"));
     return holder;
 }
+
+/** A systemd-run that logs its arguments and execs the command after `--`, as one that makes the scope does. */
+export const workingSystemdRun = (scopeLog: string): string =>
+    [
+        `printf '%s\\n' "$*" >> "${scopeLog}"`,
+        'while [ "$#" -gt 0 ]; do arg=$1; shift; [ "$arg" = "--" ] && break; done',
+        'exec "$@"',
+    ].join("\n");
+
+/** A systemd-run that fails as it does over ssh without a user session bus: before running the command, exit 1. */
+export const noBusSystemdRun = (scopeLog: string): string =>
+    [`printf '%s\\n' "$*" >> "${scopeLog}"`, "echo 'Failed to connect to bus: No medium found' >&2", "exit 1"].join(
+        "\n",
+    );
+
+/** The cgroup of a process in a terminal's scope, outside any toli build scope. */
+export const TERMINAL_CGROUP = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/vte-spawn-1.scope\n";
+
+/**
+ * Linux with a user manager (a fake runtime dir with its private socket), a systemd-run stub (by default
+ * `workingSystemdRun`), a `cgroup` for this process (/proc/self/cgroup) and a memory cap of 512 MB, on one build slot
+ * of three cargo jobs.
+ */
+export function scopeBox(
+    cgroup: string,
+    systemdRun = workingSystemdRun,
+): { box: Sandbox; log: string; scopeLog: string; env: Record<string, string> } {
+    const { box, log } = slotBox(1, 3);
+    const config = join(box.root, "config", "machine.json");
+    const parsed = JSON.parse(readFileSync(config, "utf8")) as { capacity: Record<string, number> };
+    writeFileSync(config, JSON.stringify({ ...parsed, capacity: { ...parsed.capacity, buildMemoryMax: 512 } }));
+    const runtime = join(box.root, ".run-user");
+    mkdirSync(join(runtime, "systemd"), { recursive: true });
+    writeFileSync(join(runtime, "systemd", "private"), "");
+    const proc = join(box.root, ".proc");
+    mkdirSync(join(proc, "self"), { recursive: true });
+    writeFileSync(join(proc, "self", "cgroup"), cgroup);
+    const scopeLog = join(box.root, ".systemd-run.log");
+    box.stub("systemd-run", systemdRun(scopeLog));
+    const env = { TOLI_PLATFORM: "linux", TOLI_BUILD_SCOPE: "", XDG_RUNTIME_DIR: runtime, TOLI_PROC_DIR: proc };
+    return { box, log, scopeLog, env };
+}
+
+/** The systemd-run stub's logged argument lines, one per scope it was asked to make. */
+export const scopeLines = (scopeLog: string): string[] =>
+    existsSync(scopeLog) ? readFileSync(scopeLog, "utf8").trim().split("\n") : [];
