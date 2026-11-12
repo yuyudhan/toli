@@ -4,6 +4,22 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.4.5 - unreleased
+
+### Fixed
+
+- The fixed-branch test runs its project and commit steps in process, so it stays well under its time limit on a
+  busy machine (T1147).
+- A project's push checks (the gate runner and `bin/toli push` with a pre-push hook) hold one heavy-build slot for
+  the whole check, with cargo's build and test threads capped to the slot's share, and run inside the slot's
+  memory-capped scope on Linux, so one push check no longer takes every core or runs without a memory limit (T1148).
+- A `--for` slice of a task that its jawan is still working on never closes the parent task (T1156).
+- Delegating the same work again (same sender, `--for` task, project, title and brief) makes no second task while
+  the first is open, and a copy already waiting in the outbox is not queued twice (T1158).
+- The disk keeper never deletes part of a build target that a running build is using; a busy target is skipped
+  whole (T1182).
+- The disk keeper never prunes Docker while a Docker pull or build is running (T1186).
+
 ## v0.4.4 - 2026-11-12
 
 ### Upgrading
