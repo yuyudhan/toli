@@ -25,7 +25,37 @@ const BROWSER_STOP_GRACE_MS = 5_000;
 const PS_TIMEOUT_MS = 20_000;
 const PS_ARGV = ["ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,etime=,args="];
 
-const BROWSER_BINARY = /chrom(?:e|ium)|headless[_ -]shell|msedge|microsoft edge|brave|firefox/i;
+/** Browser executables, by exact basename: Linux/Windows binaries and the macOS app-bundle binaries. */
+const BROWSER_BINARIES = new Set([
+    "chrome",
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "google-chrome-beta",
+    "google-chrome-unstable",
+    "chrome-headless-shell",
+    "headless_shell",
+    "msedge",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "brave",
+    "brave-browser",
+    "firefox",
+    "firefox-bin",
+    "firefox-esr",
+    "Google Chrome",
+    "Google Chrome for Testing",
+    "Google Chrome Canary",
+    "Google Chrome Beta",
+    "Google Chrome Dev",
+    "Chromium",
+    "Microsoft Edge",
+    "Brave Browser",
+    "Firefox",
+]);
+/** A macOS app-bundle executable path, whose directory and binary names may contain spaces. */
+const APP_BUNDLE_BINARY = /^\/.*\.app\/Contents\/MacOS\/[^/]+$/;
 const AUTOMATION_FLAG =
     /(?:^|\s)(?:--?remote-debugging-(?:port|pipe)|--?headless|--enable-automation|--?marionette)(?:[=\s]|$)/;
 const PROFILE_FLAG = /(?:^|\s)--user-data-dir=(\S+)/;
@@ -39,13 +69,29 @@ function throwawayProfile(dir: string): boolean {
 }
 
 /**
- * Whether the `ps` command line `args` is an automation browser: a browser binary (the executable before the first
- * flag) started with an automation flag or a throwaway profile. Chrome's helper processes (`--type=...`) are not
- * browsers of their own: they go with their browser's tree.
+ * Whether the command line starts with a browser executable: its first word, or (for a macOS app bundle, whose path
+ * has spaces) its first words up to the bundle binary, has a known browser basename. A tool merely named after a
+ * browser (`npx chrome-devtools-mcp`, `python3 chromium_tests.py`) is not one.
+ */
+function browserExecutable(args: string): boolean {
+    const words = args.trim().split(/\s+/);
+    let prefix = "";
+    for (const [index, word] of words.entries()) {
+        if (index > 0 && word.startsWith("-")) return false;
+        prefix = index === 0 ? word : `${prefix} ${word}`;
+        if ((index === 0 || APP_BUNDLE_BINARY.test(prefix)) && BROWSER_BINARIES.has(basename(prefix))) return true;
+        if (!prefix.startsWith("/")) return false;
+    }
+    return false;
+}
+
+/**
+ * Whether the `ps` command line `args` is an automation browser: a browser executable started with an automation
+ * flag or a throwaway profile. Chrome's helper processes (`--type=...`) are not browsers of their own: they go with
+ * their browser's tree.
  */
 export function automationBrowser(args: string): boolean {
-    const binary = basename(args.split(/\s-/, 1)[0] ?? "");
-    if (!BROWSER_BINARY.test(binary) || HELPER_FLAG.test(args)) return false;
+    if (!browserExecutable(args) || HELPER_FLAG.test(args)) return false;
     if (AUTOMATION_FLAG.test(args)) return true;
     const profile = PROFILE_FLAG.exec(args)?.[1];
     return profile !== undefined && throwawayProfile(profile);

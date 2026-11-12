@@ -16,6 +16,11 @@ describe("which processes are automation browsers", () => {
             "chromium --user-data-dir=/tmp/playwright_chromiumdev_profile-x1 about:blank",
             "/usr/lib/firefox/firefox -marionette -profile /tmp/rust_mozprofile",
             "msedge --enable-automation",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium --headless",
+            "/usr/bin/chromium-browser --headless",
+            "/usr/bin/google-chrome-stable --remote-debugging-port=0",
+            "/opt/chrome-headless-shell/chrome-headless-shell --remote-debugging-pipe",
+            "/usr/bin/brave-browser --enable-automation",
         ])
             expect([args, automationBrowser(args)]).toEqual([args, true]);
     });
@@ -28,6 +33,9 @@ describe("which processes are automation browsers", () => {
             "/opt/google/chrome/chrome --type=renderer --enable-automation --headless",
             "node /home/u/.npm/_npx/1/node_modules/chrome-devtools-mcp/build/src/index.js --headless",
             "bash -c chrome --headless",
+            "npx chrome-devtools-mcp --headless",
+            "python3 /home/u/src/chromium_tests.py --headless",
+            "/usr/bin/python3 /home/u/src/chromium/tools/run.py --remote-debugging-port=0",
         ])
             expect([args, automationBrowser(args)]).toEqual([args, false]);
     });
