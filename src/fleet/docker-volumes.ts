@@ -6,8 +6,10 @@
 // `cargo` folder), and never when its name or any mount point looks like data (a database, uploads, backups: DATA
 // below), whatever else matches. Largest first, re-checking free disk after each volume and stopping once it is over
 // the emergency level. Stopped containers that still mount the volume are removed first (`docker rm`, never `-v`:
-// their other volumes stay), since Docker refuses to remove a volume a container references; a running, paused or
-// just-created container keeps its volumes. Like the prune, it never runs while a pull, build or compose up runs.
+// their other volumes stay), since Docker refuses to remove a volume a container references, but only a container
+// that holds nothing but build output: every mount a named build-output volume (no bind mount, no anonymous or
+// data-looking volume) and an image that is no database or data store (DATA_IMAGE). Any other stopped user keeps the
+// volume, which is then skipped. A running, paused or just-created container keeps its volumes. Like the prune, it never runs while a pull, build or compose up runs.
 import { run } from "../core/util.ts";
 import { parseSize } from "./disk-caches.ts";
 import { GIB, gb } from "./disk-state.ts";
@@ -25,13 +27,36 @@ const BUILD_MOUNT = /\/(?:target|node_modules)\/?$|cargo/i;
 /** A name or mount point that may hold data: such a volume is never removed, even when it also looks like a build's. */
 const DATA =
     /pg|postgres|sql|maria|mongo|redis|valkey|data|db|upload|media|minio|elastic|opensearch|clickhouse|kafka|rabbit|backup|storage|vault|secret/i;
+/** An image that keeps data in its container (a database, queue or object store): such a container is never removed. */
+const DATA_IMAGE =
+    /postgres|postgis|timescale|mysql|maria|percona|mongo|clickhouse|redis|valkey|keydb|memcache|elastic|opensearch|minio|rabbitmq|kafka|zookeeper|cassandra|scylla|couch|neo4j|influx|etcd|consul|vault|nats|pulsar|cockroach|surreal|questdb|meilisearch|typesense|qdrant|weaviate|milvus|registry|gitea|gitlab|nextcloud|wordpress|ghost/i;
+/** An anonymous volume's name: 64 hex digits Docker chose. */
+const ANONYMOUS = /^[0-9a-f]{64}$/;
 /** Docker's volume names: anything else in `docker volume ls` output is not a volume. */
 const VOLUME_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 /** Container states that start nothing on their own: their volumes may go once they are removed. */
 const STOPPED: Record<string, true> = { exited: true, dead: true };
 
-export type DockerMount = { volume: string; destination: string };
-export type DockerContainer = { id: string; name: string; status: string; mounts: DockerMount[] };
+/** One mount of a container: `volume` is the volume's name for a volume mount, else its source (a bind's host path). */
+export type DockerMount = { type: string; volume: string; destination: string };
+export type DockerContainer = { id: string; name: string; status: string; image: string; mounts: DockerMount[] };
+
+/** A named volume mount whose name or mount point says build output and neither may hold data. */
+function buildMount(mount: DockerMount): boolean {
+    if (mount.type !== "volume" || mount.volume === "" || ANONYMOUS.test(mount.volume)) return false;
+    if (!BUILD_NAME.test(mount.volume) && !BUILD_MOUNT.test(mount.destination)) return false;
+    return !DATA.test(mount.volume) && !DATA.test(mount.destination);
+}
+
+/** Why a stopped container may not be removed (it holds more than build output), or null when it may. */
+function holdsMore(container: DockerContainer): string | null {
+    if (DATA_IMAGE.test(container.image)) return `its image ${container.image} keeps data`;
+    const other = container.mounts.find((mount) => !buildMount(mount));
+    if (other === undefined) return null;
+    if (other.type === "volume")
+        return `it also mounts ${ANONYMOUS.test(other.volume) ? "an anonymous volume" : `volume ${other.volume}`} at ${other.destination}`;
+    return `it also has a ${other.type} mount ${other.volume} at ${other.destination}`;
+}
 /** A build-output volume to remove, and the stopped containers that must go first. */
 export type BuildVolume = { name: string; sizeGB: number | null; stopped: DockerContainer[] };
 
@@ -46,10 +71,9 @@ export function buildVolumes(
     const volumes: BuildVolume[] = [];
     const kept: string[] = [];
     for (const name of names) {
-        const users = containers.filter((container) => container.mounts.some((mount) => mount.volume === name));
-        const at = users.flatMap((container) =>
-            container.mounts.filter((mount) => mount.volume === name).map((mount) => mount.destination),
-        );
+        const mine = (mount: DockerMount): boolean => mount.type === "volume" && mount.volume === name;
+        const users = containers.filter((container) => container.mounts.some(mine));
+        const at = users.flatMap((container) => container.mounts.filter(mine).map((mount) => mount.destination));
         if (!BUILD_NAME.test(name) && !at.some((destination) => BUILD_MOUNT.test(destination))) continue;
         const data = [name, ...at].find((text) => DATA.test(text));
         if (data !== undefined) {
@@ -59,6 +83,13 @@ export function buildVolumes(
         const live = users.find((container) => !Object.hasOwn(STOPPED, container.status));
         if (live !== undefined) {
             kept.push(`kept docker volume ${name}: container ${live.name} uses it (${live.status})`);
+            continue;
+        }
+        const holder = users.map((container) => ({ container, why: holdsMore(container) })).find((u) => u.why !== null);
+        if (holder !== undefined) {
+            kept.push(
+                `kept docker volume ${name}: stopped container ${holder.container.name} mounts it and ${holder.why}`,
+            );
             continue;
         }
         volumes.push({ name, sizeGB: null, stopped: users });
@@ -96,7 +127,8 @@ type Inspected = {
     Id?: unknown;
     Name?: unknown;
     State?: { Status?: unknown };
-    Mounts?: { Type?: unknown; Name?: unknown; Destination?: unknown }[];
+    Config?: { Image?: unknown };
+    Mounts?: { Type?: unknown; Name?: unknown; Source?: unknown; Destination?: unknown }[];
 };
 
 /** Containers from `docker container inspect` JSON; null when it does not parse. */
@@ -111,14 +143,20 @@ export function parseContainers(json: string): DockerContainer[] | null {
     const containers: DockerContainer[] = [];
     for (const item of parsed as Inspected[]) {
         if (typeof item.Id !== "string") return null;
-        const mounts = (Array.isArray(item.Mounts) ? item.Mounts : []).flatMap((mount) =>
-            mount.Type === "volume" && typeof mount.Name === "string"
-                ? [{ volume: mount.Name, destination: typeof mount.Destination === "string" ? mount.Destination : "" }]
-                : [],
-        );
+        // Every mount, binds and tmpfs included: an unknown type counts as more than build output.
+        const mounts = (Array.isArray(item.Mounts) ? item.Mounts : []).map((mount) => {
+            const type = typeof mount.Type === "string" ? mount.Type : "unknown";
+            const source = type === "volume" ? mount.Name : mount.Source;
+            return {
+                type,
+                volume: typeof source === "string" ? source : "",
+                destination: typeof mount.Destination === "string" ? mount.Destination : "",
+            };
+        });
         const name = typeof item.Name === "string" ? item.Name.replace(/^\//, "") : item.Id.slice(0, 12);
         const status = typeof item.State?.Status === "string" ? item.State.Status : "unknown";
-        containers.push({ id: item.Id, name, status, mounts });
+        const image = typeof item.Config?.Image === "string" ? item.Config.Image : "";
+        containers.push({ id: item.Id, name, status, image, mounts });
     }
     return containers;
 }

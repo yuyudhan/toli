@@ -113,9 +113,15 @@ system df -v`), until free space is over that level. A volume is build output on
    `postgres`, `sql`, `maria`, `mongo`, `redis`, `valkey`, `data`, `db`, `upload`, `media`, `minio`, `elastic`,
    `opensearch`, `clickhouse`, `kafka`, `rabbit`, `backup`, `storage`, `vault` or `secret` (`kept docker volume
 <name>: ... may hold data`). Never one a running, paused, restarting or just-created container uses (`kept docker
-volume <name>: container <c> uses it (running)`); a stopped (`exited` or `dead`) container that still mounts it is
+volume <name>: container <c> uses it (running)`). A stopped (`exited` or `dead`) container that still mounts it is
    removed first (`docker rm`, never `-v`, so its other volumes stay; `compose up` creates it again), since Docker
-   refuses to remove a volume a container references. Like step 3 it never runs while a `docker pull`, `build`,
+   refuses to remove a volume a container references, but only when that container holds nothing but build output:
+   every one of its mounts is a named build-output volume as above (no bind mount, tmpfs, anonymous volume or
+   data-looking volume), and its image is no database or data store (`postgres`, `mysql`, `mariadb`, `mongo`,
+   `clickhouse`, `redis`, `elasticsearch`, `opensearch`, `minio`, `rabbitmq`, `kafka`, `zookeeper`, `cassandra`,
+   `etcd`, `vault`, a registry and the like). Otherwise the volume is skipped whole (`kept docker volume <name>:
+stopped container <c> mounts it and its image postgres:16 keeps data`, `... it also has a bind mount <path> at
+<dest>`) and the keeper moves on. Like step 3 it never runs while a `docker pull`, `build`,
    `buildx`, `compose up` or `load` runs (`docker volumes: skipped (pid N ... is running)`). Docker's build cache
    already went in step 3. On macOS Docker Desktop keeps volumes in its VM disk image, so the host may get the space
    back only later; the keeper logs what free space actually gained.

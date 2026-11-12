@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { KeepReport } from "../src/fleet/disk.ts";
-import { buildVolumes, type DockerContainer, parseContainers, parseVolumeSizes } from "../src/fleet/docker-volumes.ts";
+import {
+    buildVolumes,
+    type DockerContainer,
+    type DockerMount,
+    parseContainers,
+    parseVolumeSizes,
+} from "../src/fleet/docker-volumes.ts";
 import { buildOutput, holdLock, keeperBox, keeperTest } from "./disk-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
 
@@ -10,7 +16,8 @@ const container = (name: string, status: string, ...mounts: [string, string][]):
     id: name,
     name,
     status,
-    mounts: mounts.map(([volume, destination]) => ({ volume, destination })),
+    image: "",
+    mounts: mounts.map(([volume, destination]) => ({ type: "volume", volume, destination })),
 });
 
 describe("which docker volumes hold idle build output", () => {
@@ -45,6 +52,45 @@ describe("which docker volumes hold idle build output", () => {
         ]);
     });
 
+    test("a stopped container holding more than build output keeps the volume: a database beside a bind mount", () => {
+        const postgres: DockerContainer = {
+            ...container("stack-postgres-1", "exited", ["x_target", "/app/target"], ["x_pgdata", "/var/lib/data"]),
+            image: "postgres:16",
+        };
+        postgres.mounts.push({ type: "bind", volume: "/home/me/seed", destination: "/seed" });
+        const { volumes, kept } = buildVolumes(["x_target"], [postgres]);
+        expect(volumes).toEqual([]);
+        expect(kept).toEqual([
+            "kept docker volume x_target: stopped container stack-postgres-1 mounts it and its image postgres:16 keeps data",
+        ]);
+        const plain = { ...postgres, image: "rust:1.82" };
+        expect(buildVolumes(["x_target"], [plain]).kept[0]).toEndWith(
+            "it also mounts volume x_pgdata at /var/lib/data",
+        );
+        plain.mounts = [postgres.mounts[0] as DockerMount, postgres.mounts[2] as DockerMount];
+        expect(buildVolumes(["x_target"], [plain]).kept[0]).toEndWith(
+            "it also has a bind mount /home/me/seed at /seed",
+        );
+        const anonymous = container(
+            "web",
+            "exited",
+            ["x_target", "/app/target"],
+            ["a".repeat(64), "/app/node_modules"],
+        );
+        expect(buildVolumes(["x_target"], [anonymous]).kept[0]).toContain("an anonymous volume at /app/node_modules");
+    });
+
+    test("a stopped container with only build volumes is still removed with its volume", () => {
+        const backend = { ...container("stack-backend-1", "exited", ["x_target", "/app/target"]), image: "rust:1.82" };
+        backend.mounts.push({ type: "volume", volume: "x_cargo", destination: "/usr/local/cargo/registry" });
+        const { volumes, kept } = buildVolumes(["x_target", "x_cargo"], [backend]);
+        expect(kept).toEqual([]);
+        expect(volumes.map((volume) => [volume.name, volume.stopped.map((c) => c.name)])).toEqual([
+            ["x_target", ["stack-backend-1"]],
+            ["x_cargo", ["stack-backend-1"]],
+        ]);
+    });
+
     test("reads volume sizes from docker system df -v and containers from docker container inspect", () => {
         const df = [
             "Images space usage:",
@@ -69,18 +115,16 @@ describe("which docker volumes hold idle build output", () => {
                 Id: "c1",
                 Name: "/stack-backend-1",
                 State: { Status: "exited" },
+                Config: { Image: "kalki-backend:dev" },
                 Mounts: [
                     { Type: "volume", Name: "kalki_backend_target", Destination: "/app/target" },
                     { Type: "bind", Source: "/home/me/app", Destination: "/app" },
                 ],
             },
         ]);
-        expect(parseContainers(inspected)).toEqual(
-            [container("stack-backend-1", "exited", ["kalki_backend_target", "/app/target"])].map((c) => ({
-                ...c,
-                id: "c1",
-            })),
-        );
+        const backend = container("stack-backend-1", "exited", ["kalki_backend_target", "/app/target"]);
+        backend.mounts.push({ type: "bind", volume: "/home/me/app", destination: "/app" });
+        expect(parseContainers(inspected)).toEqual([{ ...backend, id: "c1", image: "kalki-backend:dev" }]);
         expect(parseContainers("Total reclaimed space: 0B")).toBeNull();
         expect(parseContainers('[{"Name":"/no-id"}]')).toBeNull();
     });
@@ -92,7 +136,7 @@ describe("which docker volumes hold idle build output", () => {
  * stopped container `stack-backend-1`), `y_target` (a running container's), `x_pgdata` (a stopped database's) and
  * `x_db_target` (no container; its name may hold data); it removes only what the keeper should remove.
  */
-function volumeTree(box: Sandbox, afterGB: number, ps = "exit 0") {
+function volumeTree(box: Sandbox, afterGB: number, ps = "exit 0", backend: Record<string, unknown> = {}) {
     box.ok(["init", "--name", "m1", "--role", "coordinator"]);
     const idle = realpathSync(withProject(box, "alpha"));
     const busy = realpathSync(withProject(box, "beta"));
@@ -114,7 +158,9 @@ function volumeTree(box: Sandbox, afterGB: number, ps = "exit 0") {
                 Id: "c2",
                 Name: "/stack-backend-1",
                 State: { Status: "exited" },
+                Config: { Image: "rust:1.82" },
                 Mounts: [{ Type: "volume", Name: "x_target", Destination: "/app/target" }],
+                ...backend,
             },
             {
                 Id: "c3",
@@ -206,6 +252,32 @@ describe("docker build volumes in the keeper", () => {
             expect(volumeAt).toBeGreaterThan(-1);
             expect(volumeAt).toBeLessThan(lines.indexOf(`deleted ${join(busy, "target")}, freed `));
             expect(lines).toContain(`deleted ${join(busy, "target")}, freed 0.0 GB (step 7: last resort)`);
+            sparedTheRest(calls());
+        } finally {
+            release();
+        }
+    });
+
+    keeperTest("a stopped postgres container with a build volume, its data and a bind mount keeps all of them", () => {
+        const box = keeperBox();
+        const postgres = {
+            Name: "/stack-postgres-2",
+            Config: { Image: "postgres:16" },
+            Mounts: [
+                { Type: "volume", Name: "x_target", Destination: "/app/target" },
+                { Type: "volume", Name: "x_pgdata", Destination: "/var/lib/postgresql/data" },
+                { Type: "bind", Source: "/home/me/seed", Destination: "/seed" },
+            ],
+        };
+        const { calls, keep, release } = volumeTree(box, 10, "exit 0", postgres);
+        try {
+            const lines = keep().lines.join("\n");
+            expect(lines).toContain(
+                "kept docker volume x_target: stopped container stack-postgres-2 mounts it and its image postgres:16 keeps data",
+            );
+            expect(lines).not.toContain("removed docker volume x_target");
+            expect(calls()).not.toContain("rm c2");
+            expect(calls()).not.toContain("volume rm x_target");
             sparedTheRest(calls());
         } finally {
             release();
