@@ -6,7 +6,7 @@ signed messages over HTTPS on a private network. The design and its reasons are 
 
 ## Identity
 
-`bin/toli peer init` (also run by `upgrade` and by the listener) makes this installation's identity in `config/peer/`
+`bin/toli peer init` (also run by `upgrade`, and by `peer serve` when it is missing) makes this installation's identity in `config/peer/`
 (private to the machine, the directory at mode 0700):
 
 - `identity.key` / `identity.pub`: an Ed25519 key that signs every message. Its **fingerprint** is the SHA-256 of the
@@ -51,9 +51,10 @@ delegated that task here, and `delegation receive|update|link --from <m>` unless
 ## The listener
 
 `bin/toli peer serve` serves HTTPS with this installation's certificate. The lead service (`bin/toli lead run`)
-starts it, detached, whenever `peer.listen` is on (the default) and none runs, and it exits by itself when a newer
-runtime is installed so the lead restarts it on that; a machine whose lead runs from crontab has no listener unless
-`peer serve` is run, and pulls from its peers instead. Settings live in `config/machine.json` `peer`:
+starts it, detached, whenever `peer.listen` is on (the default), this installation has its identity (`peer init`,
+which `upgrade` runs) and none runs. It exits by itself when a newer runtime is installed, so the lead restarts it
+on that, and when the checkout's `config/machine.json` is gone; a machine whose lead runs from crontab has no
+listener unless `peer serve` is run, and pulls from its peers instead. Settings live in `config/machine.json` `peer`:
 
 | Setting       | Default   | Meaning                                                                                                                    |
 | ------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |

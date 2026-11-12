@@ -22,7 +22,7 @@ import { isJsonObject, now, pidAlive, readJson, ToliError, warn, writeJsonAtomic
 import { runtimeSuperseded } from "../release/runtime.ts";
 import { bindAddresses, hostPort } from "./bind.ts";
 import { applyBatch, type Envelope, verifyEnvelope } from "./envelope.ts";
-import { type Identity, initIdentity, loadIdentity } from "./identity.ts";
+import { hasIdentity, type Identity, initIdentity, loadIdentity } from "./identity.ts";
 import { type Peer, peerLog, peerSettings } from "./store.ts";
 
 export const MAX_REQUEST_BYTES = 512 * 1024;
@@ -259,6 +259,12 @@ export async function runListener(): Promise<number> {
             version,
         } satisfies ListenerRecord);
     const rebind = (): void => {
+        if (!existsSync(paths.machine())) {
+            // The checkout was removed (or never finished `init`): nothing here can take a message any more.
+            peerLog("listener: config/machine.json is gone; stopping");
+            stop();
+            return;
+        }
         const settings = peerSettings();
         if (!settings.listen) {
             peerLog("listener: peer.listen is off; stopping");
@@ -319,11 +325,13 @@ export async function controlRequest(path: string, body?: unknown): Promise<{ st
 }
 
 /**
- * The lead service's pass (src/fleet/lead.ts): start `bin/toli peer serve` detached when `peer.listen` is on and no
- * listener runs. Returns the log line when it started one (or, with TOLI_DRY_RUN, would have), else null.
+ * The lead service's pass (src/fleet/lead.ts): start `bin/toli peer serve` detached when `peer.listen` is on, this
+ * installation has its peer identity (`peer init`, which `upgrade` runs: a checkout that never opted in, a test
+ * sandbox included, never binds the machine's addresses) and no listener runs. Returns the log line when it started
+ * one (or, with TOLI_DRY_RUN, would have), else null.
  */
 export function ensureListener(): string | null {
-    if (!peerSettings().listen) return null;
+    if (!peerSettings().listen || !hasIdentity()) return null;
     const running = readListener();
     if (running !== null && pidAlive(running.pid)) return null;
     if (process.env.TOLI_DRY_RUN === "1") return "would start the peer listener (TOLI_DRY_RUN)";
