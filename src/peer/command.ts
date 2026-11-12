@@ -6,11 +6,130 @@ import { isJsonObject, out, pidAlive, printJson, readStdin, ToliError } from "..
 import { bindAddresses } from "./bind.ts";
 import { applyBatch } from "./envelope.ts";
 import { hasIdentity, initIdentity, loadIdentity, spokenFingerprint } from "./identity.ts";
+import { acceptRequest, declineRequest, loadRequests } from "./pair.ts";
+import { completePairing, requestPairing } from "./pair-client.ts";
 import { controlRequest, type ListenerRecord, readListener, runListener } from "./server.ts";
-import { loadPeers, type Peer, peerSettings, updatePeerSettings } from "./store.ts";
+import {
+    actorFrom,
+    isPermission,
+    loadPeers,
+    PERMISSIONS,
+    type Peer,
+    peerLog,
+    peerSettings,
+    updatePeerSettings,
+    updatePeers,
+} from "./store.ts";
 
 const USAGE = `usage: toli peer init | status [--json] | list [--json] | apply (envelopes on stdin)
-  peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]`;
+  peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
+  peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
+  peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
+  peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]`;
+
+const ACTOR_VALUES = ["by", "why"];
+
+/** `peer add <host> [--code NNNN]`: ask the host to pair, then (with the code its side shows) finish pairing. */
+async function add(argv: string[]): Promise<void> {
+    const args = new Args(argv, { values: ["code", ...ACTOR_VALUES] });
+    args.maxPositional(1);
+    const target = args.pos(0, "host");
+    const code = args.str("code");
+    const actor = actorFrom(args.str("by"), args.str("why"));
+    if (code === undefined) {
+        const { hello, reqId } = await requestPairing(target);
+        out(
+            [
+                `asked ${hello.name} to pair (request ${reqId}); its fingerprint: ${spokenFingerprint(hello.fingerprint)}`,
+                `Ask its owner or Sardar to run \`bin/toli peer accept ${reqId}\` there and read you the 4-digit code,`,
+                `then: bin/toli peer add ${target} --code NNNN (the code lives 2 minutes).`,
+            ].join("\n"),
+        );
+        return;
+    }
+    const peer = await completePairing(target, code, actor);
+    out(
+        `paired with ${peer.name} (fingerprint ${spokenFingerprint(peer.fingerprint)}); it may: ${peer.allow.join(", ")}`,
+    );
+}
+
+/** `peer accept <request>`: mint the 4-digit code; printed here only, never stored or logged. */
+async function accept(argv: string[]): Promise<void> {
+    const args = new Args(argv, { values: ACTOR_VALUES });
+    args.maxPositional(1);
+    const reqId = args.pos(0, "request");
+    const accepted = await acceptRequest(reqId, actorFrom(args.str("by"), args.str("why")));
+    const seconds = Math.round((accepted.expiresAt - Date.now()) / 1000);
+    out(
+        [
+            `pairing code for ${accepted.name}: ${accepted.code}`,
+            `It works once within ${seconds} s. Read it to ${accepted.name}'s owner or Sardar only after checking its`,
+            `fingerprint with them: ${spokenFingerprint(accepted.fingerprint)}`,
+        ].join("\n"),
+    );
+}
+
+function decline(argv: string[]): void {
+    const args = new Args(argv, { values: ACTOR_VALUES });
+    args.maxPositional(1);
+    const name = declineRequest(args.pos(0, "request"), actorFrom(args.str("by"), args.str("why")));
+    out(`declined the pairing request from ${name}`);
+}
+
+function requests(argv: string[]): void {
+    const args = new Args(argv, { booleans: ["json"] });
+    args.maxPositional(0);
+    const pending = loadRequests();
+    if (args.bool("json")) {
+        printJson(pending.map(({ cert: _cert, certSig: _sig, ...request }) => request));
+        return;
+    }
+    if (pending.length === 0) {
+        out("no pairing requests wait here");
+        return;
+    }
+    for (const request of pending)
+        out(
+            `${request.reqId}\t${request.name}\t${request.source}\t${new Date(request.receivedAt).toISOString()}\t${request.fingerprint.slice(0, 16)}`,
+        );
+}
+
+/** `peer allow|deny <peer> <permission>`: grant or revoke one permission, logged with who and why. */
+function grant(argv: string[], allow: boolean): void {
+    const args = new Args(argv, { values: ACTOR_VALUES });
+    args.maxPositional(2);
+    const name = args.pos(0, "peer");
+    const permission = args.pos(1, "permission");
+    if (!isPermission(permission))
+        throw new ToliError(`unknown permission "${permission}" (${PERMISSIONS.join(", ")})`);
+    const actor = actorFrom(args.str("by"), args.str("why"));
+    const now = updatePeers((peers) => {
+        const peer = peers.find((entry) => entry.name === name && entry.status === "active");
+        if (peer === undefined) throw new ToliError(`no paired peer "${name}" (bin/toli peer list)`);
+        const others = peer.allow.filter((entry) => entry !== permission);
+        peer.allow = allow ? PERMISSIONS.filter((entry) => entry === permission || others.includes(entry)) : others;
+        return peer.allow;
+    });
+    peerLog(`${allow ? "allowed" : "denied"} ${name} ${permission} by the ${actor.by}: ${actor.why}`);
+    out(`${name} may now: ${now.join(", ") || "nothing"}`);
+}
+
+/** `peer remove <peer>`: revoke it; its key is refused from now on (kept as `revoked`, not forgotten). */
+function remove(argv: string[]): void {
+    const args = new Args(argv, { values: ACTOR_VALUES });
+    args.maxPositional(1);
+    const name = args.pos(0, "peer");
+    const actor = actorFrom(args.str("by"), args.str("why"));
+    updatePeers((peers) => {
+        const peer = peers.find((entry) => entry.name === name && entry.status === "active");
+        if (peer === undefined) throw new ToliError(`no paired peer "${name}" (bin/toli peer list)`);
+        peer.status = "revoked";
+        peer.revokedAt = new Date().toISOString();
+        peer.allow = [];
+    });
+    peerLog(`removed ${name} by the ${actor.by}: ${actor.why}`);
+    out(`removed ${name}: its key is refused here from now on`);
+}
 
 /** The running listener's record, or null when none runs. */
 function liveListener(): ListenerRecord | null {
@@ -165,6 +284,25 @@ export async function peerCommand(argv: string[]): Promise<number> {
             return 0;
         case "set":
             set(rest);
+            return 0;
+        case "add":
+            await add(rest);
+            return 0;
+        case "accept":
+            await accept(rest);
+            return 0;
+        case "decline":
+            decline(rest);
+            return 0;
+        case "requests":
+            requests(rest);
+            return 0;
+        case "allow":
+        case "deny":
+            grant(rest, sub === "allow");
+            return 0;
+        case "remove":
+            remove(rest);
             return 0;
         default:
             throw new ToliError(USAGE);

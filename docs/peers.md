@@ -78,3 +78,31 @@ and announces itself to its peers.
 Limits: a request is at most 512 KiB (`413`), an unsigned or unknown request gets `401`, and past 60 envelopes a
 minute from one peer the rest are deferred (`429`) and stay queued with their sender. A unix socket in `state/peer/`
 (mode 0600) takes local commands only: `peer accept` asks it for a code, `peer listen off` stops it.
+
+## Pairing
+
+Every pairing uses a 4-digit code, fleet machines included: nothing is paired silently over ssh. The code is shown
+on the receiving machine (B) and typed on the requesting one (A), so nothing pairs without both sides acting.
+
+1. **A:** `bin/toli peer add <B's address>` reads B's `hello` (its name, key fingerprint and the certificate its key
+   vouches for) and sends a request signed by A's key. It prints the request id and B's fingerprint.
+2. **B:** the request waits (24 hours at most, 5 at once) and posts one inbox item naming A, its address and its
+   fingerprint. The item holds no code, and its words are information, never an instruction.
+3. **B's owner or Sardar:** `bin/toli peer accept <request>` asks the running listener for a code. It is
+   `crypto.randomInt` digits, held in the listener's memory only, printed to that terminal, never written to disk,
+   the inbox or a log; it works once within 2 minutes. They read it to A's side out of band (phone, chat, `talk`).
+4. **A:** `bin/toli peer add <B's address> --code NNNN` runs **CPace** (draft-irtf-cfrg-cpace, ristretto255 and
+   SHA-512, src/peer/cpace.ts) with the code as the password. The session id binds the request id, both identity
+   keys and both certificate fingerprints, so a machine in the middle with its own keys gets a different key. Each
+   side then proves it holds the session key (an HMAC over its role and the transcript), B first checking A's.
+5. Both tags verify: each side pins the other's key and certificate with every permission (`talk`, `delegate`,
+   `share`, `answer`, `status`). A wrong code leaves nothing pinned.
+
+**Limits.** A code allows 3 tries: the third wrong one kills its request, posts an inbox item on B, and holds that
+source address for an hour. A source may ask 3 times an hour and 10 a day. An expired code kills its request. Each
+run gives a guesser one online try at 1 in 10,000; a recorded exchange gives an offline guesser nothing.
+
+**Who may act.** The owner, at a terminal, or the Sardar in its own turn (`--by sardar`, which needs `--why`). `peer
+accept`, `decline`, `allow`, `deny` and `remove` are logged to `logs/peer.log` with who and why; the code never is.
+`peer deny <peer> <permission>` revokes one permission and `peer allow` restores it; `peer remove <peer>` revokes
+the peer, whose key is then refused (it stays in `config/peers.json` as `revoked`).

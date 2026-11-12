@@ -254,6 +254,9 @@ Details: [fleet.md](fleet.md).
 
     peer init | status [--json] | list [--json] | apply (envelopes on stdin)
     peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
+    peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
+    peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
+    peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
 
 - `peer init` makes this installation's identity (an Ed25519 key and a TLS certificate in `config/peer/`); `upgrade`
   and the listener run it too. `peer status` shows the fingerprint to compare when pairing; `peer list` the paired
@@ -264,6 +267,10 @@ Details: [fleet.md](fleet.md).
   is on (the default). `peer listen off` stops it and keeps it off (this machine then pulls from its peers); `peer
 set` changes the port (47123), the bind (`private`, the default, or a list of addresses) and whether a paired peer
   may still get messages over ssh when HTTPS fails ([peers.md](peers.md#the-listener)).
+- `peer add <host>` asks that machine to pair; there `peer accept <request>` prints a 4-digit code (2 minutes, one
+  use, 3 tries) that its owner or Sardar reads to this side, and `peer add <host> --code NNNN` finishes. Pairing
+  grants every permission; `peer deny|allow` revokes or restores one, `peer remove` revokes the peer. The Sardar runs
+  these only with `--why`, and every one is logged with who and why ([peers.md](peers.md#pairing)).
 
 Details: [peers.md](peers.md).
 
