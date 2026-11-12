@@ -35,8 +35,13 @@ export type DelegateState = {
 export type DelegationFields = {
     /** Set on a task another machine's lead delegated here: its report goes back to that machine. */
     delegatedBy?: DelegatedBy;
-    /** Fleet ids (`<machine>/T<n>`) of tasks this one was delegated as. */
+    /** Fleet ids (`<machine>/T<n>`) of tasks this one was delegated as: once all are done, so is this task. */
     delegatedTo?: string[];
+    /**
+     * Fleet ids of slices of this task delegated while its own jawan works on it: their outcome adds notes, its commit
+     * and report, and a wake, but never changes this task's status (src/records/delegation-sync.ts).
+     */
+    slices?: string[];
     /** Each delegated task's last reported state, by fleet id. */
     delegates?: Record<string, DelegateState>;
     /** `task escalate`: this hold is a delegated task's question; answering it here also answers it there. */

@@ -23,7 +23,7 @@ import { type Delivered, queuedText, sendNow } from "../jobs/outbox.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
 import { fleetId } from "../records/delegation-report.ts";
-import { applyUpdate, parseLink, parseUpdate, receiveLink, workOnBy } from "../records/delegation-sync.ts";
+import { applyUpdate, parseLink, parseUpdate, receiveLink, recordDelegation } from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
 
 /** What travels to the target (JSON on `delegation receive`'s stdin). */
@@ -199,9 +199,10 @@ export function delegationCommand(argv: string[]): void {
 }
 
 /**
- * Record the target's answer to a delivered delegation: the fleet id goes on the `--for` task, which counts as
- * active with that id as its jawan, so oversight does not call it stale; a done or dropped `--for` task (its earlier
- * delegation was given up) is reopened. Returns the fleet id.
+ * Record the target's answer to a delivered delegation on the `--for` task (src/records/delegation-sync.ts
+ * `recordDelegation`): it counts as active with that id as its jawan, so oversight does not call it stale, and a done
+ * or dropped `--for` task (its earlier delegation was given up) is reopened; while the task's own jawan works on it,
+ * the delegation is a slice that only reports back. Returns the fleet id.
  */
 export function acceptDelegation(delegation: Delegation, stdout: string): string {
     const accepted = ACCEPTED.exec(stdout);
@@ -209,11 +210,7 @@ export function acceptDelegation(delegation: Delegation, stdout: string): string
     const id = accepted[1] as string;
     const forTask = delegation.fromTask;
     if (forTask !== undefined && loadBacklog().tasks.some((task) => task.id === forTask)) {
-        updateTask(forTask, (task) => {
-            if (!task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
-            task.notes.push(`delegated to ${id}: ${delegation.title}`);
-            workOnBy(task, id);
-        });
+        updateTask(forTask, (task) => recordDelegation(task, id, `delegated to ${id}: ${delegation.title}`));
     }
     return id;
 }

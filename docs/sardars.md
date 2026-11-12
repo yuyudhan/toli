@@ -85,6 +85,10 @@ title, brief text, project, note, shape, tier and its own name. The receiving ma
 - posts `delegated T<n> from <machine>: <title>` to its own inbox, which wakes its lead;
 - answers with the fleet id `<owner>/T<n>`, which `delegate` prints. With `--for T<n>`, this machine's own task
   records it (`delegatedTo`) and counts as active with the fleet id as its jawan, so oversight does not call it stale.
+  While that task's own jawan works on it (`task start T<n> --agent <id>`, an id that is not one of its delegations),
+  the delegation is a slice of that work instead (`slices`): the task stays with its jawan, and the slice's outcome
+  only adds notes (`<owner>/T<n> is done`, its commit and report path) and wakes this lead; it never changes the
+  task's status. `task link` follows the same rule.
 
 The receiving lead dispatches its own jawans for the task as for any task (`task start`, `spawn --task`). A project
 not cloned there is its lead's to clone: the task's notes name `bin/toli project ensure <p> <url>` with the URL the

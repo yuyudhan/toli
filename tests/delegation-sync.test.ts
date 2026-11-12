@@ -84,6 +84,43 @@ describe("delegated tasks write back to the --for task", () => {
         expect(parent(m1).status).toBe("dropped");
         expect(inbox(m1).at(-1)?.title).toBe("m2/T1 dropped: the work");
     });
+
+    test("a slice delegated while the task's own jawan works on it adds notes, commit and report, never closes it", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        m1.ok(["task", "add", "app", "release"]);
+        m1.ok(["task", "start", "T1", "--agent", "ReleaseSub"]);
+        expect(m1.ok(["delegate", "m2", "lint slice", "--brief", brief(m1), "--for", "T1"])).toContain("m2/T1");
+        expect(parent(m1)).toMatchObject({ status: "active", agent: "ReleaseSub", slices: ["m2/T1"] });
+        expect(parent(m1).delegatedTo).toBeUndefined();
+        writeFileSync(join(m2.root, "report.md"), "lint clean\n");
+        m2.ok(["task", "done", "T1", "--commit", "11ab", "--report", "report.md"]);
+        const task = parent(m1);
+        expect(task).toMatchObject({ status: "active", agent: "ReleaseSub" });
+        expect(task.commit).toBeUndefined();
+        expect(task.report).toBeUndefined();
+        expect(task.notes).toContain("m2/T1 is done");
+        expect(task.notes).toContain("m2/T1 commit: 11ab");
+        expect(task.notes).toContain("m2/T1 report: data/reports/delegated/m2-T1.md");
+        expect(readFileSync(join(m1.root, "data", "reports", "delegated", "m2-T1.md"), "utf8")).toContain("lint clean");
+        expect(inbox(m1).filter((item) => item.title === "m2/T1 done: lint slice")).toHaveLength(1);
+        // The slice handed back or dropped leaves the task with its jawan too.
+        m1.ok(["delegate", "m2", "docs slice", "--brief", brief(m1), "--for", "T1"]);
+        m2.ok(["task", "handback", "T2", "--reason", "busy"]);
+        expect(parent(m1)).toMatchObject({ status: "active", agent: "ReleaseSub", slices: ["m2/T1", "m2/T2"] });
+    });
+
+    test("the task's whole work delegated closes it when done, even with a slice delegated later", () => {
+        const { m1, m2 } = delegated();
+        expect(parent(m1)).toMatchObject({ status: "active", agent: "m2/T1", delegatedTo: ["m2/T1"] });
+        m1.ok(["task", "start", "T1", "--agent", "IntegrateSub"]);
+        m1.ok(["delegate", "m2", "a slice", "--brief", brief(m1), "--for", "T1"]);
+        expect(parent(m1)).toMatchObject({ delegatedTo: ["m2/T1"], slices: ["m2/T2"] });
+        m2.ok(["task", "done", "T2", "--commit", "5115"]);
+        expect(parent(m1).status).toBe("active");
+        m2.ok(["task", "done", "T1", "--commit", "9a1e"]);
+        expect(parent(m1)).toMatchObject({ status: "done", commit: "9a1e" });
+    });
 });
 
 describe("a delegated task's question goes to the delegating lead", () => {

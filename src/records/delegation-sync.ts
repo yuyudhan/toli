@@ -1,7 +1,8 @@
 // Write-back of delegated tasks (docs/sardars.md): the delegating machine's `--for` task follows the delegated task
 // its owner reports (src/records/delegation-report.ts). `delegation update` applies one report here: the owner's new
 // notes are copied, the task's state is recorded under `delegates`, and once every delegation is done (or dropped)
-// the `--for` task is too, with the commit and report. A question stays with this machine's lead, who answers it
+// the `--for` task is too, with the commit and report. A slice (a delegation made while the `--for` task's own jawan
+// works on it) only adds its notes, commit and report. A question stays with this machine's lead, who answers it
 // (`task answer <owner>/T<n>`) or, when only the user can decide, `task escalate`s it into the Needs-you queue.
 // `task link` attaches a delegation made without `--for`. Repeats are skipped by the owner's `updatedAt`.
 import { join, relative } from "node:path";
@@ -34,7 +35,7 @@ function parseJson<T>(text: string, what: string): T {
 function localTaskFor(update: DelegationUpdate, id: string): Task | undefined {
     const tasks = loadBacklog().tasks;
     const named = update.forTask === undefined ? undefined : tasks.find((task) => task.id === update.forTask);
-    return named ?? tasks.find((task) => task.delegatedTo?.includes(id));
+    return named ?? tasks.find((task) => task.delegatedTo?.includes(id) || task.slices?.includes(id));
 }
 
 /** Where a delegated task's report is kept on this machine, relative to the root. */
@@ -52,7 +53,8 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         if (seen !== undefined && seen.updatedAt >= update.task.updatedAt) return;
         applied = true;
         const { status, updatedAt, notes, question, options, recommend, blocks, commit, handedBack } = update.task;
-        if (!task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
+        const slice = task.slices?.includes(id) === true;
+        if (!slice && !task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
         for (const note of notes.slice(seen?.notes ?? 0))
             if (!note.startsWith("delegated by ")) task.notes.push(`${id}: ${note}`);
         if (handedBack !== undefined && seen?.handedBack === undefined)
@@ -63,23 +65,36 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         if (commit !== undefined) state.commit = commit;
         if (handedBack !== undefined) state.handedBack = handedBack;
         task.delegates = { ...task.delegates, [id]: state };
-        if (status === "done" && update.report !== null) task.report = saveReport(id, update.report);
-        settle(task, id, status, commit);
+        if (status === "done" && update.report !== null) {
+            const report = saveReport(id, update.report);
+            if (slice) task.notes.push(`${id} report: ${report}`);
+            else task.report = report;
+        }
+        if (slice && status === "done" && commit !== undefined && seen?.commit !== commit)
+            task.notes.push(`${id} commit: ${commit}`);
+        settle(task, id, status, commit, slice);
     });
     return applied;
 }
 
 /**
  * The `--for` task's own status after a delegate's change: done when every delegation not dropped is done, dropped
- * when all are dropped, queued again (for another Sardar or this one) when every delegation was handed back.
+ * when all are dropped, queued again (for another Sardar or this one) when every delegation was handed back. A slice
+ * only releases the hold it escalated; the task's own jawan decides the rest.
  */
-function settle(task: Task, id: string, status: DelegateState["status"], commit: string | undefined): void {
+function settle(
+    task: Task,
+    id: string,
+    status: DelegateState["status"],
+    commit: string | undefined,
+    slice: boolean,
+): void {
     if (task.status === "held" && task.heldFrom === id && status !== "held") {
         task.status = "active";
         delete task.heldFrom;
         task.notes.push(`${id} no longer waits on the escalated question`);
     }
-    if (task.status !== "queued" && task.status !== "active") return;
+    if (slice || (task.status !== "queued" && task.status !== "active")) return;
     const live = (task.delegatedTo ?? []).filter((entry) => task.delegates?.[entry]?.handedBack === undefined);
     const open = live
         .map((entry) => task.delegates?.[entry]?.status ?? "active")
@@ -154,11 +169,7 @@ function link(argv: string[]): void {
         throw new ToliError("task link needs another machine's task: <machine>/T<n>");
     const target = fleetMachine(machine);
     const fid = fleetId(machine, id);
-    updateTask(local, (task) => {
-        if (!task.delegatedTo?.includes(fid)) task.delegatedTo = [...(task.delegatedTo ?? []), fid];
-        task.notes.push(`linked to ${fid}`);
-        workOnBy(task, fid);
-    });
+    updateTask(local, (task) => recordDelegation(task, fid, `linked to ${fid}`));
     const body = JSON.stringify({ from: self, task: local, id } satisfies DelegationLink);
     const sent = sendNow(
         self,
@@ -220,10 +231,38 @@ export function forwardEscalatedAnswer(heldFrom: string | undefined, reply: stri
 }
 
 /**
+ * Whether the task's own jawan works on it: active or held with an agent that is not one of its delegations. A
+ * delegation made then is a slice of that work.
+ */
+function ownJawan(task: Task): boolean {
+    return (
+        (task.status === "active" || task.status === "held") &&
+        task.agent !== undefined &&
+        !(task.delegatedTo ?? []).includes(task.agent)
+    );
+}
+
+/**
+ * Record `fid` (a new delegation or a link) on the `--for` task, with `note`. While the task's own jawan works on it,
+ * `fid` is a slice (`slices`): its outcome is noted and wakes this lead, and the task stays with its jawan. Otherwise
+ * it is the task's delegation (`delegatedTo`): the task works through it and is done once every delegation is.
+ */
+export function recordDelegation(task: Task, fid: string, note: string): void {
+    if (task.slices?.includes(fid) || (!task.delegatedTo?.includes(fid) && ownJawan(task))) {
+        if (!task.slices?.includes(fid)) task.slices = [...(task.slices ?? []), fid];
+        task.notes.push(`${note} (a slice: ${task.id} stays with its own jawan)`);
+        return;
+    }
+    if (!task.delegatedTo?.includes(fid)) task.delegatedTo = [...(task.delegatedTo ?? []), fid];
+    task.notes.push(note);
+    workOnBy(task, fid);
+}
+
+/**
  * The `--for` task now works through `fid` (a new delegation or a link): queued and active become active with it as
  * the jawan, and a done or dropped task (its earlier delegation finished or was given up) is reopened.
  */
-export function workOnBy(task: Task, fid: string): void {
+function workOnBy(task: Task, fid: string): void {
     if (task.status === "held") return;
     if (task.status === "done" || task.status === "dropped") {
         task.notes.push(`reopened (was ${task.status}): it works through ${fid} now`);

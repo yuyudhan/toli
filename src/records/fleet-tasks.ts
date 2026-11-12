@@ -146,6 +146,7 @@ function line(task: FleetTask): string {
             `delegated by ${task.delegatedBy.machine}${task.delegatedBy.task ? `/${task.delegatedBy.task}` : ""}`,
         );
     if (task.delegatedTo?.length) extras.push(`delegated to ${task.delegatedTo.join(", ")}`);
+    if (task.slices?.length) extras.push(`slices at ${task.slices.join(", ")}`);
     if (task.status === "held" && task.question) extras.push(`question: ${task.question}`);
     if (task.answer !== undefined) extras.push(`answer: ${task.answer}`);
     if (task.agent) extras.push(`agent: ${task.agent}`);
