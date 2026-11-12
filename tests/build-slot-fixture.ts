@@ -74,8 +74,8 @@ export function start(box: Sandbox, argv: string[], env: Record<string, string> 
 
 // These tests run real processes that hold real file locks, so they poll for what those processes report (a log
 // line, a stderr message) rather than driving a fake clock.
-export async function until(what: string, ready: () => boolean): Promise<void> {
-    const deadline = Date.now() + 15_000;
+export async function until(what: string, ready: () => boolean, timeoutMs = 15_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
     while (!ready()) {
         if (Date.now() > deadline) throw new Error(`${what} never happened`);
         await Bun.sleep(50);

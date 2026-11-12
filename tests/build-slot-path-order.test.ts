@@ -35,8 +35,8 @@ function realCargo(box: Sandbox, log: string): string {
             'else "$here/rustc" -vV >/dev/null || exit 1; fi',
             `echo "start \${STUB_LABEL:-x} $(ms) \${TOLI_BUILD_SLOT:-none} \${CARGO_BUILD_JOBS:-none} $*" >> ${log}`,
             'if [ -n "${NESTED:-}" ]; then NESTED="" STUB_LABEL="${STUB_LABEL:-x}-inner" STUB_SLEEP=0 "$0" check || exit 1; fi',
-            `n="\${STUB_SLEEP:-0}"; while [ "$n" -gt 0 ] && [ ! -e "${log}.done-\${STUB_LABEL:-x}" ]; do`,
-            "    sleep 0.2; n=$((n - 1)); done",
+            `n="\${STUB_SLEEP:-0}"; while [ "$n" -gt 0 ] && [ ! -e "${log}.done-\${STUB_LABEL:-x}" ] &&`,
+            '    kill -0 "$PPID" 2>/dev/null; do sleep 0.2; n=$((n - 1)); done',
             `echo "end \${STUB_LABEL:-x} $(ms)" >> ${log}`,
         ].join("\n"),
     );
@@ -54,81 +54,110 @@ function jawan(box: Sandbox): Record<string, string> {
 const holderFiles = (box: Sandbox): string[] =>
     readdirSync(join(box.root, "state", "build-slots")).filter((name) => name.startsWith("cargo-"));
 
+/** How long a wait on a real process event may take on a machine under load (a full `just check` beside it). */
+const LOADED_MS = 120_000;
+
 describe("a cargo ahead of the shim on PATH still holds a heavy-build slot", () => {
-    test("a pre-push hook's script that puts ~/.cargo/bin first: its clippy holds the slot, the next build waits", async () => {
-        const { box, log } = slotBox(1, 3);
-        const real = realCargo(box, log);
-        const dir = withProject(box, "app");
-        // The project's hook runs its verify script, which (like a login profile) puts the real cargo first.
-        script(join(dir, ".githooks", "pre-push"), "bash scripts/verify.sh");
-        script(
-            join(dir, "scripts", "verify.sh"),
-            `PATH="${real}:$PATH"; export PATH\ncargo clippy --workspace --all-targets`,
-        );
-        box.git(dir, ["config", "core.hooksPath", ".githooks"]);
-        box.git(dir, ["add", "-A"]);
-        box.git(dir, ["commit", "-q", "-m", "hook"]);
-        const env = { ...jawan(box), STUB_LABEL: "a", STUB_SLEEP: "150" };
-        const push = start(box, ["git", "push", "-q", "origin", "HEAD:refs/heads/main"], env, dir);
-        await until("the hook's clippy", () => runs(log).some((run) => run.label === "a"));
-        expect(runs(log).find((run) => run.label === "a")).toMatchObject({
-            jobs: "3",
-            args: "clippy --workspace --all-targets",
-        });
-        const second = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "b" });
-        await until("the second build waiting", () =>
-            second.stderr.join("").includes("waiting for a heavy-build slot (1 busy)"),
-        );
-        expect(runs(log).some((run) => run.label === "b")).toBe(false);
-        writeFileSync(`${log}.done-a`, "");
-        const [pushed, built] = await Promise.all([push.done, second.done]);
-        expect([pushed.code, built.code]).toEqual([0, 0]);
-        const a = runs(log).find((run) => run.label === "a") as Run;
-        const b = runs(log).find((run) => run.label === "b") as Run;
-        expect(b.start).toBeGreaterThanOrEqual(a.end);
-        await until("the holder's files gone", () => holderFiles(box).length === 0);
-    }, 60_000);
+    test(
+        "a pre-push hook's script that puts ~/.cargo/bin first: its clippy holds the slot, the next build waits",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const real = realCargo(box, log);
+            const dir = withProject(box, "app");
+            // The project's hook runs its verify script, which (like a login profile) puts the real cargo first.
+            script(join(dir, ".githooks", "pre-push"), "bash scripts/verify.sh");
+            script(
+                join(dir, "scripts", "verify.sh"),
+                `PATH="${real}:$PATH"; export PATH\ncargo clippy --workspace --all-targets`,
+            );
+            box.git(dir, ["config", "core.hooksPath", ".githooks"]);
+            box.git(dir, ["add", "-A"]);
+            box.git(dir, ["commit", "-q", "-m", "hook"]);
+            // The stub stays busy until the test writes `<log>.done-a`; its start line is logged only once its first rustc
+            // call returned, so that line is the event "the hook's clippy holds the slot". Under a loaded machine a git
+            // push plus a few bun cold starts can take well over 15 s, so the waits get a generous deadline instead.
+            const env = { ...jawan(box), STUB_LABEL: "a", STUB_SLEEP: "1500" };
+            const push = start(box, ["git", "push", "-q", "origin", "HEAD:refs/heads/main"], env, dir);
+            await until("the hook's clippy", () => runs(log).some((run) => run.label === "a"), LOADED_MS);
+            expect(runs(log).find((run) => run.label === "a")).toMatchObject({
+                jobs: "3",
+                args: "clippy --workspace --all-targets",
+            });
+            const second = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "b" });
+            await until(
+                "the second build waiting",
+                () => second.stderr.join("").includes("waiting for a heavy-build slot (1 busy)"),
+                LOADED_MS,
+            );
+            expect(runs(log).some((run) => run.label === "b")).toBe(false);
+            writeFileSync(`${log}.done-a`, "");
+            const [pushed, built] = await Promise.all([push.done, second.done]);
+            expect([pushed.code, built.code]).toEqual([0, 0]);
+            const a = runs(log).find((run) => run.label === "a") as Run;
+            const b = runs(log).find((run) => run.label === "b") as Run;
+            expect(b.start).toBeGreaterThanOrEqual(a.end);
+            await until("the holder's files gone", () => holderFiles(box).length === 0, LOADED_MS);
+        },
+        4 * LOADED_MS,
+    );
 
-    test("a nested cargo under a cargo that holds its slot through the wrapper reuses it, never deadlocks", async () => {
-        const { box, log } = slotBox(1, 3);
-        const real = realCargo(box, log);
-        const env = { ...jawan(box), PATH: `${real}:${jawan(box).PATH}`, STUB_LABEL: "o", NESTED: "1" };
-        const outer = start(box, [join(real, "cargo"), "clippy"], env);
-        const result = await outer.done;
-        expect(result.code).toBe(0);
-        expect(result.stderr).not.toContain("waiting");
-        expect(runs(log).map((run) => [run.label, run.args])).toEqual([
-            ["o", "clippy"],
-            ["o-inner", "check"],
-        ]);
-    }, 30_000);
+    test(
+        "a nested cargo under a cargo that holds its slot through the wrapper reuses it, never deadlocks",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const real = realCargo(box, log);
+            const env = { ...jawan(box), PATH: `${real}:${jawan(box).PATH}`, STUB_LABEL: "o", NESTED: "1" };
+            const outer = start(box, [join(real, "cargo"), "clippy"], env);
+            const result = await outer.done;
+            expect(result.code).toBe(0);
+            expect(result.stderr).not.toContain("waiting");
+            expect(runs(log).map((run) => [run.label, run.args])).toEqual([
+                ["o", "clippy"],
+                ["o-inner", "check"],
+            ]);
+        },
+        LOADED_MS,
+    );
 
-    test("a cargo killed with SIGKILL frees the slot its holder took", async () => {
-        const { box, log } = slotBox(1, 3);
-        const real = realCargo(box, log);
-        const env = { ...jawan(box), STUB_LABEL: "k", STUB_SLEEP: "150" };
-        const killed = start(box, [join(real, "cargo"), "build"], env);
-        await until("the killed build", () => runs(log).some((run) => run.label === "k"));
-        expect(holderFiles(box).some((name) => name.endsWith(".held"))).toBe(true);
-        const next = start(box, [CARGO_SHIM, "test"], { STUB_LABEL: "n" });
-        await until("the next build waiting", () => next.stderr.join("").includes("waiting for a heavy-build slot"));
-        killed.proc.kill("SIGKILL");
-        const result = await next.done;
-        expect(result.code).toBe(0);
-        expect(runs(log).find((run) => run.label === "n")).toMatchObject({ slot: "1", args: "test" });
-        await until("the holder's files gone", () => holderFiles(box).length === 0);
-        expect(existsSync(join(box.root, "state", "build-slots", "1.lock"))).toBe(true);
-    }, 30_000);
+    test(
+        "a cargo killed with SIGKILL frees the slot its holder took",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const real = realCargo(box, log);
+            const env = { ...jawan(box), STUB_LABEL: "k", STUB_SLEEP: "1500" };
+            const killed = start(box, [join(real, "cargo"), "build"], env);
+            await until("the killed build", () => runs(log).some((run) => run.label === "k"), LOADED_MS);
+            expect(holderFiles(box).some((name) => name.endsWith(".held"))).toBe(true);
+            const next = start(box, [CARGO_SHIM, "test"], { STUB_LABEL: "n" });
+            await until(
+                "the next build waiting",
+                () => next.stderr.join("").includes("waiting for a heavy-build slot"),
+                LOADED_MS,
+            );
+            killed.proc.kill("SIGKILL");
+            const result = await next.done;
+            expect(result.code).toBe(0);
+            expect(runs(log).find((run) => run.label === "n")).toMatchObject({ slot: "1", args: "test" });
+            await until("the holder's files gone", () => holderFiles(box).length === 0, LOADED_MS);
+            expect(existsSync(join(box.root, "state", "build-slots", "1.lock"))).toBe(true);
+        },
+        4 * LOADED_MS,
+    );
 
-    test("light cargo commands run past the wrapper at once while every slot is busy", async () => {
-        const { box, log } = slotBox(1, 3);
-        const real = realCargo(box, log);
-        const holder = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "h", STUB_SLEEP: "150" });
-        await until("the holding build", () => runs(log).some((run) => run.label === "h"));
-        const metadata = await start(box, [join(real, "cargo"), "metadata"], { ...jawan(box), STUB_LABEL: "m" }).done;
-        holder.proc.kill("SIGKILL");
-        expect(metadata.code).toBe(0);
-        expect(metadata.stderr).not.toContain("waiting");
-        expect(runs(log).find((run) => run.label === "m")).toMatchObject({ args: "metadata" });
-    }, 30_000);
+    test(
+        "light cargo commands run past the wrapper at once while every slot is busy",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const real = realCargo(box, log);
+            const holder = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "h", STUB_SLEEP: "1500" });
+            await until("the holding build", () => runs(log).some((run) => run.label === "h"), LOADED_MS);
+            const metadata = await start(box, [join(real, "cargo"), "metadata"], { ...jawan(box), STUB_LABEL: "m" })
+                .done;
+            holder.proc.kill("SIGKILL");
+            expect(metadata.code).toBe(0);
+            expect(metadata.stderr).not.toContain("waiting");
+            expect(runs(log).find((run) => run.label === "m")).toMatchObject({ args: "metadata" });
+        },
+        4 * LOADED_MS,
+    );
 });
