@@ -112,7 +112,8 @@ jawan building and testing on its own:
   live-stack project's code brief has no `## Live stack` section.
 - Its spawned jawans run without the heavy-build slot shim (src/jawans/env.ts): the machine's one build is the
   stack's; their scoped test builds share the checkout's build folder, where cargo's own lock already runs them one
-  at a time, still capped at `capacity.cargoJobs`.
+  at a time, still capped at `capacity.cargoJobs`. Its gates and pushes skip the slot too, at the same cap
+  ([fleet.md](fleet.md#heavy-build-slots)).
 - The machine's jawan cap must fit the team: set `capacity.maxRuns` in `config/machine.json` to the number of
   jawans the machine runs at once (16 for 8-16 jawans; the default is a quarter of the cores, [fleet.md](fleet.md)).
   Spawns beyond it queue.

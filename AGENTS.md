@@ -173,8 +173,9 @@ jawans stop on any OTP or captcha.
    of the code to verify "cleanly", or any other duplicate of the code or its build output. Cargo's build-directory
    lock serializes concurrent builds: wait for it, never work around it. Heavy builds queue for one of the machine's
    heavy-build slots (`capacity.buildSlots`, default one per six cores), each with `CARGO_BUILD_JOBS` at one slot's
-   share of the cores (`bin/toli spawn` puts toli's cargo shim first on its jawans' PATH and sets it; run other heavy
-   commands under `bin/toli build-slot -- <command>`). Never put "own CARGO_TARGET_DIR", "build in a temp dir" or
+   share of the cores (`bin/toli spawn` puts toli's cargo shim first on its jawans' PATH and sets it; `gate run`,
+   `push --gate` and `bin/toli push` with a pre-push hook take a slot for the whole check; run other heavy commands
+   under `bin/toli build-slot -- <command>`). Never put "own CARGO_TARGET_DIR", "build in a temp dir" or
    "verify on a scratch copy" in a brief. A live-stack project (`project set --live-stack yes`, docs/projects.md) has
    one build per machine, its running dev stack: its jawans skip the slot and run only scoped tests themselves.
 6. Each project's `workspace` strategy (`bin/toli project list --json`) decides branches. `same-branch`: work and

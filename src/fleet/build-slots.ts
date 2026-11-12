@@ -4,7 +4,9 @@
 // while its command runs, so a holder that dies, however it dies, frees its slot. A waiter holds a numbered ticket in
 // state/build-slots/queue/ (also a flock, so a waiter that dies leaves the line with it), and only the oldest live
 // ticket may take a free slot. Jawans reach it through the cargo shim in bin/shims, first on their PATH
-// (src/jawans/env.ts). On Linux with a user manager each build runs in its own systemd scope capped at
+// (src/jawans/env.ts); a gate's runner (src/forge/gate.ts) and `bin/toli push` with a pre-push hook (src/forge/forge.ts)
+// hold one for their whole run, so a project's push check gets one slot's share even when it calls cargo directly.
+// On Linux with a user manager each build runs in its own systemd scope capped at
 // `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the session that started it.
 import {
     closeSync,
@@ -180,6 +182,24 @@ export function buildMemoryMaxMB(machine: Machine, buildSlots: number, totalMB: 
 /** Where a build runs: its slot's number (0 without a slot) and its scope's memory cap in MB (0: none). */
 type BuildScope = { slot: number; memoryMaxMB: number };
 
+/** What a command run in a slot gets: the variables to add to its environment, and its scope (null: none). */
+export type HeldSlot = { env: Record<string, string>; scope: BuildScope | null };
+
+/** The test harnesses' thread variables: capped at one slot's share like the compile jobs, unless already set. */
+const TEST_THREAD_VARS = ["RUST_TEST_THREADS", "NEXTEST_TEST_THREADS"] as const;
+
+/**
+ * One slot's share of the cores for a heavy command: `CARGO_BUILD_JOBS` at `cargoJobs` (always: one setting per
+ * machine), and `RUST_TEST_THREADS` / `NEXTEST_TEST_THREADS` at the same number where the caller has not set them, so
+ * `cargo test` and nextest never run a test per core either. Cargo reads them from the environment however it was
+ * reached (the shim, or a `just` recipe calling the real cargo directly).
+ */
+function slotShareEnv(cargoJobs: number): Record<string, string> {
+    const env: Record<string, string> = { CARGO_BUILD_JOBS: String(cargoJobs) };
+    for (const name of TEST_THREAD_VARS) if ((process.env[name] ?? "") === "") env[name] = String(cargoJobs);
+    return env;
+}
+
 /**
  * Spawn `argv` with this process's stdio plus `env`, passing termination signals on: its exit code (a child ended by
  * a signal resolves to 128 + its number, as a shell reports it) and whether a signal was passed on meanwhile.
@@ -267,35 +287,42 @@ function inLiveStackCheckout(cwd: string): boolean {
 }
 
 /**
- * `bin/toli build-slot -- <command...>`: run the command in a heavy-build slot with `CARGO_BUILD_JOBS` at one slot's
- * share and `TOLI_BUILD_SLOT` set, waiting (never failing) in arrival order while every slot is busy, in its own
- * memory-capped systemd scope where the host has one. Inside a slot already (`TOLI_BUILD_SLOT` set) it runs the
- * command at once and in its parent's scope, so a nested build never waits on its own slot; in a live-stack
- * project's checkout it runs it at once without a slot or scope.
+ * Run `body` in a heavy-build slot, waiting (never failing) in arrival order while every slot is busy; `body` gets
+ * `slotShareEnv` plus `TOLI_BUILD_SLOT` set to the slot's number, and the slot's scope. Inside a slot already
+ * (`TOLI_BUILD_SLOT` set) it runs at once with nothing added, so a nested build never waits on its own slot; with
+ * `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still at one slot's share.
+ */
+export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Promise<T>): Promise<T> {
+    if ((process.env.TOLI_BUILD_SLOT ?? "") !== "") return await body({ env: {}, scope: null });
+    // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
+    const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
+    const capacity = capacityFor(machine, availableParallelism());
+    const memoryMaxMB = buildMemoryMaxMB(machine, capacity.buildSlots, Math.floor(totalmem() / MB));
+    const share = slotShareEnv(capacity.cargoJobs);
+    if (inLiveStackCheckout(cwd)) return await body({ env: share, scope: null });
+    const lock = flock();
+    if (lock === null) {
+        warn("toli: flock(2) unavailable, running without a heavy-build slot");
+        return await body({ env: share, scope: { slot: 0, memoryMaxMB } });
+    }
+    const held = await takeInTurn(capacity.buildSlots, lock);
+    try {
+        const slot = held.index + 1;
+        return await body({ env: { ...share, TOLI_BUILD_SLOT: String(slot) }, scope: { slot, memoryMaxMB } });
+    } finally {
+        lock(held.fd, LOCK_UN);
+        closeSync(held.fd);
+    }
+}
+
+/**
+ * `bin/toli build-slot -- <command...>`: run the command in a heavy-build slot (`withBuildSlot`), in its own
+ * memory-capped systemd scope where the host has one; a nested one stays in its parent's scope.
  */
 export async function buildSlotCommand(argv: string[]): Promise<number> {
     const args = new Args(argv);
     args.maxPositional(0);
     const command = args.rest;
     if (command.length === 0) throw new ToliError("usage: bin/toli build-slot -- <command...>");
-    if ((process.env.TOLI_BUILD_SLOT ?? "") !== "") return await runInSlot(command, {}, null);
-    // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
-    const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
-    const capacity = capacityFor(machine, availableParallelism());
-    const memoryMaxMB = buildMemoryMaxMB(machine, capacity.buildSlots, Math.floor(totalmem() / MB));
-    const jobs = { CARGO_BUILD_JOBS: String(capacity.cargoJobs) };
-    if (inLiveStackCheckout(process.cwd())) return await runInSlot(command, jobs, null);
-    const lock = flock();
-    if (lock === null) {
-        warn("toli: flock(2) unavailable, running without a heavy-build slot");
-        return await runInSlot(command, jobs, { slot: 0, memoryMaxMB });
-    }
-    const held = await takeInTurn(capacity.buildSlots, lock);
-    try {
-        const slot = held.index + 1;
-        return await runInSlot(command, { ...jobs, TOLI_BUILD_SLOT: String(slot) }, { slot, memoryMaxMB });
-    } finally {
-        lock(held.fd, LOCK_UN);
-        closeSync(held.fd);
-    }
+    return await withBuildSlot(process.cwd(), ({ env, scope }) => runInSlot(command, env, scope));
 }

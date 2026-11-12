@@ -110,8 +110,14 @@ take hours, so toli runs it at most once per commit:
 - A checkout that is not exactly its commit (changed tracked files, or untracked files that are not ignored) is
   refused: the result would not belong to any commit. A pass also counts only if the checkout is still exactly that
   commit when the gate ends; if HEAD moved or files changed while it ran, it is recorded `failed` with the reason.
+- The runner runs the recipe in one of the machine's heavy-build slots, waiting for one while all are busy, with
+  `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` at one slot's share of the cores
+  ([fleet.md](fleet.md#heavy-build-slots)), so a recipe that calls cargo directly (through `just`, without toli's
+  cargo shim) cannot take every core. A live-stack project's gate skips the slot, still at one slot's share.
 - `push --gate "<recipe>"` runs the gate this way first and pushes only if it passed at HEAD. The push's hooks see
-  `TOLI_GATE_SHA` and `TOLI_GATE_RECIPE`.
+  `TOLI_GATE_SHA` and `TOLI_GATE_RECIPE`. In a project with a pre-push hook, `bin/toli push` (with or without
+  `--gate`) runs `git push` in one heavy-build slot the same way, since the hook may run the long check itself; a
+  `bin/toli gate run` the hook starts runs inside that slot.
 
 A project whose own pre-push hook runs the same long check can skip it when toli already passed it on that commit.
 Put this at the top of the hook, before the check (`project` is the project's toli name, `toli` the path to toli's

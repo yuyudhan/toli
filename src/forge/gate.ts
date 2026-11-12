@@ -13,6 +13,7 @@ import { type Machine, machineSettings } from "../core/config.ts";
 import { checkoutDirty, git, headSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, printJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
+import { withBuildSlot } from "../fleet/build-slots.ts";
 import { watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { stopTree } from "../jawans/stop.ts";
@@ -214,101 +215,104 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
     return final;
 }
 
-/** The detached runner: run the recipe in its own process group, stop it only when it stops making progress. */
+/** The detached runner: in one heavy-build slot (cargo via `just` too), run the recipe; stop it only when it stalls. */
 async function runGateProcess(file: string): Promise<void> {
     const record = readRecord(file);
     if (record === null) throw new ToliError(`gate record ${file} is gone`);
     // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
     process.on("SIGHUP", () => {});
-    const minuteMs = runMinuteMs();
-    const pollMs = Math.max(50, Math.min(1000, (record.stallMinutes * minuteMs) / 10));
-    const logFd = openSync(record.log, "a");
-    let child: ChildProcess;
-    try {
-        child = spawnChild("sh", ["-c", record.recipe], {
-            cwd: record.dir,
-            detached: true,
-            stdio: ["ignore", logFd, logFd],
-        });
-    } finally {
-        closeSync(logFd);
-    }
-    const spawnedAtMs = Date.now();
-    const { promise: exited, resolve: done } = Promise.withResolvers<{
-        code: number | null;
-        signal: NodeJS.Signals | null;
-        error?: string;
-    }>();
-    child.on("exit", (code, signal) => done({ code, signal }));
-    child.on("error", (error) => done({ code: 127, signal: null, error: error.message }));
-    let stopped: { status: GateStatus; reason: string } | null = null;
-    const stopping: Promise<number[]>[] = [];
-    const stop = (status: GateStatus, reason: string): void => {
-        if (stopped !== null || child.pid === undefined) return;
-        stopped = { status, reason };
-        // A reaped root's pid may already be someone else's: only a live (or unreaped) gate is stopped.
-        if (child.exitCode === null && child.signalCode === null)
-            stopping.push(stopTree({ pid: child.pid, spawnedAtMs }, STOP_GRACE_MS));
-    };
-    for (const signal of ["SIGTERM", "SIGINT"] as const)
-        process.on(signal, () => stop("killed", `its runner got ${signal}`));
-    let size = statSync(record.log).size;
-    const output = setInterval(() => {
-        const current = statSync(record.log).size;
-        if (current === size) return;
-        size = current;
-        updateRecord(file, (entry) => {
-            entry.lastOutputAt = now().toISOString();
-        });
-    }, pollMs);
-    const stopWatch = watchStall(
-        () => ({ pid: child.pid ?? null, logPath: record.log, sessionDir: null, cwd: record.dir }),
-        record.stallMinutes,
-        minuteMs,
-        () => {
-            const reason = `no new output, file change or CPU use for ${record.stallMinutes} minutes; stopped it`;
-            logDecision(record, "stall", `${record.recipe} at ${short(record.sha)}: ${reason}`);
-            stop("stalled", reason);
-        },
-    );
-    const result = await exited;
-    clearInterval(output);
-    stopWatch();
-    // The recipe's shell may die on SIGTERM while a child that ignores it runs on: the record waits until all are gone.
-    const survivors = (await Promise.all(stopping)).flat();
-    const final = updateRecord(file, (entry) => {
-        entry.endedAt = now().toISOString();
-        entry.exitCode = result.code;
-        if (stopped !== null) {
-            entry.status = stopped.status;
-            entry.reason =
-                survivors.length === 0
-                    ? stopped.reason
-                    : `${stopped.reason}; pid ${survivors.join(", ")} outlived SIGKILL`;
-        } else if (result.error !== undefined) {
-            entry.status = "failed";
-            entry.reason = `could not run it: ${result.error}`;
-        } else if (result.signal !== null) {
-            entry.status = "killed";
-            entry.reason = `it was killed by ${result.signal}`;
-        } else if (result.code !== 0) {
-            entry.status = "failed";
-        } else {
-            // A pass counts only if the checkout still was exactly the commit when the gate ended.
-            const head = headSha(entry.dir);
-            const changes = checkoutChanges(entry.dir);
-            if (head !== entry.sha) {
-                entry.status = "failed";
-                entry.reason = `HEAD moved to ${short(head)} while it ran, so the pass may not hold for ${short(entry.sha)}`;
-            } else if (changes !== null) {
-                entry.status = "failed";
-                entry.reason = `the checkout changed while it ran (${changesText(changes)}), so the pass may not hold for ${short(entry.sha)}`;
-            } else {
-                entry.status = "passed";
-            }
+    await withBuildSlot(record.dir, async ({ env: slotEnv }) => {
+        const minuteMs = runMinuteMs();
+        const pollMs = Math.max(50, Math.min(1000, (record.stallMinutes * minuteMs) / 10));
+        const logFd = openSync(record.log, "a");
+        let child: ChildProcess;
+        try {
+            child = spawnChild("sh", ["-c", record.recipe], {
+                cwd: record.dir,
+                detached: true,
+                env: { ...process.env, ...slotEnv },
+                stdio: ["ignore", logFd, logFd],
+            });
+        } finally {
+            closeSync(logFd);
         }
+        const spawnedAtMs = Date.now();
+        const { promise: exited, resolve: done } = Promise.withResolvers<{
+            code: number | null;
+            signal: NodeJS.Signals | null;
+            error?: string;
+        }>();
+        child.on("exit", (code, signal) => done({ code, signal }));
+        child.on("error", (error) => done({ code: 127, signal: null, error: error.message }));
+        let stopped: { status: GateStatus; reason: string } | null = null;
+        const stopping: Promise<number[]>[] = [];
+        const stop = (status: GateStatus, reason: string): void => {
+            if (stopped !== null || child.pid === undefined) return;
+            stopped = { status, reason };
+            // A reaped root's pid may already be someone else's: only a live (or unreaped) gate is stopped.
+            if (child.exitCode === null && child.signalCode === null)
+                stopping.push(stopTree({ pid: child.pid, spawnedAtMs }, STOP_GRACE_MS));
+        };
+        for (const signal of ["SIGTERM", "SIGINT"] as const)
+            process.on(signal, () => stop("killed", `its runner got ${signal}`));
+        let size = statSync(record.log).size;
+        const output = setInterval(() => {
+            const current = statSync(record.log).size;
+            if (current === size) return;
+            size = current;
+            updateRecord(file, (entry) => {
+                entry.lastOutputAt = now().toISOString();
+            });
+        }, pollMs);
+        const stopWatch = watchStall(
+            () => ({ pid: child.pid ?? null, logPath: record.log, sessionDir: null, cwd: record.dir }),
+            record.stallMinutes,
+            minuteMs,
+            () => {
+                const reason = `no new output, file change or CPU use for ${record.stallMinutes} minutes; stopped it`;
+                logDecision(record, "stall", `${record.recipe} at ${short(record.sha)}: ${reason}`);
+                stop("stalled", reason);
+            },
+        );
+        const result = await exited;
+        clearInterval(output);
+        stopWatch();
+        // The recipe's shell may die on SIGTERM while a child that ignores it runs on: the record waits until all are gone.
+        const survivors = (await Promise.all(stopping)).flat();
+        const final = updateRecord(file, (entry) => {
+            entry.endedAt = now().toISOString();
+            entry.exitCode = result.code;
+            if (stopped !== null) {
+                entry.status = stopped.status;
+                entry.reason =
+                    survivors.length === 0
+                        ? stopped.reason
+                        : `${stopped.reason}; pid ${survivors.join(", ")} outlived SIGKILL`;
+            } else if (result.error !== undefined) {
+                entry.status = "failed";
+                entry.reason = `could not run it: ${result.error}`;
+            } else if (result.signal !== null) {
+                entry.status = "killed";
+                entry.reason = `it was killed by ${result.signal}`;
+            } else if (result.code !== 0) {
+                entry.status = "failed";
+            } else {
+                // A pass counts only if the checkout still was exactly the commit when the gate ended.
+                const head = headSha(entry.dir);
+                const changes = checkoutChanges(entry.dir);
+                if (head !== entry.sha) {
+                    entry.status = "failed";
+                    entry.reason = `HEAD moved to ${short(head)} while it ran, so the pass may not hold for ${short(entry.sha)}`;
+                } else if (changes !== null) {
+                    entry.status = "failed";
+                    entry.reason = `the checkout changed while it ran (${changesText(changes)}), so the pass may not hold for ${short(entry.sha)}`;
+                } else {
+                    entry.status = "passed";
+                }
+            }
+        });
+        logDecision(final, final.status, outcomeText(final));
     });
-    logDecision(final, final.status, outcomeText(final));
 }
 
 async function gateRun(argv: string[]): Promise<number> {
