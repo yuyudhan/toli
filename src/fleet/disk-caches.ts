@@ -1,6 +1,6 @@
-// Machine-wide caches the disk keeper (src/fleet/disk.ts) shrinks after project build output: Docker's build cache and
-// unused images (never volumes or containers), sccache's local cache when it has grown past its own cap, and, as its
-// last resort, Playwright's downloaded browsers.
+// Machine-wide caches the disk keeper (src/fleet/disk.ts) shrinks after project build output: sccache's local cache
+// when it has grown past its own cap and, as its last resort, Playwright's downloaded browsers. Docker has its own
+// file (docker-prune.ts).
 import { readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -33,34 +33,6 @@ export function playwrightBrowsers(): string[] {
     }
 }
 
-const DOCKER_PRUNE_TIMEOUT_MS = 30 * 60_000;
-
-/** Docker build cache, then images no container uses; `say` gets one line per step. Never volumes or containers. */
-export function pruneDocker(dryRun: boolean, say: (line: string) => void): void {
-    const info = run(["docker", "info", "--format", "{{.ServerVersion}}"], { timeoutMs: 20_000 });
-    if (info.code !== 0) {
-        say(`docker: skipped (${info.code === 127 ? "not installed" : "daemon not reachable"})`);
-        return;
-    }
-    for (const step of [
-        ["builder", "prune", "-af"],
-        ["image", "prune", "-af"],
-    ]) {
-        const command = `docker ${step.join(" ")}`;
-        if (dryRun) {
-            say(`would run ${command}`);
-            continue;
-        }
-        const result = run(["docker", ...step], { timeoutMs: DOCKER_PRUNE_TIMEOUT_MS });
-        const reclaimed = /Total(?: reclaimed space)?:\s*(.+)$/im.exec(result.stdout)?.[1]?.trim();
-        say(
-            result.code === 0
-                ? `ran ${command}: reclaimed ${reclaimed ?? "nothing reported"}`
-                : `${command} failed (exit ${result.code}): ${(result.stderr || result.stdout).trim().split("\n")[0]}`,
-        );
-    }
-}
-
 export type SccacheStats = { dir: string; bytes: number; maxBytes: number };
 
 const UNIT_BYTES: Record<string, number> = {
@@ -70,13 +42,14 @@ const UNIT_BYTES: Record<string, number> = {
     MiB: 1024 ** 2,
     GiB: 1024 ** 3,
     TiB: 1024 ** 4,
+    kB: 1000,
     KB: 1000,
     MB: 1000 ** 2,
     GB: 1000 ** 3,
     TB: 1000 ** 4,
 };
 
-function parseSize(text: string | undefined): number | null {
+export function parseSize(text: string | undefined): number | null {
     const match = /^([\d.]+)\s*(\w+)$/.exec(text?.trim() ?? "");
     const unit = match?.[2] === undefined ? undefined : UNIT_BYTES[match[2]];
     if (match?.[1] === undefined || unit === undefined) return null;

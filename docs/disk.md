@@ -82,7 +82,22 @@ going on now goes last. Steps 1 to 4 spare build output in use; steps 5 and 6, u
 2. `node_modules/` and `dist/` of those idle checkouts, unless a process holds a file in them open. A project main
    clone's `node_modules/` is never deleted: builds run there between jobs (a project's build queue) and do not
    reinstall dependencies on their own, while cargo rebuilds a wiped `target/` by itself.
-3. Docker: `docker builder prune -af`, then `docker image prune -af`. It never touches volumes or containers.
+3. Docker: `docker builder prune -af`, then `docker image prune -f` (dangling images only); under the emergency level
+   (see 6) `docker image prune -af`, every image no container uses. It never touches volumes or containers. A prune
+   deletes what a pull or build in flight has fetched but not yet tagged or started (a `lease does not exist` or
+   `lchown ... no such file` failure of `docker pull`), and an unused image a minute-old pull just left is gone before
+   its container starts, so Docker is pruned only when it is due (`state/disk-docker-prune.json` holds when, free
+   disk then, and what the last prune reclaimed):
+    - not while a `docker pull`, `build`, `buildx`, `compose up` or `load` process runs on the machine (found in `ps`;
+      a pull or build started through the Docker API by another tool is not seen, and `docker run`'s implicit pull is
+      not either): `docker: skipped (pid N `docker pull ...` is running; ...)`. A `compose up` kept in the foreground
+      keeps Docker unpruned while it runs;
+    - at most once every 30 minutes;
+    - after a prune that reclaimed 0 B, not again until free disk has dropped 1 GB below its level then, or 6 hours
+      have passed.
+
+    A dry run reads that state and applies the same rules but never writes it.
+
 4. sccache: when its local cache is over its own cap, the oldest entries until it is back under the cap. A missing
    entry is only a cache miss.
 5. Only under the emergency level (see 6): every `target/` still left, busy checkouts included, between build steps.

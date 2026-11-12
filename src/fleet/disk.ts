@@ -7,7 +7,8 @@
 //      there between jobs (a project's build queue) and cannot reinstall dependencies themselves, while cargo
 //      rebuilds a wiped `target/` on its own (that wipe matches the cargo-sweep helper's: under cargo's locks, only
 //      while no jawan of the project runs);
-//   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune -af`; never volumes);
+//   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune`; never volumes), not
+//      while a pull or build runs and not every minute (docker-prune.ts);
 //   4. sccache's local cache entries past its own cap;
 //   5. under the emergency level only (max(5 GB, 3% of the disk), at most the floor): `target/` folders of busy
 //      checkouts, between build steps: under cargo's own locks, with no cargo running in its workspace (cargo test
@@ -37,7 +38,7 @@ import { out, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
 import { wipeTargetBetweenBuilds } from "./cargo-lock.ts";
 import { diskAlertBeforeWork, diskKeepSetting } from "./disk-alert.ts";
-import { playwrightBrowsers, pruneDocker, trimSccache } from "./disk-caches.ts";
+import { playwrightBrowsers, trimSccache } from "./disk-caches.ts";
 import {
     type BuildDir,
     buildDirs,
@@ -61,6 +62,7 @@ import {
     PAUSE_EXPIRY_MS,
     releaseKeeper,
 } from "./disk-state.ts";
+import { pruneDocker } from "./docker-prune.ts";
 import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep } from "./stale-sweep.ts";
 
@@ -243,7 +245,10 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             return null;
         });
         // 3 and 4: machine-wide caches.
-        if (!enough()) pruneDocker(dryRun, say);
+        if (!enough()) {
+            const freeNow = free();
+            pruneDocker({ dryRun, freeGB: freeNow, emergency: freeNow < report.emergencyGB }, say);
+        }
         if (!enough()) trimSccache(dryRun, say);
         // 5: under the emergency level only, every target still here, busy ones included, between build steps.
         // Builds pause between cargo invocations; the wipe takes such a pause under cargo's locks. A target with no
