@@ -36,6 +36,12 @@ one. See docs/releasing.md.
 - A heavy build's systemd scope also sets `MemoryHigh` (90% of `capacity.buildMemoryMax`) and `MemorySwapMax=0`:
   with only `MemoryMax`, a build at its cap swapped the rest, filled the machine's swap and systemd-oomd killed the
   whole build (T1223).
+- toli notices when a clone's own git hooks are not installed: a fresh clone ran none of its `.husky` hooks, so its
+  pre-push check never ran on pushes. `bin/toli project add`, `project ensure` and `project setup <name>` install the
+  hooks a repo declares where they can tell how (husky, a hooks directory a recipe or doc sets `core.hooksPath` to)
+  and print the command for the rest (`.githooks/`, pre-commit, lefthook); `project setup` and `bin/toli doctor`
+  report what is missing; `bin/toli push` refuses while a declared pre-push hook is not installed (`--no-hooks-ok`
+  pushes anyway). See docs/projects.md "Git hooks" (T1253).
 
 ## v0.4.5 - 2026-11-12
 

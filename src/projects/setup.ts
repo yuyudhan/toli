@@ -5,6 +5,7 @@ import { paths } from "../core/paths.ts";
 import { now, out, printJson, ToliError } from "../core/util.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { STALE_DAYS } from "../records/memory.ts";
+import { hookCheckLine, hookChecks, installHooks } from "./hooks.ts";
 import { brokenLink } from "./link.ts";
 import { findProject, loadProjects, type Project } from "./projects.ts";
 import { standingText } from "./strategy.ts";
@@ -31,6 +32,7 @@ export type SetupKey =
     | "forge"
     | "forge-auth"
     | "no-mistakes"
+    | "hooks"
     | "notes"
     | "test"
     | "smoke"
@@ -154,6 +156,14 @@ function repoChecks(project: Project, deep: boolean): SetupCheck[] {
             detail: `${project.branch}${head !== null && head !== project.branch ? ` (clone is on ${head})` : ""}`,
         });
     else checks.push({ key: "branch", status: "ok", detail: "no fixed branch" });
+    if (cloned)
+        for (const hook of hookChecks(dir))
+            checks.push({
+                key: "hooks",
+                status: hook.missing.length === 0 ? "ok" : "missing",
+                detail: hookCheckLine(hook, `bin/toli project setup ${project.name}`),
+                ...(hook.missing.length === 0 ? {} : { fill: "jawan" as const }),
+            });
 
     const needsForge = project.mode !== "commit";
     if (!deep && !needsForge) return checks;
@@ -258,7 +268,10 @@ function renderReport(report: SetupReport): string {
     return lines.join("\n");
 }
 
-/** `toli project setup <name> [--json]` | `toli project setup --all [--json]`. */
+/**
+ * `toli project setup <name> [--json]` | `toli project setup --all [--json]`. For one named project it first installs
+ * the git hooks the clone declares where toli can tell how (src/projects/hooks.ts); `--all` only reports.
+ */
 export function projectSetupCommand(argv: string[]): void {
     const args = new Args(argv, { booleans: ["all", "json"] });
     args.maxPositional(1);
@@ -275,7 +288,14 @@ export function projectSetupCommand(argv: string[]): void {
         if (needing.length > 0) out("details: bin/toli project setup <name>; flow: /setup-project <name>");
         return;
     }
-    const report = setupChecklist(findProject(args.pos(0, "name")), true);
-    if (args.bool("json")) printJson(report);
-    else out(renderReport(report));
+    const project = findProject(args.pos(0, "name"));
+    const dir = paths.projectDir(project.name);
+    const installed = isGitRepo(dir) ? installHooks(dir) : [];
+    const report = setupChecklist(project, true);
+    if (args.bool("json")) {
+        printJson(report);
+        return;
+    }
+    for (const line of installed) out(line);
+    out(renderReport(report));
 }

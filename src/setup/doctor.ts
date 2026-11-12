@@ -19,6 +19,7 @@ import { schedulePath } from "../jobs/os-scheduler.ts";
 import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
 import { nobleLocation } from "../peer/deps.ts";
 import { hasIdentity, loadIdentity, looseSecrets } from "../peer/identity.ts";
+import { hooksDoctorChecks } from "../projects/hooks.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
 import { describeRuntime, runtimeStatus } from "../release/runtime.ts";
@@ -315,6 +316,7 @@ export async function runChecks(): Promise<Check[]> {
               }
             : { level: "warn", name: "projects", detail: `registered but not cloned: ${missing.join(", ")}` },
     );
+    checks.push(...hooksDoctorChecks(registered.map((project) => project.name)));
 
     if (machineOk) {
         try {

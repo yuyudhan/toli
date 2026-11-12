@@ -144,6 +144,7 @@ Example:
 | `forge`       | the forge is detected (required for `pr` / `no-mistakes`)                      |
 | `forge-auth`  | `gh`/`glab` are authenticated, or Bitbucket credentials exist (single project) |
 | `no-mistakes` | the clone has the `no-mistakes` remote (gate mode)                             |
+| `hooks`       | each git hook the repo declares is installed ([git hooks](#git-hooks))         |
 | `notes`       | `data/projects/<name>/notes.md` exists                                         |
 | `test`        | a test command in the notes (a `- Test:` line, or any backticked test command) |
 | `smoke`       | a smoke command in the notes                                                   |
@@ -155,6 +156,32 @@ Example:
 `[x]` done, `[ ]` missing, `[~]` stale, `[-]` unknown but not needed in this mode. Each gap names who fills it: the
 user (the lead batches every such question into one message) or a jawan (detected from the repo). `--all` and
 `bin/toli digest` use the fast local checks only (no forge auth probe), so digest can say how many projects need setup.
+
+## Git hooks
+
+toli delivers through the project's own hooks: `bin/toli commit` runs its `commit-msg` hook and `git push` runs its
+`pre-push` hook. A fresh clone runs none of them until they are installed, so toli looks for hooks the repo declares
+and checks that git would run each one (an executable file where git resolves it, `core.hooksPath` honoured):
+
+- Hook files in `.husky/` (husky): toli sets `core.hooksPath .husky/_` when husky 9 already generated `.husky/_`, or
+  `.husky` for husky 8's `.husky/_/husky.sh`; else it runs the repo's own `node_modules/.bin/husky` with the arguments
+  its `prepare` script gives husky; else, when every hook file there is executable and does not source `husky.sh`, it
+  sets `core.hooksPath .husky`. Otherwise it prints the dependency install, which runs husky through `prepare`.
+- A directory that a justfile, Makefile or `package.json` recipe, or a doc (`README.md`, `CONTRIBUTING.md`,
+  `AGENTS.md`, `CLAUDE.md`, `docs/*.md`), sets `core.hooksPath` to: toli runs `git config core.hooksPath <dir>`.
+- `.githooks/` that nothing names: toli prints `git config core.hooksPath .githooks`.
+- `.pre-commit-config.yaml` (its `default_install_hook_types`, else `pre-commit`): toli prints `pre-commit install`.
+- `lefthook.yml` (or `.toml`/`.json`, dotted or not) and its hook sections: toli prints `lefthook install`.
+
+`bin/toli project add`, `project ensure` and `project setup <name>` install what they can and print a `hooks:` line
+per declaration: active, or what is missing and the command that installs it. They never replace a `core.hooksPath`
+already set to something else. `bin/toli project setup` lists a `hooks` item per declaration, and `bin/toli doctor`
+warns about each clone whose declared hooks are not installed.
+
+`bin/toli push` refuses when the repo declares a `pre-push` hook git would not run: the project's own pre-push check
+would otherwise skip without a word, which is how pushes went out unverified before. `--no-hooks-ok` pushes anyway,
+for the rare repo whose declared hook is meant to stay off on this machine. Other declared hooks that are not
+installed only warn. A repo that declares no hooks gets no `hooks` line, item or warning.
 
 ## Data layout
 

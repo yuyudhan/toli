@@ -39,7 +39,8 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
 
 - `init`: write this machine's `config/machine.json` and seed `local/`; re-running keeps the other settings.
 - `setup`: the first-run checklist, the told-once notice, snoozing it, and seeding `local/` ([setup.md](setup.md)).
-- `doctor`: check tools, harnesses, forge auth, config, clones, fleet, scheduler, and memory budget.
+- `doctor`: check tools, harnesses, forge auth, config, clones (and the git hooks each declares but has not
+  installed), fleet, scheduler, and memory budget.
 - `digest`: the session-start summary; `--fleet` adds every machine.
 - `version`, `upgrade`: the installed release and moving to another one ([install.md](install.md)).
 - `update`: the 3-day check for a new release, snoozing a version, switching the check off
@@ -60,13 +61,15 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
 
 - `add` clones into `projects/<name>`; `link` registers an existing checkout through a symlink; `ensure` is the
   idempotent form a delegated task's jawan runs on a machine without the clone; `import` registers clones already in
-  `projects/`.
+  `projects/`. `add` and `ensure` also install the git hooks the repo declares where toli can tell how, and print the
+  command for the rest ([projects.md](projects.md#git-hooks)).
 - `set` records delivery, branch, forge, workspace strategy, and standing grants ([delivery.md](delivery.md),
   [projects.md](projects.md#workspace-strategy)). `--branch <b>` also switches a clean clone to `<b>`, or prints the
   `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)). `--live-stack yes`
   puts the project in live-stack mode ([projects.md](projects.md#live-stack-mode)).
 - `drop` keeps the clone and data unless asked; it refuses a dirty clone or unpushed commits.
-- `setup` is the per-project checklist ([projects.md](projects.md#setting-up-an-existing-project)).
+- `setup` is the per-project checklist ([projects.md](projects.md#setting-up-an-existing-project)); for one named
+  project it first installs the repo's declared git hooks like `ensure` does.
 
 ### Tasks
 
@@ -118,7 +121,7 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
-    push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+    push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
     gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json]
     push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
@@ -140,7 +143,9 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
   grant ([delivery.md](delivery.md#forges-push-and-pull-requests)).
 - `push` logs each push that moved origin's branch in this machine's `data/pushes.jsonl` (old..new sha, the issuing
   machine and task, the owner's quoted word; inside `exec`, the issuing machine and task by default), and `digest`
-  shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog.
+  shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog. `push`
+  refuses when the repo declares a pre-push hook git would not run (`--no-hooks-ok` pushes anyway) and warns about
+  any other declared hook that is not installed ([projects.md](projects.md#git-hooks)).
 - `gate run` runs a long verification command (a gate, such as `just verify all`) once per tree and recipe: a gate
   that already passed on HEAD's tree (at any commit with the same files) is skipped, a running one is waited on instead
   of started twice, and a new one runs in the background so it survives its caller, in one heavy-build slot at one
@@ -263,6 +268,7 @@ Details: [fleet.md](fleet.md).
     peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
     peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
     peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
+    peer scan [--netbird] [--tailscale] [--subnet <cidr>] [--port <n>] [--json]
 
 - `peer init` makes this installation's identity (an Ed25519 key and a TLS certificate in `config/peer/`); `upgrade`
   and the listener run it too. `peer status` shows the fingerprint to compare when pairing; `peer list` the paired
@@ -277,6 +283,12 @@ set` changes the port (47123), the bind (`private`, the default, or a list of ad
   use, 3 tries) that its owner or Sardar reads to this side, and `peer add <host> --code NNNN` finishes. Pairing
   grants every permission; `peer deny|allow` revokes or restores one, `peer remove` revokes the peer. The Sardar runs
   these only with `--why`, and every one is logged with who and why ([peers.md](peers.md#pairing)).
+- `peer flush` sends what waits for a peer now (the tick does it every minute), `peer pull` takes what peers hold
+  for this machine when its listener is off, `peer stats` compares how long HTTPS and ssh deliveries took,
+  `peer ask <peer> status` asks a peer what `resources` and its task list say there, and `peer rotate` replaces this
+  machine's key and certificate ([peers.md](peers.md#delivery)).
+- `peer scan` lists the toli listeners that answer on NetBird's and Tailscale's peers and an optional private
+  `--subnet` (at most a /22); it never pairs ([peers.md](peers.md#finding-peers)).
 
 Details: [peers.md](peers.md).
 

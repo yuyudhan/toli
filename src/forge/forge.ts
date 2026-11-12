@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
@@ -7,6 +7,7 @@ import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "../core/util.ts";
 import { runInSlot, withBuildSlot } from "../fleet/build-slots.ts";
+import { activeHookPath, requirePushHooks } from "../projects/hooks.ts";
 import { type Forge, findProject, loadProjects, type Project, projectCloneDir } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import { appendPush, pushAttribution, pushLine } from "../records/push-log.ts";
@@ -221,18 +222,6 @@ function requirePushAuthority(project: string, word: string | null): void {
     );
 }
 
-/** Whether git runs an executable pre-push hook for pushes from `dir` (core.hooksPath honoured). */
-function hasPrePushHook(dir: string): boolean {
-    const hook = git(dir, ["rev-parse", "--path-format=absolute", "--git-path", "hooks/pre-push"]);
-    if (hook.code !== 0) return false;
-    try {
-        accessSync(hook.stdout.trim(), constants.X_OK);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 /**
  * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Refused
  * unless `--word` quotes the user's word for this push or the project has a standing push grant on this machine. Runs
@@ -244,15 +233,18 @@ function hasPrePushHook(dir: string): boolean {
  * their own run with `bin/toli gate check` (the variables alone prove nothing: anyone can set them). A project with a
  * pre-push hook pushes in one heavy-build slot and its memory-capped scope (src/fleet/build-slots.ts), since the hook
  * may run the long check itself: its cargo gets one slot's share of the cores even through `just` without toli's cargo
- * shim, and a `bin/toli gate run` it starts rides on that slot.
+ * shim, and a `bin/toli gate run` it starts rides on that slot. A push is refused when the repo declares a pre-push hook
+ * (src/projects/hooks.ts) that git would not run, so the project's own check never silently skips; `--no-hooks-ok`
+ * pushes anyway. Other declared hooks that are not installed only warn.
  */
 export async function pushCommand(argv: string[]): Promise<void> {
-    const args = new Args(argv, { values: [TASK_FLAG, "by", "for", "word", "gate"] });
+    const args = new Args(argv, { values: [TASK_FLAG, "by", "for", "word", "gate"], booleans: ["no-hooks-ok"] });
     args.maxPositional(1);
     const project = args.pos(0, "project");
     const { dir, task } = workDir(project, args.str(TASK_FLAG));
     const attribution = pushAttribution(args, task?.id);
     requirePushAuthority(project, attribution.word);
+    requirePushHooks(project, dir, args.bool("no-hooks-ok"));
     const branch = requireBranch(dir, "push");
     const ref = `refs/heads/${branch}`;
     const recipe = args.str("gate");
@@ -278,9 +270,10 @@ export async function pushCommand(argv: string[]): Promise<void> {
         throw new ToliError(`git ls-remote origin failed: ${(before.stderr || before.stdout).trim()}`);
     const old = before.stdout.trim().split(/\s+/)[0] || null;
     const push = ["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`];
-    const code = hasPrePushHook(dir)
-        ? await withBuildSlot(dir, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
-        : await runInherit(push, { env: gateEnv });
+    const code =
+        activeHookPath(dir, "pre-push") !== null
+            ? await withBuildSlot(dir, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
+            : await runInherit(push, { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push -u origin ${branch} failed (exit ${code})`);
     const pushed = headSha(dir, ref);
     if (pushed === old) {

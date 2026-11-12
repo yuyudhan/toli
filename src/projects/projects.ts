@@ -4,6 +4,7 @@ import { Args } from "../core/args.ts";
 import { git, gitOk, isGitRepo, unpushedBranches } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, readJson, requireName, run, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { ensureHooks } from "./hooks.ts";
 import { brokenLink, isLinked, projectLinkCommand } from "./link.ts";
 import { projectSetCommand } from "./set.ts";
 import { projectSetupCommand } from "./setup.ts";
@@ -209,9 +210,13 @@ function add(argv: string[]): void {
     const labels = register(name, url, mode);
     out(`added ${name} (${labels}) at ${dir}`);
     out(noMistakesReadiness(dir));
+    for (const line of ensureHooks(dir, `bin/toli project setup ${name}`)) out(line);
 }
 
-/** `project ensure`: idempotent "this machine has a registered clone of <name>"; prints what it did. */
+/**
+ * `project ensure`: idempotent "this machine has a registered clone of <name>"; prints what it did. It also installs
+ * the git hooks the repo declares where toli can tell how (src/projects/hooks.ts) and reports the rest.
+ */
 function ensure(argv: string[]): void {
     const args = new Args(argv, { values: ["mode"] });
     args.maxPositional(2);
@@ -222,22 +227,18 @@ function ensure(argv: string[]): void {
     const dir = paths.projectDir(name);
     const cloned = isGitRepo(dir);
     if (!cloned && existsSync(dir)) throw new ToliError(`projects/${name} exists and is not a git clone`);
-    if (registered && cloned) {
-        out(`${name}: already registered and cloned at ${dir}`);
-        return;
-    }
-    if (cloned) {
+    if (registered && cloned) out(`${name}: already registered and cloned at ${dir}`);
+    else if (cloned) out(`${name}: registered the existing clone at ${dir} (${register(name, url, mode)})`);
+    else {
+        cloneInto(name, url);
         const labels = register(name, url, mode);
-        out(`${name}: registered the existing clone at ${dir} (${labels})`);
-        return;
+        out(
+            registered
+                ? `${name}: cloned into ${dir} (already registered)`
+                : `${name}: cloned into ${dir} and registered (${labels})`,
+        );
     }
-    cloneInto(name, url);
-    const labels = register(name, url, mode);
-    out(
-        registered
-            ? `${name}: cloned into ${dir} (already registered)`
-            : `${name}: cloned into ${dir} and registered (${labels})`,
-    );
+    for (const line of ensureHooks(dir, `bin/toli project setup ${name}`)) out(line);
 }
 
 function list(argv: string[]): void {
