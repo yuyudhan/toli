@@ -64,7 +64,10 @@ acknowledged:
 An ack covers only what a reader was shown, so a result that arrives while the lead is busy is never acknowledged
 unseen. Each wake ends with the exact commands for the items it showed (`--through` the newest one per stream), and
 the digest's Next block gives the same for the results it lists. A plain `ack` covers up to the newest item a wake,
-`inbox list` or `job results` has shown; anything newer stays unread and wakes the lead again.
+`inbox list` or `job results` has shown; anything newer stays unread and wakes the lead again. The shown mark is one
+per machine, not per session: with two sessions open, one may have shown what the other has not, so ack with the
+`--through` commands your own wake or digest printed. Results delivered by a toli that predates the mark wake the
+lead once more after the upgrade, then ack as usual.
 
 ## The ticker
 

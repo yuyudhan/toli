@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { type Sandbox, sandbox } from "./helpers.ts";
 
 type Wake = { items: { kind: string; title: string; body: string }[]; message: string };
@@ -88,6 +90,24 @@ describe("wake", () => {
         const next = wake(box);
         expect(next.items).toHaveLength(1);
         expect(next.items[0]?.body).toContain("second run");
+    });
+
+    test("items unread at upgrade wake the lead once and ack normally", () => {
+        const box = coordinator();
+        deliver(box, "before upgrade", "2026-03-04T10:00:00Z");
+        finishJob(box, "2026-03-04T10:01:00Z", "old job");
+        const inboxStamp = (JSON.parse(box.ok(["inbox", "list", "--json"])) as { stamp: string }[])[0]?.stamp ?? "";
+        const jobStamp = (JSON.parse(box.ok(["job", "results", "--json"])) as { stamp: string }[])[0]?.stamp ?? "";
+        // A toli without shown marks had delivered both and recorded only that.
+        writeFileSync(
+            join(box.root, "state", "acks.json"),
+            JSON.stringify({ inboxDelivered: inboxStamp, jobsDelivered: jobStamp }),
+        );
+        expect(wake(box).items.map((item) => item.title)).toEqual(["m2: before upgrade", "job nightly (ok)"]);
+        expect(wake(box).items).toEqual([]);
+        expect(box.ok(["inbox", "ack"])).toBe("acknowledged 1 inbox item");
+        expect(box.ok(["job", "ack"])).toBe("acknowledged 1 job result");
+        expect(wake(box).items).toEqual([]);
     });
 
     test("the wake ends with ack commands through the newest item of each stream it shows", () => {

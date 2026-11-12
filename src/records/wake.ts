@@ -14,9 +14,14 @@ export type WakeItem = { kind: "inbox" | "job"; stamp: string; title: string; pa
 const MAX_FULL_ITEMS = 10;
 const BODY_LIMIT = 4000;
 
-/** Items newer than both the user's ack and the last delivery are new; acknowledged items never wake. */
-function floor(acked: AckStream, delivered: AckStream): string {
-    return [ackedThrough(acked), ackedThrough(delivered)].sort().at(-1) ?? "";
+/**
+ * Items above the user's ack and the last delivery are new; acknowledged items never wake. A delivery counts only as
+ * far as the shown mark reaches: items delivered before the shown marks existed (an upgrade from a toli without them)
+ * were never recorded as shown, so they wake once more and then ack as usual.
+ */
+function floor(acked: AckStream, delivered: AckStream, shown: AckStream): string {
+    const deliveredAndShown = [ackedThrough(delivered), ackedThrough(shown)].sort()[0] ?? "";
+    return [ackedThrough(acked), deliveredAndShown].sort().at(-1) ?? "";
 }
 
 function readBody(path: string): string {
@@ -30,9 +35,9 @@ function readBody(path: string): string {
  */
 export function takeWake(): WakeItem[] {
     return withLock(paths.lock("wake"), () => {
-        const inboxFloor = floor("inbox", "inboxDelivered");
+        const inboxFloor = floor("inbox", "inboxDelivered", "inboxShown");
         const inbox = listInbox().filter((item) => item.stamp > inboxFloor);
-        const jobsFloor = floor("jobs", "jobsDelivered");
+        const jobsFloor = floor("jobs", "jobsDelivered", "jobsShown");
         const jobs = listResults().filter((result) => result.stamp > jobsFloor);
         const lastInbox = inbox.at(-1);
         if (lastInbox) ackThrough("inboxDelivered", lastInbox.stamp);
