@@ -13,9 +13,9 @@ import {
     launchdPlistPath,
     launchdRemovalPlan,
     loadLaunchdJob,
-    renderLaunchdPlist,
     unloadLaunchdJob,
 } from "../jobs/launchd.ts";
+import { renderLaunchdPlist } from "../jobs/launchd-plist.ts";
 import {
     bunPath,
     dryRun,

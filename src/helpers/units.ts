@@ -1,7 +1,7 @@
 import type { Cron } from "../core/cron.ts";
 import { paths } from "../core/paths.ts";
 import { shellQuote, ToliError } from "../core/util.ts";
-import { renderLaunchdPlist } from "../jobs/launchd.ts";
+import { renderLaunchdPlist } from "../jobs/launchd-plist.ts";
 import { schedulePath, systemdEnv, systemdPath, systemdWord } from "../jobs/os-scheduler.ts";
 import type { Helper } from "./registry.ts";
 

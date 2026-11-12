@@ -195,7 +195,8 @@ Tracked (shared by all machines):
                                  JSON files, locks, processes)
     src/records/                 toli's own records: backlog, needs, digest, memory, inbox, acks, wake, migrate, prune
     src/jobs/                    scheduled jobs: jobs, schedule (OS ticker), os-scheduler (systemd --user, crontab:
-                                 choice and primitives shared with helpers), launchd (user agents, LaunchDaemons), tick
+                                 choice and primitives shared with helpers), launchd (user agents, LaunchDaemons) and
+                                 launchd-plist, tick
     src/jawans/                  `bin/toli spawn` on any harness: spawn, supervise, runs
     src/harness/                 agent harnesses: headless commands, hooks, sync of generated files, lead guard,
                                  guidance, live session, CLI health for the extension

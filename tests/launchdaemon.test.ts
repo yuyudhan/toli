@@ -50,6 +50,14 @@ function agent(fixture: Box, label: string): string {
 
 const guiBootstraps = (calls: string[]): string[] => calls.filter((call) => /^bootstrap gui\//.test(call));
 
+/** A `sudo` stub with cached credentials that refuses (exit 1) any command whose first or second word is `word`. */
+function failingSudo(box: Sandbox, word: string): void {
+    box.stub(
+        "sudo",
+        `[ "$1" = "-n" ] && shift; if [ "$1" = "${word}" ] || [ "$2" = "${word}" ]; then echo "${word}: refused" >&2; exit 1; fi; exec "$@"`,
+    );
+}
+
 describe("status sees a LaunchDaemon", () => {
     test("helper status: installed and loaded, in the system domain", () => {
         const fixture = darwin();
@@ -169,6 +177,40 @@ describe("install with a LaunchDaemon present", () => {
         expect(readFileSync(plist, "utf8")).toBe(PREVIOUS);
         expect(launchctl.loaded(HELPER, "system")).toBe(true);
         expect(existsSync(join(fixture.agents, `${HELPER}.plist`))).toBe(false);
+    });
+
+    test("a failed sudo chmod or mv removes the staged plist and leaves the daemon unchanged", () => {
+        for (const step of ["chmod", "mv"]) {
+            const fixture = darwin();
+            const plist = daemon(fixture, HELPER);
+            const { box, env, launchctl } = fixture;
+            failingSudo(box, step);
+            const result = box.toli(["helper", "install", "sweep"], { env });
+            expect(result.code).toBe(1);
+            expect(result.stderr).toContain(`sudo -n ${step} `);
+            expect(result.stderr).toContain(`${plist} is unchanged`);
+            expect(existsSync(`${plist}.toli-new`)).toBe(false);
+            expect(readFileSync(plist, "utf8")).toBe(PREVIOUS);
+            expect(launchctl.loaded(HELPER, "system")).toBe(true);
+            expect(existsSync(join(fixture.agents, `${HELPER}.plist`))).toBe(false);
+        }
+    });
+
+    test("a failed sudo launchctl bootout puts the previous plist back and keeps the agent beside it", () => {
+        const fixture = darwin();
+        const plist = daemon(fixture, LEAD);
+        const leftover = agent(fixture, LEAD);
+        const { box, env, launchctl } = fixture;
+        failingSudo(box, "bootout");
+        const result = box.toli(["lead", "install"], { env });
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain(`sudo -n launchctl bootout system/${LEAD} failed`);
+        expect(result.stderr).toContain(`the previous ${plist} is back and ${LEAD} stays loaded as it was`);
+        expect(readFileSync(plist, "utf8")).toBe(PREVIOUS);
+        expect(existsSync(`${plist}.toli-new`)).toBe(false);
+        expect(launchctl.loaded(LEAD, "system")).toBe(true);
+        expect(existsSync(leftover)).toBe(true);
+        expect(launchctl.loaded(LEAD)).toBe(true);
     });
 
     test("uninstall boots the daemon out and removes it through sudo -n", () => {
