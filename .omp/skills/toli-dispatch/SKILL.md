@@ -156,6 +156,9 @@ heavy-build slot the same way. A native subagent's brief for a shared Rust clone
 same line as the brief template: never `-j` or `CARGO_BUILD_JOBS`, no extra `RUSTFLAGS`/profile/features, the
 project's own commands. Briefs for toli itself say: edit in place on `develop`, `just check`, then
 `bin/toli commit toli`.
+Every jawan brief keeps the rule: never send signals (STOP, CONT, TERM, KILL, ...) to omp, claude, tmux, terminals,
+the lead, or any process you did not start yourself; to pause, stop starting new steps. Native subagents run inside
+the lead's own process, so a signal to it freezes Sardar and every other jawan.
 
 Ship work on a `branch-per-task` or `worktree-per-task` project (opt-in strategies Malik chose for that project)
 runs on the task's own branch, prepared before the

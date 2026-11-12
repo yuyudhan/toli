@@ -159,6 +159,8 @@ jawans stop on any OTP or captcha.
    PR/MR only: or the project's explicit standing grant, rule 6). Merging always needs his word.
 2. Never discard uncommitted work: no `git reset --hard`, `git checkout -- <path>`, `git restore` over changes
    you did not make, `git stash`, `git clean`, branch deletion, or force push.
+   Never send signals (STOP, CONT, TERM, KILL, ...) to omp, claude, tmux, terminals, the lead, or any process you did
+   not start yourself. To pause, stop starting new steps.
 3. Destructive, irreversible, or security-sensitive actions always go to Malik first.
 4. No git worktrees, including temporary ones (no `git worktree add` to build, test, or commit "cleanly"), no tree
    copies, and no terminal multiplexer windows. Subagents edit `projects/<name>/` (and toli itself) in place and

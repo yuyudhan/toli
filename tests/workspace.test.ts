@@ -316,6 +316,9 @@ describe("briefs carry the workspace", () => {
             expect(text).toContain("- Workspace: <same-branch | branch-per-task | worktree-per-task>");
             expect(text).toContain("- Path: <");
             expect(text).toContain("- Branch: <");
+            expect(text).toContain(
+                "- Never send signals (STOP, CONT, TERM, KILL, ...) to omp, claude, tmux, terminals",
+            );
         }
         const box = coordinator();
         project(box, "worktree-per-task", "Build API");

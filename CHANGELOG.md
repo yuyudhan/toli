@@ -8,6 +8,9 @@ one. See docs/releasing.md.
 
 ### Added
 
+- Jawan rules (brief templates, AGENTS.md section 0b, toli-dispatch): never signal omp, claude, tmux, terminals, the
+  lead, or any process the jawan did not start; to pause, stop starting new steps (T1126).
+
 - When a `bin/toli spawn` run's harness exits, its supervisor closes the automation browsers the run left open (a
   Chrome, Chromium, Edge, Brave or Firefox started with remote debugging, headless, `--enable-automation`,
   marionette, or a temp-dir `--user-data-dir`). Only the run's own processes count: its tree, sampled while it runs,
