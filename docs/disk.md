@@ -11,11 +11,12 @@ runs or skips).
 
 **A full disk means delete the build folders.** Every `target/` folder can go when the disk is nearly full, even one a
 running build uses: cargo builds it again. If free space is still under the emergency level after the idle steps
-(max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper wipes or sweeps busy targets
-between build steps (step 5), then deletes every `target/` folder in the clones and task worktrees, in use or not,
-then the rest of the build output (step 6). Over the emergency level a build folder in use is never touched, not even
-a sweep of its old artifacts, so a disk a little under its floor never costs a running build its output. A Sardar or
-jawan on any machine that finds its disk full runs `bin/toli disk keep` and never asks first.
+(max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper wipes busy targets between
+build steps (step 5), then deletes every `target/` folder in the clones and task worktrees, in use or not, then the
+rest of the build output (step 6). It never deletes part of a target a build uses: a target goes whole or not at
+all. Over the emergency level a build folder in use is never touched, so a disk a little under its floor never costs
+a running build its output. A Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep` and
+never asks first.
 
     bin/toli disk keep [--dry-run] [--floor <GB>] [--json]
 
@@ -103,22 +104,12 @@ going on now goes last. Steps 1 to 4 spare build output in use; steps 5 and 6, u
    the renamed tree (where the rename fails, as it can on a full disk, it deletes the folder in place under the locks).
    A cargo that starts meanwhile waits on the lock, then builds into an empty target.
 
-    A target that is in use right now (jawans building it back to back hold its lock all the time) is swept instead
-    of skipped: every entry directly inside `<profile>/deps`, `build`, `.fingerprint` and `incremental` (any profile
-    dir up to three levels down: `target/debug`, `target/<triple>/release`, ...) that went unused for
-    `capacity.diskSweepStaleMinutes` (default 180) is deleted, lock or no lock. The keeper logs, per target, how many
-    artifacts it removed and the bytes that freed (`swept N stale artifacts from <target>`, then `freed X GB (B bytes)`;
-    `--json` lists them under `swept`). Unused means no file in the entry was read or written since, judged by access
-    time where the mount keeps it current enough and by modification time elsewhere: `noatime` mounts, Linux
-    `relatime` (the default; it refreshes access times at most once a day, so access time counts only for an age of a
-    day or more), and macOS volumes not mounted `strictatime`. The keeper reads the mount's options from
-    `/proc/self/mounts` or `mount` and names its choice in the log line (`by mtime: relatime mount ...`). It never
-    deletes a cargo lock file, anything holding one, anything newer than the age, or anything a process holds open,
-    runs or maps (lsof; `/proc` on Linux). Cargo rebuilds an artifact it finds missing; a build already running that
-    needs one swept from under it fails once and rebuilds it when run again.
-
-    The keeper tries the wipe once and then sweeps; it checks `state/disk-keep.pause` before the wipe, so a job that
-    writes the pause is not cut off.
+    A target that is in use right now (jawans building it back to back hold its lock all the time) is kept whole:
+    the keeper never deletes part of a target under a live build. Cargo links up-to-date artifacts it compiled hours
+    ago, so artifacts left unwritten for hours are not stale to a running build, and deleting them breaks it at link
+    time (`crate ... required in rlib format, but was not found`). Such a target goes only in step 6, whole. The
+    keeper tries the wipe once; it checks `state/disk-keep.pause` before the wipe, so a job that writes the pause is
+    not cut off.
 
 6. The last resort, only when free space is still under the emergency level after steps 1 to 5: max(5 GB, 3% of the
    disk), never above the floor (6.8 GB on a 228 GB disk, 14 GB on a 468 GB one). Under the floor but over that
@@ -141,10 +132,18 @@ memory until the first deletion (then go to `logs/disk.log`), `bin/toli disk` ru
 `freeing without the keeper lock`). A write that fails never stops it. It runs no shell and expands no glob, so it
 behaves the same under any login shell (a zsh loop over `*/target` aborts with `no matches found` when one pattern
 matches nothing). If the keeper fails anyway (free disk unreadable, a broken `config/machine.json`), a fallback
-sweeps the stale artifacts out of every target nothing uses, as above, with no lock and no free-disk reading. Since it
-cannot tell whether the disk is under the emergency level, a target in use stays whole (`kept <target>: in use
-(...)`). Then the command exits 1 with the reason instead of a crash. The keeper run before every jawan start and
-from the tick falls back the same way.
+sweeps the stale artifacts out of every target nothing uses, with no keeper lock and no free-disk reading: every entry
+directly inside `<profile>/deps`, `build`, `.fingerprint` and `incremental` (any profile dir up to three levels down:
+`target/debug`, `target/<triple>/release`, ...) that went unused for `capacity.diskSweepStaleMinutes` (default 180).
+It takes cargo's locks first, as the wipe does, and holds them while it deletes, so a target in use stays whole
+(`kept <target>: in use (...)`). Unused means no file in the entry was read or written since, judged by access time
+where the mount keeps it current enough and by modification time elsewhere: `noatime` mounts, Linux `relatime` (the
+default; it refreshes access times at most once a day, so access time counts only for an age of a day or more), and
+macOS volumes not mounted `strictatime`. The fallback reads the mount's options from `/proc/self/mounts` or `mount`
+and names its choice in the log line (`swept N stale artifacts from <target> (unused for M min, by mtime: relatime
+mount ...), freed X GB (B bytes)`). It never deletes a cargo lock file, anything holding one, anything newer than the
+age, or anything a process holds open, runs or maps (lsof; `/proc` on Linux). Then the command exits 1 with the reason
+instead of a crash. The keeper run before every jawan start and from the tick falls back the same way.
 
 If `bin/toli` itself cannot run, delete the git-ignored `target/` folders by hand with `find` from the toli checkout
 (no glob, nothing written; a tracked folder named `target` is not ignored, so it stays), then run `bin/toli disk keep`:
@@ -168,8 +167,8 @@ its own caches.
 
 `diskKeep` false leaves all deleting to the lead (see above). `diskKeepGB` is the floor in GB, capped at 15% of the
 size of the volume holding toli (see the top of this page).
-`diskSweepStaleMinutes` is how long an artifact in a busy target must go unused
-before the sweep deletes it (a positive number of minutes; at 1440 or more, Linux `relatime` access times count too).
+`diskSweepStaleMinutes` is how long an artifact in an idle target must go unused before the fallback sweep (see "On a
+full disk") deletes it (a positive number of minutes; at 1440 or more, Linux `relatime` access times count too).
 `diskBuildTools` (default none) names this machine's own build tools, such as a project's build queue that runs
 cargo from above its workspaces: while one runs, a target in a workspace it works in, above or names counts as in
 use. An entry is a program name, matched against every word of a command line by file name (`my-queue` also

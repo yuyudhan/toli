@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { dirname, join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
-import { atimeVerdict, sweepStaleArtifacts } from "../src/fleet/stale-sweep.ts";
+import { atimeVerdict, sweepLine, sweepStaleArtifacts } from "../src/fleet/stale-sweep.ts";
 import { age, agedTarget, artifact, buildOutput, dfLine, holdLock, keeperBox, setCapacity } from "./disk-fixture.ts";
 import { sandbox, tempDir, withProject } from "./helpers.ts";
 
@@ -11,22 +11,30 @@ import { sandbox, tempDir, withProject } from "./helpers.ts";
 // longer than bun's 5 s default.
 setDefaultTimeout(60_000);
 
-describe("sweeping stale artifacts out of a target in use", () => {
-    test("while a build holds the lock it deletes what went unused past the age; the lock and fresh artifacts stay", () => {
+describe("sweeping stale artifacts out of a cargo target", () => {
+    test("while a build holds the artifact lock it deletes nothing, however old: never a partial delete", () => {
         const target = join(realpathSync(tempDir("sweep")), "target");
-        const { lock, stale, fresh } = agedTarget(target, 240);
+        const { stale, fresh } = agedTarget(target, 240);
+        const lock = artifact(join(target, "debug", ".cargo-artifact-lock"), 0);
+        age(lock, 240);
         const release = holdLock(lock);
         try {
             expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: false, reason: `a build holds ${lock}` });
             const swept = sweepStaleArtifacts(target, 180, false);
-            expect(swept.artifacts).toBe(4);
-            expect(swept.bytes).toBeGreaterThanOrEqual(4 * 4096);
-            expect(swept.failed).toEqual([]);
-            for (const path of stale) expect(existsSync(path)).toBe(false);
-            for (const path of [...fresh, lock]) expect(existsSync(path)).toBe(true);
+            expect(swept.kept).toBe(`a build holds ${lock}`);
+            expect(swept.artifacts).toBe(0);
+            expect(sweepLine(target, 180, swept, false)).toBe(`kept ${target}: in use (a build holds ${lock})`);
+            for (const path of [...stale, ...fresh, lock]) expect(existsSync(path)).toBe(true);
         } finally {
             release();
         }
+        const swept = sweepStaleArtifacts(target, 180, false);
+        expect(swept.kept).toBeUndefined();
+        expect(swept.artifacts).toBe(4);
+        expect(swept.bytes).toBeGreaterThanOrEqual(4 * 4096);
+        expect(swept.failed).toEqual([]);
+        for (const path of stale) expect(existsSync(path)).toBe(false);
+        for (const path of [...fresh, lock]) expect(existsSync(path)).toBe(true);
     });
 
     test("the age setting decides what is stale; a dry run only counts", () => {
@@ -62,19 +70,20 @@ describe("sweeping stale artifacts out of a target in use", () => {
         expect(atimeVerdict("darwin", ["apfs", "noatime", "strictatime"], 180).atime).toBe(false);
     });
 
-    test("under the emergency level disk keep sweeps a target a build keeps locked, at capacity.diskSweepStaleMinutes", () => {
+    test("under the emergency level disk keep never sweeps part of a target a build keeps locked; the last resort deletes it whole", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const clone = realpathSync(withProject(box, "alpha"));
         buildOutput(box, clone);
         const target = join(clone, "target");
-        const { lock, stale, fresh } = agedTarget(target, 120);
+        const { lock, stale } = agedTarget(target, 120);
         const machineFile = join(box.root, "config", "machine.json");
         const machine = JSON.parse(readFileSync(machineFile, "utf8")) as Record<string, unknown>;
         writeFileSync(machineFile, JSON.stringify({ ...machine, capacity: { diskSweepStaleMinutes: 60 } }));
         box.stub("docker", "exit 1");
         box.stub("sccache", "exit 2");
-        // 1 GB free until the sweep removes the stale rlib, 100 GB after: floor 50, so the last resort never runs.
+        // 1 GB free of 200 GB while the stale rlib is there, 100 GB after: floor 50, emergency level 6. A sweep of the
+        // stale artifacts alone would end the run with the target's fresh artifacts left behind a live build.
         box.stub(
             "df",
             `if [ -e "${stale[0]}" ]; then kb=1048576; else kb=104857600; fi
@@ -86,13 +95,10 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
             const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
             const lines = report.lines.join("\n");
             expect(lines).toContain(`kept ${target}: a build holds ${lock}`);
-            expect(lines).toContain(`swept 4 stale artifacts from ${target} (unused for 60 min, by `);
-            expect(report.swept).toHaveLength(1);
-            expect(report.swept[0]?.target).toBe(target);
-            expect(report.swept[0]?.artifacts).toBe(4);
-            expect(report.swept[0]?.bytes).toBeGreaterThanOrEqual(4 * 4096);
-            for (const path of stale) expect(existsSync(path)).toBe(false);
-            for (const path of [...fresh, lock]) expect(existsSync(path)).toBe(true);
+            expect(lines).not.toContain("stale artifacts");
+            expect(report.lastResort).toBe(true);
+            expect(lines).toContain(`${target} is in use (a build holds ${lock}): deleting it anyway`);
+            expect(existsSync(target)).toBe(false);
         } finally {
             release();
         }
@@ -119,7 +125,6 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
             expect(report.lastResort).toBe(false);
             expect(lines).toContain(`kept ${target}: a build holds ${lock}`);
             expect(lines).toContain(`kept ${target} in use: free 20.0 GB is over the emergency level 6.0 GB`);
-            expect(report.swept).toEqual([]);
             expect(lines).not.toContain("stale artifacts");
             for (const path of [...stale, ...fresh, lock]) expect(existsSync(path)).toBe(true);
         } finally {

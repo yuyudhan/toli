@@ -12,8 +12,8 @@
 //   5. under the emergency level only (max(5 GB, 3% of the disk), at most the floor): `target/` folders of busy
 //      checkouts, between build steps: under cargo's own locks, with no cargo running in its workspace (cargo test
 //      runs its test binaries after dropping the locks) and no file in it open. A target that stays in use (builds
-//      back to back) is swept instead: every artifact in it unused for capacity.diskSweepStaleMinutes (default 180)
-//      goes, lock or no lock (src/fleet/stale-sweep.ts);
+//      back to back) is kept whole: never a partial delete under a live build, whose up-to-date artifacts can sit
+//      unwritten for hours and still be linked;
 //   6. last resort, under the emergency level after 1 to 5: every `target/` left, in use or not, then every
 //      `node_modules/` (but a main clone's) and `dist/` and Playwright's browser cache. All of it rebuilds itself; a
 //      build cut off fails once and compiles again. Over the emergency level build output in use is never touched, not
@@ -54,7 +54,6 @@ import {
     describe,
     diskPause,
     expirePause,
-    GIB,
     gb,
     KEEPER_LOCK,
     keepDiskDetached,
@@ -62,8 +61,8 @@ import {
     PAUSE_EXPIRY_MS,
     releaseKeeper,
 } from "./disk-state.ts";
-import { diskEmergencyGB, diskSweepStaleMinutes, measureDisk, measureVolume } from "./resources.ts";
-import { fallbackSweep, sweepLine, sweepStaleArtifacts } from "./stale-sweep.ts";
+import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
+import { fallbackSweep } from "./stale-sweep.ts";
 
 export type KeepOptions = {
     /** Overrides the floor (capacity.diskKeepGB, capped at 15% of the disk); not capped itself. */
@@ -88,8 +87,6 @@ export type KeepReport = {
     ran: boolean;
     /** The live pid in state/disk-keep.pause that held the keeper off, if one did. */
     pausedBy?: number;
-    /** Busy targets swept of stale artifacts (tier 5), with what each freed (or, in a dry run, would free). */
-    swept: { target: string; artifacts: number; bytes: number }[];
     /** True when the last resort ran: under the emergency level, so build output in use went too (tier 6). */
     lastResort: boolean;
     /** False when capacity.diskKeep is false (or invalid): toli deletes nothing on its own, only this run by hand. */
@@ -114,7 +111,6 @@ function freeGB(): number {
 export function keepDisk(options: KeepOptions = {}): KeepReport {
     const dryRun = options.dryRun === true || envDryRun();
     const machine = loadMachine();
-    const staleMinutes = diskSweepStaleMinutes(machine);
     const volume = measureVolume(paths.root());
     if (typeof volume === "string") throw new ToliError(`cannot read free disk: ${volume}`);
     const freeBeforeGB = volume.freeGB;
@@ -130,7 +126,6 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         freeAfterGB: freeBeforeGB,
         dryRun,
         ran: false,
-        swept: [],
         lastResort: false,
         automatic: diskKeepSetting(machine) === true,
         lines: [],
@@ -252,8 +247,9 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         if (!enough()) trimSccache(dryRun, say);
         // 5: under the emergency level only, every target still here, busy ones included, between build steps.
         // Builds pause between cargo invocations; the wipe takes such a pause under cargo's locks. A target with no
-        // pause right now (builds back to back) has its stale artifacts swept instead, lock or not. Over the
-        // emergency level a target in use is never touched: losing a long build's output costs more than the space.
+        // pause right now (builds back to back) stays whole: deleting part of it under a live build breaks that build
+        // (cargo links rlibs it compiled hours ago). Over the emergency level a target in use is never touched:
+        // losing a long build's output costs more than the space.
         const busy = dirs.filter((dir) => dir.kind === "target" && !done.has(dir.path));
         for (const dir of busy) {
             if (enough()) break;
@@ -267,12 +263,6 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps`);
                 remove(dir.path, () => wipeOutcome(dir.path));
             }
-            if (done.has(dir.path) || enough()) continue;
-            const swept = sweepStaleArtifacts(dir.path, staleMinutes, dryRun);
-            report.swept.push({ target: dir.path, artifacts: swept.artifacts, bytes: swept.bytes });
-            if (dryRun) simulated += swept.bytes / GIB;
-            else if (swept.artifacts > 0) log.open();
-            say(sweepLine(dir.path, staleMinutes, swept, dryRun));
         }
         // 6: the last resort, under the emergency level after 1 to 5: every target left goes now, in use or not, then
         // node_modules (never a main clone's, see 2) and dist (Vite's cache lives in node_modules/.vite) and

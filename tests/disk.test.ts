@@ -86,7 +86,6 @@ describe("disk keeper", () => {
             expect(lines).not.toContain("docs/dist");
             expect(lines).toContain("docker: skipped (daemon not reachable)");
             expect(lines).toContain(`kept ${join(busy, "target")} in use: free 100.0 GB is over the emergency level`);
-            expect(report.swept).toEqual([]);
             const order = ["alpha/target", "T1/web/node_modules", "docker:", "beta/target in use"];
             const at = order.map((text) => lines.indexOf(text));
             expect(at).toEqual([...at].sort((a, b) => a - b));

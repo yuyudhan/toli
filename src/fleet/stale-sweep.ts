@@ -1,17 +1,16 @@
-// Sweep stale artifacts out of a cargo target that builds keep busy (src/fleet/disk.ts tier 5, under the emergency
-// level only). When jawans build the same clone back to back, cargo's lock is never free and the whole-target wipe
-// never gets its moment; the target only grows. Cargo rebuilds any artifact it finds missing, so the keeper deletes,
-// without waiting for the lock, every entry directly inside `<profile>/{deps,build,.fingerprint,incremental}` that
-// nothing used for `capacity.diskSweepStaleMinutes` (default 180): no file in it read (atime) or written (mtime) since,
-// none of cargo's lock files in it, and no process holding a file in it open, running or mapping it. Use is read from
-// atime only where the mount keeps atime current enough for that age (see atimeVerdict); elsewhere from mtime alone.
-// The same sweep over every target nothing uses is the keeper's fallback when it fails (fallbackSweep): it needs
-// nothing but deletions, so it works on a full disk.
+// Sweep stale artifacts out of a cargo target nothing uses: the keeper's fallback when it fails (fallbackSweep), which
+// needs nothing but deletions, so it works on a full disk. Cargo rebuilds any artifact it finds missing, so the sweep
+// deletes every entry directly inside `<profile>/{deps,build,.fingerprint,incremental}` that nothing used for
+// `capacity.diskSweepStaleMinutes` (default 180): no file in it read (atime) or written (mtime) since, none of cargo's
+// lock files in it, and no process holding a file in it open, running or mapping it. Use is read from atime only
+// where the mount keeps atime current enough for that age (see atimeVerdict); elsewhere from mtime alone. It never
+// touches a target in use: it takes cargo's own locks first (whileIdle) and holds them while it deletes. A live build
+// links up-to-date artifacts it has not rewritten for hours, so a partial delete under it breaks that build.
 import { type Dirent, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { out, platform, run, warn } from "../core/util.ts";
-import { CARGO_LOCKS, LOCK_DEPTH, targetInUse } from "./cargo-lock.ts";
+import { CARGO_LOCKS, LOCK_DEPTH, whileIdle } from "./cargo-lock.ts";
 import {
     type BuildDir,
     buildDirs,
@@ -172,14 +171,25 @@ export type SweepResult = {
     by: string;
     /** Stale entries that could not be deleted, with the error. */
     failed: string[];
+    /** Why the target was left whole (a build holds a lock, a process uses it), if it was. */
+    kept?: string;
 };
 
 /**
- * Delete every stale entry directly inside the target's artifact folders (see the header), however busy the target
- * is. Writes nothing, so it also works on a full disk. `dryRun` only counts.
+ * Delete every stale entry directly inside the target's artifact folders (see the header) while holding cargo's
+ * locks; a target in use is left whole (`kept` says why). Writes nothing, so it also works on a full disk. `dryRun`
+ * only counts.
  */
 export function sweepStaleArtifacts(target: string, staleMinutes: number, dryRun: boolean): SweepResult {
     const source = timeSource(target, staleMinutes);
+    const result: SweepResult = { artifacts: 0, bytes: 0, by: source.why, failed: [] };
+    const outcome = whileIdle(target, () => deleteStale(target, source.atime, staleMinutes, dryRun, result));
+    if (!outcome.ran) result.kept = outcome.reason;
+    return result;
+}
+
+/** The sweep itself, counted into `result`; only ever run under cargo's locks. */
+function deleteStale(target: string, atime: boolean, staleMinutes: number, dryRun: boolean, result: SweepResult): void {
     const cutoffMs = Date.now() - staleMinutes * 60_000;
     const stale: { path: string; bytes: number }[] = [];
     for (const root of artifactRoots(target)) {
@@ -192,12 +202,11 @@ export function sweepStaleArtifacts(target: string, staleMinutes: number, dryRun
         for (const name of names) {
             if (CARGO_LOCKS[name] === true) continue;
             const path = join(root, name);
-            const bytes = staleBytes(path, source.atime, cutoffMs);
+            const bytes = staleBytes(path, atime, cutoffMs);
             if (bytes !== null) stale.push({ path, bytes });
         }
     }
-    const result: SweepResult = { artifacts: 0, bytes: 0, by: source.why, failed: [] };
-    if (stale.length === 0) return result;
+    if (stale.length === 0) return;
     const held = heldOpenBelow(target).map((file) => file.path);
     for (const entry of stale) {
         if (held.some((path) => within(path, entry.path))) continue;
@@ -212,11 +221,11 @@ export function sweepStaleArtifacts(target: string, staleMinutes: number, dryRun
         result.artifacts += 1;
         result.bytes += entry.bytes;
     }
-    return result;
 }
 
 /** What a sweep of `target` freed, in GB and exact bytes, or why it freed nothing. */
 export function sweepLine(target: string, staleMinutes: number, swept: SweepResult, dryRun: boolean): string {
+    if (swept.kept !== undefined) return `kept ${target}: in use (${swept.kept})`;
     const age = `unused for ${staleMinutes} min, ${swept.by}`;
     const failed =
         swept.failed.length === 0 ? "" : `; ${swept.failed.length} could not be deleted, e.g. ${swept.failed[0]}`;
@@ -229,11 +238,10 @@ export function sweepLine(target: string, staleMinutes: number, swept: SweepResu
 
 /**
  * The keeper's fallback when it fails anyway (free disk or config unreadable, anything unforeseen): sweep the stale
- * artifacts out of every target nothing uses, the one step that needs nothing but deletions. Not knowing free disk,
- * it cannot know the disk is under the emergency level, so a target in use (a jawan or process working in its
- * checkout, a build holding its lock, anything a wipe checks) is kept whole. It reads no free disk and takes no keeper
- * lock, honours state/disk-keep.pause, writes logs/disk.log only once it has deleted something, and never throws.
- * Returns its lines.
+ * artifacts out of every target nothing uses, the one step that needs nothing but deletions. A target in use (a jawan
+ * or process working in its checkout, a build holding its lock, anything a wipe checks) is kept whole. It reads no
+ * free disk and takes no keeper lock, honours state/disk-keep.pause, writes logs/disk.log only once it has deleted
+ * something, and never throws. Returns its lines.
  */
 export function fallbackSweep(failure: unknown, echo: boolean, dryRun: boolean): string[] {
     const lines: string[] = [];
@@ -268,7 +276,7 @@ export function fallbackSweep(failure: unknown, echo: boolean, dryRun: boolean):
         for (const dir of targets) {
             const target = dir.path;
             try {
-                const use = checkoutUse(dir.checkout, currentHolders(), checkouts) ?? targetInUse(target);
+                const use = checkoutUse(dir.checkout, currentHolders(), checkouts);
                 if (use !== null) {
                     say(`kept ${target}: in use (${use})`);
                     continue;

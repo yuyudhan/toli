@@ -33,7 +33,7 @@ export type Capacity = Required<
 const DEFAULT_AUTO_RESUME = 3;
 /** Default minutes without progress after which a jawan run counts as stalled. */
 export const DEFAULT_STALL_MINUTES = 30;
-/** Default age (minutes without use) past which the disk keeper sweeps an artifact out of a busy cargo target. */
+/** Default age (minutes without use) past which the fallback sweep deletes an artifact out of an idle cargo target. */
 export const DEFAULT_DISK_SWEEP_STALE_MINUTES = 180;
 
 /** `capacity.autoResume`: resumes per run chain of stalled, limited or rate-limited runs (0 turns resuming off). */
@@ -54,7 +54,7 @@ export function stallMinutes(machine: Machine): number {
     return raw;
 }
 
-/** `capacity.diskSweepStaleMinutes`: how long an artifact in a busy cargo target must go unused before it is swept. */
+/** `capacity.diskSweepStaleMinutes`: how long an artifact in an idle cargo target must go unused before it is swept. */
 export function diskSweepStaleMinutes(machine: Machine): number {
     const raw = machine.capacity?.diskSweepStaleMinutes;
     if (raw === undefined) return DEFAULT_DISK_SWEEP_STALE_MINUTES;

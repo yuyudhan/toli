@@ -23,8 +23,8 @@ export type CapacityConfig = {
      */
     diskKeep?: boolean;
     /**
-     * Minutes without use after which the disk keeper sweeps an artifact out of a cargo target a build holds
-     * (src/fleet/stale-sweep.ts; default 180).
+     * Minutes without use after which the disk keeper's fallback sweep deletes an artifact out of a cargo target
+     * nothing uses (src/fleet/stale-sweep.ts; default 180).
      */
     diskSweepStaleMinutes?: number;
     /**

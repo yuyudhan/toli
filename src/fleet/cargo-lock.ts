@@ -109,14 +109,23 @@ function useBesideLocks(target: string, probes: UseProbes): string | null {
     );
 }
 
-/** Why `target` is in use right now (a build holds one of its locks, or anything a wipe checks), or null. */
-export function targetInUse(target: string, probes: UseProbes = LIVE_PROBES): string | null {
+export type IdleOutcome<T> = { ran: true; value: T } | { ran: false; reason: string };
+
+/**
+ * Run `body` while holding every cargo lock of `target`, only when no build holds one and nothing else uses the
+ * target (see useBesideLocks); otherwise run nothing and say why. A cargo that starts meanwhile waits on the lock.
+ */
+export function whileIdle<T>(target: string, body: () => T, probes: UseProbes = LIVE_PROBES): IdleOutcome<T> {
     const lock = flock();
-    if (lock === null) return "cannot load libc flock to take cargo's locks";
+    if (lock === null) return { ran: false, reason: "cannot load libc flock to take cargo's locks" };
     const held = tryLockAll(cargoLockFiles(target), lock);
-    if (typeof held === "string") return `a build holds ${held}`;
-    release(held, lock);
-    return useBesideLocks(target, probes);
+    if (typeof held === "string") return { ran: false, reason: `a build holds ${held}` };
+    try {
+        const busy = useBesideLocks(target, probes);
+        return busy === null ? { ran: true, value: body() } : { ran: false, reason: busy };
+    } finally {
+        release(held, lock);
+    }
 }
 
 /**
