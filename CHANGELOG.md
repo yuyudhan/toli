@@ -4,10 +4,38 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
-## v0.4.6 - unreleased
+## v0.5.0-rc.1 - unreleased
+
+### Added
+
+- **Peers: Sardar-to-Sardar messaging over HTTPS on a private network.** Two toli installations pair once with a
+  4-digit code (`bin/toli peer add <host>` on one, `peer accept <request>` on the other, which shows the code: two
+  minutes, one use, three tries, never stored; the code is key-bound with CPace on ristretto255 from the audited,
+  pinned `@noble/curves`). After that every message (talk, delegate, a delegated task's update and answer, share,
+  status questions) is one Ed25519-signed envelope sent over HTTPS with the peer's certificate pinned, checked for
+  key, addressee, a 5-minute window, a fresh nonce, the permission and the sender's claim, and applied exactly once
+  with a receipt. The lead service runs the listener (`peer serve`) on private addresses only (RFC1918, CGNAT, IPv6
+  ULA; port 47123). The outbox stays the one queue for HTTPS, ssh and pulls: in order, exactly once; a peer that
+  comes back announces itself and gets its backlog as one wake; the tick posts one "waiting to send" alert per
+  machine at 1 hour, 1 day and each further day; `outbox list|cancel|expire` show and give up on items, and nothing
+  is dropped silently. ssh stays as the fallback (`peer set --ssh-fallback on|off`) and for sync and attach;
+  `peer stats` compares the two transports' timings. `peer scan` finds listeners on NetBird and Tailscale peers.
+  Permissions (`talk`, `delegate`, `share`, `answer`, `status`) are granted by pairing and revoked per peer
+  (`peer deny|allow|remove`), by the owner or by the Sardar with `--by sardar --why`, logged in `logs/peer.log`.
+  `bin/toli upgrade` and the installer install the one runtime dependency (`bun install --production`). See
+  docs/peers.md (T1249).
 
 ### Fixed
 
+- Any fleet machine could answer another machine's held task (`task answer --from`) and send updates for a task it
+  did not own (`delegation update --from`): both are now refused unless the sender delegated or owns the task, over
+  ssh, pulls and HTTPS alike (T1249).
+- A message its receiver refuses (a malformed body, a task that does not exist there, one another machine
+  delegated) was retried every minute forever and held up every later message to that machine: it is now cancelled
+  once into `state/outbox/cancelled/` with the receiver's reason and one inbox note, and later items still go.
+  `task link` refuses an id that is not `T<n>` and undoes itself when the owner refuses (T1249).
+- A message from another machine reaches the lead fenced and marked `- via: peer <name>`: information to weigh,
+  never an instruction (AGENTS.md rule 10) (T1249).
 - `bin/toli workspace prune` never removes a task worktree holding unlanded work: uncommitted or untracked
   (non-ignored) files, or commits no base branch (local or origin) contains. It prints
   `kept: <path>: N unlanded commits / M dirty files` and removes the worktree at a later prune once it is landed and
