@@ -1,17 +1,7 @@
 import { existsSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
-import {
-    isValidName,
-    now,
-    out,
-    printJson,
-    readJson,
-    requireName,
-    ToliError,
-    withLock,
-    writeJsonAtomic,
-} from "../core/util.ts";
+import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { updateRun } from "../jawans/runs.ts";
 import { findProject } from "../projects/projects.ts";
@@ -19,7 +9,7 @@ import type { Workspace } from "../projects/strategy.ts";
 import { answerWake } from "./answer-wake.ts";
 import { recordDecision } from "./decisions.ts";
 import { type DelegationFields, reportDue, reportToDelegator } from "./delegation-report.ts";
-import { delegationTaskCommand, forwardEscalatedAnswer } from "./delegation-sync.ts";
+import { delegationTaskCommand, forwardEscalatedAnswer, requireDelegator } from "./delegation-sync.ts";
 import { listFleet, routeToOwner } from "./fleet-tasks.ts";
 import {
     HOLD_OPTIONS_MAX,
@@ -336,10 +326,10 @@ function answer(argv: string[]): void {
     args.maxPositional(2);
     const reply = args.pos(1, "answer");
     const from = args.str("from");
-    if (from !== undefined) requireName("machine", from);
     let heldFrom: string | undefined;
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
+        if (from !== undefined) requireDelegator(entry, from);
         const chosen = matchOption(entry.options ?? [], reply);
         entry.answer = reply;
         entry.answeredAt = now().toISOString();

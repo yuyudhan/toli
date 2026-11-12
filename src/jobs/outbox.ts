@@ -65,11 +65,16 @@ function parseAnswer(body: string): AnswerBody {
     return { id, answer };
 }
 
-/** The `bin/toli` arguments one item runs on its target (over ssh, or here when it was pulled); stdin is its body. */
-export function deliveryArgv(item: OutboxItem): string[] {
-    if (item.kind === "delegation") return ["delegation", "receive"];
-    if (item.kind === "update") return ["delegation", "update"];
-    if (item.kind === "link") return ["delegation", "link"];
+/**
+ * The `bin/toli` arguments one item runs on its target (over ssh, or here when it was pulled); stdin is its body.
+ * `verified`: the sender as this machine checked it (a pull): delegation records must then speak for that machine.
+ * Left out for an ssh push, whose target may run a toli without `--from` on those commands.
+ */
+export function deliveryArgv(item: OutboxItem, verified?: string): string[] {
+    const from = verified === undefined ? [] : ["--from", verified];
+    if (item.kind === "delegation") return ["delegation", "receive", ...from];
+    if (item.kind === "update") return ["delegation", "update", ...from];
+    if (item.kind === "link") return ["delegation", "link", ...from];
     if (item.kind === "share") return ["share", "receive"];
     if (item.kind === "answer") {
         const { id, answer } = parseAnswer(item.body);

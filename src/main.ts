@@ -66,7 +66,7 @@ const USAGE = `usage: bin/toli <command> [args]
   task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
   task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..." [--full]
   delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
-  delegation receive|update|link (JSON on stdin)
+  delegation receive|update|link [--from <machine>] (JSON on stdin)
   talk <machine> ["<words>"]
   share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
   share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
@@ -92,9 +92,9 @@ const USAGE = `usage: bin/toli <command> [args]
   job results [--unseen] [--json] | ack [--through <stamp>]
   schedule install|uninstall|status
   helper list [--json] | install <name>|--all | uninstall <name>|--all | run <name> | status [<name>] [--json]
-  inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
+  inbox add --from <machine> --title "<t>" [--via "<how it arrived>"] (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
   outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
-  peer init | status [--json] | list [--json]
+  peer init | status [--json] | list [--json] | apply (envelopes on stdin)
   wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]

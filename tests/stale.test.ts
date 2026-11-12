@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ENV, fleet, remoteSnapshot } from "./fleet-fixture.ts";
+import { ENV, editBacklog, fleet, remoteSnapshot } from "./fleet-fixture.ts";
 import { type Sandbox, SSH_STUB_ARGS, sandbox, withProject } from "./helpers.ts";
 
 const START = "2026-03-04T08:00:00.000Z";
@@ -198,9 +198,12 @@ describe("answers reach the waiting work", () => {
         expect(box.ok(["wake"])).toBe("nothing new");
     });
 
-    test("an answer forwarded by another machine's lead posts the wake, since no lead here ran the command", () => {
+    test("an answer forwarded by the delegating machine's lead posts the wake, since no lead here ran the command", () => {
         const box = coordinator();
         heldDecision(box);
+        editBacklog(box, (tasks) =>
+            Object.assign(tasks[0] ?? {}, { delegatedBy: { machine: "m2", id: "m2-1", at: START } }),
+        );
         const printed = box.ok(["task", "answer", "T1", "postgres", "--from", "m2"]).split("\n");
         expect(printed.slice(1)).toEqual([
             ...printedLines,

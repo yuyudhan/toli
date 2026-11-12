@@ -2,11 +2,28 @@
 // with a 4-digit code, the HTTPS listener, discovery and delivery timings.
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
-import { out, printJson, ToliError } from "../core/util.ts";
+import { isJsonObject, out, printJson, readStdin, ToliError } from "../core/util.ts";
+import { applyBatch } from "./envelope.ts";
 import { hasIdentity, initIdentity, loadIdentity, spokenFingerprint } from "./identity.ts";
 import { loadPeers, type Peer, peerSettings } from "./store.ts";
 
-const USAGE = "usage: toli peer init | status [--json] | list [--json]";
+const USAGE = "usage: toli peer init | status [--json] | list [--json] | apply (envelopes on stdin)";
+
+/**
+ * `peer apply`: the ssh transport's receiver. Stdin is `{envelopes: [...]}` (or one envelope); prints `{receipts}`.
+ * The same checks as over HTTPS: the signature, not the ssh login, says who sent each one.
+ */
+async function apply(argv: string[]): Promise<void> {
+    new Args(argv).maxPositional(0);
+    let value: unknown;
+    try {
+        value = JSON.parse(readStdin());
+    } catch {
+        throw new ToliError("peer apply needs envelope JSON on stdin");
+    }
+    const envelopes = isJsonObject(value) && Array.isArray(value.envelopes) ? value.envelopes : [value];
+    printJson({ receipts: await applyBatch(envelopes, loadIdentity().fingerprint) });
+}
 
 function init(argv: string[]): void {
     new Args(argv).maxPositional(0);
@@ -81,6 +98,9 @@ export async function peerCommand(argv: string[]): Promise<void> {
             return;
         case "list":
             list(rest);
+            return;
+        case "apply":
+            await apply(rest);
             return;
         default:
             throw new ToliError(USAGE);

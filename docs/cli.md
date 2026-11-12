@@ -79,7 +79,7 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
     task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
     task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..." [--full]
     delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
-    delegation receive|update|link (JSON on stdin)
+    delegation receive|update|link [--from <machine>] (JSON on stdin)
     talk <machine> ["<words>"]
     share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
     share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
@@ -182,7 +182,7 @@ Details: [harnesses.md](harnesses.md).
     job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
     job results [--unseen] [--json] | ack [--through <stamp>]
     schedule install|uninstall|status
-    inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
+    inbox add --from <machine> --title "<t>" [--via "<how it arrived>"] (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
     outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
     wake [--json]
 
@@ -252,11 +252,13 @@ Details: [fleet.md](fleet.md).
 
 ### Peers (HTTP messaging)
 
-    peer init | status [--json] | list [--json]
+    peer init | status [--json] | list [--json] | apply (envelopes on stdin)
 
 - `peer init` makes this installation's identity (an Ed25519 key and a TLS certificate in `config/peer/`); `upgrade`
   and the listener run it too. `peer status` shows the fingerprint to compare when pairing; `peer list` the paired
   peers with their permissions and addresses.
+- `peer apply` is the ssh transport's receiver: signed envelopes on stdin, one receipt each on stdout, with the same
+  checks as over HTTPS ([peers.md](peers.md#the-envelope)).
 
 Details: [peers.md](peers.md).
 

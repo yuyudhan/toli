@@ -9,7 +9,17 @@ import { join, relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { fleetMachine, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, readJson, stamp, ToliError, withLock, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
+import {
+    now,
+    out,
+    readJson,
+    requireName,
+    stamp,
+    ToliError,
+    withLock,
+    writeJsonAtomic,
+    writeTextAtomic,
+} from "../core/util.ts";
 import { fullText, HANDBACK_FULL_MINUTES, setFull } from "../fleet/full.ts";
 import { sendNow } from "../jobs/outbox.ts";
 import { loadBacklog, type Task, updateTask } from "./backlog.ts";
@@ -157,6 +167,21 @@ export function receiveLink(link: DelegationLink): string {
         entry.notes.push(`linked to ${link.from}/${link.task}`);
     });
     return `delegation-linked ${fleetId(loadMachine().name, task.id)} to ${link.from}/${link.task}`;
+}
+
+/**
+ * `task answer <id> --from <machine>`: another machine's lead answers only a task it delegated here; it never speaks
+ * for the user here, and never releases this machine's own holds.
+ */
+export function requireDelegator(task: Task, from: string): void {
+    requireName("machine", from);
+    const by = task.delegatedBy?.machine;
+    if (by === from) return;
+    throw new ToliError(
+        by === undefined
+            ? `${task.id} was not delegated here: only this machine's lead or user answers it, not ${from}`
+            : `${task.id} was delegated by ${by}, not ${from}: only it may answer`,
+    );
 }
 
 /** `task link <T<n>> <machine>/T<n>`: make another machine's task (delegated without `--for`) report to this one. */

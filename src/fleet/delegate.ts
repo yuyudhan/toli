@@ -192,27 +192,43 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
 }
 
 /**
- * `delegation receive|update|link` (JSON on stdin): what another machine's lead runs here over ssh. `receive`: a new
- * delegation (`delegate`); `update`: a delegated task's owner reports it (src/records/delegation-sync.ts); `link`:
- * this machine's task starts reporting to the delegator's (`task link`).
+ * `delegation receive|update|link [--from <machine>]` (JSON on stdin): what another machine's lead runs here (over
+ * ssh, or applied from a pull or a peer's signed message). `receive`: a new delegation (`delegate`); `update`: a
+ * delegated task's owner reports it (src/records/delegation-sync.ts); `link`: this machine's task starts reporting to
+ * the delegator's (`task link`). `--from` names the sender as the transport verified it; the JSON must speak for that
+ * machine only.
  */
 export function delegationCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
-    new Args(rest).maxPositional(0);
+    const args = new Args(rest, { values: ["from"] });
+    args.maxPositional(0);
+    const from = args.str("from");
+    if (from !== undefined) requireName("machine", from);
+    const claim = (claimed: string, what: string): void => {
+        if (from !== undefined && claimed !== from) throw new ToliError(`${what} cannot come from ${from}`);
+    };
     switch (sub) {
         case "receive": {
-            const { task, created } = receiveDelegation(parseDelegation(readStdin()));
+            const delegation = parseDelegation(readStdin());
+            claim(delegation.from, `a delegation from ${delegation.from}`);
+            const { task, created } = receiveDelegation(delegation);
             out(`delegation-accepted ${fleetId(loadMachine().name, task.id)} ${created ? "created" : "existing"}`);
             return;
         }
-        case "update":
-            out(applyUpdate(parseUpdate(readStdin())));
+        case "update": {
+            const update = parseUpdate(readStdin());
+            claim(update.owner, `an update for ${update.owner}'s task`);
+            out(applyUpdate(update));
             return;
-        case "link":
-            out(receiveLink(parseLink(readStdin())));
+        }
+        case "link": {
+            const link = parseLink(readStdin());
+            claim(link.from, `a link from ${link.from}`);
+            out(receiveLink(link));
             return;
+        }
         default:
-            throw new ToliError("usage: toli delegation receive|update|link (JSON on stdin)");
+            throw new ToliError("usage: toli delegation receive|update|link [--from <machine>] (JSON on stdin)");
     }
 }
 

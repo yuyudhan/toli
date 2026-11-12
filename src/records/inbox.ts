@@ -32,27 +32,38 @@ export function listInbox(): InboxItem[] {
         });
 }
 
-/** Store one inbox message; used locally and by workers delivering over ssh. */
-export function addInboxItem(from: string, title: string, body: string): string {
+/**
+ * Store one inbox message; used locally and by deliveries from other machines. `via` names how a message from
+ * another machine arrived (`peer <name> (fingerprint ...)` for a verified peer): the wake fences such words.
+ */
+export function addInboxItem(from: string, title: string, body: string, via?: string): string {
     const at = now();
     let path = join(paths.inboxDir(), `${stamp(at)}-${from}.md`);
     // Same-millisecond deliveries get the next free millisecond so neither overwrites the other.
     for (let bump = 1; existsSync(path); bump++) {
         path = join(paths.inboxDir(), `${stamp(new Date(at.getTime() + bump))}-${from}.md`);
     }
-    writeTextAtomic(path, `# ${title}\n\n- from: ${from}\n- received: ${at.toISOString()}\n\n${body.trimEnd()}\n`);
+    const header = [
+        `- from: ${from}`,
+        ...(via === undefined ? [] : [`- via: ${via}`]),
+        `- received: ${at.toISOString()}`,
+    ];
+    writeTextAtomic(path, `# ${title}\n\n${header.join("\n")}\n\n${body.trimEnd()}\n`);
     return path;
 }
 
 function add(argv: string[]): void {
-    const args = new Args(argv, { values: ["from", "title"] });
+    const args = new Args(argv, { values: ["from", "title", "via"] });
     args.maxPositional(0);
     const from = requireName("machine", args.str("from"));
     const title = args.str("title");
     if (!title) throw new ToliError("inbox add needs --title");
+    const via = args.str("via");
+    if (via !== undefined && !/^[\w .:()/-]{1,120}$/.test(via))
+        throw new ToliError("inbox add: --via is one short line");
     const body = readStdin();
     if (body.trim() === "") throw new ToliError("inbox add needs the message body on stdin");
-    out(addInboxItem(from, title, body));
+    out(addInboxItem(from, title, body, via));
 }
 
 function list(argv: string[]): void {

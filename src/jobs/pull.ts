@@ -182,7 +182,7 @@ function applyBatch(sender: FleetMachine, batch: PendingBatch, report: PullRepor
         }
         let argv: string[];
         try {
-            argv = deliveryArgv(item);
+            argv = deliveryArgv(item, sender.name);
         } catch (error) {
             report.errors.push(`${sender.name} ${id}: ${error instanceof Error ? error.message : String(error)}`);
             break;
