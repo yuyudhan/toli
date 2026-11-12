@@ -367,4 +367,31 @@ describe("live runs without a task id, and tasks that wait", () => {
         box.ok(["task", "start", "T1", "--agent", "j-20260304-080000-dddd"], { now: "2026-03-04T10:01:00.000Z" });
         expect(box.ok(["digest"], { now: "2026-03-04T10:30:00.000Z" })).toContain("T1 (alpha) is active but its run");
     });
+
+    test("a parked task (active, waiting on something, no jawan) is not flagged, and every task list says what it waits on", () => {
+        const box = coordinator();
+        box.ok(["task", "add", "alpha", "staging browser test"]);
+        box.ok(["task", "wait", "T1", "--on", "the v0.3.4 staging deploy"], { now: START });
+        const at = { now: "2026-03-04T10:00:00.000Z" };
+        expect(JSON.parse(box.ok(["fleet", "check", "--local", "--json"], at))).toMatchObject({
+            stale: [],
+            waiting: [],
+        });
+        // Without its waitingOn, an active task with no agent reads as orphaned in the lists the fleet update reads.
+        expect(box.ok(["task", "list"], at)).toContain("staging browser test\t(waiting on: the v0.3.4 staging deploy)");
+        expect(box.ok(["task", "list", "--fleet"], at)).toContain(
+            "m1/T1\tactive\talpha\tstaging browser test\t(waiting on: the v0.3.4 staging deploy)",
+        );
+    });
+
+    test("an active task with no jawan and nothing it waits on is still flagged by the fleet check", () => {
+        const box = coordinator();
+        box.ok(["task", "add", "alpha", "orphaned slice"]);
+        box.ok(["task", "start", "T1"], { now: START });
+        const report = JSON.parse(box.ok(["fleet", "check", "--local", "--json"], { now: "2026-03-04T10:00:00.000Z" }));
+        expect(report.stale).toHaveLength(1);
+        expect(report.stale[0].line).toBe("T1 (alpha) is active but no running jawan is recorded on it");
+        expect(report.waiting).toEqual([{ id: "T1", project: "alpha", status: "active", title: "orphaned slice" }]);
+        expect(box.ok(["task", "list", "--fleet"])).not.toContain("waiting on");
+    });
 });

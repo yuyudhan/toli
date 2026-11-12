@@ -149,6 +149,7 @@ function line(task: FleetTask): string {
     if (task.status === "held" && task.question) extras.push(`question: ${task.question}`);
     if (task.answer !== undefined) extras.push(`answer: ${task.answer}`);
     if (task.agent) extras.push(`agent: ${task.agent}`);
+    if (task.waitingOn !== undefined) extras.push(`waiting on: ${task.waitingOn}`);
     return `${task.fleetId}\t${task.status}\t${task.project}\t${task.title}${extras.length ? `\t(${extras.join("; ")})` : ""}`;
 }
 

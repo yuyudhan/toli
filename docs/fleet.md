@@ -221,8 +221,9 @@ Nothing may sit idle silently, away mode (`/afk`) included. Two checks run from 
   also records the task on a run spawned without `--task`).
 - **Tasks that wait.** `bin/toli task wait T<n> --on "<what>"` marks an active task as deliberately waiting (a
   deferred spawn, a push, another task). Next names it as `waiting on <what>` after the stale tasks, never as a
-  re-dispatch; the tick and `fleet check` leave it out. Recording a new jawan or holding the task ends the wait. A
-  machine's own helpers that defer or trigger work call it for the tasks they hold back.
+  re-dispatch; the tick and `fleet check` leave it out, and `task list` (`--fleet` too) shows `(waiting on: <what>)`
+  on its line. Recording a new jawan or holding the task ends the wait. A machine's own helpers that defer or trigger
+  work call it for the tasks they hold back.
 - **Idle machines.** `fleet check` probes every machine (as `fleet status` does) and reads each reachable one's own
   backlog (`fleet check --local --json` over ssh). A reachable machine with no active run while queued work, or a
   stale active task, exists for a project cloned there is idle; every machine's stale tasks are named too. `--wake`

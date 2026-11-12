@@ -132,6 +132,7 @@ function describe(task: Task): string {
     const extras: string[] = [];
     if (task.status === "held" && task.question) extras.push(`question: ${task.question}`);
     if (task.agent) extras.push(`agent: ${task.agent}`);
+    if (task.waitingOn !== undefined) extras.push(`waiting on: ${task.waitingOn}`);
     if (task.pinned !== undefined) extras.push(task.pinned === "" ? "pinned" : `pinned: ${task.pinned}`);
     if (task.commit) extras.push(`commit: ${task.commit}`);
     if (task.report) extras.push(`report: ${task.report}`);
@@ -243,7 +244,7 @@ function wait(argv: string[]): void {
         entry.startedAt ??= now().toISOString();
         entry.waitingOn = on;
     });
-    out(`${describe(task)}\t(waiting on: ${on})`);
+    out(describe(task));
 }
 
 function done(argv: string[]): void {
