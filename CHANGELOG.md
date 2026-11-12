@@ -4,7 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
-## Unreleased
+## v0.4.4 - unreleased
+
+### Upgrading
+
+- Linux machines that added a temporary `toli-tick.service.d/*killmode.conf` drop-in can remove it after
+  `bin/toli schedule install` has rewritten `toli-tick.service` with `KillMode=process`, then run
+  `systemctl --user daemon-reload`.
+- Machines still on v0.4.2 or older need the first-hop steps from the v0.4.3 notes: after `bin/toli upgrade`, run
+  `bin/toli lead install` and `bin/toli schedule install` by hand once (docs/install.md#upgrading).
 
 ### Added
 
@@ -16,7 +24,8 @@ one. See docs/releasing.md.
   marionette, or a temp-dir `--user-data-dir`). Only the run's own processes count: its tree, sampled while it runs,
   and on Linux the processes that inherited its `TOLI_RUN_ID`. A default-profile browser is never touched. The
   brief templates and the dispatch skill tell browser and screenshot jawans to close their browsers before reporting
-  (T1121).
+  (T1121). Browsers are recognised by their executable (Chrome, Chromium, chrome-headless-shell, Edge, Brave,
+  Firefox), so a script, `npx` tool or MCP server whose name or arguments merely mention one is never closed.
 
 ### Changed
 
@@ -33,12 +42,15 @@ one. See docs/releasing.md.
   (`/Library/LaunchDaemons/com.toli.*.plist`) and keep it there: status reports it installed, in the system domain,
   instead of "not installed"; install rewrites and reloads the daemon as root through `sudo -n` (changing nothing
   without cached credentials) and retires a LaunchAgent of the same label instead of adding a second copy; uninstall
-  removes the daemon. Machines without one keep the user agent in `~/Library/LaunchAgents` (docs/helpers.md) (T1119).
+  removes the daemon. Machines without one keep the user agent in `~/Library/LaunchAgents` (docs/helpers.md). When a
+  `sudo -n` step fails, install leaves the daemon as it was: a failed write removes the staged plist, and a failed
+  bootout puts the previous plist back, still loaded (T1119).
 - `bin/toli inbox ack` and `bin/toli job ack` no longer acknowledge results that arrived after the lead was shown its
   wake, which were then never shown to any lead. An ack now covers only what was shown: each `[toli wake]` (and the
   headless lead turn) ends with `bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>` for the
   items it showed, the digest's Next block gives the same for the results it lists, and a plain `ack` stops at the
-  newest item a wake, `inbox list` or `job results` showed. Newer items stay unread and wake the lead again (T1124).
+  newest item a wake, `inbox list` or `job results` showed. Newer items stay unread and wake the lead again. Results
+  delivered by a toli that predates this wake the lead once more after the upgrade, then ack as usual (T1124).
 - On Linux with systemd, the background work the minute tick starts (the disk keeper, the update check and
   `fleet check --wake`) now runs to the end. `toli-tick.service` uses `KillMode=process`; before, systemd killed
   them with the tick's cgroup as soon as `bin/toli job tick` exited, so the disk keeper never freed space. Run
