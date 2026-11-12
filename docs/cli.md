@@ -141,14 +141,15 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
 - `push` logs each push that moved origin's branch in this machine's `data/pushes.jsonl` (old..new sha, the issuing
   machine and task, the owner's quoted word; inside `exec`, the issuing machine and task by default), and `digest`
   shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog.
-- `gate run` runs a long verification command (a gate, such as `just verify all`) once per commit and recipe: a gate
-  that already passed at HEAD is skipped, a running one is waited on instead of started twice, and a new one runs in
-  the background so it survives its caller, in one heavy-build slot at one slot's share of the cores. It never times
-  out; only a gate with no new output, checkout change or CPU use for `--stall` minutes (`capacity.gateStallMinutes`,
-  default 30) is stopped. `gate check` exits 0 only when HEAD already passed the recipe (for pre-push hooks);
-  `gate status` lists a project's gates, newest first. `push --gate "<recipe>"` runs the gate first and pushes only
-  once it passed; a push whose project has a pre-push hook runs in one heavy-build slot
-  ([delivery.md](delivery.md#gates-long-checks-run-once-per-commit)).
+- `gate run` runs a long verification command (a gate, such as `just verify all`) once per tree and recipe: a gate
+  that already passed on HEAD's tree (at any commit with the same files) is skipped, a running one is waited on instead
+  of started twice, and a new one runs in the background so it survives its caller, in one heavy-build slot at one
+  slot's share of the cores. It never times out; only a gate with no new output, checkout change or CPU use for
+  `--stall` minutes (`capacity.gateStallMinutes`, default 30) is stopped. `gate check` exits 0 only when this machine's
+  gate runner recorded a sealed pass of the recipe on the tree (HEAD's, which must be exactly the checkout, or
+  `--sha`'s commit), for pre-push hooks; a record edited or copied by hand is refused. `gate status` lists a project's
+  gates, newest first. `push --gate "<recipe>"` runs the gate first and pushes only once it passed; a push whose
+  project has a pre-push hook runs in one heavy-build slot ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
 
 ### Jawans and harnesses
 

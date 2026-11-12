@@ -80,22 +80,24 @@ on the machine whose clone pushes (`bin/toli project set <p> --standing-push yes
 refuses a detached HEAD. `pr create` refuses until the current branch is on origin and contains local HEAD, then prints
 the PR/MR URL. `--task` runs the command in the task's workspace.
 
-## Gates: long checks run once per commit
+## Gates: long checks run once per tree
 
 A gate is a project's long verification command, such as `just verify all`, that must pass before a push. It can
-take hours, so toli runs it at most once per commit:
+take hours, so toli runs it at most once per tree (the git tree of the commit: the exact files, whatever the commit's
+parents, message or author):
 
     bin/toli gate run <project> [--task T<n>] --recipe "just verify all" [--stall <minutes>] [--json]
     bin/toli gate check <project> [--task T<n>] [--sha <commit>] --recipe "just verify all" [--json]
     bin/toli gate status <project> [--json]
     bin/toli push <project> --gate "just verify all"
 
-- `gate run` works in the same checkout as `push` and keys the result on its HEAD commit and the exact recipe text.
-  The record and the full output live in `state/gates/<project>/`; every decision (skip, attach, start, stall,
-  outcome) is also one line in `logs/gates.log`.
-- Already passed at this commit: it says so (`already passed at <sha> ...; skipping the re-run`) and exits 0
+- `gate run` works in the same checkout as `push` and keys the result on the tree of its HEAD commit and the exact
+  recipe text, so an amended, rebased or empty commit that holds the same files shares the result. The record and the
+  full output live in `state/gates/<project>/`; every decision (skip, attach, start, stall, outcome, proof use) is
+  also one line in `logs/gates.log`.
+- Already passed on this tree: it says so (`already passed at <sha> on tree <tree> ...; skipping the re-run`) and exits 0
   without running. A failed, stalled or killed gate is never reused: the next `gate run` runs it again.
-- Already running at this commit (another jawan or hook started it): it waits for that run and exits with its result.
+- Already running on this tree (another jawan or hook started it): it waits for that run and exits with its result.
   It never starts a second copy.
 - Otherwise it starts the gate in a background runner of its own, then waits for it. The runner outlives whoever
   started it: a jawan ending, a hook being killed, Ctrl-C or a dropped ssh session leave the gate running, and the
@@ -114,25 +116,35 @@ take hours, so toli runs it at most once per commit:
   `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` at one slot's share of the cores
   ([fleet.md](fleet.md#heavy-build-slots)), so a recipe that calls cargo directly (through `just`, without toli's
   cargo shim) cannot take every core. A live-stack project's gate skips the slot, still at one slot's share.
-- `push --gate "<recipe>"` runs the gate this way first and pushes only if it passed at HEAD. The push's hooks see
-  `TOLI_GATE_SHA` and `TOLI_GATE_RECIPE`. In a project with a pre-push hook, `bin/toli push` (with or without
-  `--gate`) runs `git push` in one heavy-build slot the same way, since the hook may run the long check itself; a
-  `bin/toli gate run` the hook starts runs inside that slot.
+- `push --gate "<recipe>"` runs the gate this way first and pushes only if it passed on HEAD's tree. The push's hooks
+  see `TOLI_GATE_PROJECT`, `TOLI_GATE_SHA`, `TOLI_GATE_TREE` and `TOLI_GATE_RECIPE`: information, not proof. In a
+  project with a pre-push hook, `bin/toli push` (with or without `--gate`) runs `git push` in one heavy-build slot the
+  same way, since the hook may run the long check itself; a `bin/toli gate run` the hook starts runs inside that slot.
+- A pass is sealed with an HMAC over its project, tree, recipe text and end time, keyed by `state/gate-key` (made once
+  per installation, owner-only). Only the gate runner writes it, and `gate run` and `gate check` count a record only
+  when its proof verifies for the tree and recipe asked about: a record edited to say `passed`, copied to another
+  tree's file, or invented gets a `forged` line in `logs/gates.log` and is ignored. A hook must therefore ask
+  `gate check`; reading `TOLI_GATE_*` (which anyone can set) proves nothing. Records made before the tree key
+  (named by commit sha, no proof) are never reused; each gate runs once more.
 
-A project whose own pre-push hook runs the same long check can skip it when toli already passed it on that commit.
-Put this at the top of the hook, before the check (`project` is the project's toli name, `toli` the path to toli's
-`bin/toli`):
+A project whose own pre-push hook runs the same long check can skip it when toli already passed it on the tree it is
+about to push. Put this at the top of the hook, before the check (`project` is the project's toli name, `toli` the
+path to toli's `bin/toli`, and the recipe the exact text given to `gate run` / `push --gate`):
 
 ```sh
 toli=/path/to/toli/bin/toli
 if [ -x "$toli" ] && "$toli" gate check <project> --recipe "just verify all" >/dev/null 2>&1; then
-    echo "pre-push: just verify all already passed on this commit (bin/toli gate); skipping it"
+    echo "pre-push: just verify all already passed on this tree (bin/toli gate); skipping it"
     exit 0
 fi
 ```
 
-Use `gate check`, not the `TOLI_GATE_*` variables alone, to decide: the check reads the recorded result for the
-commit itself.
+The hook keeps working outside toli: without `bin/toli` (or with a failed check) it falls through to the full check.
+`gate check` without `--sha` also requires the checkout to be exactly HEAD, since the hook tests the working tree;
+a changed or untracked file, or a tree that never passed, runs the check in full. A hook that decides per pushed ref
+(git's stdin lines) passes `--sha <local sha>`, which names that commit's tree and ignores the checkout, as toli's own
+hook does. A passing check logs one `proof` line (recipe, tree, the commit it passed at, the proof's first 12 hex
+digits) in `logs/gates.log`, so every skipped re-run can be traced to a gate that really ran.
 
 toli's own pre-push hook (`.githooks/pre-push`) works this way for `bun run check`: a pushed commit that already
 passed is not checked again, and a checkout that is exactly the pushed commit runs the checks as a gate, so the

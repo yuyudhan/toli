@@ -1,29 +1,31 @@
-// Gates: a project's long verification command (e.g. `just verify all`) run at most once per commit. A record per
-// HEAD sha and recipe lives in state/gates/<project>/; a passed one is never run again, a running one is attached to,
-// never started twice. The gate itself runs under a detached runner (`bin/toli gate runner <record>`) that outlives
-// its caller (a jawan ending, a hook timing out, ssh dropping) and has no time limit: it only stops a gate that made no
-// progress for the stall minutes (config/machine.json capacity.gateStallMinutes): its log did not grow, its checkout
-// did not change and its process tree burned almost no CPU (the jawan stall check, src/jawans/progress.ts). A build
-// that links silently for a long time keeps its gate alive through its CPU use.
+// Gates: a project's long verification command (e.g. `just verify all`) run at most once per tree. A record per
+// tree (the git tree of HEAD, so a commit with the same files shares the result) and recipe lives in
+// state/gates/<project>/; a passed one is never run again, a running one is attached to, never started twice. A pass
+// carries a proof only this installation's runner can write (src/forge/gate-record.ts): a pre-push hook asks
+// `bin/toli gate check` for it, so an environment variable set by hand never skips anything. The gate itself runs
+// under a detached runner (`bin/toli gate runner <record>`) that outlives its caller (a jawan ending, a hook timing
+// out, ssh dropping) and has no time limit: it only stops a gate that made no progress for the stall minutes
+// (config/machine.json capacity.gateStallMinutes): its log did not grow, its checkout did not change and its process
+// tree burned almost no CPU (the jawan stall check, src/jawans/progress.ts). A build that links silently for a long
+// time keeps its gate alive through its CPU use.
 import { spawn as spawnChild } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { Args } from "../core/args.ts";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { type Machine, machineSettings } from "../core/config.ts";
-import { checkoutDirty, git, headSha } from "../core/git.ts";
+import { checkoutDirty, git, headSha, treeSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, pidAlive, printJson, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
+import { now, out, pidAlive, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { launchInScope, scopeFailedWarning, withBuildSlot } from "../fleet/build-slots.ts";
 import type { Argv } from "../jawans/scope.ts";
-import { toliSelfCheckout } from "../projects/projects.ts";
-import { workDir } from "../projects/workspace.ts";
 import {
     type GateRecord,
     logDecision,
     outcomeText,
+    provenPass,
     readRecord,
     reconcile,
     recordFile,
+    sealPass,
     short,
     updateRecord,
 } from "./gate-record.ts";
@@ -31,7 +33,6 @@ import { superviseRecipe } from "./gate-supervise.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
-const TASK_FLAG = "task";
 const DEFAULT_STALL_MINUTES = 30;
 /** How often an attached caller re-reads the record and the log. */
 const FOLLOW_POLL_MS = 250;
@@ -43,20 +44,6 @@ function gateStallMinutes(machine: Partial<Machine>): number {
     if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0)
         throw new ToliError("config/machine.json capacity.gateStallMinutes must be a positive number");
     return raw;
-}
-
-/** `--stall <minutes>`; undefined when absent (the gate then uses capacity.gateStallMinutes). */
-function parseStall(value: string | undefined): number | undefined {
-    if (value === undefined) return undefined;
-    const minutes = Number(value);
-    if (!Number.isFinite(minutes) || minutes <= 0) throw new ToliError("--stall must be a positive number of minutes");
-    return minutes;
-}
-
-function requireRecipe(args: Args): string {
-    const recipe = args.str("recipe");
-    if (recipe === undefined || recipe.trim() === "") throw new ToliError('missing --recipe "<shell command>"');
-    return recipe;
 }
 
 /** Copy the log's complete new lines (all of it once the gate ended) to stdout; returns the new offset. */
@@ -132,7 +119,7 @@ export type GateRun = {
  * not ignored ones: either can change what a gate sees). Whether it differs comes from git exit statuses
  * (checkoutDirty); the `git status --porcelain` lines only name the changes, and may be empty if git's output was lost.
  */
-function checkoutChanges(dir: string): string[] | null {
+export function checkoutChanges(dir: string): string[] | null {
     if (!checkoutDirty(dir)) return null;
     const status = git(dir, ["status", "--porcelain"]);
     if (status.code !== 0) throw new ToliError(`git status failed in ${dir}: ${status.stderr.trim()}`);
@@ -140,7 +127,7 @@ function checkoutChanges(dir: string): string[] | null {
 }
 
 /** At most five changed paths, then how many more. */
-function changesText(changes: string[]): string {
+export function changesText(changes: string[]): string {
     if (changes.length === 0) return "changes git status did not list";
     const shown = changes.slice(0, 5).map((line) => line.slice(3));
     return changes.length > shown.length
@@ -149,8 +136,8 @@ function changesText(changes: string[]): string {
 }
 
 /**
- * Run a gate at the checkout's HEAD, cached: skip it when it already passed there, attach when it is running, else
- * start it under a detached runner and attach. Resolves to the gate's final record.
+ * Run a gate at the checkout's HEAD, cached by tree: skip it when it already passed on this tree (at any commit), attach
+ * when it is running, else start it under a detached runner and attach. Resolves to the gate's final record.
  */
 export async function runGate(input: GateRun): Promise<GateRecord> {
     const say = input.json ? warn : out;
@@ -161,15 +148,20 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
                 "result would not belong to any commit and could not be reused; commit them (or set them aside) first",
         );
     const sha = headSha(input.dir);
-    const file = recordFile(input.project, sha, input.recipe);
+    const tree = treeSha(input.dir);
+    const file = recordFile(input.project, tree, input.recipe);
     const decided = withLock(`${file}.lock`, (): { record: GateRecord; action: "skip" | "attach" | "start" } => {
         const existing = readRecord(file);
-        if (existing?.status === "passed") return { record: existing, action: "skip" };
+        if (provenPass(existing, input.project, tree, input.recipe) && existing !== null)
+            return { record: existing, action: "skip" };
+        if (existing?.status === "passed")
+            logDecision(existing, "forged", `${file} says passed but carries no valid proof; running the gate again`);
         if (existing?.status === "running" && existing.pid !== null && pidAlive(existing.pid))
             return { record: existing, action: "attach" };
         const record = startRunner(file, {
             project: input.project,
             sha,
+            tree,
             recipe: input.recipe,
             dir: input.dir,
             status: "running",
@@ -193,7 +185,9 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
     });
     const { record, action } = decided;
     if (action === "skip") {
-        const message = `${record.recipe} already passed at ${short(sha)} (${record.endedAt}), log ${record.log}; skipping the re-run`;
+        const message =
+            `${record.recipe} already passed at ${short(record.sha)} on tree ${short(tree)} (${record.endedAt}, ` +
+            `proof ${short(record.proof ?? "")}), log ${record.log}; skipping the re-run`;
         logDecision(record, "skip", message);
         say(`gate: ${message}`);
         return record;
@@ -216,7 +210,7 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
  * the host has one, run the recipe; stop it only when it stalls. A recipe whose scope systemd-run could not make never
  * ran: it runs once more without the scope, after one warning line in the log.
  */
-async function runGateProcess(file: string): Promise<void> {
+export async function runGateProcess(file: string): Promise<void> {
     const record = readRecord(file);
     if (record === null) throw new ToliError(`gate record ${file} is gone`);
     // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
@@ -249,103 +243,21 @@ async function runGateProcess(file: string): Promise<void> {
             } else if (end.code !== 0) {
                 entry.status = "failed";
             } else {
-                // A pass counts only if the checkout still was exactly the commit when the gate ended.
+                // A pass counts only if the checkout still was exactly the tree when the gate ended.
                 const head = headSha(entry.dir);
                 const changes = checkoutChanges(entry.dir);
-                if (head !== entry.sha) {
+                if (treeSha(entry.dir) !== entry.tree) {
                     entry.status = "failed";
-                    entry.reason = `HEAD moved to ${short(head)} while it ran, so the pass may not hold for ${short(entry.sha)}`;
+                    entry.reason = `HEAD moved to ${short(head)} (another tree) while it ran, so the pass may not hold for ${short(entry.tree)}`;
                 } else if (changes !== null) {
                     entry.status = "failed";
                     entry.reason = `the checkout changed while it ran (${changesText(changes)}), so the pass may not hold for ${short(entry.sha)}`;
                 } else {
                     entry.status = "passed";
+                    sealPass(entry);
                 }
             }
         });
         logDecision(final, final.status, outcomeText(final));
     });
-}
-
-async function gateRun(argv: string[]): Promise<number> {
-    const args = new Args(argv, { booleans: ["json"], values: [TASK_FLAG, "recipe", "stall"] });
-    args.maxPositional(1);
-    const project = args.pos(0, "project");
-    const recipe = requireRecipe(args);
-    const stallMinutes = parseStall(args.str("stall"));
-    const dir = toliSelfCheckout(project) ?? workDir(project, args.str(TASK_FLAG)).dir;
-    const json = args.bool("json");
-    const record = await runGate({ project, dir, recipe, stallMinutes, json });
-    if (json) printJson(record);
-    if (record.status === "passed") return 0;
-    warn(`toli: gate ${outcomeText(record)}`);
-    return 1;
-}
-
-function gateCheck(argv: string[]): number {
-    const args = new Args(argv, { booleans: ["json"], values: [TASK_FLAG, "recipe", "sha"] });
-    args.maxPositional(1);
-    const project = args.pos(0, "project");
-    const recipe = requireRecipe(args);
-    const dir = toliSelfCheckout(project) ?? workDir(project, args.str(TASK_FLAG)).dir;
-    const sha = headSha(dir, args.str("sha") ?? "HEAD");
-    const record = reconcile(recordFile(project, sha, recipe));
-    if (record?.status !== "passed") {
-        const last = record === null ? "" : `; its last run is ${record.status}, log ${record.log}`;
-        warn(`gate: ${recipe} has not passed at ${short(sha)}${last}`);
-        return 1;
-    }
-    if (args.bool("json")) printJson(record);
-    else out(`gate: ${recipe} passed at ${short(sha)} (${record.endedAt}), log ${record.log}`);
-    return 0;
-}
-
-function gateStatus(argv: string[]): number {
-    const args = new Args(argv, { booleans: ["json"] });
-    args.maxPositional(1);
-    const project = args.pos(0, "project");
-    const dir = paths.gatesDir(project);
-    const records = existsSync(dir)
-        ? readdirSync(dir)
-              .filter((name) => name.endsWith(".json"))
-              .map((name) => reconcile(join(dir, name)))
-              .filter((record): record is GateRecord => record !== null)
-              .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-        : [];
-    if (args.bool("json")) {
-        printJson(records);
-        return 0;
-    }
-    if (records.length === 0) {
-        out(`no gates recorded for ${project}`);
-        return 0;
-    }
-    for (const record of records)
-        out(
-            [record.status, short(record.sha), record.startedAt, record.endedAt ?? "-", record.recipe, record.log].join(
-                "\t",
-            ),
-        );
-    return 0;
-}
-
-/** `bin/toli gate run|check|status`; `gate runner <record>` is the detached runner `gate run` starts. */
-export async function gateCommand(argv: string[]): Promise<number> {
-    const [sub, ...rest] = argv;
-    switch (sub) {
-        case "run":
-            return await gateRun(rest);
-        case "check":
-            return gateCheck(rest);
-        case "status":
-            return gateStatus(rest);
-        case "runner": {
-            const args = new Args(rest);
-            args.maxPositional(1);
-            await runGateProcess(args.pos(0, "record"));
-            return 0;
-        }
-        default:
-            throw new ToliError("usage: bin/toli gate run|check|status <project> ...");
-    }
 }

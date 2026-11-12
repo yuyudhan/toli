@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { currentBranch, git, headSha, isGitRepo } from "../core/git.ts";
+import { currentBranch, git, headSha, isGitRepo, treeSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "../core/util.ts";
@@ -239,11 +239,12 @@ function hasPrePushHook(dir: string): boolean {
  * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. A push that moved
  * origin's branch is recorded in this machine's push log (src/records/push-log.ts), attributed with `--by`/`--for`/
  * `--word` (or the issuing machine and task `bin/toli exec` put in the environment). With `--gate "<recipe>"` the
- * gate runs first (cached per commit, src/forge/gate.ts) and the push happens only once it passed at HEAD; the push's
- * hooks get TOLI_GATE_SHA and TOLI_GATE_RECIPE. A project with a pre-push hook pushes in one heavy-build slot and its
- * memory-capped scope (src/fleet/build-slots.ts), since the hook may run the long check itself: its cargo gets one
- * slot's share of the cores even through `just` without toli's cargo shim, and a `bin/toli gate run` it starts rides
- * on that slot.
+ * gate runs first (cached per tree, src/forge/gate.ts) and the push happens only once it passed on HEAD's tree; the
+ * push's hooks get TOLI_GATE_PROJECT, TOLI_GATE_SHA, TOLI_GATE_TREE and TOLI_GATE_RECIPE, and decide whether to skip
+ * their own run with `bin/toli gate check` (the variables alone prove nothing: anyone can set them). A project with a
+ * pre-push hook pushes in one heavy-build slot and its memory-capped scope (src/fleet/build-slots.ts), since the hook
+ * may run the long check itself: its cargo gets one slot's share of the cores even through `just` without toli's cargo
+ * shim, and a `bin/toli gate run` it starts rides on that slot.
  */
 export async function pushCommand(argv: string[]): Promise<void> {
     const args = new Args(argv, { values: [TASK_FLAG, "by", "for", "word", "gate"] });
@@ -262,12 +263,14 @@ export async function pushCommand(argv: string[]): Promise<void> {
             throw new ToliError(
                 `refusing to push: gate ${recipe} ${gate.status} at ${gate.sha.slice(0, 12)}${gate.reason === undefined ? "" : ` (${gate.reason})`}, log ${gate.log}`,
             );
-        const head = headSha(dir);
-        if (head !== gate.sha)
+        const tree = treeSha(dir);
+        if (tree !== gate.tree)
             throw new ToliError(
-                `refusing to push: HEAD moved to ${head.slice(0, 12)} while the gate ran on ${gate.sha.slice(0, 12)}; run the push again`,
+                `refusing to push: HEAD moved to ${headSha(dir).slice(0, 12)} (another tree) while the gate ran on ${gate.sha.slice(0, 12)}; run the push again`,
             );
-        gateEnv.TOLI_GATE_SHA = gate.sha;
+        gateEnv.TOLI_GATE_PROJECT = project;
+        gateEnv.TOLI_GATE_SHA = headSha(dir);
+        gateEnv.TOLI_GATE_TREE = tree;
         gateEnv.TOLI_GATE_RECIPE = recipe;
     }
     const before = git(dir, ["ls-remote", "origin", ref]);

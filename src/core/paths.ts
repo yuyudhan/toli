@@ -175,8 +175,10 @@ export const paths = {
     buildSlotsDir: () => join(repoRoot(), "state", "build-slots"),
     /** The cargo shim jawans get first on PATH; it routes heavy cargo commands through a build slot. */
     buildShimsDir: () => join(repoRoot(), "bin", "shims"),
-    /** Gate records and logs of a project (`bin/toli gate`): state/gates/<project>/<sha>-<recipe hash>.{json,log}. */
+    /** Gate records and logs of a project (`bin/toli gate`): state/gates/<project>/<tree>-<recipe hash>.{json,log}. */
     gatesDir: (project: string) => join(repoRoot(), "state", "gates", project),
+    /** This installation's secret that seals a passed gate record, so only a gate run here can have written one. */
+    gateKey: () => join(repoRoot(), "state", "gate-key"),
     /** Every gate skip, attach, start, stall and outcome (src/forge/gate.ts). */
     gatesLog: () => join(repoRoot(), "logs", "gates.log"),
     /** Private per-installation helpers, never committed: local/{scripts,hooks,helpers.json,README.md}. */

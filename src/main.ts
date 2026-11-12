@@ -12,7 +12,7 @@ import { resourcesCommand } from "./fleet/resources.ts";
 import { shareCommand } from "./fleet/share.ts";
 import { talkCommand } from "./fleet/talk.ts";
 import { forgeCommand, prCommand, pushCommand } from "./forge/forge.ts";
-import { gateCommand } from "./forge/gate.ts";
+import { gateCommand } from "./forge/gate-cli.ts";
 import { guidanceCommand } from "./harness/guidance.ts";
 import { hookCommand } from "./harness/hooks.ts";
 import { sessionCommand } from "./harness/session.ts";

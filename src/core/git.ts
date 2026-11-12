@@ -44,6 +44,24 @@ export function headSha(dir: string, rev = "HEAD"): string {
     return sha;
 }
 
+/**
+ * The tree object of the commit `rev` (default HEAD) names in `dir`: what the commit contains, whatever its parents,
+ * message or author. Two commits with the same tree hold byte-identical files. Checked like resolveSha.
+ */
+export function treeSha(dir: string, rev = "HEAD"): string {
+    const args = ["rev-parse", "--verify", "--quiet", `${rev}^{tree}`];
+    let printed = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const result = git(dir, args);
+        if (result.code !== 0) throw new ToliError(`git rev-parse ${rev}^{tree} failed in ${dir}: no such commit`);
+        printed = result.stdout.trim();
+        if (SHA.test(printed)) return printed;
+    }
+    throw new ToliError(
+        `git ${args.join(" ")} in ${dir} succeeded twice but printed ${printed === "" ? "nothing" : `"${printed}"`} instead of a tree sha`,
+    );
+}
+
 /** `git <args>` asked a yes/no question by exit status: 0 no, 1 yes, anything else an error. */
 function differs(dir: string, args: string[]): boolean {
     const result = git(dir, args);

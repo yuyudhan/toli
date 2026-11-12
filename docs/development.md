@@ -170,7 +170,7 @@ gitleaks itself, and `just check` runs the formatters, lint and guards before it
 - **commit-msg**: subject of at most 72 characters with no trailing period, a blank line before the body, and no AI
   co-author or Generated-by trailers.
 - **pre-push**: gitleaks over the pushed commits, then `bun run check`
-  ([delivery.md](delivery.md#gates-long-checks-run-once-per-commit)): skipped when the pushed commit already passed
+  ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)): skipped when the pushed commit already passed
   as a `bin/toli gate`; run as that gate (and recorded) when the checkout is exactly the pushed commit; otherwise run
   on the working tree as before, after listing up to 20 files that differ, and not recorded.
 

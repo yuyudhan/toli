@@ -1,8 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pidAlive } from "../src/core/util.ts";
-import { GIT_ENV, type Sandbox, sandbox, TOLI_BIN, withProject } from "./helpers.ts";
+import { commitFile, type GateRecord, gatesLog, recipe, records, runs, setup } from "./gate-fixture.ts";
+import { GIT_ENV, type Sandbox, TOLI_BIN } from "./helpers.ts";
 
 // Gates run real detached runners and wait on them; on a loaded machine one test can take tens of seconds.
 setDefaultTimeout(60_000);
@@ -13,59 +14,6 @@ setDefaultTimeout(60_000);
  */
 const MINUTE_MS = "3000";
 const FAST = { TOLI_RUN_MINUTE_MS: MINUTE_MS };
-
-type GateRecord = {
-    project: string;
-    sha: string;
-    recipe: string;
-    status: string;
-    pid: number | null;
-    startedAt: string;
-    endedAt: string | null;
-    lastOutputAt: string | null;
-    exitCode: number | null;
-    log: string;
-    reason?: string;
-};
-
-/** A coordinator with project "app"; returns the clone. */
-function setup(): { box: Sandbox; dir: string } {
-    const box = sandbox();
-    box.ok(["init", "--name", "mini", "--role", "coordinator"]);
-    return { box, dir: withProject(box, "app") };
-}
-
-/** A recipe script outside the clone (so the worktree stays clean) that counts its runs in `<root>/count`. */
-function recipe(box: Sandbox, name: string, body: string): string {
-    const file = join(box.root, `${name}.sh`);
-    writeFileSync(file, `echo run >> "${join(box.root, "count")}"\n${body}\n`);
-    return `sh ${file}`;
-}
-
-function runs(box: Sandbox): number {
-    const file = join(box.root, "count");
-    return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").length : 0;
-}
-
-function commitFile(box: Sandbox, dir: string, name: string): string {
-    writeFileSync(join(dir, name), `${name}\n`);
-    box.git(dir, ["add", name]);
-    box.git(dir, ["commit", "-m", `add ${name}`]);
-    return box.git(dir, ["rev-parse", "HEAD"]);
-}
-
-function records(box: Sandbox): GateRecord[] {
-    const dir = join(box.root, "state", "gates", "app");
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-        .filter((name) => name.endsWith(".json"))
-        .map((name) => JSON.parse(readFileSync(join(dir, name), "utf8")) as GateRecord);
-}
-
-function gatesLog(box: Sandbox): string {
-    const file = join(box.root, "logs", "gates.log");
-    return existsSync(file) ? readFileSync(file, "utf8") : "";
-}
 
 /** `bin/toli` started in the background with the sandbox's environment, for a caller the test can kill. */
 function spawnToli(box: Sandbox, args: string[], env: Record<string, string> = {}): Bun.Subprocess {
@@ -281,7 +229,7 @@ describe("gate", () => {
         const seen = join(box.root, "hook-env");
         writeFileSync(
             join(dir, ".git", "hooks", "pre-push"),
-            `#!/bin/sh\necho "$TOLI_GATE_SHA $TOLI_GATE_RECIPE" > ${seen}\n`,
+            `#!/bin/sh\necho "$TOLI_GATE_PROJECT $TOLI_GATE_SHA $TOLI_GATE_TREE $TOLI_GATE_RECIPE" > ${seen}\n`,
             {
                 mode: 0o755,
             },
@@ -293,7 +241,8 @@ describe("gate", () => {
         expect(existsSync(seen)).toBe(false);
         const verify = recipe(box, "verify", "echo ok");
         box.ok(["push", "app", "--gate", verify]);
-        expect(readFileSync(seen, "utf8").trim()).toBe(`${sha} ${verify}`);
+        const tree = box.git(dir, ["rev-parse", "HEAD^{tree}"]);
+        expect(readFileSync(seen, "utf8").trim()).toBe(`app ${sha} ${tree} ${verify}`);
         expect(box.git(dir, ["ls-remote", "origin", "refs/heads/feature"])).toContain(sha);
     });
 });
