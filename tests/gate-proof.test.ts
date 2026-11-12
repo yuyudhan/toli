@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { commitFile, type GateRecord, gatesLog, recipe, records, runs, setup } from "./gate-fixture.ts";
 import { TOLI_BIN } from "./helpers.ts";
@@ -112,5 +112,39 @@ describe("gate proofs", () => {
         box.ok(["push", "app"]);
         expect(readFileSync(seen, "utf8").trim().split("\n")).toEqual(["skipped", "skipped", "ran"]);
         expect(runs(box)).toBe(1);
+    });
+
+    test("an unsafe gate key or a malformed proof proves nothing", () => {
+        const { box } = setup();
+        const verify = recipe(box, "verify", "echo ok");
+        box.ok(["gate", "run", "app", "--recipe", verify]);
+        const key = join(box.root, "state", "gate-key");
+        expect(statSync(key).mode & 0o777).toBe(0o600);
+        expect(readFileSync(key, "utf8")).toMatch(/^[0-9a-f]{64}$/);
+        expect(box.toli(["gate", "check", "app", "--recipe", verify]).code).toBe(0);
+        // Readable by others: anyone could have sealed a pass with it.
+        chmodSync(key, 0o644);
+        const loose = box.toli(["gate", "check", "app", "--recipe", verify]);
+        expect(loose.code).toBe(1);
+        expect(loose.stderr).toContain("mode 0600");
+        chmodSync(key, 0o600);
+        // A symlink to a key elsewhere is refused even when its target is owner-only.
+        const elsewhere = join(box.root, "other-key");
+        writeFileSync(elsewhere, readFileSync(key, "utf8"), { mode: 0o600 });
+        rmSync(key);
+        symlinkSync(elsewhere, key);
+        const linked = box.toli(["gate", "check", "app", "--recipe", verify]);
+        expect(linked.code).toBe(1);
+        expect(linked.stderr).toContain("a symlink");
+        rmSync(key);
+        writeFileSync(key, readFileSync(elsewhere, "utf8"), { mode: 0o600 });
+        expect(box.toli(["gate", "check", "app", "--recipe", verify]).code).toBe(0);
+        // The real proof with junk after it is not that proof.
+        const [record] = records(box);
+        expect(record?.proof).toMatch(/^[0-9a-f]{64}$/);
+        const gates = join(box.root, "state", "gates", "app");
+        const file = join(gates, readdirSync(gates).find((name) => name.endsWith(".json")) ?? "");
+        writeFileSync(file, JSON.stringify({ ...record, proof: `${record?.proof}zz` }));
+        expect(box.toli(["gate", "check", "app", "--recipe", verify]).code).toBe(1);
     });
 });

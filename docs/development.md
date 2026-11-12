@@ -170,9 +170,13 @@ gitleaks itself, and `just check` runs the formatters, lint and guards before it
 - **commit-msg**: subject of at most 72 characters with no trailing period, a blank line before the body, and no AI
   co-author or Generated-by trailers.
 - **pre-push**: gitleaks over the pushed commits, then `bun run check`
-  ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)): skipped when the pushed commit already passed
-  as a `bin/toli gate`; run as that gate (and recorded) when the checkout is exactly the pushed commit; otherwise run
-  on the working tree as before, after listing up to 20 files that differ, and not recorded.
+  ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)): skipped when the pushed commit's tree already
+  passed as a `bin/toli gate`; run as that gate (and recorded) when the checkout is exactly the pushed commit; otherwise
+  run on the working tree as before, after listing up to 20 files that differ, and not recorded. The hook reads the
+  proof only through `bin/toli gate check toli --sha <pushed sha> --recipe "bun run check"`, which exits 0 only for a
+  record whose HMAC (keyed by this installation's owner-only `state/gate-key`) verifies for that tree, recipe and
+  project. It never trusts `TOLI_GATE_*` variables or a record's `status` alone, so an edited, copied or invented
+  record, or a gate key others can read, makes the hook run the full check.
 
 CI (`.github/workflows/ci.yml`) runs on pushes and pull requests to `main` and `develop`, on `ubuntu-latest` and
 `macos-latest`. Each runner installs the pinned, checksum-verified shfmt, shellcheck, actionlint, just, and gitleaks

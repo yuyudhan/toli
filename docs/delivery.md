@@ -125,7 +125,9 @@ parents, message or author):
   when its proof verifies for the tree and recipe asked about: a record edited to say `passed`, copied to another
   tree's file, or invented gets a `forged` line in `logs/gates.log` and is ignored. A hook must therefore ask
   `gate check`; reading `TOLI_GATE_*` (which anyone can set) proves nothing. Records made before the tree key
-  (named by commit sha, no proof) are never reused; each gate runs once more.
+  (named by commit sha, no proof) are never reused; each gate runs once more. A key that is a symlink, owned by
+  another user or readable by group or others is refused (`gate check` fails, a finished run is recorded `failed`):
+  delete it and the next gate makes a fresh one.
 
 A project whose own pre-push hook runs the same long check can skip it when toli already passed it on the tree it is
 about to push. Put this at the top of the hook, before the check (`project` is the project's toli name, `toli` the

@@ -4,7 +4,16 @@
 // the same files is the same gate result. A pass is sealed with an HMAC (key in state/gate-key, made once per
 // installation, mode 0600) that only the gate runner writes, so a record edited or copied by hand never counts.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    existsSync,
+    linkSync,
+    lstatSync,
+    mkdirSync,
+    readFileSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { paths } from "../core/paths.ts";
 import { now, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
@@ -43,13 +52,20 @@ export function recordFile(project: string, tree: string, recipe: string): strin
     return join(paths.gatesDir(project), `${tree}-${hash}.json`);
 }
 
-/** The installation's gate key; created (owner-only, published atomically) by the first seal or proof check. */
+/** A gate key and a proof: 32 bytes as 64 lowercase hex digits. */
+const HEX_256 = /^[0-9a-f]{64}$/;
+
+/**
+ * The installation's gate key; created (owner-only, published atomically) by the first seal or proof check. A key
+ * anyone else could read or replace (a symlink, another owner, group or other permission bits) or not in the shape
+ * toli writes is refused: a proof sealed with it would prove nothing.
+ */
 function gateKey(): Buffer {
     const file = paths.gateKey();
     mkdirSync(dirname(file), { recursive: true });
     if (!existsSync(file)) {
-        const staged = `${file}.${process.pid}.tmp`;
-        writeFileSync(staged, randomBytes(32).toString("hex"), { mode: 0o600 });
+        const staged = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+        writeFileSync(staged, randomBytes(32).toString("hex"), { mode: 0o600, flag: "wx" });
         try {
             linkSync(staged, file);
         } catch (error) {
@@ -58,9 +74,17 @@ function gateKey(): Buffer {
             unlinkSync(staged);
         }
     }
+    const stat = lstatSync(file);
+    const uid = process.getuid?.();
+    if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (uid !== undefined && stat.uid !== uid))
+        throw new ToliError(
+            `${file} must be a regular file owned by this user with mode 0600 (it is ` +
+                `${stat.isSymbolicLink() ? "a symlink" : `mode ${(stat.mode & 0o777).toString(8)}, uid ${stat.uid}`}); ` +
+                "delete it and run the gate again",
+        );
     const key = readFileSync(file, "utf8").trim();
-    if (key === "") throw new ToliError(`${file} is empty; delete it and run the gate again`);
-    return Buffer.from(key, "utf8");
+    if (!HEX_256.test(key)) throw new ToliError(`${file} is not a gate key; delete it and run the gate again`);
+    return Buffer.from(key, "hex");
 }
 
 /** What a proof covers: the project, the tree, the exact recipe text, and when it ended passed. */
@@ -81,9 +105,10 @@ export function sealPass(record: GateRecord): void {
 export function provenPass(record: GateRecord | null, project: string, tree: string, recipe: string): boolean {
     if (record === null || record.status !== "passed" || typeof record.proof !== "string") return false;
     if (record.project !== project || record.tree !== tree || record.recipe !== recipe) return false;
+    if (!HEX_256.test(record.proof)) return false;
     const have = Buffer.from(record.proof, "hex");
     const want = Buffer.from(proofOf(record), "hex");
-    return have.length === want.length && timingSafeEqual(have, want);
+    return timingSafeEqual(have, want);
 }
 
 export function readRecord(file: string): GateRecord | null {

@@ -43,6 +43,16 @@ one. See docs/releasing.md.
   report what is missing; `bin/toli push` refuses while a declared pre-push hook is not installed (`--no-hooks-ok`
   pushes anyway). See docs/projects.md "Git hooks" (T1253).
 
+### Changed
+
+- Gates run once per git tree, not per commit: an amended, rebased or empty commit with the same files reuses the
+  pass. A pass is sealed with an HMAC over its project, tree, recipe and end time, keyed by `state/gate-key` (made once
+  per installation, mode 0600, never committed; a symlinked, foreign or group/other-readable key is refused). A
+  project's pre-push hook skips its own run only when `bin/toli gate check` verifies that proof for an identical clean
+  tree; edited, copied or invented records, `TOLI_GATE_*` variables and dirty checkouts never skip it. Records from
+  before (keyed by commit, unsealed) are not reused; each gate runs once more. See docs/delivery.md "Gates" (T1241,
+  from itlinux10).
+
 ## v0.4.5 - 2026-11-12
 
 ### Fixed

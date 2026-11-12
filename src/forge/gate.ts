@@ -253,8 +253,14 @@ export async function runGateProcess(file: string): Promise<void> {
                     entry.status = "failed";
                     entry.reason = `the checkout changed while it ran (${changesText(changes)}), so the pass may not hold for ${short(entry.sha)}`;
                 } else {
+                    // A pass the runner cannot seal (an unsafe or broken state/gate-key) is no pass anyone can reuse.
                     entry.status = "passed";
-                    sealPass(entry);
+                    try {
+                        sealPass(entry);
+                    } catch (error) {
+                        entry.status = "failed";
+                        entry.reason = `the pass could not be sealed: ${error instanceof Error ? error.message : String(error)}`;
+                    }
                 }
             }
         });
