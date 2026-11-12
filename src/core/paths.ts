@@ -98,6 +98,31 @@ export const paths = {
     fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
     fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),
     outboxDir: () => join(repoRoot(), "state", "outbox"),
+    /** Items cancelled or refused by their peer, kept with the reason (src/jobs/outbox-admin.ts): nothing is dropped. */
+    outboxCancelledDir: () => join(repoRoot(), "state", "outbox", "cancelled"),
+    /** Each outbox target's next `seq` (the order its items are sent in). */
+    outboxSeq: () => join(repoRoot(), "state", "outbox-seq.json"),
+    /** The "waiting to send" alerts already posted, per target and age threshold (src/jobs/outbox-admin.ts). */
+    outboxAlerts: () => join(repoRoot(), "state", "outbox-alerts.json"),
+    /** This installation's peer identity (src/peer/identity.ts): Ed25519 key, TLS certificate, mode 0600 secrets. */
+    peerConfigDir: () => join(repoRoot(), "config", "peer"),
+    /** Paired peers: public keys, pinned certificates, addresses and permissions (src/peer/store.ts). */
+    peers: () => join(repoRoot(), "config", "peers.json"),
+    /** Peer messaging state: requests, nonces, received ledgers, the listener's record and control socket. */
+    peerStateDir: () => join(repoRoot(), "state", "peer"),
+    peerRequests: () => join(repoRoot(), "state", "peer", "requests.json"),
+    peerOutgoing: () => join(repoRoot(), "state", "peer", "outgoing.json"),
+    peerNonces: () => join(repoRoot(), "state", "peer", "nonces.json"),
+    peerLimits: () => join(repoRoot(), "state", "peer", "limits.json"),
+    peerReceived: (peer: string) => join(repoRoot(), "state", "peer", "received", `${peer}.json`),
+    peerListener: () => join(repoRoot(), "state", "peer", "listener.json"),
+    peerControl: () => join(repoRoot(), "state", "peer", "control.sock"),
+    /** Touched while a batch from a peer is applied, so the lead wakes once for the whole batch. */
+    peerReceiving: () => join(repoRoot(), "state", "peer", "receiving"),
+    /** One JSON line per delivery attempt, with its transport and time (`bin/toli peer stats`). */
+    peerStats: () => join(repoRoot(), "state", "peer", "stats.jsonl"),
+    /** Pairing, permission and revocation events with who did them and why; never a code. */
+    peerLog: () => join(repoRoot(), "logs", "peer.log"),
     /**
      * On a machine that takes no inbound ssh (`inbound: false`, src/jobs/pull.ts): the items pulled from each machine
      * and applied here but not yet acknowledged there, one `<machine>.json` each, so a re-pulled item is applied once.

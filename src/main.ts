@@ -22,6 +22,7 @@ import { resumeCommand, runCommand, runsCommand, spawnCommand } from "./jawans/s
 import { outboxCommand } from "./jobs/pull.ts";
 import { scheduleCommand } from "./jobs/schedule.ts";
 import { jobCommand } from "./jobs/tick.ts";
+import { peerCommand } from "./peer/command.ts";
 import { branchCommand, commitCommand } from "./projects/commit.ts";
 import { projectCommand } from "./projects/projects.ts";
 import { workspaceCommand } from "./projects/workspace-command.ts";
@@ -93,6 +94,7 @@ const USAGE = `usage: bin/toli <command> [args]
   helper list [--json] | install <name>|--all | uninstall <name>|--all | run <name> | status [<name>] [--json]
   inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
   outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
+  peer init | status [--json] | list [--json]
   wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]
@@ -197,6 +199,9 @@ export async function main(argv: string[]): Promise<number> {
                 return 0;
             case "outbox":
                 await outboxCommand(rest);
+                return 0;
+            case "peer":
+                await peerCommand(rest);
                 return 0;
             case "wake":
                 wakeCommand(rest);

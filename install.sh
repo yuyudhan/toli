@@ -157,6 +157,10 @@ fi
 dir="$(cd "$dir" && pwd)" # a typed path like ~/a/../b reads as the real directory from here on
 
 if command -v bun >/dev/null 2>&1; then
+    # toli's one runtime dependency (@noble/curves, for pairing with peers); pinned by bun.lock.
+    say "Installing dependencies (bun install --production --frozen-lockfile)"
+    (cd "$dir" && bun install --production --frozen-lockfile >/dev/null) \
+        || say "bun install failed; pairing with peers needs it: cd \"$dir\" && bun install --production --frozen-lockfile"
     say "Checking the install (bin/toli version, bin/toli doctor)"
     (cd "$dir" && bin/toli version) || die "bin/toli does not run; see the error above"
     if (cd "$dir" && bin/toli doctor); then
@@ -166,7 +170,7 @@ if command -v bun >/dev/null 2>&1; then
     fi
 else
     say ""
-    say "bun is not installed; toli needs it. Install it, then run: cd \"$dir\" && bin/toli doctor"
+    say "bun is not installed; toli needs it. Install it, then run: cd \"$dir\" && bun install --production --frozen-lockfile && bin/toli doctor"
     say "  curl -fsSL https://bun.sh/install | bash      (Linux needs unzip first; macOS also: brew install oven-sh/bun/bun)"
 fi
 

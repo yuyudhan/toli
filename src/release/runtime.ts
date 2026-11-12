@@ -4,8 +4,8 @@
 // call `bin/toli` in. `bin/toli` is a launcher: when the checkout has an installed runtime it imports the runtime's
 // src/main.ts instead of the working tree's, so a half-edited working tree never breaks the live session.
 //
-//   ~/.toli/runtime/<checkout>-<hash>/<commit>/   `git archive` of one commit: tracked files only (src/ imports only
-//                                                 Bun and node built-ins, so no node_modules)
+//   ~/.toli/runtime/<checkout>-<hash>/<commit>/   `git archive` of one commit: tracked files only, plus a link to the
+//                                                 checkout's node_modules (the pinned @noble/curves, src/peer/deps.ts)
 //     .toli-runtime.json                          {checkout, commit, syncedAt}: paths.root() reads the checkout from
 //                                                 it, so config/, data/, state/ and projects/ stay in the checkout
 //   <checkout>/state/runtime                      the active snapshot directory (one line), read by bin/toli
@@ -26,6 +26,7 @@ import {
     renameSync,
     rmSync,
     statSync,
+    symlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -113,6 +114,9 @@ function buildSnapshot(checkout: string, store: string, commit: string): string 
         const unpacked = run(["tar", "-xf", tar, "-C", staging]);
         if (unpacked.code !== 0) throw new ToliError(`tar -xf failed: ${(unpacked.stderr || unpacked.stdout).trim()}`);
         rmSync(tar);
+        // The snapshot is the checkout's HEAD, so the checkout's installed dependencies are the ones it pins.
+        const modules = join(checkout, "node_modules");
+        if (existsSync(modules)) symlinkSync(modules, join(staging, "node_modules"));
         writeJsonAtomic(join(staging, RUNTIME_MARKER), {
             checkout: realpathSync(checkout),
             commit,

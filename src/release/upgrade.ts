@@ -4,6 +4,7 @@ import { Args } from "../core/args.ts";
 import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, runInherit, ToliError } from "../core/util.ts";
+import { ensureDependencies } from "../peer/deps.ts";
 import {
     changelogBetween,
     compareVersions,
@@ -149,6 +150,13 @@ export async function upgradeCommand(argv: string[]): Promise<number> {
     ]);
     gitOk(root, ["-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", `${target}^{commit}`]);
     out(`checked out ${target}${downgrade ? " (downgrade)" : ""}`);
+    try {
+        out(ensureDependencies(root));
+    } catch (error) {
+        out(
+            `toli: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}; pairing with peers needs it`,
+        );
+    }
 
     // The live session runs the installed runtime when there is one: move it to the new code before running it.
     if (activeRuntime(root) !== null) {
@@ -167,7 +175,7 @@ export async function upgradeCommand(argv: string[]): Promise<number> {
     // so their units are written by the new code too.
     const services = serviceRefresh();
     for (const note of services.notes) out(`toli: ${note}`);
-    for (const step of [["migrate"], ["harness", "sync"], ...services.steps]) {
+    for (const step of [["migrate"], ["harness", "sync"], ["peer", "init"], ...services.steps]) {
         out(`bin/toli ${step.join(" ")}`);
         const code = await runInherit([paths.toliBin(), ...step], { cwd: root });
         if (code !== 0) {

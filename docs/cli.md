@@ -250,6 +250,16 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 
 Details: [fleet.md](fleet.md).
 
+### Peers (HTTP messaging)
+
+    peer init | status [--json] | list [--json]
+
+- `peer init` makes this installation's identity (an Ed25519 key and a TLS certificate in `config/peer/`); `upgrade`
+  and the listener run it too. `peer status` shows the fingerprint to compare when pairing; `peer list` the paired
+  peers with their permissions and addresses.
+
+Details: [peers.md](peers.md).
+
 ### Working on toli itself
 
     self sync [--json] | status [--json]

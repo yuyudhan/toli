@@ -72,6 +72,9 @@ export type RetentionConfig = {
     inboxDays?: number;
 };
 
+/** config/machine.json `peer` (see Machine.peer). */
+export type PeerSettings = { port?: number; bind?: "private" | string[]; listen?: boolean; sshFallback?: boolean };
+
 export type Machine = {
     name: string;
     role: Role;
@@ -97,6 +100,13 @@ export type Machine = {
      * queue depths across the fleet and offers or asks for work when the gap is at least `balanceGap` (default 3).
      */
     lead?: { balanceMinutes?: number; balanceGap?: number };
+    /**
+     * Peer messaging over HTTPS (src/peer/, docs/peers.md): the listener's `port` (default 47123), `bind` ("private",
+     * the default: every local address in a private range; or a list of addresses), `listen` (default true; false:
+     * no listener, this machine pulls from its peers instead) and `sshFallback` (default true; false: a paired peer
+     * gets nothing over ssh, HTTP only).
+     */
+    peer?: PeerSettings;
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

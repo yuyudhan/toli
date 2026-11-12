@@ -110,12 +110,13 @@ describe("bin/toli upgrade and the installed services", () => {
         return { box, env, units };
     }
 
-    test("installs the lead service and the tick again, from the new code, once migrate and harness sync ran", () => {
+    test("installs the lead service and the tick again, from the new code, once migrate, harness sync and peer init ran", () => {
         const { box, env } = withServices();
         const output = box.ok(["upgrade"], { env });
         expect(stepsOf(output)).toEqual([
             "bin/toli migrate",
             "bin/toli harness sync",
+            "bin/toli peer init",
             "bin/toli lead install",
             "bin/toli schedule install",
         ]);
@@ -125,7 +126,11 @@ describe("bin/toli upgrade and the installed services", () => {
 
     test("installs nothing that was not installed", () => {
         const box = releaseInstall();
-        expect(stepsOf(box.ok(["upgrade"]))).toEqual(["bin/toli migrate", "bin/toli harness sync"]);
+        expect(stepsOf(box.ok(["upgrade"]))).toEqual([
+            "bin/toli migrate",
+            "bin/toli harness sync",
+            "bin/toli peer init",
+        ]);
     });
 
     test("systemd units this shell cannot reach (ssh without a user bus) are named and left as they are", () => {
@@ -135,7 +140,7 @@ describe("bin/toli upgrade and the installed services", () => {
         expect(output).toContain(
             `toli: systemd units exist (${join(units, "toli-lead.service")}, ${join(units, "toli-tick.timer")}) but \`systemctl --user\` is not reachable from this shell`,
         );
-        expect(stepsOf(output)).toEqual(["bin/toli migrate", "bin/toli harness sync"]);
+        expect(stepsOf(output)).toEqual(["bin/toli migrate", "bin/toli harness sync", "bin/toli peer init"]);
     });
 });
 

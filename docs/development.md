@@ -82,9 +82,10 @@ bin/toli self sync     # snapshot HEAD, prove it loads, then make it the runtime
 bin/toli self status   # which code bin/toli runs: the runtime (current or behind HEAD) or the working tree
 ```
 
-- A snapshot is `git archive` of one commit in `~/.toli/runtime/<checkout>-<hash>/<commit>/` (tracked files only:
-  `src/` imports only Bun and node built-ins). Its `.toli-runtime.json` names the checkout, so `config/`, `data/`,
-  `state/`, `projects/` and `.omp/` stay where they are; `state/runtime` names the active snapshot.
+- A snapshot is `git archive` of one commit in `~/.toli/runtime/<checkout>-<hash>/<commit>/` (tracked files only, plus
+  a link to the checkout's `node_modules` for toli's one runtime dependency, below). Its `.toli-runtime.json` names the
+  checkout, so `config/`, `data/`, `state/`, `projects/` and `.omp/` stay where they are; `state/runtime` names the
+  active snapshot.
 - `self sync` runs the new snapshot once (`self status --json`, which loads every command module) and switches only
   when it loads and serves this checkout; otherwise it refuses with the error and the live session keeps the previous
   snapshot. The last three snapshots are kept, since running processes may still use the previous one.
@@ -113,6 +114,15 @@ Run `just setup` once per clone: `bun install`, points git at `.githooks/`, and 
 `sudo apt install` (Debian/Ubuntu/WSL2) or `sudo dnf install` (Fedora) on Linux, or the tool's release page when the
 distribution does not package it (actionlint and gitleaks on both). Format and lint steps that need a missing tool
 fail with that hint instead of skipping.
+
+## Runtime dependency
+
+`src/` imports Bun and node built-ins, plus exactly one package: **`@noble/curves`** (MIT license, by Paul Miller;
+audited), pinned to an exact version in `package.json` with `bun.lock` committed. It is used only for pairing peers
+(CPace over ristretto255, `src/peer/cpace.ts`) and is loaded on demand by `src/peer/deps.ts`, so every other command
+runs without `node_modules`. `install.sh` and `bin/toli upgrade` run `bun install --production --frozen-lockfile`,
+the installed runtime links the checkout's `node_modules`, and pairing installs it itself when it is missing.
+`bin/toli doctor` reports it (`peer-deps`). Never hand-write cryptography in toli; add an audited, pinned package.
 
 ## The gate: `just check`
 

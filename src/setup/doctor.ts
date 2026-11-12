@@ -17,6 +17,8 @@ import { syncShims } from "../harness/sync.ts";
 import { cargoConfigPath } from "../jawans/env.ts";
 import { schedulePath } from "../jobs/os-scheduler.ts";
 import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
+import { nobleLocation } from "../peer/deps.ts";
+import { hasIdentity, loadIdentity, looseSecrets } from "../peer/identity.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
 import { describeRuntime, runtimeStatus } from "../release/runtime.ts";
@@ -209,6 +211,41 @@ export function serviceEnvCheck(env: Record<string, string | undefined> = proces
                 : `services see ${nameList([...seen].sort())} via the ${capture.shell} login profile`,
     };
 }
+/**
+ * Peer messaging (docs/peers.md): openssl makes the listener's certificate, the identity's secrets stay private to
+ * this user, and the pinned @noble/curves is installed for pairing. Warnings only: messaging over ssh works without.
+ */
+function peerChecks(): Check[] {
+    const checks: Check[] = [toolCheck("openssl", ["openssl", "version"], "warn")];
+    if (!hasIdentity())
+        checks.push({
+            level: "warn",
+            name: "peer",
+            detail: "no peer identity: bin/toli peer init (the listener makes it too)",
+        });
+    else {
+        const loose = looseSecrets();
+        checks.push(
+            loose.length === 0
+                ? {
+                      level: "ok",
+                      name: "peer",
+                      detail: `identity ${loadIdentity().fingerprint.slice(0, 16)}..., secrets at 0600`,
+                  }
+                : { level: "fail", name: "peer", detail: `readable by others: ${loose.join(", ")} (chmod 600 them)` },
+        );
+    }
+    checks.push(
+        nobleLocation() === null
+            ? {
+                  level: "warn",
+                  name: "peer-deps",
+                  detail: `@noble/curves missing (pairing needs it): bun install --production --frozen-lockfile in ${paths.root()}`,
+              }
+            : { level: "ok", name: "peer-deps", detail: "@noble/curves installed" },
+    );
+    return checks;
+}
 
 export async function runChecks(): Promise<Check[]> {
     const checks: Check[] = [
@@ -217,6 +254,7 @@ export async function runChecks(): Promise<Check[]> {
         serviceEnvCheck(),
         toolCheck("git", ["git", "--version"], "fail"),
         ...forgeChecks(),
+        ...peerChecks(),
     ];
     const noMistakes = Bun.which("no-mistakes", { PATH: process.env.PATH ?? "" });
     checks.push(
