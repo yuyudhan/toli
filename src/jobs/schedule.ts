@@ -62,7 +62,12 @@ export function cronLine(): string {
     return `* * * * * ${command} ${CRON_TAG}`;
 }
 
-/** The tick as systemd user units: a oneshot service and a timer that starts it a second after load, then every 60s. */
+/**
+ * The tick as systemd user units: a oneshot service and a timer that starts it a second after load, then every 60s.
+ * `KillMode=process`: when `job tick` exits, systemd ends only it. The default (`control-group`) would also kill what
+ * the tick starts in the background and does not wait on (the disk keeper, the update check, `fleet check --wake`),
+ * since they stay in the unit's cgroup, so they would die milliseconds after they start.
+ */
 export function renderTickSystemd(): { service: string; timer: string } {
     const log = systemdPath(join(paths.logsDir(), "systemd.log"));
     const service = [
@@ -71,6 +76,7 @@ export function renderTickSystemd(): { service: string; timer: string } {
         "",
         "[Service]",
         "Type=oneshot",
+        "KillMode=process",
         `WorkingDirectory=${systemdPath(paths.root())}`,
         `Environment=${systemdEnv("PATH", schedulePath())}`,
         `ExecStart=${[bunPath(), paths.toliBin(), "job", "tick"].map(systemdWord).join(" ")}`,

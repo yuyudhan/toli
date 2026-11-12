@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { type Sandbox, sandbox, withCrontab, withSystemd } from "./helpers.ts";
 
@@ -154,6 +154,21 @@ describe("schedule on Linux (systemd user units)", () => {
             detail: string;
         }[];
         expect(doctor.find((check) => check.name === "scheduler")?.detail).toBe("systemd installed and loaded");
+    });
+
+    test("install gives the tick unit KillMode=process, so the children the tick leaves running outlive it", () => {
+        const box = sandbox();
+        const systemd = withSystemd(box);
+        mkdirSync(systemd.units, { recursive: true });
+        // A unit from before the fix: the default KillMode=control-group kills the disk keeper, the update check and
+        // `fleet check --wake` with the tick's cgroup. Re-running install must replace it.
+        writeFileSync(
+            join(systemd.units, "toli-tick.service"),
+            `[Service]\nType=oneshot\nExecStart=/usr/bin/bun ${join(box.root, "bin", "toli")} job tick\n`,
+        );
+        box.ok(["schedule", "install"], { env: systemd.env });
+        const service = readFileSync(join(systemd.units, "toli-tick.service"), "utf8");
+        expect(service).toMatch(/^\[Service\]\nType=oneshot\nKillMode=process\n/m);
     });
 
     test("uninstall disables the timer and removes both units", () => {

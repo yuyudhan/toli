@@ -39,6 +39,10 @@ one. See docs/releasing.md.
   headless lead turn) ends with `bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>` for the
   items it showed, the digest's Next block gives the same for the results it lists, and a plain `ack` stops at the
   newest item a wake, `inbox list` or `job results` showed. Newer items stay unread and wake the lead again (T1124).
+- On Linux with systemd, the background work the minute tick starts (the disk keeper, the update check and
+  `fleet check --wake`) now runs to the end. `toli-tick.service` uses `KillMode=process`; before, systemd killed
+  them with the tick's cgroup as soon as `bin/toli job tick` exited, so the disk keeper never freed space. Run
+  `bin/toli schedule install` once to rewrite the unit (T1128).
 
 ## v0.4.3 - 2026-11-12
 
