@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, readStdin, requireName, stamp, ToliError, writeTextAtomic } from "../core/util.ts";
-import { ackedThrough, ackThrough } from "./acks.ts";
+import { ackedThrough, acknowledge, markShown } from "./acks.ts";
 
 export type InboxItem = { file: string; path: string; stamp: string; from: string; title: string; unseen: boolean };
 
@@ -59,6 +59,10 @@ function list(argv: string[]): void {
     const args = new Args(argv, { booleans: ["json", "unseen"] });
     args.maxPositional(0);
     const items = listInbox().filter((item) => !args.bool("unseen") || item.unseen);
+    markShown(
+        "inbox",
+        items.map((item) => item.stamp),
+    );
     if (args.bool("json")) {
         printJson(items);
         return;
@@ -72,12 +76,12 @@ function list(argv: string[]): void {
 }
 
 function ack(argv: string[]): void {
-    new Args(argv).maxPositional(0);
-    const items = listInbox();
-    const last = items[items.length - 1];
-    const unseen = items.filter((item) => item.unseen).length;
-    if (last) ackThrough("inbox", last.stamp);
-    out(`acknowledged ${unseen} inbox item${unseen === 1 ? "" : "s"}`);
+    acknowledge(
+        "inbox",
+        argv,
+        listInbox().map((item) => item.stamp),
+        "inbox item",
+    );
 }
 
 export function inboxCommand(argv: string[]): void {

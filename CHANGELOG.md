@@ -31,6 +31,11 @@ one. See docs/releasing.md.
   instead of "not installed"; install rewrites and reloads the daemon as root through `sudo -n` (changing nothing
   without cached credentials) and retires a LaunchAgent of the same label instead of adding a second copy; uninstall
   removes the daemon. Machines without one keep the user agent in `~/Library/LaunchAgents` (docs/helpers.md) (T1119).
+- `bin/toli inbox ack` and `bin/toli job ack` no longer acknowledge results that arrived after the lead was shown its
+  wake, which were then never shown to any lead. An ack now covers only what was shown: each `[toli wake]` (and the
+  headless lead turn) ends with `bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>` for the
+  items it showed, the digest's Next block gives the same for the results it lists, and a plain `ack` stops at the
+  newest item a wake, `inbox list` or `job results` showed. Newer items stay unread and wake the lead again (T1124).
 
 ## v0.4.3 - 2026-11-12
 

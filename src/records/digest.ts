@@ -36,6 +36,7 @@ import { projectsNeedingSetup } from "../projects/setup.ts";
 import { takeUpdateNotice } from "../release/update-check.ts";
 import { type SetupItem, setupChecklist } from "../setup/checklist.ts";
 import { setupSnoozed, takeSetupNotice } from "../setup/setup.ts";
+import { ackCommand } from "./acks.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
 import { type Needs, needsQueue, renderNeeds, takeStaleHolds } from "./needs.ts";
@@ -190,6 +191,10 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
             backlog,
             needs,
             unseenResults: jobResults.length + inbox.length,
+            ackCommands: [
+                ...inbox.slice(-1).map((item) => ackCommand("inbox", item.stamp)),
+                ...jobResults.slice(-1).map((result) => ackCommand("jobs", result.stamp)),
+            ],
             urls,
             setup: projectsNeedingSetup(),
             setupSteps: setupItems.filter((item) => item.status === "missing").map((item) => item.title),

@@ -19,7 +19,7 @@ import {
 } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { findProject } from "../projects/projects.ts";
-import { ackedThrough, ackThrough } from "../records/acks.ts";
+import { ackedThrough, acknowledge, markShown } from "../records/acks.ts";
 import { deliverOutbox, queueOutbox } from "./outbox.ts";
 
 export type JobShape = "scout" | "ship";
@@ -356,6 +356,12 @@ function results(argv: string[]): void {
     const items = listResults().filter(
         (item) => (!args.bool("unseen") || item.unseen) && (job === undefined || item.job === job),
     );
+    // One job's results say nothing of other jobs' newer ones, so only an unfiltered listing raises the shown mark.
+    if (job === undefined)
+        markShown(
+            "jobs",
+            items.map((item) => item.stamp),
+        );
     if (args.bool("json")) {
         printJson(items);
         return;
@@ -369,13 +375,12 @@ function results(argv: string[]): void {
 }
 
 function ack(argv: string[]): void {
-    new Args(argv).maxPositional(0);
-    const items = listResults();
-    // listResults is sorted by stamp, so the last item holds the newest one.
-    const last = items.at(-1)?.stamp ?? "";
-    const unseen = items.filter((item) => item.unseen).length;
-    if (last !== "") ackThrough("jobs", last);
-    out(`acknowledged ${unseen} job result${unseen === 1 ? "" : "s"}`);
+    acknowledge(
+        "jobs",
+        argv,
+        listResults().map((item) => item.stamp),
+        "job result",
+    );
 }
 
 export const jobSubcommands = { add, list, setEnabled, remove, due, begin, finish, results, ack };

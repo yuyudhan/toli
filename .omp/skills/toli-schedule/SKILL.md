@@ -60,7 +60,8 @@ How jobs run, in plain words for Malik:
   (`bin/toli resources`) while it runs.
 - On a worker machine, results are also sent to the coordinator; undelivered ones retry every minute.
 - New results reach an open session as a `[toli wake]` message (each result once). Relay the outcome and any
-  decision to Malik in plain words, dispatch follow-up work to jawans, then `bin/toli job ack` / `bin/toli inbox ack`.
+  decision to Malik in plain words, dispatch follow-up work to jawans, then run the ack commands the wake ends with
+  (`bin/toli job ack --through <stamp>` / `bin/toli inbox ack --through <stamp>`; they cover only what it showed).
   Results also appear in `/bearings` until acknowledged.
 
 ## Scheduled-run rules

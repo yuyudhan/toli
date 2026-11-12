@@ -114,6 +114,6 @@ On the new machine, in the directory where the clone should live:
   (`bin/toli inbox add`).
 - Everything sent to another machine (job results, alerts, delegations, delegated-task reports, `talk` messages)
   waits in `state/outbox/` while that machine is unreachable and retries every minute.
-- `bin/toli inbox list --unseen` (and `/bearings`) shows them; `bin/toli inbox ack` clears them after Malik has seen
-  them.
+- `bin/toli inbox list --unseen` (and `/bearings`) shows them; `bin/toli inbox ack` then clears what that listing
+  showed after Malik has seen it (anything newer stays unread).
 - To send a one-off note to another machine's Sardar: `bin/toli talk <machine> "<words>"`.

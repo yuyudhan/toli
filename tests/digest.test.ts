@@ -70,6 +70,8 @@ describe("digest", () => {
         box.ok(["job", "add", "nightly", "--cron", "0 * * * *", "--prompt", "check"], { now: "2026-03-04T09:00:00Z" });
         box.ok(["inbox", "add", "--from", "m2", "--title", "old news"], { stdin: "x", now: "2026-03-04T09:10:00Z" });
         finishJob(box, "nightly", "failed", "2026-03-04T09:20:00Z");
+        box.ok(["inbox", "list"]);
+        box.ok(["job", "results"]);
         box.ok(["inbox", "ack"]);
         box.ok(["job", "ack"]);
         box.ok(["inbox", "add", "--from", "m3", "--title", "fresh news"], { stdin: "y", now: "2026-03-04T09:30:00Z" });
@@ -130,7 +132,10 @@ describe("digest", () => {
         expect(next[1]).toBe(
             '  - Ask the user about T1 (alpha): which db?: bin/toli needs; record each reply verbatim with bin/toli task answer T<n> "<answer>" and dispatch the unblocked task at once (the toli-ahoy skill)',
         );
-        expect(next[2]).toStartWith("  - Relay 1 new result to the user in plain words: then bin/toli inbox ack");
+        const stamp = (JSON.parse(box.ok(["inbox", "list", "--json"])) as { stamp: string }[])[0]?.stamp;
+        expect(next[2]).toBe(
+            `  - Relay 1 new result to the user in plain words: then bin/toli inbox ack --through ${stamp} (only these; follow-up work goes to a jawan)`,
+        );
         expect(next[3]).toStartWith(
             "  - Dispatch T2 (alpha, ship): build it: load the toli-dispatch skill, then a background jawan recorded on the task (bin/toli task start T2 --agent <id>",
         );
@@ -149,6 +154,7 @@ describe("digest", () => {
             backlog: { inFlight: [], waiting: [], queued: [] },
             needs: { total: 0, staleDays: 7, groups: [] },
             unseenResults: 0,
+            ackCommands: [],
             urls: new Map<string, string>(),
             setup: [],
             setupSteps: [],

@@ -110,10 +110,12 @@ everything new since the last call, once, and the harness brings it into the cha
 - **No session open**: the machine's lead service (`bin/toli lead install`) takes them in a headless turn of the same
   lead conversation ([sardars.md](sardars.md)).
 
-Delivered items keep showing in `bin/toli digest` and `/bearings` until acknowledged (`bin/toli job ack`,
-`bin/toli inbox ack`). Long-running things (fleet probes, lavish pages) also run in the background and arrive the
-same way. Every machine has its own lead: work for another machine is delegated to its lead, which dispatches its own
-jawans and sends the result back here ([sardars.md](sardars.md)).
+Delivered items keep showing in `bin/toli digest` and `/bearings` until acknowledged with the ack commands the wake
+or the digest's Next block prints (`bin/toli inbox ack --through <stamp>`, `bin/toli job ack --through <stamp>`): an
+ack covers only the items that were shown, so one arriving meanwhile wakes the lead again ([jobs.md](jobs.md)).
+Long-running things (fleet probes, lavish pages) also run in the background and arrive the same way. Every machine
+has its own lead: work for another machine is delegated to its lead, which dispatches its own jawans and sends the
+result back here ([sardars.md](sardars.md)).
 
 ## Talking to the lead
 

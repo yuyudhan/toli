@@ -238,7 +238,8 @@ toli's own release is `just release` (alias `just publish`; docs/releasing.md), 
 Scheduled jobs never run in Sardar's chat. While this session is open, the toli extension hands each due job to a
 background headless run (`bin/toli job run-due`); otherwise the OS ticker does. Either way the job runs in its own
 `omp -p` session, and its result comes back into the chat as a `[toli wake]` message: relay what matters to Malik
-in plain words, dispatch any follow-up work to jawans, and acknowledge with `bin/toli job ack` / `bin/toli inbox ack`.
+in plain words, dispatch any follow-up work to jawans, and acknowledge with the ack commands the wake ends with
+(`bin/toli job ack --through <stamp>` / `bin/toli inbox ack --through <stamp>`): they cover only what it showed.
 
 A prompt starting with `[toli job <name> <runId>]` means you are that headless run, not the live Sardar. Load
 `toli-schedule`, do the job under scheduled-run rules (no push, merge, PR, or questions; anything that needs Malik

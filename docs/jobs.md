@@ -57,9 +57,14 @@ words and dispatches any follow-up work to jawans. Results stay in `/bearings` a
 acknowledged:
 
     bin/toli job results [--unseen] [--json]
-    bin/toli job ack
+    bin/toli job ack [--through <stamp>]
     bin/toli inbox list [--json] [--unseen]
-    bin/toli inbox ack
+    bin/toli inbox ack [--through <stamp>]
+
+An ack covers only what a reader was shown, so a result that arrives while the lead is busy is never acknowledged
+unseen. Each wake ends with the exact commands for the items it showed (`--through` the newest one per stream), and
+the digest's Next block gives the same for the results it lists. A plain `ack` covers up to the newest item a wake,
+`inbox list` or `job results` has shown; anything newer stays unread and wakes the lead again.
 
 ## The ticker
 

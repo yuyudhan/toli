@@ -22,10 +22,11 @@ describe("inbox", () => {
         ]);
     });
 
-    test("ack marks everything seen; later deliveries are unseen again", () => {
+    test("ack marks everything listed seen; later deliveries are unseen again", () => {
         const box = sandbox();
         deliver(box, "m2", "one", "2026-03-04T10:00:00Z");
         deliver(box, "m2", "two", "2026-03-04T10:01:00Z");
+        expect(items(box)).toHaveLength(2);
         expect(box.ok(["inbox", "ack"])).toBe("acknowledged 2 inbox items");
         expect(items(box, "--unseen")).toEqual([]);
         expect(items(box)).toHaveLength(2);
@@ -35,6 +36,40 @@ describe("inbox", () => {
         expect(items(box, "--unseen").map((item) => item.title)).toEqual(["three"]);
         expect(box.ok(["inbox", "ack"])).toBe("acknowledged 1 inbox item");
         expect(box.ok(["inbox", "ack"])).toBe("acknowledged 0 inbox items");
+    });
+
+    test("ack covers only what a listing showed; a later arrival stays unread", () => {
+        const box = sandbox();
+        deliver(box, "m2", "shown", "2026-03-04T10:00:00Z");
+        expect(box.ok(["inbox", "list", "--unseen"])).toContain("shown");
+        deliver(box, "m2", "arrived after", "2026-03-04T10:01:00Z");
+        expect(box.ok(["inbox", "ack"])).toBe(
+            "acknowledged 1 inbox item; 1 newer inbox item not shown yet, still unread",
+        );
+        expect(items(box, "--unseen").map((item) => item.title)).toEqual(["arrived after"]);
+    });
+
+    test("ack with nothing shown acknowledges nothing", () => {
+        const box = sandbox();
+        deliver(box, "m2", "never listed", "2026-03-04T10:00:00Z");
+        expect(box.ok(["inbox", "ack"])).toBe(
+            "acknowledged 0 inbox items; 1 newer inbox item not shown yet, still unread",
+        );
+        expect(items(box, "--unseen")).toHaveLength(1);
+    });
+
+    test("ack --through covers exactly the given stamp and rejects anything but a stamp", () => {
+        const box = sandbox();
+        deliver(box, "m2", "one", "2026-03-04T10:00:00Z");
+        deliver(box, "m2", "two", "2026-03-04T10:01:00Z");
+        const [first] = items(box);
+        expect(box.ok(["inbox", "ack", "--through", first?.stamp ?? ""])).toBe(
+            "acknowledged 1 inbox item; 1 newer inbox item not shown yet, still unread",
+        );
+        expect(items(box, "--unseen").map((item) => item.title)).toEqual(["two"]);
+        const bad = box.toli(["inbox", "ack", "--through", "yesterday"]);
+        expect(bad.code).toBe(1);
+        expect(bad.stderr).toContain("--through takes an item stamp");
     });
 
     test("two deliveries in the same millisecond from one sender both survive", () => {

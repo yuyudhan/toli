@@ -61,11 +61,11 @@ is coming and end the turn.
 ## After reporting
 
 - Job results and inbox items stay in the digest until acknowledged. Once Malik has seen them in this overview, clear
-  them:
+  them with the ack commands the digest's Next block gives ("Relay N new results ... then ..."), for example:
 
-        bin/toli job ack
-        bin/toli inbox ack
+        bin/toli inbox ack --through <stamp>
+        bin/toli job ack --through <stamp>
 
-    Only acknowledge what was actually shown to him.
+    Each covers only the results that digest listed; one that arrived since stays unread and wakes you again.
 
 - Never start new work from the overview alone; wait for Malik's word.

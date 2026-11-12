@@ -18,6 +18,8 @@ export type NextInput = {
     backlog: Digest["backlog"];
     needs: Needs;
     unseenResults: number;
+    /** The ack commands covering exactly the unseen results this digest shows (`ackCommand`, src/records/acks.ts). */
+    ackCommands: string[];
     urls: Map<string, string>;
     setup: { name: string; missing: string[] }[];
     /** Titles of this machine's missing install-level setup steps (src/setup/checklist.ts). */
@@ -60,7 +62,7 @@ export function nextActions(input: NextInput): NextAction[] {
     if (input.unseenResults > 0)
         actions.push({
             action: `Relay ${input.unseenResults} new result${input.unseenResults === 1 ? "" : "s"} to the user in plain words`,
-            command: "then bin/toli inbox ack / bin/toli job ack (follow-up work goes to a jawan)",
+            command: `then ${input.ackCommands.join(" / ")} (only these; follow-up work goes to a jawan)`,
         });
     for (const project of input.projects.filter((entry) => entry.branchMismatch))
         actions.push({

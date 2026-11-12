@@ -17,6 +17,11 @@ function deliver(box: Sandbox, title: string, now: string, body = "details"): vo
 
 function finishJob(box: Sandbox, now: string, body: string): void {
     box.ok(["job", "add", "nightly", "--cron", "0 3 * * *", "--prompt", "x"], { now });
+    runJob(box, now, body);
+}
+
+/** One more run of the already added `nightly` job, finished with `body`. */
+function runJob(box: Sandbox, now: string, body: string): void {
     const begun = JSON.parse(box.ok(["job", "begin", "nightly", "--via", "headless", "--json"], { now })) as {
         runId: string;
     };
@@ -52,8 +57,50 @@ describe("wake", () => {
     test("items already acknowledged never wake", () => {
         const box = coordinator();
         deliver(box, "old", "2026-03-04T10:00:00Z");
+        box.ok(["inbox", "list"]);
         box.ok(["inbox", "ack"]);
         expect(wake(box).items).toEqual([]);
+    });
+
+    test("inbox ack covers only what the wake showed: a message arriving after it stays unread and wakes next", () => {
+        const box = coordinator();
+        deliver(box, "A", "2026-03-04T10:00:00Z");
+        const shown = wake(box);
+        expect(shown.items.map((item) => item.title)).toEqual(["m2: A"]);
+        deliver(box, "B", "2026-03-04T10:01:00Z");
+        expect(box.ok(["inbox", "ack"])).toBe(
+            "acknowledged 1 inbox item; 1 newer inbox item not shown yet, still unread",
+        );
+        const unseen = JSON.parse(box.ok(["inbox", "list", "--unseen", "--json"])) as { title: string }[];
+        expect(unseen.map((item) => item.title)).toEqual(["B"]);
+        expect(wake(box).items.map((item) => item.title)).toEqual(["m2: B"]);
+    });
+
+    test("job ack covers only what the wake showed: a result finishing after it stays unread and wakes next", () => {
+        const box = coordinator();
+        finishJob(box, "2026-03-04T10:00:00Z", "first run");
+        expect(wake(box).items.map((item) => item.title)).toEqual(["job nightly (ok)"]);
+        runJob(box, "2026-03-04T11:00:00Z", "second run");
+        expect(box.ok(["job", "ack"])).toBe(
+            "acknowledged 1 job result; 1 newer job result not shown yet, still unread",
+        );
+        expect((JSON.parse(box.ok(["job", "results", "--unseen", "--json"])) as unknown[]).length).toBe(1);
+        const next = wake(box);
+        expect(next.items).toHaveLength(1);
+        expect(next.items[0]?.body).toContain("second run");
+    });
+
+    test("the wake ends with ack commands through the newest item of each stream it shows", () => {
+        const box = coordinator();
+        deliver(box, "A", "2026-03-04T10:00:00Z");
+        finishJob(box, "2026-03-04T10:01:00Z", "job body");
+        const { message } = wake(box);
+        const inboxStamp = (JSON.parse(box.ok(["inbox", "list", "--json"])) as { stamp: string }[])[0]?.stamp;
+        const jobStamp = (JSON.parse(box.ok(["job", "results", "--json"])) as { stamp: string }[])[0]?.stamp;
+        expect(message.split("\n").slice(-2)).toEqual([
+            `    bin/toli inbox ack --through ${inboxStamp}`,
+            `    bin/toli job ack --through ${jobStamp}`,
+        ]);
     });
 
     test("a large backlog shows ten bodies and lists the rest by path", () => {

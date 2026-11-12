@@ -4,7 +4,7 @@ import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, withLock } from "../core/util.ts";
 import { listResults } from "../jobs/jobs.ts";
-import { type AckStream, ackedThrough, ackThrough } from "./acks.ts";
+import { type AckStream, ackCommand, ackedThrough, ackThrough, markShown, type ResultStream } from "./acks.ts";
 import { listInbox } from "./inbox.ts";
 
 /** One result that arrived since the last wake: an inbox message or a job result recorded on this machine. */
@@ -25,7 +25,7 @@ function readBody(path: string): string {
 }
 
 /**
- * Take every result that arrived since the last call and mark it delivered, so each item wakes the session
+ * Take every result that arrived since the last call and mark it delivered and shown, so each item wakes the session
  * exactly once. The user's ack watermarks are untouched: the digest keeps showing items until acknowledged.
  */
 export function takeWake(): WakeItem[] {
@@ -38,6 +38,14 @@ export function takeWake(): WakeItem[] {
         if (lastInbox) ackThrough("inboxDelivered", lastInbox.stamp);
         const lastJob = jobs.at(-1);
         if (lastJob) ackThrough("jobsDelivered", lastJob.stamp);
+        markShown(
+            "inbox",
+            inbox.map((item) => item.stamp),
+        );
+        markShown(
+            "jobs",
+            jobs.map((result) => result.stamp),
+        );
         const items: Omit<WakeItem, "body">[] = [
             ...inbox.map((item) => ({
                 kind: "inbox" as const,
@@ -58,20 +66,34 @@ export function takeWake(): WakeItem[] {
     });
 }
 
+/** The ack command for each stream `items` hold, through the newest item of that stream they show. */
+function ackCommands(items: WakeItem[]): string[] {
+    const streams: [WakeItem["kind"], ResultStream][] = [
+        ["inbox", "inbox"],
+        ["job", "jobs"],
+    ];
+    return streams.flatMap(([kind, stream]) => {
+        const newest = items.filter((item) => item.kind === kind).at(-1);
+        return newest === undefined ? [] : [ackCommand(stream, newest.stamp)];
+    });
+}
+
 /** The message pushed into the live session for `items`; empty when nothing arrived. */
 export function wakeMessage(items: WakeItem[]): string {
     if (items.length === 0) return "";
     const lines = [
         `[toli wake] ${items.length} new result${items.length === 1 ? "" : "s"} arrived.`,
         "Relay each outcome and any decision it needs to the user in plain words, then end the turn.",
-        "Follow-up work goes to a jawan (dispatch it); do not do it here. After relaying, acknowledge with",
-        "`bin/toli inbox ack` / `bin/toli job ack` so the digest stops listing them.",
+        "Follow-up work goes to a jawan (dispatch it); do not do it here. After relaying, run the ack commands at the",
+        "end of this message: they cover exactly what it shows, and anything newer stays unread and wakes you again.",
     ];
     for (const item of items.slice(0, MAX_FULL_ITEMS))
         lines.push("", `## ${item.title} - ${relative(paths.root(), item.path)}`, "", item.body);
     const rest = items.slice(MAX_FULL_ITEMS);
     if (rest.length > 0) lines.push("", "More (read the file for details):");
     for (const item of rest) lines.push(`- ${item.title} - ${relative(paths.root(), item.path)}`);
+    lines.push("", "Acknowledge after relaying (only these items; later arrivals stay unread):");
+    for (const command of ackCommands(items)) lines.push(`    ${command}`);
     return lines.join("\n");
 }
 

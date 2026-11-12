@@ -179,9 +179,9 @@ Details: [harnesses.md](harnesses.md).
     job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--tier light|standard|deep]
     job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
     job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
-    job results [--unseen] [--json] | ack
+    job results [--unseen] [--json] | ack [--through <stamp>]
     schedule install|uninstall|status
-    inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack
+    inbox add --from <machine> --title "<t>" (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
     outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
     wake [--json]
 
