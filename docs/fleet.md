@@ -157,8 +157,9 @@ share: `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` are set to it unless the c
 in arrival order: each holds a numbered ticket in `state/build-slots/queue/` and only the oldest live one takes a slot
 that frees, so a later build never passes an earlier one. A slot is a lock on `state/build-slots/<n>.lock` held by the
 `build-slot` process, and a ticket is a lock held the same way, so a holder or waiter that is killed or crashes frees
-its slot or its place in line at once. Inside a slot already (`TOLI_BUILD_SLOT` set), it runs the command at once: a
-nested build never waits on its own slot.
+its slot or its place in line at once. The lock files stay once made, one per slot number ever used (a `2.lock` on a
+machine now at one slot is from when it had two); only the lock on a file says its slot is busy. Inside a slot
+already (`TOLI_BUILD_SLOT` set), it runs the command at once: a nested build never waits on its own slot.
 
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
 (a `just` recipe, a hook that resets PATH), where the cargo shim below never sees it: a gate's runner
@@ -171,7 +172,9 @@ still watches the recipe's own process tree for stalls. A live-stack project's c
 
 On Linux with a systemd user manager, each build also runs in its own user scope,
 `toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with
-`systemd-run --user --scope --collect -p MemoryMax=<cap>`. An out-of-memory kill (the kernel at the cap, or
+`systemd-run --user --scope --collect -p MemoryHigh=<90% of cap> -p MemoryMax=<cap> -p MemorySwapMax=0`. The build
+cannot swap: without `MemorySwapMax=0` a build at its cap pushed the rest of its memory into swap, and once the
+machine's swap filled systemd-oomd killed the whole build anyway. An out-of-memory kill (the kernel at the cap, or
 systemd-oomd under memory pressure) then takes that one build, not the terminal, tmux server or lead session that
 started it. The cap is `capacity.buildMemoryMax` in MB (default three quarters of the RAM split evenly over the build
 slots: 16384 with 64 GB and 3 slots, so every slot at its cap still leaves a quarter for the rest; 0: no cap, still its
@@ -181,20 +184,36 @@ own scope). The build's exit code, or the signal that killed it, is reported as 
 `/bin/sh` creates `state/build-slots/scope-<pid>.started` and then execs the build; when systemd-run exits without it
 (it could not make the scope: no user session bus over ssh, no lingering), the build never ran, so it runs once
 without a scope after one warning line. A build that ran and failed reports its own exit code and is not run again.
-`TOLI_BUILD_SCOPE=off` turns the scope off. `systemctl --user list-units 'toli-build-*'` lists the running ones.
+`TOLI_BUILD_SCOPE=off` turns the scope off. `systemctl --user list-units 'toli-build-*'` lists the running ones;
+`systemctl --user show` on a scope already gone (`--collect`) reports the defaults (`MemoryMax=infinity`), not its cap.
 
-`bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH and sets its
-`CARGO_BUILD_JOBS` to `capacity.cargoJobs`. A lead session started in toli's root gets the same two variables for
+`bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH, sets its
+`CARGO_BUILD_JOBS` to `capacity.cargoJobs` and makes toli's rustc wrapper (`bin/shims/toli-rustc-wrapper`) its
+`RUSTC_WRAPPER`. A lead session started in toli's root gets the same variables for
 itself, so the native subagents it starts (omp `task`, Claude Code's Agent tool), which inherit its environment, build
 the same way: omp's toli extension adopts them into the omp process when it loads (any omp that is not a
 `bin/toli spawn` jawan), and Claude Code's SessionStart hook writes them to `CLAUDE_ENV_FILE`, which Claude sources
 before every Bash command; both read them from `bin/toli hook lead-build-env`. The shim sends the heavy cargo
 commands (`build`, `check`, `test`, `clippy`, `nextest`, `run`, `bench`, `doc`, `install`, `rustc`, `rustdoc` and
 their one-letter aliases) through `bin/toli build-slot`, and runs everything else (`cargo --version`, `metadata`,
-`fmt`, ...) and any cargo inside a slot straight away, with the first real cargo on PATH after the shim. A build
-started in a live-stack project's checkout ([projects.md](projects.md#live-stack-mode)) skips the slots, as that
-project's jawans run without the shim. `[build] jobs` in `~/.cargo/config.toml` holds the same per-slot number so
-hand-run cargo gets it too
+`fmt`, ...) and any cargo inside a slot straight away, with the first real cargo on PATH after the shim.
+
+PATH order alone is not enough: a login profile, a harness's shell snapshot or git (its exec path, in a hook) can put
+`~/.cargo/bin` ahead of the shim, and that cargo then never sees the shim. The rustc wrapper catches it: cargo calls
+it for every rustc it runs, whichever cargo PATH found, starting with its `rustc -vV` probe. Inside a slot it goes
+straight on. Otherwise, on the first call of a cargo running a heavy command, `bin/toli build-slot --cargo <pid>`
+starts a detached holder (`build-slot --hold <pid>`) that waits in line, takes a slot for that cargo and writes
+`state/build-slots/cargo-<pid>.held`; the call waits (printing the same waiting line) until it holds. Later calls of
+that cargo, of any cargo it starts (cargo-clippy's `cargo check`) and of its build scripts find the holder through
+their process ancestry and go straight on, so a nested cargo reuses the slot and never deadlocks on it. The holder
+frees the slot when the cargo exits or is killed (it polls the pid), and a killed holder frees it with its lock; the
+cargo's next rustc call then takes one again. The wrapper then runs the wrapper it replaced (an inherited
+`RUSTC_WRAPPER`, else `[build] rustc-wrapper` in `~/.cargo/config.toml`, such as sccache), or rustc itself. Such a
+cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
+
+A build started in a live-stack project's checkout ([projects.md](projects.md#live-stack-mode)) skips the slots, as
+that project's jawans run without the shim or the wrapper. `[build] jobs` in `~/.cargo/config.toml` holds the same
+per-slot number so hand-run cargo gets it too
 (`bin/toli doctor` warns when the two differ). `bin/toli resources` shows the slots as `builds <busy>/<total>`
 (`buildSlots` and `buildSlotsBusy` in `--json`).
 

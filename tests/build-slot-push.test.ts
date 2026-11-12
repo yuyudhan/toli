@@ -90,7 +90,7 @@ describe("a push check in one heavy-build slot", () => {
 
     /** systemd-run's logged line for one scope: unit toli-build-1-<pid> capped at scopeBox's 512 MB. */
     const SCOPE_LINE =
-        /^--user --scope --collect --quiet --unit=toli-build-1-\d+\.scope -p MemoryMax=512M -- \/bin\/sh /;
+        /^--user --scope --collect --quiet --unit=toli-build-1-\d+\.scope -p MemoryHigh=460M -p MemoryMax=512M -p MemorySwapMax=0 -- \/bin\/sh /;
 
     test("on Linux a gate's recipe runs in its slot's memory-capped scope; a cargo or build-slot in it rides on the slot", async () => {
         const { box, log, scopeLog, env } = scopeBox(TERMINAL_CGROUP);

@@ -106,7 +106,7 @@ export function leadBuildVars(env: Record<string, string | undefined>): Record<s
     if (env.TOLI_ROLE === "jawan") return null;
     // Readable before `init`: an uninitialised machine gets the default capacity.
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
-    return leadBuildEnv(env.PATH, capacityFor(machine, availableParallelism()).cargoJobs);
+    return leadBuildEnv(env, capacityFor(machine, availableParallelism()).cargoJobs);
 }
 
 /** The lead's build variables as `export` lines for Claude Code's `CLAUDE_ENV_FILE`, sourced before each Bash call. */

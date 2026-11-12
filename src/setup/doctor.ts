@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { availableParallelism, homedir } from "node:os";
-import { join } from "node:path";
+import { availableParallelism } from "node:os";
 import { Args } from "../core/args.ts";
 import { hasMachine, inboundOff, loadFleet, loadMachine } from "../core/config.ts";
 import { isGitRepo } from "../core/git.ts";
@@ -15,6 +14,7 @@ import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
 import { syncShims } from "../harness/sync.ts";
+import { cargoConfigPath } from "../jawans/env.ts";
 import { schedulePath } from "../jobs/os-scheduler.ts";
 import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
@@ -24,11 +24,6 @@ import { outboxCheck } from "./outbox-check.ts";
 
 export type CheckLevel = "ok" | "warn" | "fail";
 export type Check = { level: CheckLevel; name: string; detail: string };
-
-/** Cargo's user config, where `[build] jobs` caps every cargo run on the machine, not only toli-spawned jawans. */
-export function cargoConfigPath(env: Record<string, string | undefined> = process.env): string {
-    return join(env.CARGO_HOME || join(homedir(), ".cargo"), "config.toml");
-}
 
 /**
  * Whether cargo's user config caps build jobs at the machine's `capacity.cargoJobs`, one heavy-build slot's share of

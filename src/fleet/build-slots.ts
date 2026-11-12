@@ -1,13 +1,17 @@
 // Heavy-build slots: at most `capacity.buildSlots` heavy commands (cargo build, test, clippy, ...) run at once on this
 // machine, each with `capacity.cargoJobs` compile jobs, so together they use about every core; the rest wait their
 // turn, first come first served. A slot is a flock(2) on state/build-slots/<n>.lock that `bin/toli build-slot` holds
-// while its command runs, so a holder that dies, however it dies, frees its slot. A waiter holds a numbered ticket in
+// while its command runs, so a holder that dies, however it dies, frees its slot; the lock files themselves stay (one
+// per slot number ever used), only their flock says a slot is busy. A waiter holds a numbered ticket in
 // state/build-slots/queue/ (also a flock, so a waiter that dies leaves the line with it), and only the oldest live
 // ticket may take a free slot. Jawans reach it through the cargo shim in bin/shims, first on their PATH
-// (src/jawans/env.ts); a gate's runner (src/forge/gate.ts) and `bin/toli push` with a pre-push hook (src/forge/forge.ts)
-// hold one for their whole run, so a project's push check gets one slot's share even when it calls cargo directly.
-// On Linux with a user manager each build (and each such push check) runs in its own systemd scope capped at
-// `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the session that started it.
+// (src/jawans/env.ts), and through toli's rustc wrapper (bin/shims/toli-rustc-wrapper, their `RUSTC_WRAPPER`), which
+// catches a cargo that bypassed the shim: its first rustc call waits until a detached holder holds a slot for that
+// cargo until it exits (src/fleet/cargo-slot.ts). A gate's runner (src/forge/gate.ts) and `bin/toli push` with a
+// pre-push hook (src/forge/forge.ts) hold one for their whole run, so a project's push check gets one slot's share even
+// when it calls cargo directly. On Linux with a user manager each build (and each such push check) runs in its own
+// systemd scope capped at `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the
+// session that started it.
 import {
     closeSync,
     existsSync,
@@ -29,10 +33,12 @@ import { ToliError, warn } from "../core/util.ts";
 import { type Argv, inBuildScope } from "../jawans/scope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
+import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
 import { capacityFor } from "./resources.ts";
 
-const POLL_MS = 500;
-const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+/** How often a waiter looks again for a free slot, and a cargo's slot holder whether its cargo still runs. */
+export const POLL_MS = 500;
+export const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 /** The share of the RAM every build slot's default memory cap adds up to; the rest stays for the lead's session. */
 const BUILD_MEMORY_SHARE = 0.75;
 const MB = 1024 * 1024;
@@ -119,12 +125,20 @@ function leaveLine(ticket: Ticket, lock: Flock): void {
     });
 }
 
-/** Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait. */
-async function takeInTurn(slots: number, lock: Flock): Promise<{ index: number; fd: number }> {
+/**
+ * Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait. Gives up
+ * (null) once `wanted` says the slot is no longer needed.
+ */
+export async function takeInTurn(
+    slots: number,
+    lock: Flock,
+    wanted: () => boolean = () => true,
+): Promise<{ index: number; fd: number } | null> {
     const ticket = takeTicket(lock);
     try {
         let told = false;
         for (;;) {
+            if (!wanted()) return null;
             const held = firstInLine(ticket, lock) ? tryTake(slots, lock) : null;
             if (held !== null) return held;
             if (!told) warn(`toli: waiting for a heavy-build slot (${slots} busy)`);
@@ -308,7 +322,7 @@ function realOrNull(path: string): string | null {
  * there is its running stack's, so a build started in it (a lead's native subagent's, through the shim) skips the
  * slots, as that project's `bin/toli spawn` jawans do by running without the shim.
  */
-function inLiveStackCheckout(cwd: string): boolean {
+export function inLiveStackCheckout(cwd: string): boolean {
     const here = realOrNull(cwd);
     if (here === null) return false;
     return loadProjects().some((project) => {
@@ -338,6 +352,7 @@ export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Pr
         return await body({ env: share, scope: { slot: 0, memoryMaxMB } });
     }
     const held = await takeInTurn(capacity.buildSlots, lock);
+    if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;
         return await body({ env: { ...share, TOLI_BUILD_SLOT: String(slot) }, scope: { slot, memoryMaxMB } });
@@ -347,13 +362,25 @@ export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Pr
     }
 }
 
+/** A pid flag's value: a positive integer. */
+function pidFlag(value: string, flag: string): number {
+    const pid = Number(value);
+    if (!Number.isInteger(pid) || pid <= 0) throw new ToliError(`${flag} must be a pid, got "${value}"`);
+    return pid;
+}
+
 /**
  * `bin/toli build-slot -- <command...>`: run the command in a heavy-build slot (`withBuildSlot`), in its own
- * memory-capped systemd scope where the host has one; a nested one stays in its parent's scope.
+ * memory-capped systemd scope where the host has one; a nested one stays in its parent's scope. `--cargo <pid>` and
+ * `--hold <pid>` are toli's rustc wrapper's (`slotForCargo`, `holdForCargo`).
  */
 export async function buildSlotCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv);
+    const args = new Args(argv, { values: ["cargo", "hold"] });
     args.maxPositional(0);
+    const cargo = args.str("cargo");
+    if (cargo !== undefined) return await slotForCargo(pidFlag(cargo, "--cargo"));
+    const hold = args.str("hold");
+    if (hold !== undefined) return await holdForCargo(pidFlag(hold, "--hold"));
     const command = args.rest;
     if (command.length === 0) throw new ToliError("usage: bin/toli build-slot -- <command...>");
     return await withBuildSlot(process.cwd(), ({ env, scope }) => runInSlot(command, env, scope));

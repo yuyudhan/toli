@@ -7,7 +7,10 @@
 // launchd leaves alone when it stops or restarts the lead's job.
 //
 // Heavy builds (`bin/toli build-slot`, src/fleet/build-slots.ts) start the same way, each in its own
-// `toli-build-<slot>-<pid>.scope` with a `MemoryMax`, so an OOM kill takes the build and not the session that ran it.
+// `toli-build-<slot>-<pid>.scope` with a `MemoryMax`, a `MemoryHigh` below it and no swap, so an OOM kill takes the
+// build and not the session that ran it. Without `MemorySwapMax=0` a build at its cap pushes the rest of its memory
+// into swap instead; once the machine's swap fills, systemd-oomd kills the biggest swap user (the whole build) and
+// the cap never held anything (itlinux8, 2026-11-13: MemoryMax set, the scope's 140 processes killed by oomd).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { platform } from "../core/util.ts";
@@ -86,12 +89,27 @@ function ownCgroup(): string {
     }
 }
 
+/** `MemoryHigh` as a share of `MemoryMax`: past it the kernel throttles and reclaims the build, before any OOM kill. */
+const MEMORY_HIGH_SHARE = 0.9;
+
 /**
- * `systemd-run` starting `argv` in scope `unit` with memory cap `memoryMaxMB` (0: no cap, still its own scope). `--`
- * ends systemd-run's options, so a command whose arguments start with `-` reaches the command unchanged.
+ * `systemd-run` starting `argv` in scope `unit` with memory cap `memoryMaxMB` (0: no cap, still its own scope): its
+ * `MemoryMax`, a `MemoryHigh` at `MEMORY_HIGH_SHARE` of it and `MemorySwapMax=0`, so the cap bounds the build's RAM
+ * and swap together. `--` ends systemd-run's options, so a command whose arguments start with `-` reaches the command
+ * unchanged.
  */
 export function buildScopeArgv(systemdRun: string, unit: string, memoryMaxMB: number, argv: Argv): Argv {
-    const limit = memoryMaxMB > 0 ? ["-p", `MemoryMax=${memoryMaxMB}M`] : [];
+    const limit =
+        memoryMaxMB > 0
+            ? [
+                  "-p",
+                  `MemoryHigh=${Math.max(1, Math.floor(memoryMaxMB * MEMORY_HIGH_SHARE))}M`,
+                  "-p",
+                  `MemoryMax=${memoryMaxMB}M`,
+                  "-p",
+                  "MemorySwapMax=0",
+              ]
+            : [];
     return [systemdRun, "--user", "--scope", "--collect", "--quiet", `--unit=${unit}`, ...limit, "--", ...argv];
 }
 

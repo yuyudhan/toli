@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { cargoConfigPath, cargoJobsCheck } from "../src/setup/doctor.ts";
+import { cargoConfigPath } from "../src/jawans/env.ts";
+import { cargoJobsCheck } from "../src/setup/doctor.ts";
 
 describe("cargo jobs mirror (doctor)", () => {
     test("ok when cargo's user config caps build jobs at capacity.cargoJobs", () => {

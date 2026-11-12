@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
 import { leadBuildEnv } from "../src/jawans/env.ts";
@@ -10,11 +11,25 @@ import { withProject } from "./helpers.ts";
 const LEAD = { TOLI_ROLE: "", NO_MISTAKES_GATE: "" };
 
 describe("a lead session's build variables, inherited by its native subagents", () => {
-    test("put toli's cargo shim first on PATH, once, and cap cargo jobs", () => {
+    test("put toli's cargo shim first on PATH, once, cap cargo jobs and chain toli's rustc wrapper", () => {
         const shims = paths.buildShimsDir();
-        expect(leadBuildEnv("/usr/bin:/bin", 4)).toEqual({ PATH: `${shims}:/usr/bin:/bin`, CARGO_BUILD_JOBS: "4" });
-        expect(leadBuildEnv(`/bin:${shims}`, 4).PATH).toBe(`${shims}:/bin`);
-        expect(leadBuildEnv(undefined, 4).PATH).toBe(shims);
+        const wrapper = join(shims, "toli-rustc-wrapper");
+        const home = { CARGO_HOME: "/nonexistent-cargo-home" };
+        expect(leadBuildEnv({ ...home, PATH: "/usr/bin:/bin" }, 4)).toEqual({
+            PATH: `${shims}:/usr/bin:/bin`,
+            CARGO_BUILD_JOBS: "4",
+            RUSTC_WRAPPER: wrapper,
+            TOLI_RUSTC_WRAPPER_NEXT: "",
+        });
+        expect(leadBuildEnv({ ...home, PATH: `/bin:${shims}` }, 4).PATH).toBe(`${shims}:/bin`);
+        expect(leadBuildEnv(home, 4).PATH).toBe(shims);
+        // The wrapper it replaces is chained to: an inherited one, else cargo's user config's (sccache).
+        expect(leadBuildEnv({ ...home, RUSTC_WRAPPER: "sccache" }, 4).TOLI_RUSTC_WRAPPER_NEXT).toBe("sccache");
+        const again = { ...home, RUSTC_WRAPPER: wrapper, TOLI_RUSTC_WRAPPER_NEXT: "sccache" };
+        expect(leadBuildEnv(again, 4)).toMatchObject({ RUSTC_WRAPPER: wrapper, TOLI_RUSTC_WRAPPER_NEXT: "sccache" });
+        const cargoHome = mkdtempSync(join(tmpdir(), "toli-cargo-home-"));
+        writeFileSync(join(cargoHome, "config.toml"), '[build]\nrustc-wrapper = "/opt/bin/sccache"\njobs = 4\n');
+        expect(leadBuildEnv({ CARGO_HOME: cargoHome }, 4).TOLI_RUSTC_WRAPPER_NEXT).toBe("/opt/bin/sccache");
     });
 
     test("bin/toli hook lead-build-env gives a lead the shim and the machine's cargo jobs, a jawan nothing", () => {

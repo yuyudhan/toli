@@ -29,7 +29,7 @@
 // lead guidance or the guard, so everything is gated on the main TUI session.
 // One thing is not: when the extension loads in any omp that is not a `bin/toli spawn`
 // jawan, it puts the lead's build variables (`bin/toli hook lead-build-env`: the cargo shim
-// first on PATH, CARGO_BUILD_JOBS) into this process's environment, before any shell starts,
+// first on PATH, CARGO_BUILD_JOBS, toli's rustc wrapper) into this process's environment, before any shell starts,
 // so the bash tool and every native subagent (omp `task`) build through the heavy-build slots.
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";

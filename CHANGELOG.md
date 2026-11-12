@@ -23,6 +23,16 @@ one. See docs/releasing.md.
   conflict resolved to the branch's own side (the file ends as in the first parent) stayed unmerged in the shared
   index, so `git status` kept listing it. The committed paths' index entries now match the commit (index only; the
   working tree and other paths' staged changes are untouched) (T1222).
+- A jawan's cargo holds a heavy-build slot even when something puts another cargo ahead of toli's cargo shim on PATH
+  (a login profile, a harness's shell snapshot, git's exec path in a hook): two full Rust builds, a pre-push hook's
+  clippy and a `just verify push`, ran the real `~/.cargo/bin/cargo` at once outside any slot. Jawans and lead
+  sessions now get toli's rustc wrapper as `RUSTC_WRAPPER` (chained to the one it replaces, such as sccache): a heavy
+  cargo outside a slot waits on its first rustc call until a detached holder takes a slot for it, which it holds until
+  that cargo exits or is killed; nested cargo (cargo-clippy's `cargo check`) and build scripts reuse it. Live-stack
+  projects keep their exemption. See docs/fleet.md "Heavy-build slots" (T1223).
+- A heavy build's systemd scope also sets `MemoryHigh` (90% of `capacity.buildMemoryMax`) and `MemorySwapMax=0`:
+  with only `MemoryMax`, a build at its cap swapped the rest, filled the machine's swap and systemd-oomd killed the
+  whole build (T1223).
 
 ## v0.4.5 - 2026-11-12
 

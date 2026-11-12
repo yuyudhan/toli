@@ -65,17 +65,26 @@ describe("build slot capacity", () => {
 });
 
 describe("jawan environment", () => {
-    test("builds into the checkout's own build folder, capped at the machine's cargo jobs", () => {
+    test("builds into the checkout's own build folder, capped at the machine's cargo jobs, through toli's rustc wrapper", () => {
         const env = jawanEnv(
-            { PATH: "/bin", CARGO_TARGET_DIR: "/tmp/jawan-target", CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli" },
+            {
+                PATH: "/bin",
+                CARGO_HOME: "/nonexistent-cargo-home",
+                CARGO_TARGET_DIR: "/tmp/jawan-target",
+                CLAUDECODE: "1",
+                CLAUDE_CODE_ENTRYPOINT: "cli",
+            },
             "r1",
             12,
         );
         expect(env).toEqual({
             PATH: `${paths.buildShimsDir()}:/bin`,
+            CARGO_HOME: "/nonexistent-cargo-home",
             TOLI_ROLE: "jawan",
             TOLI_RUN_ID: "r1",
             CARGO_BUILD_JOBS: "12",
+            RUSTC_WRAPPER: join(paths.buildShimsDir(), "toli-rustc-wrapper"),
+            TOLI_RUSTC_WRAPPER_NEXT: "",
         });
     });
 
@@ -162,7 +171,7 @@ describe("build slots", () => {
 });
 
 describe("each heavy build in its own systemd scope", () => {
-    test("the scope argv: its unit, the memory cap (none at 0), then the command after --", () => {
+    test("the scope argv: its unit, the memory cap (MemoryHigh below MemoryMax, no swap; none at 0), then the command", () => {
         expect(buildScopeUnit(2, 4242)).toBe("toli-build-2-4242.scope");
         expect(buildScopeArgv("/usr/bin/systemd-run", "toli-build-2-4242.scope", 4096, ["/bin/cargo", "-v"])).toEqual([
             "/usr/bin/systemd-run",
@@ -172,7 +181,11 @@ describe("each heavy build in its own systemd scope", () => {
             "--quiet",
             "--unit=toli-build-2-4242.scope",
             "-p",
+            "MemoryHigh=3686M",
+            "-p",
             "MemoryMax=4096M",
+            "-p",
+            "MemorySwapMax=0",
             "--",
             "/bin/cargo",
             "-v",
@@ -222,7 +235,8 @@ describe("each heavy build in its own systemd scope", () => {
         // Inside the scope /bin/sh marks that the scope was made (state/build-slots/scope-<pid>.started), then execs
         // the build.
         const marker = `/bin/sh -c : > "$0" && exec "$@" ${join(box.root, "state", "build-slots")}/scope-`;
-        const prefix = /^--user --scope --collect --quiet --unit=toli-build-1-(\d+)\.scope -p MemoryMax=512M -- /;
+        const prefix =
+            /^--user --scope --collect --quiet --unit=toli-build-1-(\d+)\.scope -p MemoryHigh=460M -p MemoryMax=512M -p MemorySwapMax=0 -- /;
         // build-slot resolves `cargo` on PATH (the shim, first there); the shim passes the real cargo.
         for (const [line, build] of [
             [first, `${join(paths.buildShimsDir(), "cargo")} build`],
