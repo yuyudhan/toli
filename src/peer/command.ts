@@ -3,7 +3,9 @@
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { isJsonObject, out, pidAlive, printJson, readStdin, ToliError } from "../core/util.ts";
+import { cancelItems, itemsFor } from "../jobs/outbox-admin.ts";
 import { bindAddresses } from "./bind.ts";
+import { rotateIdentity } from "./deliver.ts";
 import { applyBatch } from "./envelope.ts";
 import { hasIdentity, initIdentity, loadIdentity, spokenFingerprint } from "./identity.ts";
 import { acceptRequest, declineRequest, loadRequests } from "./pair.ts";
@@ -20,12 +22,14 @@ import {
     updatePeerSettings,
     updatePeers,
 } from "./store.ts";
+import { askCommand, flushCommand, pullCommand, statsCommand } from "./transport-command.ts";
 
 const USAGE = `usage: toli peer init | status [--json] | list [--json] | apply (envelopes on stdin)
   peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
   peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
   peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
-  peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]`;
+  peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
+  peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate`;
 
 const ACTOR_VALUES = ["by", "why"];
 
@@ -128,7 +132,13 @@ function remove(argv: string[]): void {
         peer.allow = [];
     });
     peerLog(`removed ${name} by the ${actor.by}: ${actor.why}`);
-    out(`removed ${name}: its key is refused here from now on`);
+    const cancelled = cancelItems(
+        itemsFor(name).map(({ file }) => file),
+        `${name} was removed as a peer`,
+    );
+    out(
+        `removed ${name}: its key is refused here from now on${cancelled.length > 0 ? `; ${cancelled.length} queued item(s) for it moved to state/outbox/cancelled/` : ""}`,
+    );
 }
 
 /** The running listener's record, or null when none runs. */
@@ -301,6 +311,26 @@ export async function peerCommand(argv: string[]): Promise<number> {
         case "deny":
             grant(rest, sub === "allow");
             return 0;
+        case "pull":
+            await pullCommand(rest);
+            return 0;
+        case "flush":
+            await flushCommand(rest);
+            return 0;
+        case "stats":
+            statsCommand(rest);
+            return 0;
+        case "ask":
+            await askCommand(rest);
+            return 0;
+        case "rotate": {
+            new Args(rest).maxPositional(0);
+            const { told, missed } = await rotateIdentity();
+            out(`new key: ${spokenFingerprint(loadIdentity().fingerprint)}`);
+            out(`told: ${told.join(", ") || "nobody"}`);
+            if (missed.length > 0) out(`not reached (they must pair again): ${missed.join(", ")}`);
+            return 0;
+        }
         case "remove":
             remove(rest);
             return 0;

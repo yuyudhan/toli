@@ -1,8 +1,10 @@
-// The outbox (state/outbox/): messages for another machine, queued as files and delivered over ssh, so a machine
-// that is offline loses nothing. Items without a target go to the coordinator's inbox (a worker's job results, prune
-// reports, alerts); items with one go to that fleet machine: a delegation (`bin/toli delegation receive` there) or an
-// inbox message (`bin/toli inbox add` there) such as a delegated task's report or a lead's `talk`. Items for a machine
-// that takes no inbound ssh (`inbound: false`) are never sent: they wait here until it pulls them (src/jobs/pull.ts).
+// The outbox (state/outbox/): messages for another machine, queued as files and delivered so a machine that is
+// offline loses nothing. Items without a target go to the coordinator's inbox (a worker's job results, prune
+// reports, alerts); items with one go to that machine: a delegation (`bin/toli delegation receive` there) or an
+// inbox message (`bin/toli inbox add` there) such as a delegated task's report or a lead's `talk`. A paired peer gets
+// its items over HTTPS first (src/peer/deliver.ts, docs/peers.md); other machines, and a peer HTTPS cannot reach
+// while `peer.sshFallback` is on, get them over ssh. Items for a machine that takes no inbound ssh (`inbound: false`)
+// and no HTTPS wait here until it pulls them (src/jobs/pull.ts, or /v1/outbox/pending).
 import { existsSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -17,6 +19,8 @@ import {
 } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { readJson, run, shellQuote, warn, writeJsonAtomic } from "../core/util.ts";
+import { recordStat } from "../peer/client.ts";
+import { flushSync, httpPeer, sshFallback } from "../peer/transport.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { Reach } from "./reach.ts";
 
@@ -90,9 +94,11 @@ function remoteCommand(item: OutboxItem, root: string): string {
 
 /**
  * Whether `target` takes no inbound ssh, by the current list (an item queued before the flag was set carries an old
- * copy of its machine): by name, else by ssh name (a worker's coordinator is `{ssh, root}`).
+ * copy of its machine): by name, else by ssh name (a worker's coordinator is `{ssh, root}`). A paired peer outside
+ * the fleet list has no ssh name at all: it is reached over HTTPS or pulls.
  */
 export function pullOnly(target: { name?: string; ssh: string }, fleet: Fleet = loadFleet()): FleetMachine | null {
+    if (target.ssh === "") return { name: target.name ?? "", ssh: "", root: "", inbound: false };
     const entry =
         fleet.machines.find((machine) => target.name !== undefined && machine.name === target.name) ??
         fleet.machines.find((machine) => machine.ssh === target.ssh);
@@ -167,10 +173,27 @@ export function deliverOutbox(
     }
     const fleet = loadFleet();
     const held = new Map<string, { items: number; why: string }>();
+    // Paired peers first, over HTTPS (one subprocess for all of them); what it could not reach may go over ssh.
+    const queuedNow = queuedItems();
+    const unreachable = new Map<string, string>();
+    if (queuedNow.some(({ item }) => httpPeer(item.to?.name) !== undefined)) {
+        for (const flush of flushSync(null)) {
+            result.delivered += flush.sent;
+            if (flush.unreachable !== undefined) unreachable.set(flush.peer, flush.unreachable);
+            if (flush.error !== undefined) result.errors.push(`${flush.peer}: ${flush.error}`);
+        }
+    }
     for (const { file, item: peek } of queuedItems()) {
         const queued = join(dir, file);
         const target = itemTarget(peek, machine);
         if (target === undefined || (peek.kind === "delegation" && onDelivered === undefined)) continue;
+        if (httpPeer(target.name) !== undefined) {
+            const why = target.name === undefined ? undefined : unreachable.get(target.name);
+            if (why === undefined || !sshFallback() || target.ssh === "" || pullOnly(target, fleet) !== null) {
+                result.pending += 1;
+                continue;
+            }
+        }
         if (pullOnly(target, fleet) !== null) {
             result.awaitingPull += 1;
             continue;
@@ -190,10 +213,12 @@ export function deliverOutbox(
             continue;
         }
         const item = readJson<OutboxItem>(claimed, { from: machine.name, title: file, body: "" });
+        const started = performance.now();
         const sent = run([...sshArgs(target.ssh, DELIVERY_CONNECT_SECONDS), remoteCommand(item, target.root)], {
             stdin: item.body,
             timeoutMs: DELIVERY_TIMEOUT_MS,
         });
+        recordSsh(target.name, file.replace(/\.json$/, ""), item, started, sent.code);
         if (sent.code === 0) {
             reach.success(target.ssh);
             rmSync(claimed, { force: true });
@@ -229,13 +254,17 @@ export function notify(machine: Machine, title: string, body: string, outboxId: 
 }
 
 /**
- * One immediate send: delivered (with what the target printed), or left queued with the reason: for the tick to retry,
- * or (`pulled`) for a target that takes no inbound ssh to pull.
+ * One immediate send: delivered (with what the target printed), or not with the reason: left queued for the tick to
+ * retry, queued (`pulled`) for a target that takes no inbound ssh to pull, or (`cancelled`) refused by the peer and
+ * kept in state/outbox/cancelled/.
  */
-export type SendResult = { delivered: true; stdout: string } | { delivered: false; pulled: boolean; error: string };
+export type SendResult =
+    | { delivered: true; stdout: string }
+    | { delivered: false; pulled: boolean; error: string; cancelled?: true };
 
-/** What a sender prints for an item left queued: who picks it up next. */
-export function queuedText(name: string, sent: { pulled: boolean }): string {
+/** What a sender prints for an item not delivered: who picks it up next, or that it was refused. */
+export function queuedText(name: string, sent: { pulled: boolean; cancelled?: true }): string {
+    if (sent.cancelled) return `not sent: ${name} refused it (kept in state/outbox/cancelled/)`;
     return sent.pulled
         ? `queued for ${name}, which pulls its messages from here every minute (it takes no inbound ssh)`
         : `queued for ${name} (unreachable); the minute tick retries`;
@@ -257,26 +286,67 @@ export function sendNow(
     const item: OutboxItem = { from, title, body, to, kind, queuedAt: Date.now() };
     const queued = join(paths.outboxDir(), `${id}.json`);
     const pulled = pullOnly(to);
-    if (pulled !== null) {
+    const peer = httpPeer(to.name);
+    let httpsFailed: string | null = null;
+    if (peer !== undefined) {
+        writeJsonAtomic(queued, item);
+        const flushed = flushSync(peer.name, id)[0];
+        const receipt = flushed?.receipts.find((entry) => entry.id === id);
+        if (receipt?.status === "applied" || receipt?.status === "duplicate")
+            return { delivered: true, stdout: receipt.stdout };
+        if (receipt?.status === "refused")
+            return {
+                delivered: false,
+                pulled: false,
+                cancelled: true,
+                error: `${peer.name} refused it: ${receipt.reason ?? "no reason"} (kept in state/outbox/cancelled/)`,
+            };
+        if (receipt !== undefined || flushed?.unreachable === undefined)
+            return {
+                delivered: false,
+                pulled: false,
+                error: `${peer.name} ${receipt?.status ?? "did not take it"}: ${receipt?.reason ?? flushed?.error ?? "no receipt"}`,
+            };
+        httpsFailed = `HTTPS: ${flushed.unreachable}`;
+        if (pulled !== null || !sshFallback() || to.ssh === "")
+            return { delivered: false, pulled: pulled !== null, error: httpsFailed };
+        try {
+            renameSync(queued, `${queued}.sending-${process.pid}`);
+        } catch {
+            return { delivered: false, pulled: false, error: httpsFailed };
+        }
+    } else if (pulled !== null) {
         writeJsonAtomic(queued, item);
         return { delivered: false, pulled: true, error: inboundOffText(pulled) };
     }
     const claimed = `${queued}.sending-${process.pid}`;
-    writeJsonAtomic(claimed, item);
+    if (peer === undefined) writeJsonAtomic(claimed, item);
+    const started = performance.now();
     const sent = run([...sshArgs(to.ssh), remoteCommand(item, to.root)], {
         stdin: body,
         timeoutMs: DELIVERY_TIMEOUT_MS,
     });
+    recordSsh(to.name, id, item, started, sent.code);
     if (sent.code === 0) {
         rmSync(claimed, { force: true });
         return { delivered: true, stdout: sent.stdout };
     }
     renameSync(claimed, queued);
-    return {
-        delivered: false,
-        pulled: false,
-        error: `ssh ${to.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`,
-    };
+    const sshError = `ssh ${to.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`;
+    return { delivered: false, pulled: false, error: httpsFailed === null ? sshError : `${httpsFailed}; ${sshError}` };
+}
+
+/** Time one ssh delivery to a named machine, for comparing it with HTTPS (`bin/toli peer stats`). */
+function recordSsh(name: string | undefined, id: string, item: OutboxItem, started: number, code: number): void {
+    if (name === undefined) return;
+    recordStat({
+        peer: name,
+        id,
+        kind: item.kind ?? "inbox",
+        transport: "ssh",
+        ms: Math.round(performance.now() - started),
+        outcome: code === 0 ? "applied" : `exit ${code}`,
+    });
 }
 
 /** Send one inbox message to another fleet machine now, or queue it for the tick when that machine is unreachable. */

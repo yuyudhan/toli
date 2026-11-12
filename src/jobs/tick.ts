@@ -19,6 +19,9 @@ import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
+import { pullPeers } from "../peer/deliver.ts";
+import { hasIdentity } from "../peer/identity.ts";
+import { peerSettings } from "../peer/store.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { surfaceStaleTasks } from "../records/stale.ts";
@@ -35,6 +38,7 @@ import {
     STALE_RUN_MS,
 } from "./jobs.ts";
 import { deliverOutbox } from "./outbox.ts";
+import { postWaitingAlerts } from "./outbox-admin.ts";
 import { pullFleet, pullsItsMessages, pullText } from "./pull.ts";
 import { Reach } from "./reach.ts";
 
@@ -66,12 +70,20 @@ async function exchangeMessages(machine: Machine): Promise<void> {
                 if (pulled === null || pulled.pulled > 0 || pulled.errors.length > 0) log(pullText(pulled));
                 for (const error of pulled?.errors ?? []) log(`pull: ${error}`);
             }
+            // A machine without a peer listener pulls from its paired peers over HTTPS.
+            if (hasIdentity() && !peerSettings().listen)
+                for (const report of await pullPeers())
+                    if (report.applied > 0 || report.error !== undefined)
+                        log(
+                            `peer pull from ${report.peer}: ${report.applied} applied${report.error ? `; ${report.error}` : ""}`,
+                        );
         } catch (error) {
             log(`pull failed: ${error instanceof Error ? error.message : String(error)}`);
         }
         const outbox = deliverOutbox(machine, onOutboxDelivered, reach);
         if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
         for (const error of outbox.errors) log(`outbox: pending ${error}`);
+        for (const alert of postWaitingAlerts()) log(`outbox: ${alert}`);
     } finally {
         rmSync(lock, { force: true });
     }

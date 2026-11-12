@@ -39,6 +39,8 @@ export function repoRoot(): string {
 export const paths = {
     root: () => repoRoot(),
     toliBin: () => join(repoRoot(), "bin", "toli"),
+    /** This code's own CLI (the installed runtime's, or the working tree's): for subprocesses of the running code. */
+    codeBin: () => join(codeRoot(), "bin", "toli"),
     /** The active installed runtime snapshot of a checkout (one line, read by bin/toli; src/release/runtime.ts). */
     runtimePointer: (checkout: string = repoRoot()) => join(checkout, "state", "runtime"),
     machine: () => join(repoRoot(), "config", "machine.json"),
@@ -100,16 +102,13 @@ export const paths = {
     outboxDir: () => join(repoRoot(), "state", "outbox"),
     /** Items cancelled or refused by their peer, kept with the reason (src/jobs/outbox-admin.ts): nothing is dropped. */
     outboxCancelledDir: () => join(repoRoot(), "state", "outbox", "cancelled"),
-    /** Each outbox target's next `seq` (the order its items are sent in). */
-    outboxSeq: () => join(repoRoot(), "state", "outbox-seq.json"),
     /** The "waiting to send" alerts already posted, per target and age threshold (src/jobs/outbox-admin.ts). */
     outboxAlerts: () => join(repoRoot(), "state", "outbox-alerts.json"),
     /** This installation's peer identity (src/peer/identity.ts): Ed25519 key, TLS certificate, mode 0600 secrets. */
     peerConfigDir: () => join(repoRoot(), "config", "peer"),
     /** Paired peers: public keys, pinned certificates, addresses and permissions (src/peer/store.ts). */
     peers: () => join(repoRoot(), "config", "peers.json"),
-    /** Peer messaging state: requests, nonces, received ledgers, the listener's record and control socket. */
-    peerStateDir: () => join(repoRoot(), "state", "peer"),
+    /** Peer messaging state in state/peer/: requests, nonces, received ledgers, the listener's record and socket. */
     peerRequests: () => join(repoRoot(), "state", "peer", "requests.json"),
     peerOutgoing: () => join(repoRoot(), "state", "peer", "outgoing.json"),
     peerNonces: () => join(repoRoot(), "state", "peer", "nonces.json"),

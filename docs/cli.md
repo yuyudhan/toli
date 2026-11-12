@@ -184,6 +184,7 @@ Details: [harnesses.md](harnesses.md).
     schedule install|uninstall|status
     inbox add --from <machine> --title "<t>" [--via "<how it arrived>"] (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
     outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
+    outbox list [--to <machine>] [--cancelled] [--json] | cancel <id>|--to <machine> [--why "..."] | expire --older <N>d
     wake [--json]
 
 - `job due` lists due jobs; `run-due` runs them (the live session); `tick` is the per-minute OS ticker; `begin` and
@@ -195,6 +196,9 @@ Details: [harnesses.md](harnesses.md).
   what every other machine queued for it (`outbox pending` there), applies it here and acknowledges it (`outbox ack`
   there), so each item is applied once ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)). Run by hand, it also
   tries the machines the tick backs off ([fleet.md](fleet.md#unreachable-machines)).
+- `outbox list` shows what waits to be sent (to whom, kind, age; `--cancelled` what was given up and why); `outbox
+cancel` and `outbox expire` move items to `state/outbox/cancelled/` with an inbox note. Nothing is dropped
+  silently, and nothing expires by itself ([peers.md](peers.md#the-queue)).
 
 Details: [jobs.md](jobs.md).
 
@@ -257,6 +261,7 @@ Details: [fleet.md](fleet.md).
     peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
     peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
     peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
+    peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
 
 - `peer init` makes this installation's identity (an Ed25519 key and a TLS certificate in `config/peer/`); `upgrade`
   and the listener run it too. `peer status` shows the fingerprint to compare when pairing; `peer list` the paired

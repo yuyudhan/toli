@@ -94,8 +94,13 @@ const USAGE = `usage: bin/toli <command> [args]
   helper list [--json] | install <name>|--all | uninstall <name>|--all | run <name> | status [<name>] [--json]
   inbox add --from <machine> --title "<t>" [--via "<how it arrived>"] (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
   outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
+  outbox list [--to <machine>] [--cancelled] [--json] | cancel <id>|--to <machine> [--why "..."] | expire --older <N>d
   peer init | status [--json] | list [--json] | apply (envelopes on stdin)
   peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
+  peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
+  peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
+  peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
+  peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
   wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]

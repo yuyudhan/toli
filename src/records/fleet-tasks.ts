@@ -20,11 +20,10 @@ import {
     printJson,
     readJson,
     requireName,
-    run,
     runAsync,
-    shellQuote,
     stamp,
     ToliError,
+    warn,
     withLock,
     writeJsonAtomic,
 } from "../core/util.ts";
@@ -199,8 +198,9 @@ export async function listFleet(options: {
 }
 
 /**
- * `task answer <machine>/T<n> "<answer>"` for another machine's task: the owner records it (rule 2). An owner that
- * takes no inbound ssh gets it with its next pull (an `answer` outbox item).
+ * `task answer <machine>/T<n> "<answer>"` for another machine's task: the owner records it (rule 2). It travels as
+ * an `answer` outbox item, over HTTPS to a paired peer or ssh otherwise; an owner that cannot be reached now gets it
+ * when it is back (or with its next pull).
  */
 export function forwardAnswer(owner: string, argv: string[]): void {
     const args = new Args(argv);
@@ -210,20 +210,15 @@ export function forwardAnswer(owner: string, argv: string[]): void {
     const target = fleetMachine(owner);
     const self = loadMachine().name;
     const fid = fleetId(owner, id);
-    if (inboundOff(target)) {
-        const body = JSON.stringify({ id, answer: reply } satisfies AnswerBody);
-        sendNow(self, target, "answer", `answer ${fid}`, body, `answer-${id}-${self}-${stamp()}`);
-        out(`answer for ${fid} ${queuedText(owner, { pulled: true })}`);
+    const body = JSON.stringify({ id, answer: reply } satisfies AnswerBody);
+    const sent = sendNow(self, target, "answer", `answer ${fid}`, body, `answer-${id}-${self}-${stamp()}`);
+    if (sent.delivered) {
+        out(`${owner} recorded the answer for ${fid}:`);
+        out(sent.stdout.trimEnd());
         return;
     }
-    const command = `task answer ${shellQuote(id)} ${shellQuote(reply)} --from ${shellQuote(self)}`;
-    const result = run([...sshArgs(target.ssh), remoteToliCommand(target.root, command)], { timeoutMs: 120_000 });
-    if (result.code !== 0)
-        throw new ToliError(
-            `${owner} did not record the answer (ssh ${target.ssh} exited ${result.code}): ${(result.stderr || result.stdout).trim()}`,
-        );
-    out(`${owner} recorded the answer for ${fleetId(owner, id)}:`);
-    out(result.stdout.trimEnd());
+    if (!sent.pulled) warn(sent.error);
+    out(`answer for ${fid} ${queuedText(owner, sent)}`);
 }
 
 /** Subcommands that change one task: they take its id first, and only its owner may run them. */

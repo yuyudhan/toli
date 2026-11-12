@@ -6,11 +6,16 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
     calculateGenerator,
+    confirmTag,
+    cpaceFinish,
+    cpaceShare,
     generatorString,
     isk,
+    type PairInputs,
     scalarFromLe,
     scalarMult,
     scalarMultVfy,
+    tagsEqual,
     transcriptIr,
 } from "../src/peer/cpace.ts";
 import { loadNoble } from "../src/peer/deps.ts";
@@ -70,6 +75,37 @@ describe("CPace (draft-irtf-cfrg-cpace-14, ristretto255 and SHA-512)", () => {
         );
         for (const invalid of INVALID)
             expect(scalarMultVfy(noble, scalarFromLe(hex(VALID.s)), hex(invalid))).toBeNull();
+    });
+
+    test("a relay with its own keys gets a different session key on each side: no tag verifies", async () => {
+        const fp = (char: string) => char.repeat(64);
+        const key = (byte: number) => Buffer.alloc(32, byte).toString("base64");
+        const real: PairInputs = {
+            reqId: "r1",
+            nameA: "alpha",
+            nameB: "beta",
+            keyA: key(1),
+            keyB: key(2),
+            certFpA: fp("a"),
+            certFpB: fp("b"),
+        };
+        // A talks to the relay as if it were B (the relay's key and certificate); B sees the relay as A.
+        const aView: PairInputs = { ...real, keyB: key(9), certFpB: fp("9") };
+        const bView: PairInputs = { ...real, keyA: key(9), certFpA: fp("9") };
+        const a = await cpaceShare("1234", aView);
+        const b = await cpaceShare("1234", bView);
+        const aDone = await cpaceFinish(a.scalar, aView, a.share, b.share, "A");
+        const bDone = await cpaceFinish(b.scalar, bView, a.share, b.share, "B");
+        if (aDone === null || bDone === null) throw new Error("valid shares aborted");
+        expect(
+            tagsEqual(confirmTag(aDone.key, "A", aDone.transcript), confirmTag(bDone.key, "A", bDone.transcript)),
+        ).toBe(false);
+        // The same inputs on both sides do agree.
+        const a2 = await cpaceShare("1234", real);
+        const b2 = await cpaceShare("1234", real);
+        const aKey = await cpaceFinish(a2.scalar, real, a2.share, b2.share, "A");
+        const bKey = await cpaceFinish(b2.scalar, real, a2.share, b2.share, "B");
+        expect(aKey?.key.equals(bKey?.key ?? Buffer.alloc(0))).toBe(true);
     });
 });
 
@@ -173,6 +209,14 @@ describe("pairing with a 4-digit code", () => {
         const again = pair.a.box.toli(["peer", "add", pair.target]);
         expect(again.code).toBe(1);
         expect(again.stderr).toContain("held after 3 wrong codes");
+    });
+
+    test("one source may ask 3 times an hour: the 4th request is refused", async () => {
+        const pair = await pairBoxes();
+        for (let index = 0; index < 3; index += 1) requestId(pair);
+        const fourth = pair.a.box.toli(["peer", "add", pair.target]);
+        expect(fourth.code).toBe(1);
+        expect(fourth.stderr).toContain("at most 3 pairing requests an hour");
     });
 
     test("an expired code kills its request", async () => {

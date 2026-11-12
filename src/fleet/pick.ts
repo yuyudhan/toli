@@ -8,6 +8,8 @@ import {
     sshArgs,
 } from "../core/config.ts";
 import { out, printJson, runAsync } from "../core/util.ts";
+import { askStatus } from "../peer/deliver.ts";
+import { httpPeer } from "../peer/transport.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { type Full, fullText } from "./full.ts";
 import { perSlot, type Queue, queueText, slotText } from "./queue.ts";
@@ -158,27 +160,40 @@ async function probe(machine: FleetMachine): Promise<FleetEntry> {
         reasons: [`unreachable: ${detail}`],
         resources: null,
     });
-    // Never probed, and never picked: work for it goes by `delegate`, which it pulls.
-    if (inboundOff(machine)) return { ...unreachable(""), reasons: [inboundOffText(machine)] };
+    const reached = (resources: Resources): FleetEntry => ({
+        machine: machine.name,
+        local: false,
+        reachable: true,
+        available: resources.available,
+        reasons: resources.reasons,
+        resources,
+    });
+    // A paired peer answers over HTTPS (its `status` permission for this machine); ssh is the fallback.
+    const peer = httpPeer(machine.name);
+    let httpsError = "";
+    if (peer !== undefined) {
+        try {
+            return reached(parseResources(JSON.stringify((await askStatus(peer)).value)));
+        } catch (error) {
+            httpsError = `HTTPS: ${firstLine(error instanceof Error ? error.message : String(error))}; `;
+        }
+    }
+    // Never probed over ssh, and never picked: work for it goes by `delegate`, which it pulls.
+    if (inboundOff(machine)) return { ...unreachable(""), reasons: [`${httpsError}${inboundOffText(machine)}`] };
     const result = await runAsync(
         [...sshArgs(machine.ssh, PROBE_CONNECT_SECONDS), remoteToliCommand(machine.root, "resources --json")],
         {
             timeoutMs: PROBE_CAP_MS,
         },
     );
-    if (result.timedOut) return unreachable(`no answer from ${machine.ssh} within ${PROBE_CAP_MS / 1000}s`);
+    if (result.timedOut)
+        return unreachable(`${httpsError}no answer from ${machine.ssh} within ${PROBE_CAP_MS / 1000}s`);
     if (result.code !== 0)
-        return unreachable(`ssh ${machine.ssh} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`);
+        return unreachable(
+            `${httpsError}ssh ${machine.ssh} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`,
+        );
     try {
-        const resources = parseResources(result.stdout);
-        return {
-            machine: machine.name,
-            local: false,
-            reachable: true,
-            available: resources.available,
-            reasons: resources.reasons,
-            resources,
-        };
+        return reached(parseResources(result.stdout));
     } catch (error) {
         return unreachable(
             `bad resources output from ${machine.ssh}: ${error instanceof Error ? error.message : String(error)}`,

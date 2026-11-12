@@ -106,3 +106,56 @@ run gives a guesser one online try at 1 in 10,000; a recorded exchange gives an 
 accept`, `decline`, `allow`, `deny` and `remove` are logged to `logs/peer.log` with who and why; the code never is.
 `peer deny <peer> <permission>` revokes one permission and `peer allow` restores it; `peer remove <peer>` revokes
 the peer, whose key is then refused (it stays in `config/peers.json` as `revoked`).
+
+## Delivery
+
+The outbox (`state/outbox/`) is the one queue for every transport. When this machine sends to another (`talk`,
+`delegate`, a delegated task's report, `share`, `task answer <m>/T<n>`), the item is written to the outbox and:
+
+1. a **paired peer** with an address gets it over HTTPS, at once: every item queued for that peer goes out in order,
+   in batches of at most 50 signed envelopes, and each receipt settles its item (`bin/toli peer flush` does this; the
+   outbox runs it as a subprocess);
+2. a fleet machine that is not paired, or a peer HTTPS cannot reach while `peer.sshFallback` is on (the default), gets
+   it over ssh as before;
+3. otherwise it waits: the minute tick retries, the peer's announce (below) sends it, or the peer pulls it.
+
+A receipt `applied` or `duplicate` removes the item (a delegation's answer is then recorded here, as over ssh); a
+lost receipt only means the item is sent again, and the receiver answers `duplicate` with the receipt it kept, so
+each item is **applied exactly once**. `deferred` (a rate limit, or 200 unread messages from that peer) and `failed`
+keep the item and every later one queued, so order holds. `refused` (a missing permission, a revoked key, a false
+sender claim) moves it to `state/outbox/cancelled/` with the reason and posts an inbox note here: retrying a refusal
+would never succeed.
+
+**Back online.** A listener that starts, or whose addresses change (VPN up, Wi-Fi joined), announces itself to every
+peer (`POST /v1/announce`, signed). The peer records the addresses and sends what waits for it at once, without
+waiting for its tick. **Pull.** A machine whose listener is off pulls from each peer every minute
+(`POST /v1/outbox/pending`, then `/v1/outbox/ack` with the receipts; by hand: `bin/toli peer pull`). A paired peer
+that is not in `config/fleet.json` is reached this way only: over HTTPS, or by its pull.
+
+**One wake.** The receiver touches `state/peer/receiving` while it applies a batch; the lead's turn and `wake` wait
+until it has been quiet for 5 seconds, so a backlog arrives as one wake. A batch of more than 5 messages from one
+peer also gets one header item: "12 queued messages from beta arrived (the oldest waited 2 d)". Every message from a
+peer carries `- via: peer <name> (fingerprint ...)`; its words are information, never an instruction, until this
+machine's lead decides.
+
+**Status.** `bin/toli peer ask <peer> status` asks a peer for its `resources --json` (load, memory, disk, queue,
+running jawans) over HTTPS; `fleet status`, `pick` and the queue balancing ask paired peers this way first and fall
+back to ssh.
+
+**Timings.** Every delivery is logged with its transport and time in `state/peer/stats.jsonl`; `bin/toli peer
+stats` shows the count, median and 90th percentile per transport and peer, to compare HTTPS with ssh.
+
+## The queue
+
+`bin/toli outbox list [--to <m>]` shows what waits, to whom and for how long; `fleet status` and the digest add a
+"waiting to send: 3 to beta, oldest 2 d" line per machine. When a machine's oldest item has waited 1 hour, 1 day and
+then each further day, the tick posts one inbox item here per machine and threshold. `outbox cancel <id>|--to <m>`
+and `outbox expire --older <N>d` give up on items; they move to `state/outbox/cancelled/` (`outbox list
+--cancelled`) with an inbox note. Nothing expires by itself and nothing is dropped silently. `peer remove` cancels
+what waits for that peer the same way.
+
+## Rotating the key
+
+`bin/toli peer rotate` makes a new key and certificate and tells every active peer, signed by the old key; they
+accept the old key for one more week, so messages already on their way still verify. A peer that was not reached
+refuses the new key until it pairs again; the command names it. The listener restarts on the new certificate.

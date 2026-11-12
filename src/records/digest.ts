@@ -30,6 +30,7 @@ import {
     runLine,
 } from "../jawans/runs.ts";
 import { type JobResult, listResults, loadJobState } from "../jobs/jobs.ts";
+import { waitingLines } from "../jobs/outbox-admin.ts";
 import { brokenLink } from "../projects/link.ts";
 import { loadProjects, type Mode } from "../projects/projects.ts";
 import { projectsNeedingSetup } from "../projects/setup.ts";
@@ -327,7 +328,10 @@ export async function digestCommand(argv: string[]): Promise<void> {
         throw new ToliError("--fleet runs on the coordinator only");
     if (!args.bool("fleet")) {
         if (args.bool("json")) printJson(digest);
-        else out(ownRender(digest, setupItems));
+        else {
+            out(ownRender(digest, setupItems));
+            for (const line of waitingLines()) out(`waiting to send: ${line}`);
+        }
         return;
     }
     const availability: AvailabilityEntry[] = await fleetStatus();
@@ -337,6 +341,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
         return;
     }
     out(ownRender(digest, setupItems));
+    for (const line of waitingLines()) out(`waiting to send: ${line}`);
     out("");
     out(`fleet availability (${availability.length}):`);
     for (const entry of availability) out(`  ${availabilityLine(entry)}`);

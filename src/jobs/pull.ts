@@ -40,6 +40,7 @@ import {
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { fleetExport, takePullerExport } from "../fleet/fleet-sync.ts";
 import { deliveryArgv, itemTarget, type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
+import { outboxAdminCommand } from "./outbox-admin.ts";
 import { Reach } from "./reach.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
@@ -301,9 +302,13 @@ export function pullText(report: PullReport | null): string {
     return `pull: ${report.pulled} waiting, ${report.applied} applied, ${report.acked} acknowledged${held}${report.errors.length > 0 ? `; ${report.errors.length} problem(s)` : ""}`;
 }
 
-/** `outbox pending --for <m>` | `outbox ack --for <m>` (a sender's side) | `outbox pull [--json]` (the puller's). */
+/**
+ * `outbox list|cancel|expire` (outbox-admin.ts), `outbox pending --for <m>` | `outbox ack --for <m>` (a sender's
+ * side), `outbox pull [--json]` (the puller's).
+ */
 export async function outboxCommand(argv: string[]): Promise<void> {
     const [sub, ...rest] = argv;
+    if (outboxAdminCommand(sub, rest)) return;
     if (sub === "pending" || sub === "ack") {
         const args = new Args(rest, { values: ["for"] });
         args.maxPositional(0);
@@ -323,5 +328,7 @@ export async function outboxCommand(argv: string[]): Promise<void> {
         for (const error of report?.errors ?? []) out(`- ${error}`);
         return;
     }
-    throw new ToliError("usage: toli outbox pull [--json] | pending --for <machine> | ack --for <machine>");
+    throw new ToliError(
+        "usage: toli outbox list [--to <m>] [--cancelled] [--json] | cancel <id>|--to <m> [--why ...] | expire --older <N>d | pull [--json] | pending --for <machine> | ack --for <machine>",
+    );
 }

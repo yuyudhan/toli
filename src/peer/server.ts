@@ -331,7 +331,7 @@ export function ensureListener(): string | null {
     const log = openSync(paths.peerLog(), "a");
     const { TOLI_LEAD_TURN: _turn, ...env } = process.env;
     try {
-        const child = spawn(process.execPath, [paths.toliBin(), "peer", "serve"], {
+        const child = spawn(process.execPath, [paths.codeBin(), "peer", "serve"], {
             cwd: paths.root(),
             detached: true,
             stdio: ["ignore", log, log],

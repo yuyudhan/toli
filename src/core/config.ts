@@ -147,10 +147,17 @@ export function loadFleet(): Fleet {
     return { machines: Array.isArray(fleet.machines) ? fleet.machines : [] };
 }
 
+/**
+ * The fleet machine named `name`, else a paired peer of that name that is not in the fleet list: it is reached over
+ * HTTPS only (no ssh name, `inbound: false`), and pulls when HTTPS cannot reach it (docs/peers.md).
+ */
 export function fleetMachine(name: string): FleetMachine {
     const machine = loadFleet().machines.find((entry) => entry.name === name);
-    if (!machine) throw new ToliError(`machine "${name}" is not in config/fleet.json`);
-    return machine;
+    if (machine !== undefined) return machine;
+    const peers = readJson<{ peers?: Array<{ name: string; status: string }> }>(paths.peers(), {}).peers ?? [];
+    if (peers.some((peer) => peer.name === name && peer.status === "active"))
+        return { name, ssh: "", root: "", inbound: false };
+    throw new ToliError(`machine "${name}" is not in config/fleet.json and is not a paired peer`);
 }
 
 /** Fleet machines other than this one. */

@@ -28,6 +28,7 @@ import {
     withLock,
     writeJsonAtomic,
 } from "../core/util.ts";
+import { waitingLines } from "../jobs/outbox-admin.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
@@ -309,5 +310,8 @@ export async function fleetCommand(argv: string[]): Promise<void> {
     args.maxPositional(0);
     const entries = await fleetStatus();
     if (args.bool("json")) printJson(entries);
-    else for (const entry of entries) out(availabilityLine(entry));
+    else {
+        for (const entry of entries) out(availabilityLine(entry));
+        for (const line of waitingLines()) out(`waiting to send: ${line}`);
+    }
 }
