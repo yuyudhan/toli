@@ -4,6 +4,17 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## Unreleased
+
+### Fixed
+
+- On macOS, `bin/toli helper status|install|uninstall`, `schedule status|install|uninstall` and
+  `lead status|install|uninstall` see a helper, tick or lead installed as a system LaunchDaemon
+  (`/Library/LaunchDaemons/com.toli.*.plist`) and keep it there: status reports it installed, in the system domain,
+  instead of "not installed"; install rewrites and reloads the daemon as root through `sudo -n` (changing nothing
+  without cached credentials) and retires a LaunchAgent of the same label instead of adding a second copy; uninstall
+  removes the daemon. Machines without one keep the user agent in `~/Library/LaunchAgents` (docs/helpers.md) (T1119).
+
 ## v0.4.3 - 2026-11-12
 
 ### Added

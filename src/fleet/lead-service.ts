@@ -1,21 +1,27 @@
-// The lead service in the OS scheduler (docs/sardars.md): a launchd agent, a systemd user service or a per-minute
-// crontab line running `bin/toli lead run`, and `lead status`.
+// The lead service in the OS scheduler (docs/sardars.md): a launchd agent (or a LaunchDaemon already installed), a
+// systemd user service or a per-minute crontab line running `bin/toli lead run`, and `lead status`.
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../core/paths.ts";
 import { out, run, shellQuote, writeTextAtomic } from "../core/util.ts";
 import { sessionFile } from "../jawans/launch.ts";
 import {
+    launchctlLoaded,
+    launchdDetail,
+    launchdDomain,
+    launchdLoadPlan,
+    launchdPlistPath,
+    launchdRemovalPlan,
+    loadLaunchdJob,
+    renderLaunchdPlist,
+    unloadLaunchdJob,
+} from "../jobs/launchd.ts";
+import {
     bunPath,
     dryRun,
-    guiDomain,
-    launchAgentsDir,
-    launchctlLoaded,
-    loadLaunchAgent,
     mustRun,
     osScheduler,
     readCrontab,
-    renderLaunchdPlist,
     type Scheduler,
     schedulePath,
     systemctl,
@@ -23,7 +29,6 @@ import {
     systemdPath,
     systemdUserDir,
     systemdWord,
-    unloadLaunchAgent,
     writeCrontab,
 } from "../jobs/os-scheduler.ts";
 import { interactiveLeadPid, readLeadState, turnPid } from "./lead-state.ts";
@@ -34,7 +39,7 @@ export const LEAD_CRON_TAG = "# toli lead";
 export const LEAD_UNIT = "toli-lead.service";
 
 export function leadPlistPath(): string {
-    return join(launchAgentsDir(), `${LEAD_LABEL}.plist`);
+    return launchdPlistPath(LEAD_LABEL);
 }
 
 export function leadUnitPath(): string {
@@ -116,22 +121,15 @@ export function installLeadService(): void {
         if (dryRun()) {
             out(`# dry run: would write ${target}`);
             out(plist);
-            out(
-                `# would run: launchctl kickstart -k ${guiDomain()}/${LEAD_LABEL} (loaded, and ${target} already is this plist)`,
-            );
-            out(
-                `# otherwise: launchctl bootout ${guiDomain()}/${LEAD_LABEL} (if loaded), then launchctl bootstrap ${guiDomain()} ${target}`,
-            );
-            out(
-                "# from a session launchd cannot bootstrap into (no login session), nothing is touched; a failed bootstrap puts the old plist back",
-            );
+            for (const line of launchdLoadPlan(LEAD_LABEL, { restartUnchanged: true })) out(line);
             return;
         }
-        const action = loadLaunchAgent(LEAD_LABEL, target, plist, { restartUnchanged: true });
+        const when = launchdDomain(LEAD_LABEL) === "system" ? "at every boot" : "at every login";
+        const action = loadLaunchdJob(LEAD_LABEL, plist, { restartUnchanged: true });
         out(
             action === "restarted"
                 ? `${target} is unchanged and ${LEAD_LABEL} is loaded: restarted it in place (launchctl kickstart -k)`
-                : `installed and loaded ${target}: the lead service runs now and at every login`,
+                : `installed and loaded ${target}: the lead service runs now and ${when}`,
         );
         return;
     }
@@ -171,10 +169,10 @@ export function uninstallLeadService(): void {
     if (scheduler === "launchd") {
         const target = leadPlistPath();
         if (dryRun()) {
-            out(`# dry run: would run launchctl bootout ${guiDomain()}/${LEAD_LABEL} (if loaded) and remove ${target}`);
+            out(launchdRemovalPlan(LEAD_LABEL));
             return;
         }
-        out(unloadLaunchAgent(LEAD_LABEL, target) ? `uninstalled ${target}` : "no lead service installed");
+        out(unloadLaunchdJob(LEAD_LABEL) ? `uninstalled ${target}` : "no lead service installed");
         return;
     }
     if (scheduler === "systemd") {
@@ -210,10 +208,13 @@ export type LeadServiceStatus = { scheduler: Scheduler; installed: boolean; runn
 /** Whether the lead service is installed in the scheduler in use, and running (a crontab line runs every minute). */
 export function leadServiceStatus(): LeadServiceStatus {
     const scheduler = osScheduler();
-    if (scheduler === "launchd") {
-        const target = leadPlistPath();
-        return { scheduler, installed: existsSync(target), running: launchctlLoaded(LEAD_LABEL), detail: target };
-    }
+    if (scheduler === "launchd")
+        return {
+            scheduler,
+            installed: existsSync(leadPlistPath()),
+            running: launchctlLoaded(LEAD_LABEL),
+            detail: launchdDetail(LEAD_LABEL),
+        };
     if (scheduler === "systemd") {
         const target = leadUnitPath();
         const running = run(systemctl("is-active", LEAD_UNIT)).stdout.trim() === "active";

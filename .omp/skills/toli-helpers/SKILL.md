@@ -71,7 +71,9 @@ after Malik agrees to what it would remove.
 
 Schedulers: launchd user agents `com.toli.helper.<name>` on macOS; systemd user units `toli-helper-<name>.service`
 (+ `.timer`) on Linux; crontab lines tagged `# toli helper <name>` when systemd's user session is unavailable.
-`TOLI_SCHEDULER=launchd|systemd|crontab` forces one (it also picks the tick's scheduler).
+`TOLI_SCHEDULER=launchd|systemd|crontab` forces one (it also picks the tick's scheduler). A helper whose plist is in
+`/Library/LaunchDaemons` stays a system LaunchDaemon: install/uninstall then need root through `sudo -n`, so hold
+for Malik to run `sudo -v` in that terminal (docs/helpers.md).
 
 ## Changing or removing
 

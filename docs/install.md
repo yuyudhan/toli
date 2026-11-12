@@ -8,7 +8,7 @@ and your private data lives in gitignored directories inside it (`data/`, `state
 
 | Platform                                   | Status                                                                     |
 | ------------------------------------------ | -------------------------------------------------------------------------- |
-| macOS (Apple silicon and Intel)            | supported; the scheduler is a launchd user agent                           |
+| macOS (Apple silicon and Intel)            | supported; a launchd user agent, or a LaunchDaemon you add                 |
 | Linux: Debian/Ubuntu and Fedora            | supported; the scheduler is a systemd user timer, or crontab without one   |
 | Windows through WSL2 (an Ubuntu or Debian) | supported through the Linux path; run everything inside the WSL2 distro    |
 | Native Windows (PowerShell, cmd)           | not supported: toli needs a POSIX shell, `git`, `bun` and a user scheduler |

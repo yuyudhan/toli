@@ -4,17 +4,26 @@ import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, platform, printJson, run, runInherit, ToliError, writeTextAtomic } from "../core/util.ts";
 import {
-    dryRun,
-    guiDomain,
+    type LaunchdDomain,
     launchAgentsDir,
-    loadLaunchAgent,
+    launchDaemonsDir,
+    launchdDetail,
+    launchdDomain,
+    launchdLoadPlan,
+    launchdPlistPath,
+    launchdRemovalPlan,
+    launchdService,
+    loadLaunchdJob,
+    unloadLaunchdJob,
+} from "../jobs/launchd.ts";
+import {
+    dryRun,
     mustRun,
     osScheduler,
     readCrontab,
     type Scheduler,
     systemctl,
     systemdUserDir,
-    unloadLaunchAgent,
     writeCrontab,
 } from "../jobs/os-scheduler.ts";
 import { type Helper, loadHelpers, scheduleText } from "./registry.ts";
@@ -33,10 +42,6 @@ import {
 const USAGE =
     "usage: toli helper list [--json] | install <name>|--all | uninstall <name>|--all | run <name> | status [<name>] [--json]";
 
-function helperPlistPath(name: string): string {
-    return join(launchAgentsDir(), `${helperLabel(name)}.plist`);
-}
-
 function systemdFiles(name: string): { service: string; timer: string } {
     const base = join(systemdUserDir(), helperUnit(name));
     return { service: `${base}.service`, timer: `${base}.timer` };
@@ -49,17 +54,20 @@ function platformOk(helper: Helper): boolean {
 function installHelper(helper: Helper, scheduler: Scheduler): void {
     if (!existsSync(helper.exec)) throw new ToliError(`helper "${helper.name}": ${helper.exec} does not exist`);
     if (scheduler === "launchd") {
+        const label = helperLabel(helper.name);
         const plist = renderHelperPlist(helper);
-        const target = helperPlistPath(helper.name);
         if (dryRun()) {
-            out(`# dry run: would write ${target}`);
+            out(`# dry run: would write ${launchdPlistPath(label)}`);
             out(plist);
-            out(`# would run: launchctl bootstrap ${guiDomain()} ${target} (after bootout if loaded)`);
+            for (const line of launchdLoadPlan(label)) out(line);
             return;
         }
         mkdirSync(dirname(paths.helperLog(helper.name)), { recursive: true });
-        loadLaunchAgent(helperLabel(helper.name), target, plist);
-        out(`installed ${helper.name}: launchd ${helperLabel(helper.name)} (${scheduleText(helper.schedule)})`);
+        const domain = launchdDomain(label);
+        loadLaunchdJob(label, plist);
+        out(
+            `installed ${helper.name}: launchd ${domain === "system" ? "LaunchDaemon " : ""}${label} (${scheduleText(helper.schedule)})`,
+        );
         return;
     }
     if (scheduler === "systemd") {
@@ -105,10 +113,10 @@ function installHelper(helper: Helper, scheduler: Scheduler): void {
 function uninstallHelper(name: string, scheduler: Scheduler): boolean {
     if (scheduler === "launchd") {
         if (dryRun()) {
-            out(`# dry run: would boot out ${guiDomain()}/${helperLabel(name)} and remove ${helperPlistPath(name)}`);
+            out(launchdRemovalPlan(helperLabel(name)));
             return false;
         }
-        return unloadLaunchAgent(helperLabel(name), helperPlistPath(name));
+        return unloadLaunchdJob(helperLabel(name));
     }
     if (scheduler === "systemd") {
         const files = systemdFiles(name);
@@ -145,6 +153,8 @@ export type HelperState = {
     platformOk: boolean;
     schedule: string;
     scheduler: Scheduler;
+    /** launchd only: the domain the helper lives in (a system LaunchDaemon or a user agent); null elsewhere. */
+    domain: LaunchdDomain | null;
     installed: boolean;
     /** Known to the scheduler: a loaded launchd agent, an active systemd unit, or a crontab line. */
     loaded: boolean;
@@ -160,20 +170,21 @@ function probe(
     scheduler: Scheduler,
 ): Omit<HelperState, "name" | "registered" | "enabled" | "platformOk" | "schedule"> {
     if (scheduler === "launchd") {
-        const target = helperPlistPath(name);
-        const printed = run(["launchctl", "print", `${guiDomain()}/${helperLabel(name)}`]);
+        const label = helperLabel(name);
+        const printed = run(["launchctl", "print", launchdService(label)]);
         const loaded = printed.code === 0;
         const field = (key: string): string | null =>
             loaded ? (new RegExp(`^\\s*${key} = (.+)$`, "m").exec(printed.stdout)?.[1]?.trim() ?? null) : null;
         const pid = field("pid");
         return {
             scheduler,
-            installed: existsSync(target),
+            domain: launchdDomain(label),
+            installed: existsSync(launchdPlistPath(label)),
             loaded,
             running: field("state") === "running",
             pid: pid === null ? null : Number(pid),
             lastExit: field("last exit code"),
-            detail: target,
+            detail: launchdDetail(label),
         };
     }
     if (scheduler === "systemd") {
@@ -188,6 +199,7 @@ function probe(
         const running = active("service");
         return {
             scheduler,
+            domain: null,
             installed: existsSync(files.service),
             loaded: hasTimer ? active("timer") : running,
             running,
@@ -199,6 +211,7 @@ function probe(
     const line = readCrontab().find((entry) => entry.endsWith(helperCronTag(name)));
     return {
         scheduler,
+        domain: null,
         installed: line !== undefined,
         loaded: line !== undefined,
         running: false,
@@ -216,7 +229,13 @@ function installedNames(scheduler: Scheduler): string[] {
                   .filter((file) => file.startsWith(prefix) && file.endsWith(suffix))
                   .map((file) => file.slice(prefix.length, -suffix.length))
             : [];
-    if (scheduler === "launchd") return list(launchAgentsDir(), HELPER_LABEL_PREFIX, ".plist");
+    if (scheduler === "launchd")
+        return [
+            ...new Set([
+                ...list(launchAgentsDir(), HELPER_LABEL_PREFIX, ".plist"),
+                ...list(launchDaemonsDir(), HELPER_LABEL_PREFIX, ".plist"),
+            ]),
+        ];
     if (scheduler === "systemd") return list(systemdUserDir(), HELPER_UNIT_PREFIX, ".service");
     return readCrontab().flatMap((entry) => {
         const at = entry.lastIndexOf(HELPER_CRON_PREFIX);
@@ -259,7 +278,8 @@ function stateLine(state: HelperState): string {
     const install = state.installed ? (state.loaded ? "installed, loaded" : "installed, NOT loaded") : "not installed";
     const activity = state.running ? `running pid ${state.pid ?? "?"}` : "idle";
     const exit = state.lastExit === null ? "" : `, last exit ${state.lastExit}`;
-    return `${state.name}\t${state.schedule}\t${state.scheduler}: ${install}${state.installed ? `, ${activity}${exit}` : ""}${flags.length > 0 ? `\t[${flags.join("; ")}]` : ""}`;
+    const where = state.domain === "system" ? `${state.scheduler} LaunchDaemon (system domain)` : state.scheduler;
+    return `${state.name}\t${state.schedule}\t${where}: ${install}${state.installed ? `, ${activity}${exit}` : ""}${flags.length > 0 ? `\t[${flags.join("; ")}]` : ""}`;
 }
 
 function findHelper(name: string): Helper {

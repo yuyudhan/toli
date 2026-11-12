@@ -1,9 +1,8 @@
 // The OS schedulers behind the tick (schedule.ts) and the helpers (src/helpers/): which one this machine uses, and
-// the launchd, systemd --user and crontab primitives both share.
-import { existsSync, readFileSync, rmSync } from "node:fs";
+// the systemd --user and crontab primitives both share (launchd's are in launchd.ts).
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { platform, run, ToliError, writeTextAtomic } from "../core/util.ts";
+import { platform, run, ToliError } from "../core/util.ts";
 
 /** `TOLI_DRY_RUN=1`: print what would be written and run, touching nothing. */
 export function dryRun(): boolean {
@@ -21,11 +20,6 @@ export function osScheduler(): Scheduler {
         throw new ToliError(`TOLI_SCHEDULER must be launchd, systemd or crontab (got "${forced}")`);
     if (platform() === "darwin") return "launchd";
     return run(systemctl("show-environment")).code === 0 ? "systemd" : "crontab";
-}
-
-/** Where launchd user agents live; `TOLI_LAUNCH_AGENTS_DIR` overrides for tests. */
-export function launchAgentsDir(): string {
-    return process.env.TOLI_LAUNCH_AGENTS_DIR ?? join(homedir(), "Library", "LaunchAgents");
 }
 
 /** Where systemd user units live; `TOLI_SYSTEMD_USER_DIR` overrides for tests. */
@@ -90,179 +84,6 @@ export function schedulePath(): string {
     }
     dirs.push("/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin");
     return [...new Set(dirs)].join(":");
-}
-
-function xml(text: string): string {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-/** One launchd user agent. Optional keys are written only when set, in a fixed order. */
-export type PlistSpec = {
-    label: string;
-    program: string[];
-    workingDirectory: string;
-    env: Record<string, string>;
-    /** Run every N seconds. */
-    startInterval?: number;
-    /** StartCalendarInterval entries (keys Minute, Hour, Day, Month, Weekday); absent keys mean "every". */
-    calendar?: Record<string, number>[];
-    runAtLoad?: boolean;
-    /** Restart whenever it exits (a long-running service). */
-    keepAlive?: boolean;
-    /** Background: throttled, efficiency cores; Interactive: full priority (launchd's default is throttled). */
-    processType?: "Background" | "Interactive";
-    nice?: number;
-    lowPriorityIO?: boolean;
-    /** Soft and hard NumberOfFiles resource limits. */
-    numberOfFiles?: number;
-    stdoutPath: string;
-    stderrPath: string;
-};
-
-export function renderLaunchdPlist(spec: PlistSpec): string {
-    const lines: string[] = [
-        "    <key>Label</key>",
-        `    <string>${xml(spec.label)}</string>`,
-        "    <key>ProgramArguments</key>",
-        "    <array>",
-        ...spec.program.map((value) => `        <string>${xml(value)}</string>`),
-        "    </array>",
-        "    <key>WorkingDirectory</key>",
-        `    <string>${xml(spec.workingDirectory)}</string>`,
-        "    <key>EnvironmentVariables</key>",
-        "    <dict>",
-        ...Object.entries(spec.env).flatMap(([key, value]) => [
-            `        <key>${xml(key)}</key>`,
-            `        <string>${xml(value)}</string>`,
-        ]),
-        "    </dict>",
-    ];
-    if (spec.startInterval !== undefined)
-        lines.push("    <key>StartInterval</key>", `    <integer>${spec.startInterval}</integer>`);
-    if (spec.calendar !== undefined) {
-        lines.push("    <key>StartCalendarInterval</key>", "    <array>");
-        for (const entry of spec.calendar) {
-            lines.push("        <dict>");
-            for (const [key, value] of Object.entries(entry))
-                lines.push(`            <key>${key}</key>`, `            <integer>${value}</integer>`);
-            lines.push("        </dict>");
-        }
-        lines.push("    </array>");
-    }
-    if (spec.runAtLoad) lines.push("    <key>RunAtLoad</key>", "    <true/>");
-    if (spec.keepAlive) lines.push("    <key>KeepAlive</key>", "    <true/>");
-    if (spec.processType !== undefined)
-        lines.push("    <key>ProcessType</key>", `    <string>${spec.processType}</string>`);
-    if (spec.nice !== undefined) lines.push("    <key>Nice</key>", `    <integer>${spec.nice}</integer>`);
-    if (spec.lowPriorityIO) lines.push("    <key>LowPriorityIO</key>", "    <true/>");
-    if (spec.numberOfFiles !== undefined)
-        for (const key of ["SoftResourceLimits", "HardResourceLimits"])
-            lines.push(
-                `    <key>${key}</key>`,
-                "    <dict>",
-                "        <key>NumberOfFiles</key>",
-                `        <integer>${spec.numberOfFiles}</integer>`,
-                "    </dict>",
-            );
-    lines.push(
-        "    <key>StandardOutPath</key>",
-        `    <string>${xml(spec.stdoutPath)}</string>`,
-        "    <key>StandardErrorPath</key>",
-        `    <string>${xml(spec.stderrPath)}</string>`,
-    );
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-${lines.join("\n")}
-</dict>
-</plist>
-`;
-}
-
-export function guiDomain(): string {
-    return `gui/${process.getuid?.() ?? 0}`;
-}
-
-export function launchctlLoaded(label: string): boolean {
-    return run(["launchctl", "print", `${guiDomain()}/${label}`]).code === 0;
-}
-
-function failure(result: { stderr: string; stdout: string }): string {
-    return (result.stderr || result.stdout).trim();
-}
-
-/**
- * Why launchd would refuse `launchctl bootstrap gui/<uid>` from this session, or null when it accepts it. A session
- * outside the user's login (a launchd background job, a daemon, no one logged in) can still `bootout` an agent but
- * cannot load one into the gui domain (error 125: "Domain does not support specified action"), and `launchctl print`
- * of the domain fails the same way.
- */
-export function launchdSessionProblem(): string | null {
-    const probe = run(["launchctl", "print", guiDomain()]);
-    if (probe.code === 0) return null;
-    const session = run(["launchctl", "managername"]).stdout.trim() || "unknown";
-    return `launchctl print ${guiDomain()} exited ${probe.code} (${failure(probe) || "no output"}); launchctl session: ${session}`;
-}
-
-export type LoadOptions = {
-    /** A loaded agent whose plist on disk already is this one is kicked (`kickstart -k`), never booted out. */
-    restartUnchanged?: boolean;
-};
-
-/**
- * Write a launchd agent and (re)load it; returns what was done. launchd cannot swap a loaded agent in place, so a
- * changed plist is booted out and bootstrapped again: the session is probed first (nothing is touched when launchd
- * would refuse the bootstrap), and when the bootstrap still fails the previous plist is put back and loaded again,
- * so a failed install does not leave a working agent unloaded.
- */
-export function loadLaunchAgent(
-    label: string,
-    target: string,
-    plist: string,
-    options: LoadOptions = {},
-): "loaded" | "restarted" {
-    const problem = launchdSessionProblem();
-    if (problem !== null)
-        throw new ToliError(
-            `cannot load ${label} from this session, and nothing was changed: ${problem}. launchd only loads user agents ` +
-                `into ${guiDomain()} from the user's login session, so booting out a running ${label} here would leave it ` +
-                "unloaded. Run this command from a Terminal in the login session.",
-        );
-    const service = `${guiDomain()}/${label}`;
-    const bootstrap = ["launchctl", "bootstrap", guiDomain(), target];
-    const loaded = launchctlLoaded(label);
-    const previous = existsSync(target) ? readFileSync(target, "utf8") : null;
-    if (loaded && options.restartUnchanged === true && previous === plist) {
-        mustRun(["launchctl", "kickstart", "-k", service]);
-        return "restarted";
-    }
-    writeTextAtomic(target, plist);
-    if (loaded) mustRun(["launchctl", "bootout", service]);
-    const booted = run(bootstrap);
-    if (booted.code === 0) return "loaded";
-    const message = `${bootstrap.join(" ")} failed: ${failure(booted)}`;
-    if (!loaded) throw new ToliError(message);
-    if (previous === null)
-        throw new ToliError(
-            `${message}; ${label} was loaded without a plist at ${target}, so the previous agent cannot be restored and ${label} is now unloaded`,
-        );
-    writeTextAtomic(target, previous);
-    const restored = run(bootstrap);
-    if (restored.code === 0)
-        throw new ToliError(`${message}; the previous ${target} is back and ${label} is loaded again, unchanged`);
-    throw new ToliError(
-        `${message}; restoring the previous agent failed too (${bootstrap.join(" ")}: ${failure(restored)}), so ${label} is now unloaded; the previous plist is back at ${target}`,
-    );
-}
-
-/** Boot out a launchd agent (when loaded) and remove its plist; returns whether anything was there. */
-export function unloadLaunchAgent(label: string, target: string): boolean {
-    const loaded = launchctlLoaded(label);
-    if (loaded) mustRun(["launchctl", "bootout", `${guiDomain()}/${label}`]);
-    const present = existsSync(target);
-    rmSync(target, { force: true });
-    return loaded || present;
 }
 
 export function readCrontab(): string[] {

@@ -172,8 +172,10 @@ smoke runs). The Ubuntu runner also runs `bun test --coverage` (threshold in `bu
 gitleaks scan.
 
 Tests never touch the host's scheduler: `TOLI_DRY_RUN=1` is the sandbox default, `systemctl` is stubbed as "no user
-session", and `TOLI_PLATFORM`, `TOLI_SCHEDULER`, `TOLI_LAUNCH_AGENTS_DIR`, `TOLI_SYSTEMD_USER_DIR` and `TOLI_PROC_DIR`
-select a platform, scheduler, unit directories and `/proc` fixtures on any host.
+session", `sudo` as one without cached credentials (`withSudo` gives a test one that runs its command), and
+`TOLI_PLATFORM`, `TOLI_SCHEDULER`, `TOLI_LAUNCH_AGENTS_DIR`, `TOLI_LAUNCH_DAEMONS_DIR`, `TOLI_SYSTEMD_USER_DIR` and
+`TOLI_PROC_DIR` select a platform, scheduler, unit directories and `/proc` fixtures on any host; the preload points
+`TOLI_LAUNCH_DAEMONS_DIR` away from the host's `/Library/LaunchDaemons`.
 
 Tests never touch this checkout's git repository either. The preload (`tests/setup.ts`, `tests/repo-guard.ts`) drops
 every inherited `GIT_*` variable (a git hook exports `GIT_DIR`, so a run under `pre-push` once wrote its temp repos'
@@ -192,8 +194,8 @@ Tracked (shared by all machines):
     src/core/                    shared plumbing: args, config, paths, persona, git, cron, util (output, errors,
                                  JSON files, locks, processes)
     src/records/                 toli's own records: backlog, needs, digest, memory, inbox, acks, wake, migrate, prune
-    src/jobs/                    scheduled jobs: jobs, schedule (OS ticker), os-scheduler (launchd, systemd --user,
-                                 crontab: choice and primitives shared with helpers), tick
+    src/jobs/                    scheduled jobs: jobs, schedule (OS ticker), os-scheduler (systemd --user, crontab:
+                                 choice and primitives shared with helpers), launchd (user agents, LaunchDaemons), tick
     src/jawans/                  `bin/toli spawn` on any harness: spawn, supervise, runs
     src/harness/                 agent harnesses: headless commands, hooks, sync of generated files, lead guard,
                                  guidance, live session, CLI health for the extension

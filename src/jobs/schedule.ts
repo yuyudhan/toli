@@ -5,16 +5,21 @@ import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, run, shellQuote, ToliError, writeTextAtomic } from "../core/util.ts";
 import {
+    launchctlLoaded,
+    launchdDetail,
+    launchdLoadPlan,
+    launchdPlistPath,
+    launchdRemovalPlan,
+    loadLaunchdJob,
+    renderLaunchdPlist,
+    unloadLaunchdJob,
+} from "./launchd.ts";
+import {
     bunPath,
     dryRun,
-    guiDomain,
-    launchAgentsDir,
-    launchctlLoaded,
-    loadLaunchAgent,
     mustRun,
     osScheduler,
     readCrontab,
-    renderLaunchdPlist,
     type Scheduler,
     schedulePath,
     systemctl,
@@ -22,7 +27,6 @@ import {
     systemdPath,
     systemdUserDir,
     systemdWord,
-    unloadLaunchAgent,
     writeCrontab,
 } from "./os-scheduler.ts";
 
@@ -30,10 +34,6 @@ export const LABEL = "com.toli.tick";
 export const CRON_TAG = "# toli tick";
 /** The tick's systemd user units: `toli-tick.service` run by `toli-tick.timer`. */
 const TICK_UNIT = "toli-tick";
-
-export function plistPath(): string {
-    return join(launchAgentsDir(), `${LABEL}.plist`);
-}
 
 export function tickUnitFiles(): { service: string; timer: string } {
     const base = join(systemdUserDir(), TICK_UNIT);
@@ -116,15 +116,14 @@ function install(): void {
     const scheduler = osScheduler();
     if (scheduler === "launchd") {
         const plist = renderPlist();
-        const target = plistPath();
+        const target = launchdPlistPath(LABEL);
         if (dryRun()) {
             out(`# dry run: would write ${target}`);
             out(plist);
-            out(`# would run: launchctl bootout ${guiDomain()}/${LABEL} (if loaded)`);
-            out(`# would run: launchctl bootstrap ${guiDomain()} ${target}`);
+            for (const line of launchdLoadPlan(LABEL)) out(line);
             return;
         }
-        loadLaunchAgent(LABEL, target, plist);
+        loadLaunchdJob(LABEL, plist);
         out(`installed and loaded ${target}: bin/toli job tick runs every minute`);
         dropCronTick();
         return;
@@ -166,12 +165,12 @@ function install(): void {
 function uninstall(): void {
     const scheduler = osScheduler();
     if (scheduler === "launchd") {
-        const target = plistPath();
+        const target = launchdPlistPath(LABEL);
         if (dryRun()) {
-            out(`# dry run: would run launchctl bootout ${guiDomain()}/${LABEL} (if loaded) and remove ${target}`);
+            out(launchdRemovalPlan(LABEL));
             return;
         }
-        unloadLaunchAgent(LABEL, target);
+        unloadLaunchdJob(LABEL);
         out(`uninstalled ${target}`);
         return;
     }
@@ -253,7 +252,7 @@ export function scheduleStatus(): ScheduleStatus {
     const cronLines = readCrontab().filter((entry) => entry.includes(CRON_TAG));
     const cronLeftover = scheduler !== "crontab" && cronLines.length > 0;
     if (scheduler === "launchd") {
-        const target = plistPath();
+        const target = launchdPlistPath(LABEL);
         const installed = existsSync(target);
         const loaded = launchctlLoaded(LABEL);
         const text = installed ? readFileSync(target, "utf8") : "";
@@ -268,7 +267,7 @@ export function scheduleStatus(): ScheduleStatus {
             scheduler,
             installed,
             loaded,
-            detail: target,
+            detail: launchdDetail(LABEL),
             otherBin: installed ? otherTickBin(text, ours) : null,
             missingBun: missingTickBun(text, ours, /<string>([^<]*)<\/string>\s*$/, unxml),
             cronLeftover,

@@ -74,6 +74,8 @@ export function sandbox(): Sandbox {
         chmodSync(file, 0o755);
     };
     stub("systemctl", 'echo "Failed to connect to bus: No medium found" >&2; exit 1');
+    // Never the host's sudo (cached credentials would run a test's root steps for real); a test that wants it uses withSudo.
+    stub("sudo", 'echo "sudo: a password is required" >&2; exit 1');
     stub(
         "crontab",
         'if [ "$1" = "-l" ]; then echo "no crontab for test" >&2; else echo "crontab stub: writes refused" >&2; fi; exit 1',
@@ -91,6 +93,8 @@ export function sandbox(): Sandbox {
         TOLI_DRY_RUN: "1",
         // Jawans and heavy builds start without a systemd scope, so tests on a Linux host never create real units.
         TOLI_JAWAN_SCOPE: "off",
+        // No LaunchDaemons unless a test writes one here: never the host's /Library/LaunchDaemons.
+        TOLI_LAUNCH_DAEMONS_DIR: join(root, "daemons"),
         TOLI_BUILD_SCOPE: "off",
         // Harnesses start without the host user's login shell (src/core/login-env.ts); a test turns it on.
         TOLI_LOGIN_ENV: "off",
@@ -189,6 +193,13 @@ esac`,
     };
 }
 
+/** A `sudo` stub with cached credentials: `sudo -n <cmd>` runs `<cmd>` (as the test user); calls go to `.sudo`. */
+export function withSudo(box: Sandbox): { calls: () => string[] } {
+    const log = join(box.root, ".sudo");
+    box.stub("sudo", `[ "$1" = "-n" ] && shift; printf '%s\\n' "$*" >> "${log}"; exec "$@"`);
+    return { calls: () => (existsSync(log) ? readFileSync(log, "utf8").trimEnd().split("\n") : []) };
+}
+
 export type LaunchctlOptions = {
     /** false: a session launchd cannot load agents into (`managername` Background): domain `print` and `bootstrap` exit 125. */
     gui?: boolean;
@@ -196,18 +207,22 @@ export type LaunchctlOptions = {
     rejects?: string;
 };
 
+/** A launchd domain in the stub: the user's gui domain or the system domain. */
+export type LaunchctlDomain = "gui" | "system";
+
 export type Launchctl = {
-    /** Mark `label` loaded, as if bootstrapped earlier. */
-    load(label: string): void;
-    loaded(label: string): boolean;
+    /** Mark `label` loaded in `domain` (default gui), as if bootstrapped earlier. */
+    load(label: string, domain?: LaunchctlDomain): void;
+    loaded(label: string, domain?: LaunchctlDomain): boolean;
     /** Every call so far, one line each (`bootout gui/501/com.toli.lead`). */
     calls(): string[];
 };
 
 /**
- * A stateful `launchctl` stub: bootstrap marks a label loaded (failing when it already is, like the real one),
- * bootout unloads it, kickstart needs it loaded, service `print` succeeds only while loaded, and domain `print`
- * follows `options.gui`. Every call is appended to `.launchctl/log`.
+ * A stateful `launchctl` stub: bootstrap marks a label loaded in its domain (failing when it already is, like the
+ * real one), bootout unloads it, kickstart needs it loaded, service `print` succeeds only while loaded, and gui
+ * domain `print` and `bootstrap` follow `options.gui` (the system domain works from any session). Every call is
+ * appended to `.launchctl/log`.
  */
 export function withLaunchctl(box: Sandbox, options: LaunchctlOptions = {}): Launchctl {
     const state = join(box.root, ".launchctl");
@@ -218,27 +233,31 @@ export function withLaunchctl(box: Sandbox, options: LaunchctlOptions = {}): Lau
     box.stub(
         "launchctl",
         `state="${state}"; echo "$*" >> "$state/log"
+key() { case "$1" in system/*) echo "system.\${1##*/}" ;; *) echo "\${1##*/}" ;; esac; }
 case "$1" in
     managername) if [ -f "$state/.background" ]; then echo Background; else echo Aqua; fi ;;
     print)
         case "$2" in
-            gui/*/*) label="\${2##*/}"; [ -f "$state/$label" ] || exit 113; printf 'state = running\\npid = 4242\\nlast exit code = 0\\n' ;;
+            gui/*/*|system/*) [ -f "$state/$(key "$2")" ] || exit 113; printf 'state = running\\npid = 4242\\nlast exit code = 0\\n' ;;
+            system) echo "domain = system" ;;
             *) ${refuseDomain}; echo "domain = $2" ;;
         esac ;;
     bootstrap)
-        ${refuseDomain}
         label="$(basename "$3" .plist)"
-        [ -f "$state/$label" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+        if [ "$2" = system ]; then key="system.$label"; else ${refuseDomain}; key="$label"; fi
+        [ -f "$state/$key" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
         [ -s "$state/.rejects" ] && grep -qF -f "$state/.rejects" "$3" && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
-        touch "$state/$label" ;;
-    bootout) label="\${2##*/}"; [ -f "$state/$label" ] || exit 3; rm -f "$state/$label" ;;
-    kickstart) label="\${3##*/}"; [ -f "$state/$label" ] || exit 113 ;;
+        touch "$state/$key" ;;
+    bootout) key="$(key "$2")"; [ -f "$state/$key" ] || exit 3; rm -f "$state/$key" ;;
+    kickstart) key="$(key "$3")"; [ -f "$state/$key" ] || exit 113 ;;
     *) exit 2 ;;
 esac`,
     );
+    const file = (label: string, domain: LaunchctlDomain): string =>
+        join(state, domain === "system" ? `system.${label}` : label);
     return {
-        load: (label) => writeFileSync(join(state, label), ""),
-        loaded: (label) => existsSync(join(state, label)),
+        load: (label, domain = "gui") => writeFileSync(file(label, domain), ""),
+        loaded: (label, domain = "gui") => existsSync(file(label, domain)),
         calls: () =>
             existsSync(join(state, "log")) ? readFileSync(join(state, "log"), "utf8").trimEnd().split("\n") : [],
     };

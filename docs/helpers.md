@@ -91,6 +91,16 @@ uses systemd when `systemctl --user show-environment` succeeds, else crontab.
 `TOLI_SCHEDULER=launchd|systemd|crontab` forces one (for the tick too), e.g. on a server whose systemd user session
 does not survive logout (or run `loginctl enable-linger $USER` so it does).
 
+On macOS a helper, the tick or the lead may instead run as a system LaunchDaemon: its plist in `/Library/LaunchDaemons`
+(`com.toli.helper.<name>.plist`, `com.toli.tick.plist`, `com.toli.lead.plist`), loaded into launchd's `system` domain
+with `UserName` set to you, so it keeps running with no one logged in at the console. toli never creates one; you (or
+root) put the plist there. Once it is there, toli keeps that job in the system domain: `status` reports it as a
+LaunchDaemon in the system domain (and names a LaunchAgent of the same label still beside it), `install` rewrites and
+reloads the daemon and retires a LaunchAgent of the same label so the job never runs twice, and `uninstall` boots it
+out and removes it. Those steps need root, which toli takes only through `sudo -n`: without cached credentials it
+changes nothing and says to run `sudo -v` in that terminal first (never run toli itself under sudo). Every other job
+stays a user agent in `~/Library/LaunchAgents`.
+
 ## Hooks
 
 Optional executables in `local/hooks/` that toli runs itself, with the toli root as `$1` and as the working
