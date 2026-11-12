@@ -6,23 +6,21 @@
 //   worktree-per-task  `git worktree add projects/.worktrees/<project>/<T-id> -b toli/<T-id>-<slug> <base>`
 //
 // The prepared workspace is recorded on the task (`workspace` in data/backlog.json), so the verifier, `bin/toli
-// commit|push|pr --task` and `bin/toli workspace list|prune` find it again.
+// commit|push|pr --task` and `bin/toli workspace list|prune` (src/projects/workspace-command.ts) find it again.
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { Args } from "../core/args.ts";
+import { dirname, relative, resolve, sep } from "node:path";
 import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
-import { out, printJson, run, ToliError, withLock } from "../core/util.ts";
+import { run, ToliError, withLock } from "../core/util.ts";
 import { loadBacklog, type Task, type TaskWorkspace, updateTask } from "../records/backlog.ts";
 import { excludeFromIndexing } from "./indexing.ts";
-import { findProject, loadProjects, type Project, projectCloneDir } from "./projects.ts";
+import { findProject, type Project, projectCloneDir } from "./projects.ts";
 import { perTask } from "./strategy.ts";
 
 const SLUG_MAX = 40;
 /** Statuses whose jawans may still be using the workspace. */
 const LIVE: readonly Task["status"][] = ["active", "held"];
-const FETCH_TIMEOUT_MS = 60_000;
 
 /** `toli/<T-id>-<slug of the title>`, a valid branch name. */
 export function taskBranch(task: Pick<Task, "id" | "title">): string {
@@ -238,154 +236,4 @@ export function workDir(
         task,
         branch: perTask(task.workspace.strategy) ? task.workspace.branch : null,
     };
-}
-
-export type WorktreeEntry = {
-    project: string;
-    task: string;
-    status: Task["status"] | "unknown";
-    path: string;
-    branch: string | null;
-    base: string | null;
-    /** Commits on the branch that no base ref (local or origin) contains; null when unknowable. */
-    unmerged: number | null;
-    dirty: boolean;
-};
-
-/** Number of commits on `branch` not contained in the local or origin base branch; null without either ref. */
-function unmergedCount(clone: string, branch: string, base: string): number | null {
-    const bases = [`refs/heads/${base}`, `refs/remotes/origin/${base}`].filter((ref) => refExists(clone, ref));
-    if (bases.length === 0 || !refExists(clone, `refs/heads/${branch}`)) return null;
-    return Math.min(
-        ...bases.map((ref) => Number(gitOk(clone, ["rev-list", "--count", `${ref}..refs/heads/${branch}`]))),
-    );
-}
-
-function worktreeEntries(projectFilter: string | undefined): WorktreeEntry[] {
-    const projects = projectFilter === undefined ? loadProjects() : [findProject(projectFilter)];
-    const tasks = new Map(loadBacklog().tasks.map((task) => [task.id, task]));
-    const entries: WorktreeEntry[] = [];
-    for (const project of projects) {
-        const clone = paths.projectDir(project.name);
-        const root = paths.worktreesDir(project.name);
-        if (!isGitRepo(clone) || !existsSync(root)) continue;
-        const realRoot = realpathSync(root);
-        for (const worktree of gitWorktrees(clone)) {
-            if (dirname(worktree.path) !== realRoot && dirname(worktree.path) !== root) continue;
-            const id = basename(worktree.path);
-            const task = tasks.get(id);
-            const base = task?.workspace?.base ?? null;
-            entries.push({
-                project: project.name,
-                task: id,
-                status: task?.status ?? "unknown",
-                path: join(root, id),
-                branch: worktree.branch,
-                base,
-                unmerged:
-                    worktree.branch === null || base === null ? null : unmergedCount(clone, worktree.branch, base),
-                dirty: existsSync(worktree.path) && dirty(worktree.path) !== "",
-            });
-        }
-    }
-    return entries;
-}
-
-function entryLine(entry: WorktreeEntry): string {
-    const merged =
-        entry.unmerged === null ? "merged: unknown" : entry.unmerged === 0 ? "merged" : `unmerged ${entry.unmerged}`;
-    return [
-        `${entry.project}/${entry.task}`,
-        entry.status,
-        entry.branch ?? "(detached)",
-        entry.base === null ? "base ?" : `base ${entry.base}`,
-        merged,
-        entry.dirty ? "dirty" : "clean",
-        relative(paths.root(), entry.path),
-    ].join("\t");
-}
-
-/** Why `prune` keeps a worktree, or null when it may go (`force`: the user's word to abandon unmerged commits). */
-function keepReason(entry: WorktreeEntry, force: boolean): string | null {
-    if (entry.status !== "done" && entry.status !== "dropped")
-        return entry.status === "unknown" ? "no task with this id in the backlog" : `task is ${entry.status}`;
-    if (entry.dirty) return "uncommitted changes (never removed; land or ask about them)";
-    if (entry.branch === null) return "detached HEAD (no task branch to check)";
-    if (entry.unmerged === 0 || force) return null;
-    return entry.unmerged === null
-        ? `cannot tell whether ${entry.branch} is merged (base unknown); --force only on ${persona().user}'s word`
-        : `${entry.branch} has ${entry.unmerged} commit${entry.unmerged === 1 ? "" : "s"} not on ${entry.base}; ` +
-              `abandon it only on ${persona().user}'s word: --force`;
-}
-
-function removeWorktree(entry: WorktreeEntry): string {
-    const clone = paths.projectDir(entry.project);
-    const removed = git(clone, ["worktree", "remove", entry.path]);
-    if (removed.code !== 0)
-        return `kept\t${entry.project}/${entry.task}\tgit worktree remove failed: ${(removed.stderr || removed.stdout).trim()}`;
-    if (entry.branch === null) return `removed\t${entry.project}/${entry.task}`;
-    const tip = gitOk(clone, ["rev-parse", `refs/heads/${entry.branch}`]);
-    const deleted = git(clone, ["branch", entry.unmerged === 0 ? "-d" : "-D", entry.branch]);
-    const branchNote =
-        deleted.code === 0
-            ? `branch ${entry.branch} deleted (was ${tip.slice(0, 12)})`
-            : `branch ${entry.branch} kept: ${(deleted.stderr || deleted.stdout).trim()}`;
-    return `removed\t${entry.project}/${entry.task}\t${branchNote}`;
-}
-
-/** Refresh origin's view of each base branch (best effort, bounded) so merges done on the forge count. */
-function fetchBases(entries: WorktreeEntry[]): void {
-    const seen = new Set<string>();
-    for (const entry of entries) {
-        if (entry.base === null || seen.has(`${entry.project}\0${entry.base}`)) continue;
-        seen.add(`${entry.project}\0${entry.base}`);
-        run(["git", "-C", paths.projectDir(entry.project), "fetch", "--quiet", "origin", entry.base], {
-            timeoutMs: FETCH_TIMEOUT_MS,
-        });
-    }
-}
-
-function listCommand(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json"], values: ["project"] });
-    args.maxPositional(0);
-    const entries = worktreeEntries(args.str("project"));
-    if (args.bool("json")) printJson(entries);
-    else out(entries.length === 0 ? "no task worktrees" : entries.map(entryLine).join("\n"));
-}
-
-function pruneCommand(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json", "force"], values: ["project"] });
-    args.maxPositional(0);
-    const force = args.bool("force");
-    const project = args.str("project");
-    fetchBases(worktreeEntries(project));
-    const results = worktreeEntries(project).map((entry) => {
-        const reason = keepReason(entry, force);
-        return reason === null ? removeWorktree(entry) : `kept\t${entry.project}/${entry.task}\t${reason}`;
-    });
-    if (args.bool("json")) printJson(results.map((line) => line.split("\t")));
-    else out(results.length === 0 ? "no task worktrees" : results.join("\n"));
-}
-
-function prepareCommand(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json"] });
-    args.maxPositional(1);
-    const workspace = prepareWorkspace(args.pos(0, "task id"));
-    if (args.bool("json")) printJson(workspace);
-    else
-        out(
-            `${workspace.strategy}: ${workspace.path} on ${workspace.branch ?? "(detached)"}${workspace.base === null ? "" : ` from ${workspace.base}`}`,
-        );
-}
-
-/** `toli workspace prepare <T-id> [--json]` | `list [--project p] [--json]` | `prune [--project p] [--force] [--json]`. */
-export function workspaceCommand(argv: string[]): void {
-    const [sub, ...rest] = argv;
-    if (sub === "prepare") prepareCommand(rest);
-    else if (sub === "list") listCommand(rest);
-    else if (sub === "prune") pruneCommand(rest);
-    else
-        throw new ToliError(
-            "usage: toli workspace prepare <T-id> | list [--project p] | prune [--project p] [--force]",
-        );
 }

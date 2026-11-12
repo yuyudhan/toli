@@ -4,6 +4,22 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.4.6 - unreleased
+
+### Fixed
+
+- `bin/toli workspace prune` never removes a task worktree holding unlanded work: uncommitted or untracked
+  (non-ignored) files, or commits no base branch (local or origin) contains. It prints
+  `kept: <path>: N unlanded commits / M dirty files` and removes the worktree at a later prune once it is landed and
+  clean. `--force`, which abandoned unmerged commits, is gone; nothing skips the check (T1218).
+- On a nearly full disk the disk keeper frees idle build output before it breaks a running build. Under the
+  emergency level it now removes Docker volumes of idle build output first (a stopped compose stack's `*_target`,
+  `*cargo*` or `*node_modules*` volume, or one mounted at a `target`/`node_modules`/cargo path), largest first, then
+  wipes busy targets between build steps, and only then deletes build folders in use. It re-checks free space after
+  each item and stops once it is over the emergency level. A volume a running container uses, or whose name or mount
+  point may hold data (`pgdata`, `db`, `uploads`, ...), is never removed, and no volume goes while a pull, build or
+  compose up is in flight. Every item freed is logged with its size and step. See docs/disk.md step 5 (T1220).
+
 ## v0.4.5 - 2026-11-12
 
 ### Fixed

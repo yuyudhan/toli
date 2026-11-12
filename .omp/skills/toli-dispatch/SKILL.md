@@ -169,7 +169,7 @@ it prints into the brief's Project section. Branch-per-task refuses while anothe
 different branch: tell Malik, and either wait for that task or offer `same-branch` for the project. The
 verifier reuses the same workspace (`spawn --task T<n> --work verify`, or the path from `bin/toli task list --json`).
 Scouts read the plain clone. Finished worktrees are cleaned with `bin/toli workspace prune` (a jawan runs it);
-it keeps unmerged, dirty, or live ones, and `--force` (abandon unmerged commits) needs Malik's word.
+it keeps live ones and any holding unlanded work (dirty files or commits not on the base), with no flag to override.
 
 ### Where the jawan runs
 

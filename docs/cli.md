@@ -116,7 +116,7 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
 
     commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [-- <path>...]
     branch <project> <branch>
-    workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
+    workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
     push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]

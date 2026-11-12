@@ -69,10 +69,12 @@ toli itself never uses worktrees.
   explicit standing grant ([delivery.md](delivery.md#standing-grants)). Without one, the verifier commits and holds
   the task with the question.
 - `bin/toli workspace list [--project p]` shows each task worktree with its task status, branch, merged state and
-  cleanliness. `bin/toli workspace prune [--project p]` removes worktrees of done/dropped tasks whose branch is
-  merged into the base (local or origin, fetched first) and deletes the merged branch. It keeps live, dirty, and
-  unmerged ones; `--force` abandons unmerged commits (it prints the deleted tip sha) and is only run on the user's
-  word. Squash-merged branches show as unmerged.
+  cleanliness. `bin/toli workspace prune [--project p]` removes worktrees of done/dropped tasks whose HEAD is
+  reachable from the base (local or origin, fetched first) and that have no uncommitted or untracked (non-ignored)
+  files, then deletes the task branch at that tip. It keeps live worktrees and never removes unlanded work, with no
+  flag to override it: such a worktree prints `kept: <path>: N unlanded commits / M dirty files` and goes at a later
+  prune once it is landed and clean. Squash-merged branches count as unlanded; land or remove them by hand, on the
+  user's word.
 - `bin/toli project set --all --workspace <s>` applies one strategy to every project. A per-task strategy moves a
   `commit`-mode project to `pr`.
 - Pre-strategy projects keep their behaviour: `bin/toli migrate` records `branch-per-task` for `pr` and branchless

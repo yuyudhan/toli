@@ -13,8 +13,8 @@ import {
     taskBranch,
     workDir,
     workspaceBrief,
-    workspaceCommand,
 } from "../src/projects/workspace.ts";
+import { workspaceCommand } from "../src/projects/workspace-command.ts";
 import { type TaskWorkspace, taskCommand } from "../src/records/backlog.ts";
 import { commandIn, inProcess, type Sandbox, sandbox, withProject } from "./helpers.ts";
 

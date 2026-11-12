@@ -247,11 +247,9 @@ describe("worktree-per-task", () => {
         expect(list).toContain("app/T3\tdropped\ttoli/T3-spike-cache\tbase main\tmerged\tdirty");
 
         const first = box.ok(["workspace", "prune"]);
-        expect(first).toContain(
-            "kept\tapp/T1\ttoli/T1-build-api has 2 commits not on main; abandon it only on Malik's word: --force",
-        );
+        expect(first).toContain("kept: projects/.worktrees/app/T1: 2 unlanded commits / 0 dirty files");
         expect(first).toContain("kept\tapp/T2\ttask is queued");
-        expect(first).toContain("kept\tapp/T3\tuncommitted changes");
+        expect(first).toContain("kept: projects/.worktrees/app/T3: 0 unlanded commits / 1 dirty file");
         expect(existsSync(worktree)).toBe(true);
 
         box.git(clone, ["merge", "--no-ff", "-m", "merge T1", "toli/T1-build-api"]);
@@ -260,7 +258,9 @@ describe("worktree-per-task", () => {
         expect(existsSync(worktree)).toBe(false);
         expect(box.git(clone, ["branch", "--list", "toli/T1-build-api"])).toBe("");
         expect(existsSync(join(box.root, "projects", ".worktrees", "app", "T3", "wip.txt"))).toBe(true);
-        expect(box.ok(["workspace", "prune", "--force"])).toContain("kept\tapp/T3\tuncommitted changes");
+        expect(box.ok(["workspace", "prune"])).toContain(
+            "kept: projects/.worktrees/app/T3: 0 unlanded commits / 1 dirty file",
+        );
     });
 
     test("on macOS keeps new worktrees out of Spotlight and Time Machine, and a failed exclusion only warns", () => {
@@ -290,22 +290,6 @@ describe("worktree-per-task", () => {
         project(box, "worktree-per-task", "Build API");
         box.ok(["workspace", "prepare", "T1"], { env: { TOLI_PLATFORM: "linux" } });
         expect(existsSync(join(box.root, "projects", ".worktrees", "app", ".metadata_never_index"))).toBe(false);
-    });
-
-    test("--force abandons an unmerged finished worktree; live tasks are never pruned", () => {
-        const box = coordinator();
-        const clone = project(box, "worktree-per-task", "Try idea", "Ongoing");
-        box.ok(["workspace", "prepare", "T1"]);
-        box.ok(["workspace", "prepare", "T2"]);
-        box.ok(["task", "start", "T2"]);
-        const worktree = join(box.root, "projects", ".worktrees", "app", "T1");
-        writeFileSync(join(worktree, "idea.txt"), "idea\n");
-        box.ok(["commit", "app", "--task", "T1", "-m", "idea", "--", "idea.txt"]);
-        box.ok(["task", "drop", "T1"]);
-        const pruned = box.ok(["workspace", "prune", "--force"]);
-        expect(pruned).toMatch(/removed\tapp\/T1\tbranch toli\/T1-try-idea deleted \(was [0-9a-f]{12}\)/);
-        expect(pruned).toContain("kept\tapp/T2\ttask is active");
-        expect(box.git(clone, ["branch", "--list", "toli/T2-ongoing"])).toContain("toli/T2-ongoing");
     });
 });
 

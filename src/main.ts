@@ -24,7 +24,7 @@ import { scheduleCommand } from "./jobs/schedule.ts";
 import { jobCommand } from "./jobs/tick.ts";
 import { branchCommand, commitCommand } from "./projects/commit.ts";
 import { projectCommand } from "./projects/projects.ts";
-import { workspaceCommand } from "./projects/workspace.ts";
+import { workspaceCommand } from "./projects/workspace-command.ts";
 import { taskCommand } from "./records/backlog.ts";
 import { digestCommand } from "./records/digest.ts";
 import { inboxCommand } from "./records/inbox.ts";
@@ -74,7 +74,7 @@ const USAGE = `usage: bin/toli <command> [args]
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [-- <path>...]
   branch <project> <branch>
-  workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--force] [--json]
+  workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
   self sync [--json] | status [--json]
   forge <project> [--json]
   push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"]

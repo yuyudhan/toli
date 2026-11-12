@@ -84,8 +84,8 @@ The verifier brief (`docs/verify-brief-template.md`) fills its Workspace section
   `pr create` lines above.
 
 After the PR/MR merges (Malik's word, `bin/toli pr merge`, or on the forge), a jawan runs `bin/toli workspace prune`
-to remove finished, merged worktrees and their branches. It never removes dirty or live ones; `--force` (abandon
-unmerged commits) only on Malik's word for those tasks.
+to remove finished, merged worktrees and their branches. It never removes live ones or unlanded work (dirty files or
+commits not on the base); it prints `kept: <path>: N unlanded commits / M dirty files`, and no flag overrides that.
 
 ## Mode: pr
 
