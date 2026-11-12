@@ -111,4 +111,6 @@ Everything "set up toli" does can be done directly. Requirements: [Bun](https://
     bin/toli setup status        # what is still missing
 
 Other machines go in `config/fleet.json` ([fleet.md](fleet.md)); projects are added with `/add-project` or
-`bin/toli project add` ([projects.md](projects.md)).
+`bin/toli project add` ([projects.md](projects.md)). To message another machine over HTTPS instead of ssh, pair the
+two once: `bin/toli peer add <host>` here, `bin/toli peer accept <request>` there, then `bin/toli peer add <host>
+--code NNNN` here with the code it shows ([peers.md](peers.md#pairing)).
