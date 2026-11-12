@@ -126,10 +126,10 @@ describe("fleet queues", () => {
     test("lists every machine shortest first, unreachable last, and suggests a delegation past the gap", () => {
         const box = withTasks(queued(0), 3);
         const lines = box.ok(["fleet", "queues"], { env: ENV }).split("\n");
-        expect(lines[0]).toBe("m2: queue 0 (0 queued, 0 running + 0 waiting; 0 active, 0 held), 0 per jawan slot");
-        expect(lines[1]).toBe(
-            "m1 (this machine): queue 3 (3 queued, 0 running + 0 waiting; 0 active, 0 held), 0.06 per jawan slot",
-        );
+        expect(lines.slice(0, 2)).toEqual([
+            "m2: queue 0 (0 queued, 0 running + 0 waiting; 0 active, 0 held), 0 per jawan slot, jawans 0/2",
+            "m1 (this machine): queue 3 (3 queued, 0 running + 0 waiting; 0 active, 0 held), 0.06 per jawan slot, jawans 0/50",
+        ]);
         expect(lines[2]).toStartWith("m3: unreachable: ssh host3 exited 255");
         expect(lines[3]).toBe(
             "suggestion: m1's queue (3) is 3 deeper than m2's (0); on m1, hand queued work over with " +

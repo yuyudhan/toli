@@ -108,6 +108,9 @@ recompiles, dashboard hot-reloads); never stop, restart or rebuild it from scrat
   what it returned.
 - <UI changes: keep, else drop> Before/after screenshots at each width in the notes' `## Proof` section
   (<widths>); give their file paths.
+- <browser or screenshot work: keep, else drop> Close every browser you start before you report (Playwright or
+  Puppeteer `browser.close()`, or the browser MCP's close tool). toli closes the automation browsers a `bin/toli
+spawn` run leaves open when it exits; a native subagent's stay open until you close them.
 - <bug fixes: keep, else drop> A test that reproduces the bug: paste its failing output before the fix and its
   passing output after.
 - Verify your own work before reporting: run every check above yourself and paste the exact commands and their

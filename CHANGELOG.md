@@ -6,6 +6,23 @@ one. See docs/releasing.md.
 
 ## Unreleased
 
+### Added
+
+- When a `bin/toli spawn` run's harness exits, its supervisor closes the automation browsers the run left open (a
+  Chrome, Chromium, Edge, Brave or Firefox started with remote debugging, headless, `--enable-automation`,
+  marionette, or a temp-dir `--user-data-dir`). Only the run's own processes count: its tree, sampled while it runs,
+  and on Linux the processes that inherited its `TOLI_RUN_ID`. A default-profile browser is never touched. The
+  brief templates and the dispatch skill tell browser and screenshot jawans to close their browsers before reporting
+  (T1121).
+
+### Changed
+
+- Native subagent jawans (active tasks recorded with `task start --agent <id>`) share `capacity.maxRuns` with spawn
+  runs: `bin/toli spawn` queues when they fill the slots, and the digest, `bin/toli resources` and
+  `bin/toli fleet queues` show `jawans <n>/<slots> (<k> native subagents)`, or
+  `jawans at cap N/N (...): queue instead`, which the dispatch skill reads before starting another subagent.
+  `resources --json` publishes `queue.subagents` (T1121).
+
 ### Fixed
 
 - On macOS, `bin/toli helper status|install|uninstall`, `schedule status|install|uninstall` and

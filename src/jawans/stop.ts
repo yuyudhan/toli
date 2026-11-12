@@ -19,7 +19,7 @@ const KILL_WAIT_MS = 5_000;
 const POLL_MS = 100;
 const PS_TIMEOUT_MS = 20_000;
 /** Start times come from `ps` elapsed time in whole seconds: two readings of one process differ by under this. */
-const SAME_START_MS = 2_000;
+export const SAME_START_MS = 2_000;
 
 /** The run's root process: its pid and when it was spawned (taken right after spawn returned). */
 export type StopRoot = { pid: number; spawnedAtMs: number };
@@ -27,13 +27,15 @@ export type StopRoot = { pid: number; spawnedAtMs: number };
 /** Live processes a stop targets: pid to start time (ms since the epoch). */
 export type Identities = Map<number, number>;
 
-type Row = { ppid: number; pgid: number; zombie: boolean; startMs: number };
+/** One `ps` row; `args` is the command line when the listing asked for it (`args=` last), else empty. */
+export type ProcessRow = { ppid: number; pgid: number; zombie: boolean; startMs: number; args: string };
 
-/** `ps -A -o pid=,ppid=,pgid=,stat=,etime=` output taken at `nowMs`, by pid. */
-function parseRows(psOutput: string, nowMs: number): Map<number, Row> {
-    const rows = new Map<number, Row>();
+/** `ps -A -o pid=,ppid=,pgid=,stat=,etime=[,args=]` output taken at `nowMs`, by pid. */
+export function parseRows(psOutput: string, nowMs: number): Map<number, ProcessRow> {
+    const rows = new Map<number, ProcessRow>();
     for (const line of psOutput.split("\n")) {
-        const [pid, ppid, pgid, stat, etime] = line.trim().split(/\s+/);
+        const fields = line.trim().split(/\s+/);
+        const [pid, ppid, pgid, stat, etime] = fields;
         if (pid === undefined || ppid === undefined || pgid === undefined || stat === undefined) continue;
         const elapsed = parseCpuTime(etime ?? "");
         if (elapsed === null) continue;
@@ -42,6 +44,7 @@ function parseRows(psOutput: string, nowMs: number): Map<number, Row> {
             pgid: Number(pgid),
             zombie: stat.startsWith("Z"),
             startMs: nowMs - elapsed * 1000,
+            args: fields.slice(5).join(" "),
         });
     }
     return rows;
@@ -117,14 +120,19 @@ async function waitGone(root: StopRoot, known: Identities, ms: number, signal: N
 }
 
 /**
- * Stop `root` and everything it started: SIGTERM, then SIGKILL to whatever is left after `graceMs`. Call it while the
- * root has not been reaped. Resolves to the pids still alive after that (empty once all are gone; the last known ones
- * when `ps` kept failing).
+ * Stop `root` and everything it started: SIGTERM, then SIGKILL to whatever is left after `graceMs`. Resolves to the
+ * pids still alive after that (empty once all are gone; the last known ones when `ps` kept failing). `unreaped`: the
+ * root is this process's child and not reaped yet, so its pid is still the run's even when `ps` fails and it is
+ * signalled anyway; a root found by an earlier look (`unreaped: false`) is signalled only when `ps` shows it.
  */
-export async function stopTree(root: StopRoot, graceMs: number): Promise<number[]> {
+export async function stopTree(
+    root: StopRoot,
+    graceMs: number,
+    options: { unreaped?: boolean } = {},
+): Promise<number[]> {
     const known: Identities = new Map();
-    // Without `ps`, only the root (not reaped yet, so still the run's) can be signalled safely.
-    signalAll(look(root, known) ?? [root.pid], "SIGTERM");
+    // Without `ps`, only an unreaped root (still the run's) can be signalled safely.
+    signalAll(look(root, known) ?? (options.unreaped === false ? [] : [root.pid]), "SIGTERM");
     if (await waitGone(root, known, graceMs, "SIGTERM")) return [];
     if (await waitGone(root, known, KILL_WAIT_MS, "SIGKILL")) return [];
     return look(root, known) ?? [...known.keys()];

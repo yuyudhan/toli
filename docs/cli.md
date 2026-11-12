@@ -162,7 +162,8 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
     session start|end --pid <n>
 
 - `spawn` starts a jawan in the background on any harness and returns a run id; `runs` and `run` follow it. With
-  every jawan slot busy (`capacity.maxRuns`) the run is queued and starts when one frees; `--now` starts it anyway.
+  every jawan slot busy (`capacity.maxRuns`, shared with the lead's native subagents) the run is queued and starts
+  when one frees; `--now` starts it anyway.
   A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
   Runs have no time limit unless given `--max-time`; a run that shows no progress for `capacity.stallMinutes`
   (default 30), or uses its explicit limit, without a report is resumed in the same omp session

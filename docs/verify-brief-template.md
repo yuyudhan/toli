@@ -44,6 +44,8 @@ For the original brief's `## Goal` and every acceptance line, record PASS or GAP
   the command and its output. The output must show a pass, not a skipped, filtered, or truncated run.
 - UI/API lines: check the logs and the local URL yourself (headless browser or HTTP request) and paste what came back.
 - UI changes: open every screenshot path the implementer gave, at every width the notes' `## Proof` section lists.
+- Browser or screenshot checks: close every browser you start before you report (Playwright or Puppeteer
+  `browser.close()`, or the browser MCP's close tool).
 - Bug fixes: confirm the reproducing test exists, failed before the fix (from the report), and passes now.
 - A line the implementer marked "could not run" is a GAP unless you can run it now.
 - The implementer stayed on the branch above, in the path above, and stopped at any OTP or captcha instead of

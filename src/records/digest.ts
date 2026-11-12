@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { cpus } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import {
@@ -15,7 +16,8 @@ import { paths } from "../core/paths.ts";
 import { personaLine } from "../core/persona.ts";
 import { now, out, printJson, run, ToliError } from "../core/util.ts";
 import { availabilityLine, fleetStatus } from "../fleet/pick.ts";
-import type { FleetEntry as AvailabilityEntry } from "../fleet/resources.ts";
+import { slotText, subagentJawans } from "../fleet/queue.ts";
+import { type FleetEntry as AvailabilityEntry, capacityFor } from "../fleet/resources.ts";
 import { configuredHarnesses, harnessPath } from "../harness/harness.ts";
 import {
     activeRuns,
@@ -24,6 +26,7 @@ import {
     type ModelTotal,
     modelTotalLine,
     modelTotalsToday,
+    RUNNING,
     runLine,
 } from "../jawans/runs.ts";
 import { type JobResult, listResults, loadJobState } from "../jobs/jobs.ts";
@@ -73,6 +76,11 @@ export type Digest = {
     reports: ReportEntry[];
     /** Jawans started with `bin/toli spawn` that are still running. */
     jawanRuns?: JawanRun[];
+    /**
+     * This machine's jawan slots in use: running spawn runs plus native subagent jawans (`subagents`), against
+     * `capacity.maxRuns`; absent before the machine is set up.
+     */
+    slots?: { jawansRunning: number; subagents: number; maxRuns: number };
     /** Today's jawan runs per harness and model (started since local midnight). */
     models?: ModelTotal[];
     /** Recommended next actions for the lead, most urgent first. */
@@ -113,7 +121,8 @@ function recentReports(): ReportEntry[] {
 /** `setupItems`: this machine's install-level setup checklist; its missing steps head the Next block's setup action. */
 export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest {
     // A fresh clone has no config/machine.json yet; the digest still works and the setup notice says what to do.
-    const machine = hasMachine() ? loadMachine() : { name: "(unnamed)", role: "not initialized" };
+    const configured = hasMachine() ? loadMachine() : null;
+    const machine = configured ?? { name: "(unnamed)", role: "not initialized" };
     const projects = loadProjects().map((project): ProjectDigest => {
         const dir = paths.projectDir(project.name);
         const branch = project.branch ?? null;
@@ -148,6 +157,8 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
     const urls = new Map(loadProjects().map((project) => [project.name, project.url]));
     const missingHarnesses = configuredHarnesses().filter((harness) => harnessPath(harness) === null);
     const runs = activeRuns();
+    const allRuns = listRuns();
+    const subagents = subagentJawans(tasks, allRuns);
     const needs = needsQueue(tasks);
     const stale = findStaleTasks(tasks);
     return {
@@ -164,7 +175,16 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
         reports: recentReports(),
         pushes: recentPushes(),
         jawanRuns: runs,
-        models: modelTotalsToday(listRuns()),
+        ...(configured === null
+            ? {}
+            : {
+                  slots: {
+                      jawansRunning: allRuns.filter((entry) => RUNNING.includes(entry.status)).length + subagents,
+                      subagents,
+                      maxRuns: capacityFor(configured, Math.max(1, cpus().length)).maxRuns,
+                  },
+              }),
+        models: modelTotalsToday(allRuns),
         next: nextActions({
             projects,
             backlog,
@@ -275,6 +295,7 @@ function render(digest: Digest, notices: readonly string[] = [], resurface: Read
         `recent pushes (${pushes.length}):`,
         ...(pushes.length === 0 ? ["  none"] : pushes.map((entry) => `  ${pushLine(entry)}`)),
     );
+    if (digest.slots !== undefined) lines.push("", slotText(digest.slots, digest.slots.maxRuns));
     const runs = digest.jawanRuns ?? [];
     lines.push(
         "",

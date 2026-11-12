@@ -10,7 +10,7 @@ import {
 import { out, printJson, runAsync } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { type Full, fullText } from "./full.ts";
-import { perSlot, type Queue, queueText } from "./queue.ts";
+import { perSlot, type Queue, queueText, slotText } from "./queue.ts";
 import { type FleetEntry, localResources, type Resources } from "./resources.ts";
 
 /** Line shown by `resources`, `fleet status`, `digest --fleet` and doctor. */
@@ -21,6 +21,7 @@ export function availabilityLine(entry: FleetEntry): string {
     if (!r) return `${name}: ${state}`;
     const detail = [
         queueText(r.queue),
+        ...(r.queue === null ? [] : [slotText(r.queue, r.maxRuns)]),
         `load ${r.load1}/${r.cpus} cpus`,
         `mem ${r.memAvailableMB}/${r.memTotalMB} MB free`,
         `disk ${r.diskFreeGB} GB free`,

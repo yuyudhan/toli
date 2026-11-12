@@ -6,15 +6,18 @@ import { currentFull, type Full } from "./full.ts";
 /**
  * The machine's work queue: its own backlog's queued, active and held tasks, and its jawans. `depth` is the work
  * waiting on or using its jawans: queued tasks + running jawans + queued runs. `jawansRunning` counts the `bin/toli
- * spawn` runs holding a slot and the native harness subagents working on its tasks (`subagentJawans`). Other active
- * tasks are not counted (a lead's bookkeeping tasks, work delegated elsewhere, a task waiting on something). Machines
- * rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its lead takes no more work.
+ * spawn` runs holding a slot and the native harness subagents working on its tasks (`subagentJawans`), and
+ * `subagents` is that second part. Other active tasks are not counted (a lead's bookkeeping tasks, work delegated
+ * elsewhere, a task waiting on something). Machines rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its
+ * lead takes no more work.
  */
 export type Queue = {
     queued: number;
     active: number;
     held: number;
     jawansRunning: number;
+    /** The native subagent jawans among `jawansRunning`; absent from machines on an older toli. */
+    subagents?: number;
     jawansQueued: number;
     depth: number;
     full?: Full;
@@ -75,7 +78,8 @@ export function localQueue(): Queue {
     const count = (status: string): number => tasks.filter((task) => task.status === status).length;
     const runs = listRuns();
     const queued = waitingTasks(tasks, runs).length;
-    const jawansRunning = runs.filter((entry) => RUNNING.includes(entry.status)).length + subagentJawans(tasks, runs);
+    const subagents = subagentJawans(tasks, runs);
+    const jawansRunning = runs.filter((entry) => RUNNING.includes(entry.status)).length + subagents;
     const jawansQueued = runs.filter((entry) => entry.status === "queued").length;
     const full = currentFull();
     return {
@@ -83,6 +87,7 @@ export function localQueue(): Queue {
         active: count("active"),
         held: count("held"),
         jawansRunning,
+        subagents,
         jawansQueued,
         depth: queued + jawansRunning + jawansQueued,
         ...(full === null ? {} : { full }),
@@ -99,4 +104,17 @@ export function queueText(queue: Queue | null): string {
     if (queue === null) return "queue unknown";
     const text = `queue ${queue.depth} (${queue.queued} queued, ${queue.jawansRunning} running + ${queue.jawansQueued} waiting; ${queue.active} active, ${queue.held} held)`;
     return queue.full === undefined ? text : `full: ${queue.full.reason}; ${text}`;
+}
+
+/**
+ * The machine's jawans against its jawan slots (`capacity.maxRuns`): `jawans <n>/<slots>`, with the native subagent
+ * jawans among them, and `jawans at cap <n>/<slots> (...): queue instead` once every slot is taken. Native subagents
+ * share the cap with `bin/toli spawn` runs: a lead at cap queues new work (`bin/toli task add`, or `bin/toli spawn`,
+ * which queues the run) instead of starting another subagent.
+ */
+export function slotText(queue: Pick<Queue, "jawansRunning" | "subagents">, slots: number): string {
+    const subagents = queue.subagents ?? 0;
+    const native = subagents === 0 ? "" : ` (${subagents} native subagent${subagents === 1 ? "" : "s"})`;
+    const count = `${queue.jawansRunning}/${slots}`;
+    return queue.jawansRunning >= slots ? `jawans at cap ${count}${native}: queue instead` : `jawans ${count}${native}`;
 }

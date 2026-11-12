@@ -1,7 +1,8 @@
-// Starting spawned jawan runs within the machine's jawan slots (config/machine.json capacity.maxRuns). A new run is
-// recorded, then started at once when a slot is free (or with `spawn --now`), otherwise left `queued`; queued runs
-// start oldest first as slots free, from the supervisor of each finishing run and from the minute tick. Before any
-// start, the disk keeper frees build output when the disk is low (src/fleet/disk.ts): low disk never holds a run.
+// Starting spawned jawan runs within the machine's jawan slots (config/machine.json capacity.maxRuns), which native
+// subagent jawans share. A new run is recorded, then started at once when a slot is free (or with `spawn --now`),
+// otherwise left `queued`; queued runs start oldest first as slots free, from the supervisor of each finishing run and
+// from the minute tick. Before any start, the disk keeper frees build output when the disk is low (src/fleet/disk.ts):
+// low disk never holds a run.
 import { spawn as spawnChild } from "node:child_process";
 import {
     closeSync,
@@ -19,6 +20,7 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { subagentJawans } from "../fleet/queue.ts";
 import { capacityFor, stallMinutes } from "../fleet/resources.ts";
 import { type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
 import type { ModelSource, Tier } from "../harness/models.ts";
@@ -72,9 +74,14 @@ export function jawanSlots(): number {
 /** Serializes slot checks with starts, so concurrent spawns and drains never overfill the machine. */
 const SLOTS_LOCK = "jawan-slots";
 
-/** Runs holding a jawan slot; the count both startOrQueue and startQueued check against jawanSlots. */
+/**
+ * Jawan slots in use, the count both startOrQueue and startQueued check against jawanSlots: running spawn runs plus
+ * the native subagent jawans working on this machine's tasks (src/fleet/queue.ts subagentJawans), so a lead's
+ * subagents and its spawned runs share the one cap.
+ */
 function busySlots(): number {
-    return listRuns().filter((run) => RUNNING.includes(run.status)).length;
+    const runs = listRuns();
+    return runs.filter((run) => RUNNING.includes(run.status)).length + subagentJawans(loadBacklog().tasks, runs);
 }
 
 /** The base brief of an earlier run; runs from before base briefs were kept fall back to the brief they ran. */

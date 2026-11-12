@@ -131,8 +131,10 @@ keeper frees build output before work starts instead ([disk.md](disk.md)):
 { "capacity": { "maxRuns": 2, "maxLoadPerCpu": 0.8, "minMemAvailableMB": 2048, "diskKeepGB": 60 } }
 ```
 
-`capacity.maxRuns` is still a hard cap on `bin/toli spawn` jawans on each machine: with that many running, a new
-spawn (or an automatic continuation) is queued and starts when one ends (`--now` overrides). `capacity.autoResume`
+`capacity.maxRuns` is still a hard cap on jawans on each machine, shared by `bin/toli spawn` runs and the lead's native
+subagents (active tasks recorded with `task start --agent <id>`; [harnesses.md](harnesses.md)): with that many
+running, a new spawn (or an automatic continuation) is queued and starts when one ends (`--now` overrides), and
+`resources`, `fleet queues` and the digest say `jawans at cap N/N (...): queue instead`. `capacity.autoResume`
 (default 3) is how many times a chain of runs that stalled (no progress for `capacity.stallMinutes`, default 30) or
 used an explicit `--max-time` without a report is resumed in the same session
 ([harnesses.md](harnesses.md#jawans-on-any-harness-bintoli-spawn)). Apart from that spawn queue and the build slots

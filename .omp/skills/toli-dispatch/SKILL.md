@@ -41,6 +41,11 @@ work goes, never CPU, load or memory; there is no locking between jawans.
 
 - `bin/toli pick --project <project>` ranks machines by task-queue depth, shortest first (ties: the one with the
   clone, then this machine, then name). It prints `local` when this machine wins: run it here (step 4 onward).
+- Before starting a jawan here, check this machine's jawan slots: the digest's `jawans <n>/<slots>` line (also in
+  `bin/toli resources` and `bin/toli fleet queues`). Native subagents (an active task with `--agent <id>`) share
+  `capacity.maxRuns` with `bin/toli spawn` runs. When it says `jawans at cap N/N ...: queue instead`, start no
+  native subagent: leave the task queued (`bin/toli task add ...`), delegate it to a shorter queue, or use
+  `bin/toli spawn`, which queues the run until a slot frees.
 - Another machine wins: record the task and write its brief as usual (step 4), then, instead of spawning, hand it
   to that machine's Sardar:
 
@@ -116,6 +121,9 @@ Build the acceptance lines from the notes file:
 - UI or API work and the notes have `## URLs`: logs checked (the `## Local stack` logs) and the local URL verified
   with a headless browser (UI) or HTTP request (API). Staging URLs are for read-only checks only.
 - UI changes: before/after screenshots at each width listed in the notes' `## Proof` section.
+- Browser or screenshot work (UI checks, screenshots, scraping): the template's line to close every browser it
+  starts before reporting. A `bin/toli spawn` run's leftover automation browsers are closed when it exits; a native
+  subagent's are not.
 - Bug fixes: a reproducing test, with its failing output before the fix and passing output after.
 
 Landing (the brief's Landing section):

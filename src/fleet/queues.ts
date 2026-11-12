@@ -21,7 +21,7 @@ import { loadProjects } from "../projects/projects.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
 import { fleetStatus, rankMachines } from "./pick.ts";
-import { perSlot, type Queue, queueText, waitingTasks } from "./queue.ts";
+import { perSlot, type Queue, queueText, slotText, waitingTasks } from "./queue.ts";
 import type { FleetEntry } from "./resources.ts";
 
 const DEFAULT_BALANCE_MINUTES = 30;
@@ -53,6 +53,8 @@ type QueueRow = {
     queue: Queue | null;
     /** Queue depth per jawan slot: what ranks it. */
     load: number | null;
+    /** Its jawan slots (`capacity.maxRuns`), which native subagent jawans share with spawn runs. */
+    slots: number | null;
     reasons: string[];
 };
 
@@ -74,6 +76,7 @@ function queueRows(entries: FleetEntry[]): QueueRow[] {
                 reachable: entry.resources !== null,
                 queue,
                 load: queue === null || entry.resources === null ? null : perSlot(queue.depth, entry.resources.maxRuns),
+                slots: entry.resources?.maxRuns ?? null,
                 reasons: entry.resources === null ? entry.reasons : [],
             },
         ];
@@ -119,7 +122,8 @@ function rowLine(row: QueueRow): string {
     const name = `${row.machine}${row.local ? " (this machine)" : ""}`;
     if (!row.reachable) return `${name}: ${row.reasons.join("; ") || "unreachable"}`;
     if (row.queue === null) return `${name}: queue unknown (its toli reports no queue)`;
-    return `${name}: ${queueText(row.queue)}, ${row.load} per jawan slot`;
+    const slots = row.slots === null ? "" : `, ${slotText(row.queue, row.slots)}`;
+    return `${name}: ${queueText(row.queue)}, ${row.load} per jawan slot${slots}`;
 }
 
 /** `toli fleet queues [--json]`: every machine's queue, shortest first, then a suggested delegation if one is due. */

@@ -4,8 +4,9 @@
 // inbox, from where `bin/toli wake` (omp extension tick, Claude Code UserPromptSubmit hook) brings it into the lead's
 // chat. A run has no wall-clock limit unless given `--max-time`; one that stalls (no progress for
 // capacity.stallMinutes, src/jawans/progress.ts), hits its explicit limit without a report, or stops on a rate/usage
-// limit is resumed: the same omp session continues (`omp --resume`), up to capacity.autoResume times per chain. The
-// freed slot starts the oldest queued run.
+// limit is resumed: the same omp session continues (`omp --resume`), up to capacity.autoResume times per chain. When
+// a harness exits, the automation browsers its run left open are closed (src/jawans/browsers.ts). The freed slot
+// starts the oldest queued run.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { availableParallelism, constants } from "node:os";
@@ -21,6 +22,7 @@ import { isLiveStack } from "../projects/projects.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { runTaskEnd } from "../records/task-end.ts";
+import { watchBrowsers } from "./browsers.ts";
 import { autoResume } from "./continue.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
@@ -162,6 +164,7 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
             if (record.status === "starting") record.status = "running";
             record.pid = childPid;
         });
+    const browsers = childPid === null ? null : watchBrowsers({ pid: childPid, spawnedAtMs }, id, minuteMs);
     let timedOut = false;
     let stalled = false;
     const stopping: Promise<number[]>[] = [];
@@ -196,6 +199,7 @@ async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, min
     // A harness that exits on SIGTERM can leave children that ignore it: the attempt ends once all of them are gone.
     const survivors = (await Promise.all(stopping)).flat();
     if (survivors.length > 0) writeSync(logFd, `\n[toli] pid ${survivors.join(", ")} outlived SIGKILL\n`);
+    await browsers?.finish(logFd);
     const elapsedMs = Date.now() - launchedAt;
     const output = existsSync(run.logPath) ? readFileSync(run.logPath).subarray(offset).toString("utf8") : "";
     return { exit, timedOut, stalled, elapsedMs, output };

@@ -71,11 +71,24 @@ records `done`, `failed` or `killed` and posts the outcome to the inbox. The omp
 bring it into the lead's chat as a `[toli wake]` message. On a worker machine the outcome is also forwarded to the
 coordinator's inbox. Run records live in `state/jawans/<id>.json`.
 
-**Jawan slots.** A machine runs at most `capacity.maxRuns` spawned jawans at once (config/machine.json, default a
-quarter of the cores). `spawn` with every slot busy records the run as `queued` (shown by `bin/toli runs`) and
-returns; queued runs start oldest first as slots free, from the supervisor of each run that ends and from the minute
-tick (`bin/toli job tick`). `--now` starts the run regardless, for the lead's explicit use. `run kill` on a queued
-run cancels it.
+**Jawan slots.** A machine runs at most `capacity.maxRuns` jawans at once (config/machine.json, default a quarter of
+the cores): running spawn runs plus the lead's native subagents, counted as the active tasks recorded with `task
+start --agent <id>` that no spawn run works on (one per distinct agent id). `spawn` with every slot busy records the
+run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free, from the
+supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run regardless,
+for the lead's explicit use. `run kill` on a queued run cancels it. The digest, `bin/toli resources` and `bin/toli
+fleet queues` show the slots as `jawans <n>/<slots> (<k> native subagents)`, and `jawans at cap N/N (...): queue
+instead` once all are taken: the lead then queues new work instead of starting another subagent.
+
+**Leftover browsers are closed.** When a run's harness exits, the supervisor closes the automation browsers the run
+left open: a browser binary (Chrome, Chromium, its headless shell, Edge, Brave, Firefox) started with remote
+debugging, headless, `--enable-automation` or marionette, or with a `--user-data-dir` under a temp dir (what
+Playwright, Puppeteer and DevTools MCP servers launch). Only the run's own processes count: its tree, sampled every
+10 seconds while the harness lives (pid and start time, so a browser reparented once its launcher exits stays known),
+and on Linux every process that inherited the run's `TOLI_RUN_ID`. Each gets SIGTERM, then SIGKILL after 5 seconds,
+with its own tree, and the log notes `[toli] closed the automation browser(s) the run left open: pid ...`. A browser
+on the user's default profile is never touched, even one the jawan opened, and nothing outside the run's tree is.
+Native subagents have no supervisor: their briefs say to close every browser they start.
 
 **One live jawan per task.** `spawn --task T<n>` refuses while T<n> already has a live run on this machine (queued,
 starting or running), naming the run and suggesting `write agent://<id>` to steer it, so two jawans never edit the
