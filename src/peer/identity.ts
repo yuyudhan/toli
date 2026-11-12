@@ -138,19 +138,20 @@ function writeSecret(path: string, text: string): void {
     renameSync(temp, path);
 }
 
-/** A fresh self-signed P-256 certificate for TLS_NAME in `dir`/tls.{key,crt}, by openssl. */
+/**
+ * A fresh self-signed P-256 certificate for TLS_NAME at `certPath`, with its key at `keyPath`. node:crypto makes the
+ * key (PKCS#8, which every TLS stack reads; LibreSSL's own EC key output is not) and openssl signs the certificate.
+ */
 function makeCertificate(keyPath: string, certPath: string): void {
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    writeSecret(`${keyPath}.new`, privateKey.export({ format: "pem", type: "pkcs8" }).toString());
     const made = run(
         [
             "openssl",
             "req",
             "-x509",
-            "-newkey",
-            "ec",
-            "-pkeyopt",
-            "ec_paramgen_curve:P-256",
-            "-nodes",
-            "-keyout",
+            "-new",
+            "-key",
             `${keyPath}.new`,
             "-out",
             `${certPath}.new`,
@@ -172,7 +173,6 @@ function makeCertificate(keyPath: string, certPath: string): void {
                 : `openssl req failed (exit ${made.code}): ${(made.stderr || made.stdout).trim()}`,
         );
     }
-    chmodSync(`${keyPath}.new`, 0o600);
     renameSync(`${keyPath}.new`, keyPath);
     renameSync(`${certPath}.new`, certPath);
 }

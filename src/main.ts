@@ -95,6 +95,7 @@ const USAGE = `usage: bin/toli <command> [args]
   inbox add --from <machine> --title "<t>" [--via "<how it arrived>"] (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
   outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
   peer init | status [--json] | list [--json] | apply (envelopes on stdin)
+  peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
   wake [--json]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]
@@ -201,8 +202,7 @@ export async function main(argv: string[]): Promise<number> {
                 await outboxCommand(rest);
                 return 0;
             case "peer":
-                await peerCommand(rest);
-                return 0;
+                return await peerCommand(rest);
             case "wake":
                 wakeCommand(rest);
                 return 0;

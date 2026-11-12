@@ -5,8 +5,7 @@
 // returns one receipt per envelope. Nothing executes on arrival: every kind ends as an inbox item, a queued task or a
 // share record, and this machine's lead decides what happens next.
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, now, readJson, runAsync, withLock, writeJsonAtomic } from "../core/util.ts";
 import type { OutboxKind } from "../jobs/outbox.ts";
@@ -14,6 +13,7 @@ import { loadBacklog } from "../records/backlog.ts";
 import { fleetId, splitFleetId } from "../records/delegation-report.ts";
 import { addInboxItem, listInbox } from "../records/inbox.ts";
 import { canonicalJson, type Identity, signWith, verifySignature } from "./identity.ts";
+import { markReceiving } from "./receiving.ts";
 import { type Peer, type Permission, peerByFingerprint } from "./store.ts";
 
 /** Kinds that carry a message (an outbox item); the rest ask the receiving listener for something. */
@@ -53,8 +53,6 @@ const BODY_MAX: Partial<Record<EnvelopeKind, number>> = { inbox: 16 * 1024, dele
 const BODY_DEFAULT_MAX = 64 * 1024;
 /** Unacknowledged inbox items one peer may have here; past it, its messages are deferred (kept queued there). */
 export const INBOX_CAP = 200;
-/** How long after the last item of a batch a lead turn waits, so a batch wakes the lead once. */
-export const RECEIVING_QUIET_MS = 5_000;
 /** A batch longer than this gets one header item naming how many arrived and how long they waited. */
 const BATCH_HEADER_OVER = 5;
 const APPLY_TIMEOUT_MS = 120_000;
@@ -233,22 +231,6 @@ function recordReceived(peer: string, id: string, stdout: string): void {
         received[id] = { status: "applied", stdout, at: now().getTime() };
         writeJsonAtomic(paths.peerReceived(peer), received);
     });
-}
-
-/** Mark that a batch is being applied now: the lead holds its turn until RECEIVING_QUIET_MS after the last mark. */
-function markReceiving(): void {
-    const path = paths.peerReceiving();
-    mkdirSync(dirname(path), { recursive: true });
-    if (!existsSync(path)) writeFileSync(path, "");
-    const at = new Date();
-    utimesSync(path, at, at);
-}
-
-/** Whether a batch from a peer was applied within the last RECEIVING_QUIET_MS (the lead waits for the rest). */
-export function receivingNow(): boolean {
-    const path = paths.peerReceiving();
-    if (!existsSync(path)) return false;
-    return Date.now() - Bun.file(path).lastModified < RECEIVING_QUIET_MS;
 }
 
 /** Apply one verified message here; never throws. */

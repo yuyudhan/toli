@@ -12,6 +12,8 @@ import { leadGuidance } from "../harness/guidance.ts";
 import { headlessOmpFlags } from "../harness/omp-args.ts";
 import { liveSession } from "../harness/session.ts";
 import { sessionFile } from "../jawans/launch.ts";
+import { receivingNow } from "../peer/receiving.ts";
+import { ensureListener } from "../peer/server.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
 import { currentFull, fullCommand, fullText, LEAD_TURN_ENV } from "./full.ts";
@@ -76,6 +78,8 @@ function claimTurn(): Claim | null {
         if (liveSession() !== null || attachPidLocked() !== null) return null;
         const state = readLeadState();
         if (turnPid(state) !== null) return null;
+        // A peer's batch is being applied: wait until it is all in, so it wakes this lead once.
+        if (receivingNow()) return null;
         const pendingPath = paths.leadPending();
         const pending = existsSync(pendingPath) ? readFileSync(pendingPath, "utf8").trim() : "";
         const fresh = wakeMessage(takeWake());
@@ -202,6 +206,14 @@ async function serve(once: boolean): Promise<number> {
     const interval = pollMs();
     if (!once) out(`${now().toISOString()} lead service started on ${codeRoot()}`);
     for (;;) {
+        if (!once) {
+            try {
+                const started = ensureListener();
+                if (started !== null) logLine(started);
+            } catch (error) {
+                logLine(`peer listener not started: ${errorText(error)}`);
+            }
+        }
         await leadPass();
         if (once) return 0;
         if (runtimeSuperseded()) {

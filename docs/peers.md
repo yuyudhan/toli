@@ -47,3 +47,34 @@ a peer carries `- via: peer <name> (fingerprint ...)`.
 
 The plain ssh commands hold the sender to its task too: `task answer <id> --from <m>` is refused unless `<m>`
 delegated that task here, and `delegation receive|update|link --from <m>` unless the JSON speaks for `<m>`.
+
+## The listener
+
+`bin/toli peer serve` serves HTTPS with this installation's certificate. The lead service (`bin/toli lead run`)
+starts it, detached, whenever `peer.listen` is on (the default) and none runs, and it exits by itself when a newer
+runtime is installed so the lead restarts it on that; a machine whose lead runs from crontab has no listener unless
+`peer serve` is run, and pulls from its peers instead. Settings live in `config/machine.json` `peer`:
+
+| Setting       | Default   | Meaning                                                                                                                    |
+| ------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `port`        | `47123`   | the TCP port on every bound address                                                                                        |
+| `bind`        | `private` | every local address in 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT: NetBird, Tailscale) or fd00::/8; or an explicit list |
+| `listen`      | `true`    | `false` (`peer listen off`): no listener                                                                                   |
+| `sshFallback` | `true`    | `false`: a paired peer gets nothing over ssh, HTTPS (or its pull) only                                                     |
+
+It never binds a wildcard (`0.0.0.0`, `::`), loopback, link-local or public address unless `bind` lists it. The
+address set is rescanned every 15 seconds; when it changes (a VPN comes up, a network is joined) the listener rebinds
+and announces itself to its peers.
+
+| Endpoint              | Who                      | What                                                              |
+| --------------------- | ------------------------ | ----------------------------------------------------------------- |
+| `GET /v1/hello`       | anyone on the network    | name, version, key, fingerprints, `certSig`: nothing else         |
+| `POST /v1/pair/...`   | a machine asking to pair | the 4-digit code exchange (below)                                 |
+| `POST /v1/messages`   | a paired peer, signed    | an ordered batch of up to 50 envelopes; one receipt each          |
+| `POST /v1/announce`   | a paired peer, signed    | "I am back at these addresses": its queue here goes out at once   |
+| `POST /v1/status`     | a peer with `status`     | what `resources` and `task list` say here, and the queue to it    |
+| `POST /v1/outbox/...` | a paired peer, signed    | a peer without a listener pulls what waits here for it, then acks |
+
+Limits: a request is at most 512 KiB (`413`), an unsigned or unknown request gets `401`, and past 60 envelopes a
+minute from one peer the rest are deferred (`429`) and stay queued with their sender. A unix socket in `state/peer/`
+(mode 0600) takes local commands only: `peer accept` asks it for a code, `peer listen off` stops it.

@@ -253,12 +253,17 @@ Details: [fleet.md](fleet.md).
 ### Peers (HTTP messaging)
 
     peer init | status [--json] | list [--json] | apply (envelopes on stdin)
+    peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
 
 - `peer init` makes this installation's identity (an Ed25519 key and a TLS certificate in `config/peer/`); `upgrade`
   and the listener run it too. `peer status` shows the fingerprint to compare when pairing; `peer list` the paired
   peers with their permissions and addresses.
 - `peer apply` is the ssh transport's receiver: signed envelopes on stdin, one receipt each on stdout, with the same
   checks as over HTTPS ([peers.md](peers.md#the-envelope)).
+- `peer serve` runs the HTTPS listener in the foreground; the lead service starts it by itself while `peer.listen`
+  is on (the default). `peer listen off` stops it and keeps it off (this machine then pulls from its peers); `peer
+set` changes the port (47123), the bind (`private`, the default, or a list of addresses) and whether a paired peer
+  may still get messages over ssh when HTTPS fails ([peers.md](peers.md#the-listener)).
 
 Details: [peers.md](peers.md).
 

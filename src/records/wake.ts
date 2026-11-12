@@ -4,6 +4,7 @@ import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, withLock } from "../core/util.ts";
 import { listResults } from "../jobs/jobs.ts";
+import { receivingNow } from "../peer/receiving.ts";
 import { type AckStream, ackCommand, ackedThrough, ackThrough, markShown, type ResultStream } from "./acks.ts";
 import { listInbox } from "./inbox.ts";
 
@@ -106,7 +107,8 @@ export function wakeMessage(items: WakeItem[]): string {
 export function wakeCommand(argv: string[]): void {
     const args = new Args(argv, { booleans: ["json"] });
     args.maxPositional(0);
-    const items = takeWake();
+    // A peer's batch is still arriving: take it next time, whole, as one wake.
+    const items = receivingNow() ? [] : takeWake();
     const message = wakeMessage(items);
     if (args.bool("json")) {
         printJson({ items, message });
