@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { Args } from "../core/args.ts";
+import { hasMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { isValidName, out, printJson, readJson, ToliError, withLock, writeTextAtomic } from "../core/util.ts";
+import { isValidName, out, printJson, readJson, ToliError, warn, withLock, writeTextAtomic } from "../core/util.ts";
+import { hasIdentity, initIdentity } from "../peer/identity.ts";
 import { loadProjects, migrateWorkspaces, projectsMissingWorkspace } from "../projects/projects.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
 
@@ -294,7 +296,11 @@ function render(plan: MigrationPlan, applied: boolean): string {
     return lines.join("\n");
 }
 
-/** `toli migrate [--dry-run] [--json]`. */
+/**
+ * `toli migrate [--dry-run] [--json]`. It also makes this installation's peer identity (`peer init`) when the
+ * machine is set up and has none: an upgrade from an older toli runs that older toli's steps, which never ran
+ * `peer init`, but always runs the new code's `migrate`.
+ */
 export function migrateCommand(argv: string[]): void {
     const args = new Args(argv, { booleans: ["dry-run", "json"] });
     args.maxPositional(0);
@@ -309,10 +315,24 @@ export function migrateCommand(argv: string[]): void {
         }
         const references = applyMigration(plan);
         const workspaces = migrateWorkspaces();
+        const identity = hasMachine() && !hasIdentity() && peerIdentity();
         const done = { ...plan, references };
-        if (args.bool("json")) printJson({ applied: true, ...done, workspaces });
-        else out([render(done, true), ...workspaceLines(workspaces, true)].join("\n"));
+        if (args.bool("json")) printJson({ applied: true, ...done, workspaces, peerIdentityMade: identity });
+        else {
+            const identityLine = identity ? ["peer identity made (config/peer/)"] : [];
+            out([render(done, true), ...workspaceLines(workspaces, true), ...identityLine].join("\n"));
+        }
     });
+}
+
+/** Make the missing peer identity; a failure (openssl missing) is a warning, never a failed migrate. */
+function peerIdentity(): boolean {
+    try {
+        return initIdentity();
+    } catch (error) {
+        warn(`toli: peer identity not made: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+    }
 }
 
 /** One line per project whose workspace strategy was (or would be) written down. */

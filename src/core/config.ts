@@ -73,7 +73,13 @@ export type RetentionConfig = {
 };
 
 /** config/machine.json `peer` (see Machine.peer). */
-export type PeerSettings = { port?: number; bind?: "private" | string[]; listen?: boolean; sshFallback?: boolean };
+export type PeerSettings = {
+    port?: number;
+    bind?: "private" | string[];
+    interfaces?: string[];
+    listen?: boolean;
+    sshFallback?: boolean;
+};
 
 export type Machine = {
     name: string;
@@ -102,9 +108,10 @@ export type Machine = {
     lead?: { balanceMinutes?: number; balanceGap?: number };
     /**
      * Peer messaging over HTTPS (src/peer/, docs/peers.md): the listener's `port` (default 47123), `bind` ("private",
-     * the default: every local address in a private range; or a list of addresses), `listen` (default true; false:
-     * no listener, this machine pulls from its peers instead) and `sshFallback` (default true; false: a paired peer
-     * gets nothing over ssh, HTTP only).
+     * the default: the private-range addresses of the VPN and LAN interfaces, never a container or VM bridge; or a
+     * list of addresses), `interfaces` (names the "private" bind includes even when it would leave them out, such as
+     * `br-3f2a9c` or `utun4`), `listen` (default true; false: no listener, this machine pulls from its peers instead)
+     * and `sshFallback` (default true; false: a paired peer gets nothing over ssh, HTTP only).
      */
     peer?: PeerSettings;
 };

@@ -91,6 +91,7 @@ export function peerSettings(): Required<Omit<PeerSettings, "bind">> & { bind: "
     return {
         port: settings.port ?? DEFAULT_PORT,
         bind: settings.bind ?? "private",
+        interfaces: settings.interfaces ?? [],
         listen: settings.listen ?? true,
         sshFallback: settings.sshFallback ?? true,
     };

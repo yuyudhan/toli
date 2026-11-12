@@ -26,7 +26,8 @@ import {
 import { askCommand, flushCommand, pullCommand, statsCommand } from "./transport-command.ts";
 
 const USAGE = `usage: toli peer init | status [--json] | list [--json] | apply (envelopes on stdin)
-  peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
+  peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--interfaces <name,...>|none]
+    [--ssh-fallback on|off]
   peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
   peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
   peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
@@ -171,26 +172,38 @@ function onOff(value: string, flag: string): boolean {
 }
 
 function set(argv: string[]): void {
-    const args = new Args(argv, { values: ["port", "bind", "ssh-fallback"] });
+    const args = new Args(argv, { values: ["port", "bind", "interfaces", "ssh-fallback"] });
     args.maxPositional(0);
     const port = args.str("port");
     const bind = args.str("bind");
+    const interfaces = args.str("interfaces");
     const fallback = args.str("ssh-fallback");
-    if (port === undefined && bind === undefined && fallback === undefined)
-        throw new ToliError("peer set needs --port, --bind or --ssh-fallback");
+    if (port === undefined && bind === undefined && interfaces === undefined && fallback === undefined)
+        throw new ToliError("peer set needs --port, --bind, --interfaces or --ssh-fallback");
     const portNumber = port === undefined ? undefined : Number(port);
     if (portNumber !== undefined && (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535))
         throw new ToliError("--port must be 1-65535");
     const bindList = bind === undefined || bind === "private" ? bind : bind.split(",").map((ip) => ip.trim());
     if (Array.isArray(bindList)) bindAddresses(bindList);
+    // `--interfaces none` clears the list; names are kept as given (the interfaces may not exist yet).
+    const named =
+        interfaces === undefined
+            ? undefined
+            : interfaces === "none"
+              ? []
+              : interfaces
+                    .split(",")
+                    .map((name) => name.trim())
+                    .filter((name) => name !== "");
     updatePeerSettings((settings) => {
         if (portNumber !== undefined) settings.port = portNumber;
         if (bindList !== undefined) settings.bind = bindList as "private" | string[];
+        if (named !== undefined) settings.interfaces = named;
         if (fallback !== undefined) settings.sshFallback = onOff(fallback, "--ssh-fallback");
     });
     const now = peerSettings();
     out(
-        `peer settings: port ${now.port}, bind ${Array.isArray(now.bind) ? now.bind.join(",") : now.bind}, ssh fallback ${now.sshFallback ? "on" : "off"}`,
+        `peer settings: port ${now.port}, bind ${Array.isArray(now.bind) ? now.bind.join(",") : now.bind}, interfaces ${now.interfaces.join(",") || "none"}, ssh fallback ${now.sshFallback ? "on" : "off"}`,
     );
 }
 

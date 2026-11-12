@@ -6,7 +6,7 @@ signed messages over HTTPS on a private network. The design and its reasons are 
 
 ## Identity
 
-`bin/toli peer init` (also run by `upgrade`, and by `peer serve` when it is missing) makes this installation's identity in `config/peer/`
+`bin/toli peer init` (also run by `upgrade` and `migrate`, and by `peer serve` when it is missing) makes this installation's identity in `config/peer/`
 (private to the machine, the directory at mode 0700):
 
 - `identity.key` / `identity.pub`: an Ed25519 key that signs every message. Its **fingerprint** is the SHA-256 of the
@@ -56,16 +56,20 @@ which `upgrade` runs) and none runs. It exits by itself when a newer runtime is 
 on that, and when the checkout's `config/machine.json` is gone; a machine whose lead runs from crontab has no
 listener unless `peer serve` is run, and pulls from its peers instead. Settings live in `config/machine.json` `peer`:
 
-| Setting       | Default   | Meaning                                                                                                                    |
-| ------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `port`        | `47123`   | the TCP port on every bound address                                                                                        |
-| `bind`        | `private` | every local address in 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT: NetBird, Tailscale) or fd00::/8; or an explicit list |
-| `listen`      | `true`    | `false` (`peer listen off`): no listener                                                                                   |
-| `sshFallback` | `true`    | `false`: a paired peer gets nothing over ssh, HTTPS (or its pull) only                                                     |
+| Setting       | Default   | Meaning                                                                                                                                        |
+| ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `port`        | `47123`   | the TCP port on every bound address                                                                                                            |
+| `bind`        | `private` | every address in 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT: NetBird, Tailscale) or fd00::/8 on a VPN or LAN interface; or an explicit list |
+| `interfaces`  | `[]`      | interfaces `private` includes even though it would leave them out (`peer set --interfaces br-3f2a9c,utun4`)                                    |
+| `listen`      | `true`    | `false` (`peer listen off`): no listener                                                                                                       |
+| `sshFallback` | `true`    | `false`: a paired peer gets nothing over ssh, HTTPS (or its pull) only                                                                         |
 
-It never binds a wildcard (`0.0.0.0`, `::`), loopback, link-local or public address unless `bind` lists it. The
-address set is rescanned every 15 seconds; when it changes (a VPN comes up, a network is joined) the listener rebinds
-and announces itself to its peers.
+It never binds a wildcard (`0.0.0.0`, `::`), loopback, link-local or public address unless `bind` lists it. By
+default it also leaves out container and VM bridges (`docker*`, `br-*`, `veth*`, `virbr*`, `cni*`, `podman*`,
+`flannel*`, `cali*`, `vboxnet*`, macOS `bridge*` and `vmnet*`, and the like): their private addresses face every
+container or VM on the machine, not the peers. A tunnel (`utun*`, `tun*`, `ppp*`) counts only for its VPN address
+(100.64/10, which NetBird's macOS `utun` carries). The address set is rescanned every 15 seconds; when it changes (a
+VPN comes up, a network is joined) the listener rebinds and announces itself to its peers.
 
 | Endpoint              | Who                      | What                                                              |
 | --------------------- | ------------------------ | ----------------------------------------------------------------- |

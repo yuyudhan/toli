@@ -1,6 +1,9 @@
-// Which addresses the listener binds (docs/peers.md "The listener"). By default ("private") every local interface
-// address in a private range: 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT, which NetBird and Tailscale use) and
-// IPv6 ULA fd00::/8. Never a wildcard (0.0.0.0, ::), a loopback, a link-local or a public address unless config lists
+// Which addresses the listener binds (docs/peers.md "The listener"). By default ("private") every private-range
+// address (10/8, 172.16/12, 192.168/16, 100.64/10, the CGNAT range NetBird and Tailscale use, and IPv6 ULA fd00::/8)
+// on an interface that carries the VPN or the LAN. Container and VM bridges (docker0, br-*, veth*, virbr*, cni*,
+// podman*, macOS bridge*/vmnet*, ...) are left out, since every container or VM on the machine could reach them, and
+// a tunnel (utun*, tun*, ppp*) counts only for its VPN (100.64/10) addresses; `peer.interfaces` names any interface
+// to include anyway. Never a wildcard (0.0.0.0, ::), a loopback, a link-local or a public address unless config lists
 // it explicitly (`peer.bind`). `TOLI_PEER_BIND` (a comma list) overrides both, for tests.
 import { isIP } from "node:net";
 import { type NetworkInterfaceInfo, networkInterfaces } from "node:os";
@@ -25,20 +28,52 @@ export function isPrivateAddress(ip: string): boolean {
     return false;
 }
 
-/** The private addresses of `interfaces` (the machine's by default), sorted, without duplicates. */
-export function privateAddresses(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces()): string[] {
+/** Container, VM and virtual-switch bridges: their private addresses face the machine's own guests, not peers. */
+const VIRTUAL_INTERFACE =
+    /^(docker|br-|veth|virbr|vnet|cni|podman|flannel|cali|vxlan|lxcbr|lxdbr|vboxnet|vmnet|bridge|kube|weave|tap)/;
+
+/** Point-to-point tunnels: a VPN's own (NetBird on macOS is utun*), or another one; see the header. */
+const TUNNEL_INTERFACE = /^(utun|tun|ppp|ipsec)/;
+
+/** Whether interface `name` is a container or VM bridge the default bind leaves out. */
+export function isVirtualInterface(name: string): boolean {
+    return VIRTUAL_INTERFACE.test(name);
+}
+
+function isVpnAddress(ip: string): boolean {
+    if (isIP(ip) !== 4) return false;
+    const [a = -1, b = -1] = ipv4Parts(ip);
+    return a === 100 && b >= 64 && b <= 127;
+}
+
+/**
+ * The private addresses of `interfaces` (the machine's by default) the default bind uses, sorted, without
+ * duplicates; interfaces named in `include` count whatever they are.
+ */
+export function privateAddresses(
+    interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(),
+    include: readonly string[] = [],
+): string[] {
     const found = new Set<string>();
-    for (const entries of Object.values(interfaces))
+    for (const [name, entries] of Object.entries(interfaces)) {
+        const named = include.includes(name);
+        if (!named && isVirtualInterface(name)) continue;
+        const tunnel = !named && TUNNEL_INTERFACE.test(name);
         for (const entry of entries ?? [])
-            if (!entry.internal && isPrivateAddress(entry.address)) found.add(entry.address);
+            if (!entry.internal && isPrivateAddress(entry.address) && (!tunnel || isVpnAddress(entry.address)))
+                found.add(entry.address);
+    }
     return [...found].sort();
 }
 
-/** The addresses to bind now: TOLI_PEER_BIND, else an explicit `peer.bind` list, else the private ones. */
-export function bindAddresses(bind: "private" | string[]): string[] {
+/**
+ * The addresses to bind now: TOLI_PEER_BIND, else an explicit `peer.bind` list, else the private ones (with the
+ * `peer.interfaces` named to include).
+ */
+export function bindAddresses(bind: "private" | string[], include: readonly string[] = []): string[] {
     const override = process.env.TOLI_PEER_BIND;
     const list = override !== undefined && override !== "" ? override.split(",").map((entry) => entry.trim()) : bind;
-    if (list === "private") return privateAddresses();
+    if (list === "private") return privateAddresses(networkInterfaces(), include);
     for (const ip of list) if (isIP(ip) === 0) throw new ToliError(`peer.bind: "${ip}" is not an IP address`);
     return [...new Set(list)];
 }

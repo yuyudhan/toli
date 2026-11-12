@@ -1,10 +1,10 @@
 // The HTTPS listener (docs/peers.md "The listener"): a real `bin/toli peer serve` bound to 127.0.0.1 through the
 // TOLI_PEER_BIND override, reached with its certificate pinned.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { join } from "node:path";
-import { bindAddresses, isPrivateAddress, privateAddresses } from "../src/peer/bind.ts";
+import { bindAddresses, isPrivateAddress, isVirtualInterface, privateAddresses } from "../src/peer/bind.ts";
 import { envelope, type PeerBox, peerBox, pin, sender } from "./peer-fixture.ts";
 import { type Listening, serve } from "./peer-serve-fixture.ts";
 
@@ -130,5 +130,53 @@ describe("the bind", () => {
     test("an explicit bind list is used as given and must be IP addresses", () => {
         expect(bindAddresses(["0.0.0.0"])).toEqual(["0.0.0.0"]);
         expect(() => bindAddresses(["example.com"])).toThrow('peer.bind: "example.com" is not an IP address');
+    });
+
+    test("container and VM bridges are left out unless named; a tunnel counts only when it is the VPN", () => {
+        const entry = (address: string): NetworkInterfaceInfo => ({
+            address,
+            internal: false,
+            netmask: "",
+            family: "IPv4",
+            mac: "",
+            cidr: null,
+        });
+        const interfaces = {
+            eth0: [entry("192.168.1.20")],
+            wt0: [entry("100.90.1.7")],
+            tailscale0: [entry("100.101.1.1")],
+            utun100: [entry("100.90.192.100")],
+            utun4: [entry("10.8.0.2")],
+            ppp0: [entry("10.212.134.7")],
+            docker0: [entry("172.17.0.1")],
+            "br-3f2a9c": [entry("172.18.0.1")],
+            veth12ab: [entry("172.18.0.9")],
+            virbr0: [entry("192.168.122.1")],
+            cni0: [entry("10.88.0.1")],
+            podman0: [entry("10.89.0.1")],
+            bridge100: [entry("192.168.139.3")],
+            vmnet8: [entry("192.168.56.1")],
+        };
+        expect(privateAddresses(interfaces)).toEqual(["100.101.1.1", "100.90.1.7", "100.90.192.100", "192.168.1.20"]);
+        expect(privateAddresses(interfaces, ["br-3f2a9c", "utun4"])).toEqual([
+            "10.8.0.2",
+            "100.101.1.1",
+            "100.90.1.7",
+            "100.90.192.100",
+            "172.18.0.1",
+            "192.168.1.20",
+        ]);
+        expect(isVirtualInterface("docker0")).toBe(true);
+        expect(isVirtualInterface("enp3s0")).toBe(false);
+    });
+
+    test("peer set --interfaces names interfaces to include; none clears them", () => {
+        const { box } = peerBox("a");
+        expect(box.ok(["peer", "set", "--interfaces", "br-3f2a9c, utun4"])).toContain("interfaces br-3f2a9c,utun4");
+        const machine = (): { peer?: { interfaces?: string[] } } =>
+            JSON.parse(readFileSync(join(box.root, "config", "machine.json"), "utf8"));
+        expect(machine().peer?.interfaces).toEqual(["br-3f2a9c", "utun4"]);
+        expect(box.ok(["peer", "set", "--interfaces", "none"])).toContain("interfaces none");
+        expect(machine().peer?.interfaces).toEqual([]);
     });
 });

@@ -263,7 +263,8 @@ Details: [fleet.md](fleet.md).
 ### Peers (HTTP messaging)
 
     peer init | status [--json] | list [--json] | apply (envelopes on stdin)
-    peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--ssh-fallback on|off]
+    peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--interfaces <name,...>|none]
+      [--ssh-fallback on|off]
     peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
     peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
     peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]

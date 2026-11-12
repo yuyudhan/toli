@@ -276,7 +276,7 @@ export async function runListener(): Promise<number> {
             stop();
             return;
         }
-        if (!bind(bindAddresses(settings.bind))) return;
+        if (!bind(bindAddresses(settings.bind, settings.interfaces))) return;
         record();
         peerLog(`listener: bound ${context.addrs().join(", ") || "nothing (no private address)"}`);
         for (const hook of onBound) hook(context, context.addrs());
@@ -292,7 +292,8 @@ export async function runListener(): Promise<number> {
             },
         });
         chmodSync(paths.peerControl(), 0o600);
-        if (!bind(bindAddresses(peerSettings().bind)) && servers.size === 0)
+        const settings = peerSettings();
+        if (!bind(bindAddresses(settings.bind, settings.interfaces)) && servers.size === 0)
             peerLog("listener: no private address to bind yet; rescanning every 15 s");
         record();
         peerLog(`listener: started (pid ${process.pid}) on ${context.addrs().join(", ") || "no address yet"}`);

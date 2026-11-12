@@ -1,7 +1,7 @@
 // `bin/toli peer init|status|list` (docs/peers.md "Identity"): the key and certificate are made once, kept private,
 // and the certificate is vouched for by the key.
 import { describe, expect, test } from "bun:test";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { certSigValid, fingerprintOf } from "../src/peer/identity.ts";
 import { sandbox } from "./helpers.ts";
@@ -48,5 +48,21 @@ describe("peer identity", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         expect(box.ok(["peer", "status"])).toContain("no peer identity here: run `bin/toli peer init`");
+    });
+
+    test("migrate makes the identity, since an upgrade from an older toli runs only its own steps", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        expect(box.ok(["migrate", "--dry-run"])).not.toContain("peer identity");
+        expect(box.ok(["peer", "status"])).toContain("no peer identity here");
+        expect(box.ok(["migrate"])).toContain("peer identity made");
+        expect(box.ok(["peer", "status"])).toMatch(/fingerprint: /);
+        expect(box.ok(["migrate"])).not.toContain("peer identity");
+    });
+
+    test("migrate on a checkout that never ran init makes no identity", () => {
+        const box = sandbox();
+        box.ok(["migrate"]);
+        expect(existsSync(join(box.root, "config", "peer"))).toBe(false);
     });
 });
