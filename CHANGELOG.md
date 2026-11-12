@@ -18,7 +18,10 @@ one. See docs/releasing.md.
   wipes busy targets between build steps, and only then deletes build folders in use. It re-checks free space after
   each item and stops once it is over the emergency level. A volume a running container uses, or whose name or mount
   point may hold data (`pgdata`, `db`, `uploads`, ...), is never removed, and no volume goes while a pull, build or
-  compose up is in flight. Every item freed is logged with its size and step. See docs/disk.md step 5 (T1220).
+  compose up is in flight. A stopped container that mounts such a volume is removed (`docker rm`, never `-v`) only
+  when every one of its mounts is a named build-output volume (no bind, tmpfs, anonymous or data-looking volume) and
+  its image is no database or other data store; otherwise the volume is kept whole. Every item freed is logged with
+  its size and step. See docs/disk.md step 5 (T1220).
 - `bin/toli commit <p> --merge <ref> --resolved` clears the clone's conflict stages for every committed path: a
   conflict resolved to the branch's own side (the file ends as in the first parent) stayed unmerged in the shared
   index, so `git status` kept listing it. The committed paths' index entries now match the commit (index only; the
