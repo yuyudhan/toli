@@ -18,7 +18,9 @@ import {
     checkoutUse,
     currentHolders,
     heldOpenBelow,
+    LIVE_PROBES,
     projectCheckouts,
+    type UseProbes,
     within,
 } from "./disk-scan.ts";
 import { DiskLog, describe, diskPause, GIB, gb } from "./disk-state.ts";
@@ -178,18 +180,34 @@ export type SweepResult = {
 /**
  * Delete every stale entry directly inside the target's artifact folders (see the header) while holding cargo's
  * locks; a target in use is left whole (`kept` says why). Writes nothing, so it also works on a full disk. `dryRun`
- * only counts.
+ * only counts. `probes` say who uses the target: the live machine unless a test injects its own process list.
  */
-export function sweepStaleArtifacts(target: string, staleMinutes: number, dryRun: boolean): SweepResult {
+export function sweepStaleArtifacts(
+    target: string,
+    staleMinutes: number,
+    dryRun: boolean,
+    probes: UseProbes = LIVE_PROBES,
+): SweepResult {
     const source = timeSource(target, staleMinutes);
     const result: SweepResult = { artifacts: 0, bytes: 0, by: source.why, failed: [] };
-    const outcome = whileIdle(target, () => deleteStale(target, source.atime, staleMinutes, dryRun, result));
+    const outcome = whileIdle(
+        target,
+        () => deleteStale(target, source.atime, staleMinutes, dryRun, result, probes),
+        probes,
+    );
     if (!outcome.ran) result.kept = outcome.reason;
     return result;
 }
 
 /** The sweep itself, counted into `result`; only ever run under cargo's locks. */
-function deleteStale(target: string, atime: boolean, staleMinutes: number, dryRun: boolean, result: SweepResult): void {
+function deleteStale(
+    target: string,
+    atime: boolean,
+    staleMinutes: number,
+    dryRun: boolean,
+    result: SweepResult,
+    probes: UseProbes,
+): void {
     const cutoffMs = Date.now() - staleMinutes * 60_000;
     const stale: { path: string; bytes: number }[] = [];
     for (const root of artifactRoots(target)) {
@@ -207,7 +225,7 @@ function deleteStale(target: string, atime: boolean, staleMinutes: number, dryRu
         }
     }
     if (stale.length === 0) return;
-    const held = heldOpenBelow(target).map((file) => file.path);
+    const held = heldOpenBelow(target, Number.POSITIVE_INFINITY, probes.openFiles).map((file) => file.path);
     for (const entry of stale) {
         if (held.some((path) => within(path, entry.path))) continue;
         if (!dryRun) {

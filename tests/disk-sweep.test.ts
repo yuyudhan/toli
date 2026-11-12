@@ -3,9 +3,18 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { dirname, join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
+import type { ProcessUse, UseProbes } from "../src/fleet/disk-scan.ts";
 import { atimeVerdict, sweepLine, sweepStaleArtifacts } from "../src/fleet/stale-sweep.ts";
 import { age, agedTarget, artifact, buildOutput, dfLine, holdLock, keeperBox, setCapacity } from "./disk-fixture.ts";
 import { sandbox, tempDir, withProject } from "./helpers.ts";
+
+/**
+ * A machine on which only `processes` run: a sweep test then never depends on what else runs on the host (a real
+ * clippy-driver whose cwd cannot be read would otherwise keep the target).
+ */
+function machine(...processes: ProcessUse[]): UseProbes {
+    return { processes: () => processes, openFiles: () => [], cargos: () => [], buildTools: () => [] };
+}
 
 // The keeper tests build a sandbox with git repos and several bin/toli runs: on a loaded machine that alone can take
 // longer than bun's 5 s default.
@@ -20,7 +29,7 @@ describe("sweeping stale artifacts out of a cargo target", () => {
         const release = holdLock(lock);
         try {
             expect(wipeTargetBetweenBuilds(target, 0)).toEqual({ wiped: false, reason: `a build holds ${lock}` });
-            const swept = sweepStaleArtifacts(target, 180, false);
+            const swept = sweepStaleArtifacts(target, 180, false, machine());
             expect(swept.kept).toBe(`a build holds ${lock}`);
             expect(swept.artifacts).toBe(0);
             expect(sweepLine(target, 180, swept, false)).toBe(`kept ${target}: in use (a build holds ${lock})`);
@@ -28,7 +37,7 @@ describe("sweeping stale artifacts out of a cargo target", () => {
         } finally {
             release();
         }
-        const swept = sweepStaleArtifacts(target, 180, false);
+        const swept = sweepStaleArtifacts(target, 180, false, machine());
         expect(swept.kept).toBeUndefined();
         expect(swept.artifacts).toBe(4);
         expect(swept.bytes).toBeGreaterThanOrEqual(4 * 4096);
@@ -40,12 +49,12 @@ describe("sweeping stale artifacts out of a cargo target", () => {
     test("the age setting decides what is stale; a dry run only counts", () => {
         const target = join(realpathSync(tempDir("sweep")), "target");
         const { lock, stale, fresh } = agedTarget(target, 120);
-        expect(sweepStaleArtifacts(target, 180, false).artifacts).toBe(0);
+        expect(sweepStaleArtifacts(target, 180, false, machine()).artifacts).toBe(0);
         for (const path of stale) expect(existsSync(path)).toBe(true);
-        const planned = sweepStaleArtifacts(target, 60, true);
+        const planned = sweepStaleArtifacts(target, 60, true, machine());
         expect(planned.artifacts).toBe(4);
         for (const path of stale) expect(existsSync(path)).toBe(true);
-        expect(sweepStaleArtifacts(target, 60, false).artifacts).toBe(4);
+        expect(sweepStaleArtifacts(target, 60, false, machine()).artifacts).toBe(4);
         for (const path of stale) expect(existsSync(path)).toBe(false);
         for (const path of [...fresh, lock]) expect(existsSync(path)).toBe(true);
     });
@@ -56,8 +65,21 @@ describe("sweeping stale artifacts out of a cargo target", () => {
         age(nested, 600);
         age(dirname(nested), 600);
         artifact(join(target, "debug", ".fingerprint", "x", "lib-x"));
-        expect(sweepStaleArtifacts(target, 60, false).artifacts).toBe(0);
+        expect(sweepStaleArtifacts(target, 60, false, machine()).artifacts).toBe(0);
         expect(existsSync(nested)).toBe(true);
+    });
+
+    test("a build tool whose working folder cannot be seen keeps the target whole, however old", () => {
+        const target = join(realpathSync(tempDir("sweep")), "target");
+        const { stale, fresh, lock } = agedTarget(target, 240);
+        const unseen: ProcessUse = { pid: "4242", args: "/usr/bin/clippy-driver --crate-name x", files: [], cwd: null };
+        const swept = sweepStaleArtifacts(target, 180, false, machine(unseen));
+        expect(swept.kept).toBe("clippy-driver (pid 4242) runs where it cannot be seen");
+        expect(swept.artifacts).toBe(0);
+        expect(sweepLine(target, 180, swept, false)).toBe(
+            `kept ${target}: in use (clippy-driver (pid 4242) runs where it cannot be seen)`,
+        );
+        for (const path of [...stale, ...fresh, lock]) expect(existsSync(path)).toBe(true);
     });
 
     test("atime tells use only where the mount keeps it current for that age", () => {
