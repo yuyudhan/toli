@@ -4,6 +4,18 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.0-rc.2 - unreleased
+
+### Fixed
+
+- Upgrading from v0.4.x now gives the machine its peer identity. The older toli's `upgrade` never ran `peer init`,
+  so the lead started no listener. `bin/toli migrate`, which every upgrade runs from the new code, now makes the
+  identity when it is missing (T1249).
+- The peer listener no longer binds container and VM bridges (`docker*`, `br-*`, `veth*`, `virbr*`, `cni*`,
+  `podman*`, macOS `bridge*`/`vmnet*`, ...). Every container or VM on the machine could reach those addresses. A
+  tunnel (`utun*`, `tun*`, `ppp*`) is bound only for its 100.64/10 VPN address. `peer.interfaces`
+  (`bin/toli peer set --interfaces <name,...>`) names any interface to bind anyway (T1249).
+
 ## v0.5.0-rc.1 - 2026-11-12
 
 ### Added
