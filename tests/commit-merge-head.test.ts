@@ -79,6 +79,28 @@ describe("bin/toli commit with a git merge in progress (MERGE_HEAD)", () => {
         expect(git(dir, ["status", "--porcelain"])).toBe("");
     });
 
+    test("--merge --resolved clears the conflict stages of a path resolved to the branch's side, keeping unrelated staged work", () => {
+        const { dir, before, upstream } = diverged(true);
+        startMerge(dir);
+        expect(git(dir, ["ls-files", "-u"])).not.toBe("");
+        // Resolved to main's side, so shared.txt ends as in the first parent and is not among the changed files.
+        git(dir, ["checkout", "--ours", "--", "shared.txt"]);
+        writeFileSync(join(dir, "other.txt"), "staged, not named\n");
+        git(dir, ["add", "--", "other.txt"]);
+        const merged = safeCommit({
+            dir,
+            paths: ["shared.txt"],
+            merge: "MERGE_HEAD",
+            resolved: true,
+            message: "Merge upstream, keeping main's shared.txt",
+        });
+        expect(parents(dir, merged.sha)).toEqual([before, upstream]);
+        expect(git(dir, ["show", `${merged.sha}:shared.txt`])).toBe("one main\ntwo\nthree");
+        expect(git(dir, ["ls-files", "-u"])).toBe("");
+        expect(git(dir, ["status", "--porcelain", "--", "shared.txt", "new.txt"])).toBe("");
+        expect(git(dir, ["status", "--porcelain"])).toBe("A  other.txt");
+    });
+
     test("a clean merge in progress lands with --merge <its sha> and no paths", () => {
         const { dir, before, upstream } = diverged(false);
         startMerge(dir);

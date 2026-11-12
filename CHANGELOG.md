@@ -19,6 +19,10 @@ one. See docs/releasing.md.
   each item and stops once it is over the emergency level. A volume a running container uses, or whose name or mount
   point may hold data (`pgdata`, `db`, `uploads`, ...), is never removed, and no volume goes while a pull, build or
   compose up is in flight. Every item freed is logged with its size and step. See docs/disk.md step 5 (T1220).
+- `bin/toli commit <p> --merge <ref> --resolved` clears the clone's conflict stages for every committed path: a
+  conflict resolved to the branch's own side (the file ends as in the first parent) stayed unmerged in the shared
+  index, so `git status` kept listing it. The committed paths' index entries now match the commit (index only; the
+  working tree and other paths' staged changes are untouched) (T1222).
 
 ## v0.4.5 - 2026-11-12
 

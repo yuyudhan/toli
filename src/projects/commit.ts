@@ -215,9 +215,13 @@ export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Com
             warn(
                 `toli: committed, but the git merge is still marked in progress (git merge --quit): ${quit.stderr.trim()}`,
             );
-        // The shared index still holds the old blobs of the committed files: point those entries at the commit, so
-        // git status shows no phantom staged reverts. Other paths' entries are left as they are.
-        const own = committed.files.filter((file) => !committed.merged.includes(file));
+        // The shared index still holds the old blobs of the committed files, and a resolved merge's conflict stages:
+        // point the committed paths' entries at the commit (index only), so git status shows no phantom staged reverts
+        // and no unmerged path, including a named one that ends as in the first parent (a conflict resolved to its
+        // side). Other paths' entries are left as they are.
+        const own = [...new Set([...committed.files, ...request.paths])].filter(
+            (file) => !committed.merged.includes(file),
+        );
         const synced = own.length === 0 ? null : git(request.dir, ["reset", "--quiet", committed.sha, "--", ...own]);
         if (synced !== null && synced.code !== 0)
             warn(
