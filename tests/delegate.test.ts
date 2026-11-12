@@ -91,6 +91,37 @@ describe("one open delegation per piece of work", () => {
         m2.ok(["task", "done", "T1"]);
         expect(m1.ok(["delegate", "m2", "same work", "--brief", brief(m1), "--for", "T1"])).toContain("m2/T3");
     });
+
+    test("the same delegation under a new id (its lead ran it again) makes one task and returns the same id", () => {
+        const { m1, m2 } = pair();
+        const work = { from: "m1", title: "nomouse fix", brief: "TOLI_BRIEF v1\nfix it\n" };
+        const receive = (id: string, brief = work.brief) =>
+            m2.ok(["delegation", "receive"], { stdin: JSON.stringify({ ...work, id, brief }) });
+        expect(receive("m1-1")).toBe("delegation-accepted m2/T1 created");
+        expect(receive("m1-2")).toBe("delegation-accepted m2/T1 existing");
+        expect(receive("m1-3")).toBe("delegation-accepted m2/T1 existing");
+        expect(m1.ok(["delegate", "m2", "nomouse fix", "--brief", brief(m1, work.brief)])).toContain(
+            "delegated to m2/T1: m2's lead dispatches it (it was already there: no second task was made)",
+        );
+        expect(tasks(m2).map((task) => task.id)).toEqual(["T1"]);
+        expect(inbox(m2)).toHaveLength(1);
+        // Other work, or the same work once the first is closed, is a new task.
+        expect(receive("m1-4", "TOLI_BRIEF v1\nsomething else\n")).toBe("delegation-accepted m2/T2 created");
+        m2.ok(["task", "drop", "T1"]);
+        expect(receive("m1-5")).toBe("delegation-accepted m2/T3 created");
+    });
+
+    test("delegating again while the first copy waits in the outbox queues no second copy", () => {
+        const { m1, m2, down, up } = pair();
+        down();
+        expect(m1.ok(["delegate", "m2", "later", "--brief", brief(m1)])).toContain("queued: m2 is unreachable");
+        expect(m1.ok(["delegate", "m2", "later", "--brief", brief(m1)])).toContain("already queued for m2");
+        expect(readdirSync(join(m1.root, "state", "outbox"))).toHaveLength(1);
+        up();
+        m1.ok(["job", "tick"]);
+        expect(tasks(m2).map((task) => task.id)).toEqual(["T1"]);
+        expect(readdirSync(join(m1.root, "state", "outbox"))).toHaveLength(0);
+    });
 });
 
 describe("delegated results go back", () => {

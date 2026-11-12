@@ -12,8 +12,12 @@ import { sendNow } from "../jobs/outbox.ts";
 import type { Status, Task } from "./backlog.ts";
 import type { HoldOption } from "./hold-options.ts";
 
-/** Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there. */
-export type DelegatedBy = { machine: string; task?: string; id: string; at: string };
+/**
+ * Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there.
+ * `key` is the delegated work's delegationKey (src/fleet/delegate.ts): a repeat of it while this task is open is this
+ * task.
+ */
+export type DelegatedBy = { machine: string; task?: string; id: string; key?: string; at: string };
 
 /** The last state of one delegated task, as its owner sent it (`delegation update`). */
 export type DelegateState = {

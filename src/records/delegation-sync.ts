@@ -150,6 +150,7 @@ export function receiveLink(link: DelegationLink): string {
             machine: link.from,
             task: link.task,
             id: by?.id ?? `link-${link.from}-${link.task}`,
+            ...(by?.key === undefined ? {} : { key: by.key }),
             at: by?.at ?? now().toISOString(),
         };
         // A new note is a change the delegator gets, so this sends the task back as it is now.

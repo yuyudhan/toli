@@ -2,7 +2,8 @@
 // `bin/toli delegation receive` adds it to that machine's own backlog (owned there, `delegatedBy` naming this machine),
 // saves the brief, and posts it to that machine's inbox, which wakes its lead; that lead dispatches its own jawans.
 // The task's results and questions come back by themselves (src/records/delegation-report.ts).
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { fleetMachine, loadMachine } from "../core/config.ts";
@@ -11,6 +12,7 @@ import {
     isValidName,
     now,
     out,
+    readJson,
     readStdin,
     requireName,
     stamp,
@@ -19,7 +21,7 @@ import {
     writeTextAtomic,
 } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
-import { type Delivered, queuedText, sendNow } from "../jobs/outbox.ts";
+import { type Delivered, type OutboxItem, queuedText, sendNow } from "../jobs/outbox.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
 import { fleetId } from "../records/delegation-report.ts";
@@ -28,7 +30,10 @@ import { addInboxItem } from "../records/inbox.ts";
 
 /** What travels to the target (JSON on `delegation receive`'s stdin). */
 export type Delegation = {
-    /** `<from>-<timestamp>`: a repeat of the same id returns the task already created. */
+    /**
+     * `<from>-<timestamp>`, fresh per `bin/toli delegate` run: a repeat of the same id returns the task already
+     * created, and so does the same work under a new id while that task is open (delegationKey).
+     */
     id: string;
     from: string;
     /** The delegating machine's own task this one works for (`--for`). */
@@ -91,33 +96,45 @@ function parseDelegation(text: string): Delegation {
     };
 }
 
-/** Whether `task` is an open delegation of the same work: same delegator, same `--for` task and title. */
-function sameOpenWork(task: Task, delegation: Delegation): boolean {
-    const by = task.delegatedBy;
-    return (
-        by !== undefined &&
-        delegation.fromTask !== undefined &&
-        by.machine === delegation.from &&
-        by.task === delegation.fromTask &&
-        task.title === delegation.title &&
-        task.status !== "done" &&
-        task.status !== "dropped"
-    );
+/**
+ * The piece of work a delegation hands over, independent of its id: sender, `--for` task, project, title and brief.
+ * Each run of `bin/toli delegate` gets a fresh id, so a lead that runs the same delegation again (after a slow ssh,
+ * while an unreachable target's copies wait in its outbox) sends the same key under a new id.
+ */
+export function delegationKey(delegation: Delegation): string {
+    const work = [delegation.from, delegation.fromTask ?? "", delegation.project ?? "", delegation.title];
+    return createHash("sha256")
+        .update(JSON.stringify([...work, delegation.brief.trim()]))
+        .digest("hex")
+        .slice(0, 16);
 }
 
 /**
- * Record a delegation in this machine's backlog, once per delegation id, and once per open piece of work: a delegation
- * of the same title for the same `--for` task while an earlier one is open (a copy queued for the tick and a retry
- * that went through) returns that task. Returns the task and whether it was new; a new one gets its brief saved and an
- * inbox item that wakes this machine's lead.
+ * Whether `task` is an open delegation of the same work from the same delegator: the same key, or the same `--for`
+ * task and title.
+ */
+function sameOpenWork(task: Task, delegation: Delegation, key: string): boolean {
+    const by = task.delegatedBy;
+    if (by === undefined || by.machine !== delegation.from || task.status === "done" || task.status === "dropped")
+        return false;
+    if (by.key === key) return true;
+    return delegation.fromTask !== undefined && by.task === delegation.fromTask && task.title === delegation.title;
+}
+
+/**
+ * Record a delegation in this machine's backlog, once per delegation id, and once per open piece of work: the same
+ * work (delegationKey) from the same delegator while an earlier copy is open (a copy queued for the tick and a retry
+ * that went through, or the delegating lead running the command again) returns that task. Returns the task and whether
+ * it was new; a new one gets its brief saved and an inbox item that wakes this machine's lead.
  */
 export function receiveDelegation(delegation: Delegation): { task: Task; created: boolean } {
     const project = delegation.project ?? DEFAULT_PROJECT;
     const cloned = existsSync(paths.projectDir(project));
+    const key = delegationKey(delegation);
     const result = updateBacklog((backlog) => {
         const existing =
             backlog.tasks.find((task) => task.delegatedBy?.id === delegation.id) ??
-            backlog.tasks.find((task) => sameOpenWork(task, delegation));
+            backlog.tasks.find((task) => sameOpenWork(task, delegation, key));
         if (existing) return { task: { ...existing }, created: false };
         const at = now().toISOString();
         const by = delegation.fromTask === undefined ? delegation.from : `${delegation.from}/${delegation.fromTask}`;
@@ -141,6 +158,7 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
                 machine: delegation.from,
                 ...(delegation.fromTask === undefined ? {} : { task: delegation.fromTask }),
                 id: delegation.id,
+                key,
                 at,
             },
             createdAt: at,
@@ -235,6 +253,29 @@ export function onOutboxDelivered({ item, stdout }: Delivered): void {
 }
 
 /**
+ * The id of a delegation of the same work (delegationKey) already waiting in this machine's outbox for `target`,
+ * queued or being sent; null when there is none. A lead that runs `delegate` again while the target is unreachable
+ * (or takes no inbound ssh) gets that copy instead of queueing another.
+ */
+function queuedCopy(target: string, key: string): string | null {
+    const dir = paths.outboxDir();
+    if (!existsSync(dir)) return null;
+    for (const file of readdirSync(dir)) {
+        if (!/\.json(\.sending-\d+)?$/.test(file)) continue;
+        const item = readJson<OutboxItem | null>(join(dir, file), null);
+        if (item?.kind !== "delegation" || item.to?.name !== target) continue;
+        let delegation: Delegation;
+        try {
+            delegation = parseDelegation(item.body);
+        } catch {
+            continue;
+        }
+        if (delegationKey(delegation) === key) return delegation.id;
+    }
+    return null;
+}
+
+/**
  * `delegate <machine> "<title>" --brief <file> [--project p] [--note "..."] [--for T<n>] [--shape s] [--tier t]`.
  * Prints the fleet id, or that the delegation is queued for the tick while the target is unreachable.
  */
@@ -278,24 +319,30 @@ export function delegateCommand(argv: string[]): number {
         ...(shape === undefined ? {} : { shape }),
         ...(tier === undefined ? {} : { tier }),
     };
-    const sent = sendNow(
-        self,
-        target,
-        "delegation",
-        `delegate ${title}`,
-        JSON.stringify(delegation),
-        `delegation-${delegation.id}`,
-    );
+    const earlier = queuedCopy(target.name, delegationKey(delegation));
+    const outboxId = `delegation-${delegation.id}`;
+    const sent = sendNow(self, target, "delegation", `delegate ${title}`, JSON.stringify(delegation), outboxId);
     if (!sent.delivered) {
         if (!sent.pulled) warn(sent.error);
+        if (earlier !== null) {
+            // The same work already waits in the outbox: keep that copy, never a second one for the target to receive.
+            rmSync(join(paths.outboxDir(), `${outboxId}.json`), { force: true });
+            out(
+                `already queued for ${target.name} (${earlier}): that copy goes when it can, and its task id arrives here as a wake; do not delegate it again`,
+            );
+            return 0;
+        }
         out(
             sent.pulled
-                ? `${queuedText(target.name, sent)}; its task id arrives here as a wake (${delegation.id})`
-                : `queued: ${target.name} is unreachable; the minute tick retries, and its task id arrives here as a wake (${delegation.id})`,
+                ? `${queuedText(target.name, sent)}; its task id arrives here as a wake (${delegation.id}); do not delegate it again`
+                : `queued: ${target.name} is unreachable; the minute tick retries, and its task id arrives here as a wake (${delegation.id}); do not delegate it again`,
         );
         return 0;
     }
     const id = acceptDelegation(delegation, sent.stdout);
-    out(`delegated to ${id}${forTask === undefined ? "" : ` (for ${forTask})`}: ${target.name}'s lead dispatches it`);
+    const existing = ACCEPTED.exec(sent.stdout)?.[2] === "existing";
+    out(
+        `delegated to ${id}${forTask === undefined ? "" : ` (for ${forTask})`}: ${target.name}'s lead dispatches it${existing ? " (it was already there: no second task was made)" : ""}`,
+    );
     return 0;
 }

@@ -92,11 +92,13 @@ title, brief text, project, note, shape, tier and its own name. The receiving ma
 
 The receiving lead dispatches its own jawans for the task as for any task (`task start`, `spawn --task`). A project
 not cloned there is its lead's to clone: the task's notes name `bin/toli project ensure <p> <url>` with the URL the
-delegator knows. Each delegation carries an id (`<from>-<timestamp>`); a
-repeat of the same id returns the task already created, so a retried delivery never makes two tasks, and so does a
-delegation of the same title for the same `--for` task while an earlier one is still open (a copy queued for the tick
-that lands after a retry went through). When the target is unreachable, the delegation waits in `state/outbox/` and
-the minute tick retries it; when it lands, the fleet id arrives here as a wake.
+delegator knows. Each delegation carries an id (`<from>-<timestamp>`, new on every `delegate` run); a
+repeat of the same id returns the task already created, so a retried delivery never makes two tasks. So does the same
+work under a new id while the first task is still open: the same delegator, `--for` task, project, title and brief
+(a lead that ran `delegate` again), or the same title for the same `--for` task (a copy queued for the tick that lands
+after a retry went through). When the target is unreachable, the delegation waits in `state/outbox/` and the minute
+tick retries it; running `delegate` again for the same work then queues no second copy. When it lands, the fleet id
+arrives here as a wake.
 
 ### Results and questions go back
 
