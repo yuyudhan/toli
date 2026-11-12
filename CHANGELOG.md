@@ -28,6 +28,9 @@ one. See docs/releasing.md.
   merged commit out of the history so later merges conflicted again. Such a commit is now refused, naming the merge;
   `--merge <its sha>` (or `--merge MERGE_HEAD`, with `--resolved -- <conflicted paths>` after conflicts) adopts the
   merge from the working tree, records both parents and ends the merge (T1105).
+- `bin/toli task list` and `task list --fleet` show a waiting task's `(waiting on: <what>)`, so a task parked with
+  `task wait` (active, no jawan) no longer reads as active with no live run in the hourly fleet update. The stale
+  check, the tick and `fleet check` already left it out; a held task is parked by its status instead (T1112).
 - `bin/toli build-slot` (and so the cargo shim) serves waiters in arrival order: each waiter holds a numbered ticket
   in `state/build-slots/queue/` and only the oldest live one takes a freed slot, so a later build never passes an
   earlier one; a waiter that dies leaves the line.
@@ -47,6 +50,12 @@ one. See docs/releasing.md.
   `bin/toli schedule install` from the new code for the services that are installed (systemd units the shell cannot
   reach are named and left alone). The first upgrade from v0.4.2 or older runs the old code's steps: run both
   commands by hand after it (docs/install.md#upgrading).
+- The fleet queue depth (`bin/toli fleet queues`, `bin/toli pick`, lead balancing) counts native subagent jawans
+  recorded with `bin/toli task start --agent` (one per agent id, unless a spawn run works on that task) and no longer
+  counts held tasks; a balancing offer lists only tasks the other machine can take (not pinned here, a project it has
+  a clone of or whose git URL is registered).
+- The toli-release skill describes issue-tracker steps without fixed Atlassian MCP tool names, which differ between
+  MCP server versions (it discovers the search, transition and edit operations when the server needs it).
 
 ## v0.4.2 - 2026-11-11
 
