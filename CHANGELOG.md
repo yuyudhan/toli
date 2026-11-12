@@ -56,8 +56,6 @@ one. See docs/releasing.md.
   a clone of or whose git URL is registered).
 - The toli-release skill describes issue-tracker steps without fixed Atlassian MCP tool names, which differ between
   MCP server versions (it discovers the search, transition and edit operations when the server needs it).
-- `bin/toli task list` (and `--fleet`) shows `(waiting on: <what>)` on a task parked with `bin/toli task wait`, so a
-  parked task no longer looks stalled (T1112).
 
 ## v0.4.2 - 2026-11-11
 
