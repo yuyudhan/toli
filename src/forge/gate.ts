@@ -16,6 +16,7 @@ import { checkoutDirty, git, headSha, treeSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { launchInScope, scopeFailedWarning, withBuildSlot } from "../fleet/build-slots.ts";
+import { runMinuteMs } from "../jawans/runs.ts";
 import type { Argv } from "../jawans/scope.ts";
 import {
     type GateRecord,
@@ -105,14 +106,28 @@ function startRunner(file: string, record: GateRecord): GateRecord {
     return record;
 }
 
-/** `stallMinutes` left out: config/machine.json capacity.gateStallMinutes (default 30). */
+/**
+ * `stallMinutes` left out: config/machine.json capacity.gateStallMinutes (default 30). `waitUntil` (epoch ms): a
+ * checkout that differs from HEAD is waited on until then (untilExactHead) instead of refused at once.
+ */
 export type GateRun = {
     project: string;
     dir: string;
     recipe: string;
     stallMinutes?: number | undefined;
+    waitUntil?: number;
     json: boolean;
 };
+
+const DEFAULT_GATE_WAIT_MINUTES = 30;
+
+/** `push --gate-wait <minutes>`: how long a push waits for a shared checkout to match HEAD (default 30; 0: not at all). */
+export function parseGateWait(value: string | undefined): number {
+    if (value === undefined) return DEFAULT_GATE_WAIT_MINUTES;
+    const minutes = Number(value);
+    if (!Number.isInteger(minutes) || minutes < 0) throw new ToliError("--gate-wait must be a whole number of minutes");
+    return minutes;
+}
 
 /**
  * How the checkout differs from its HEAD commit, or null when it is exactly HEAD (changed tracked files and untracked,
@@ -124,6 +139,42 @@ export function checkoutChanges(dir: string): string[] | null {
     const status = git(dir, ["status", "--porcelain"]);
     if (status.code !== 0) throw new ToliError(`git status failed in ${dir}: ${status.stderr.trim()}`);
     return status.stdout.split("\n").filter((line) => line.trim() !== "");
+}
+
+/**
+ * Wait until the checkout is exactly HEAD or `deadline` (epoch ms) passes; returns null once it is, else its changes.
+ * A shared same-branch clone (T1383) differs from HEAD whenever another jawan has an edit it has not committed yet,
+ * and a gate run on such a tree proves nothing about the commit (a pushed file may need an edit that is not in it).
+ * So the gate never runs on it: it waits for them to be committed (`bin/toli commit` moves HEAD, the checkout matches
+ * it again), polling every twelfth of a run minute.
+ */
+async function untilExactHead(dir: string, deadline: number, say: (text: string) => void): Promise<string[] | null> {
+    let waiting = false;
+    for (;;) {
+        const changes = checkoutChanges(dir);
+        if (changes === null || Date.now() >= deadline) {
+            if (waiting && changes === null) say(`gate: ${dir} matches its HEAD commit again; running the gate`);
+            return changes;
+        }
+        if (!waiting) {
+            const minutes = Math.max(1, Math.ceil((deadline - Date.now()) / runMinuteMs()));
+            say(
+                `gate: ${dir} differs from its HEAD commit (${changesText(changes)}), uncommitted edits such as other ` +
+                    `jawans' in a shared clone; the gate runs only on exactly HEAD, so waiting up to ${minutes} ` +
+                    `minute${minutes === 1 ? "" : "s"} for them to be committed (commit your own first)`,
+            );
+            waiting = true;
+        }
+        await Bun.sleep(Math.max(50, Math.round(runMinuteMs() / 12)));
+    }
+}
+
+/**
+ * Whether a gate's recipe passed but its pass was voided because HEAD or the checkout changed while it ran (the
+ * runner's two reasons below): a waiting push runs it again on the new tree.
+ */
+export function changedWhileRunning(record: GateRecord): boolean {
+    return record.status === "failed" && record.exitCode === 0 && (record.reason ?? "").includes(" while it ran");
 }
 
 /** At most five changed paths, then how many more. */
@@ -141,11 +192,15 @@ export function changesText(changes: string[]): string {
  */
 export async function runGate(input: GateRun): Promise<GateRecord> {
     const say = input.json ? warn : out;
-    const changes = checkoutChanges(input.dir);
+    const changes =
+        input.waitUntil === undefined
+            ? checkoutChanges(input.dir)
+            : await untilExactHead(input.dir, input.waitUntil, say);
     if (changes !== null)
         throw new ToliError(
-            `refusing to run the gate: ${input.dir} differs from its HEAD commit (${changesText(changes)}), so the ` +
-                "result would not belong to any commit and could not be reused; commit them (or set them aside) first",
+            `refusing to run the gate: ${input.dir} differs from its HEAD commit (${changesText(changes)})` +
+                `${input.waitUntil === undefined ? "" : " still, at the end of the wait"}, so the result would not ` +
+                "belong to any commit and could not be reused; commit them (or set them aside) first",
         );
     const sha = headSha(input.dir);
     const tree = treeSha(input.dir);
@@ -203,6 +258,33 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
     const final = await follow(file, !input.json);
     if (final.status === "passed") say(`gate: ${outcomeText(final)}`);
     return final;
+}
+
+/**
+ * `push --gate`: a pass on the tree HEAD has now, waiting up to `waitMinutes` for the checkout to be exactly HEAD
+ * (untilExactHead) and running the gate again when HEAD or the checkout changed under a run; refuses otherwise.
+ */
+export async function gateForPush(input: GateRun, waitMinutes: number): Promise<GateRecord> {
+    const waitUntil = Date.now() + waitMinutes * runMinuteMs();
+    for (;;) {
+        const gate = await runGate({ ...input, waitUntil });
+        const tree = treeSha(input.dir);
+        if (gate.status === "passed" && tree === gate.tree) return gate;
+        const moved = gate.status === "passed" || changedWhileRunning(gate);
+        if (moved && Date.now() < waitUntil) {
+            out(
+                `gate: ${gate.reason ?? `HEAD moved to ${short(headSha(input.dir))}`}; running it again on the new tree`,
+            );
+            continue;
+        }
+        if (gate.status !== "passed")
+            throw new ToliError(
+                `refusing to push: gate ${input.recipe} ${gate.status} at ${short(gate.sha)}${gate.reason === undefined ? "" : ` (${gate.reason})`}, log ${gate.log}`,
+            );
+        throw new ToliError(
+            `refusing to push: HEAD moved to ${short(headSha(input.dir))} (another tree) while the gate ran on ${short(gate.sha)}; run the push again`,
+        );
+    }
 }
 
 /**

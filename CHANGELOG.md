@@ -12,6 +12,12 @@ one. See docs/releasing.md.
   owner reactivated a delegated hold before the answer arrived, its `task answer --from` refused it ("T256 is active,
   not waiting on an answer") and the sender moved it to state/outbox/cancelled/. The owner now records it as a note
   on the task and posts `answer from <machine> for T<n> (<status>)` to its inbox, which wakes its lead.
+- **`push --gate` in a shared same-branch clone waits for other jawans' edits instead of refusing (T1383).** The
+  gate refused whenever the checkout differed from HEAD, which in a shared clone is whenever any other jawan has an
+  uncommitted edit. It still never runs on such a tree (a pass there would be recorded for HEAD's tree while the
+  pushed code may lean on an edit that is not in the commit, which checking the dirty paths against the commit's
+  files cannot catch), but the push now waits up to `--gate-wait <minutes>` (default 30; 0 refuses at once) for the
+  edits to be committed, gates exactly HEAD, and runs the gate again when HEAD or the checkout changed under a run.
 - **A native subagent that died with its session frees its jawan slot (T1384).** `subagentJawans` counted every
   active task recorded with `task start --agent <id>` as a running jawan, so a subagent that died with the omp
   session that dispatched it took a slot forever. `task start --agent` now records that session's pid (the

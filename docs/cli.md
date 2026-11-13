@@ -123,7 +123,7 @@ the interactive Sardar's subagents.
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
-    push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
+    push <project> [--task T<n>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
     gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json]
     push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
@@ -156,8 +156,10 @@ the interactive Sardar's subagents.
   `--stall` minutes (`capacity.gateStallMinutes`, default 30) is stopped. `gate check` exits 0 only when this machine's
   gate runner recorded a sealed pass of the recipe on the tree (HEAD's, which must be exactly the checkout, or
   `--sha`'s commit), for pre-push hooks; a record edited or copied by hand is refused. `gate status` lists a project's
-  gates, newest first. `push --gate "<recipe>"` runs the gate first and pushes only once it passed; a push whose
-  project has a pre-push hook runs in one heavy-build slot ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
+  gates, newest first. `push --gate "<recipe>"` runs the gate first and pushes only once it passed; a checkout with
+  uncommitted edits (other jawans' in a shared clone) is waited on for `--gate-wait` minutes (default 30, 0 refuses at
+  once) until they are committed; a push whose project has a pre-push hook runs in one heavy-build slot
+  ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
 
 ### Jawans and harnesses
 

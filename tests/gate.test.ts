@@ -15,8 +15,8 @@ setDefaultTimeout(60_000);
 const MINUTE_MS = "3000";
 const FAST = { TOLI_RUN_MINUTE_MS: MINUTE_MS };
 
-/** `bin/toli` started in the background with the sandbox's environment, for a caller the test can kill. */
-function spawnToli(box: Sandbox, args: string[], env: Record<string, string> = {}): Bun.Subprocess {
+/** `bin/toli` started in the background with the sandbox's environment, for a caller the test can kill or read. */
+function spawnToli(box: Sandbox, args: string[], env: Record<string, string> = {}) {
     return Bun.spawn([process.execPath, TOLI_BIN, ...args], {
         cwd: box.root,
         env: {
@@ -28,9 +28,26 @@ function spawnToli(box: Sandbox, args: string[], env: Record<string, string> = {
             ...env,
         },
         stdin: "ignore",
-        stdout: "ignore",
+        stdout: "pipe",
         stderr: "ignore",
     });
+}
+
+/** Read `stdout` until it contains `text` (the process says it reached a state); returns what was read. */
+async function readUntil(stdout: ReadableStream<Uint8Array>, text: string): Promise<string> {
+    const reader = stdout.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+    try {
+        while (!seen.includes(text)) {
+            const { value, done } = await reader.read();
+            if (done) throw new Error(`output ended before "${text}":\n${seen}`);
+            seen += decoder.decode(value, { stream: true });
+        }
+        return seen;
+    } finally {
+        reader.releaseLock();
+    }
 }
 
 /** Poll a condition another process makes true (a detached runner's record); fake timers cannot drive it. */
@@ -243,6 +260,52 @@ describe("gate", () => {
         box.ok(["push", "app", "--gate", verify]);
         const tree = box.git(dir, ["rev-parse", "HEAD^{tree}"]);
         expect(readFileSync(seen, "utf8").trim()).toBe(`app ${sha} ${tree} ${verify}`);
+        expect(box.git(dir, ["ls-remote", "origin", "refs/heads/feature"])).toContain(sha);
+    });
+
+    test("push --gate waits for another jawan's uncommitted edit to be committed, then gates exactly HEAD (T1383)", async () => {
+        // In a shared same-branch clone another jawan's edit made every push --gate refuse at once.
+        const { box, dir } = setup();
+        box.ok(["project", "set", "app", "--standing-push", "yes"]);
+        box.git(dir, ["switch", "-c", "feature"]);
+        commitFile(box, dir, "a.txt");
+        writeFileSync(join(dir, "other.ts"), "another jawan's edit, not committed yet\n");
+        const verify = recipe(box, "verify", "echo ok");
+        const push = spawnToli(box, ["push", "app", "--gate", verify, "--gate-wait", "5"], FAST);
+        const waiting = await readUntil(push.stdout, "for them to be committed");
+        expect(waiting).toContain("differs from its HEAD commit (other.ts), uncommitted edits such as other");
+        expect(runs(box)).toBe(0);
+        const sha = commitFile(box, dir, "other.ts");
+        expect(await readUntil(push.stdout, "push log:")).toContain("matches its HEAD commit again; running the gate");
+        expect(await push.exited).toBe(0);
+        expect(runs(box)).toBe(1);
+        expect(records(box)).toMatchObject([{ status: "passed", sha }]);
+        expect(box.git(dir, ["ls-remote", "origin", "refs/heads/feature"])).toContain(sha);
+
+        // Edits still uncommitted when the wait ends are refused, naming them; --gate-wait 0 refuses at once.
+        writeFileSync(join(dir, "late.ts"), "still uncommitted\n");
+        const refused = box.toli(["push", "app", "--gate", verify, "--gate-wait", "0"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("differs from its HEAD commit (late.ts) still, at the end of the wait");
+        expect(runs(box)).toBe(1);
+    });
+
+    test("push --gate runs the gate again when the checkout changed under it, once the change is committed", async () => {
+        const { box, dir } = setup();
+        box.ok(["project", "set", "app", "--standing-push", "yes"]);
+        box.git(dir, ["switch", "-c", "feature"]);
+        commitFile(box, dir, "a.txt");
+        // The first run sees another jawan's file appear while it runs; later runs see a quiet checkout.
+        const once = join(box.root, "once");
+        const verify = recipe(box, "verify", `[ -e ${once} ] || { touch ${once}; echo edit > ${join(dir, "b.txt")}; }`);
+        const push = box.toliAsync(["push", "app", "--gate", verify, "--gate-wait", "5"], { env: FAST });
+        await until("the first run to end", () => records(box).some((record) => record.status === "failed"));
+        const sha = commitFile(box, dir, "b.txt");
+        const result = await push;
+        expect(result.code).toBe(0);
+        expect(result.stdout).toContain("the checkout changed while it ran (b.txt)");
+        expect(result.stdout).toContain("running it again on the new tree");
+        expect(runs(box)).toBe(2);
         expect(box.git(dir, ["ls-remote", "origin", "refs/heads/feature"])).toContain(sha);
     });
 });

@@ -69,7 +69,7 @@ them.
 
     bin/toli forge <project> [--json]                  # forge, host, repo path, CLI/credential readiness
     bin/toli branch <project> <branch>                 # create a new work branch in the clone and switch to it
-    bin/toli push <project> [--task T<n>] [--gate "<recipe>"] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+    bin/toli push <project> [--task T<n>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
                                                        # git push -u origin <current branch>; never forced; logged in
                                                        # data/pushes.jsonl, shown in bin/toli digest
     bin/toli push-log add <project> [--by <machine>] [--for T<n>] [--word "..."]   # log a raw git push made here
@@ -120,7 +120,15 @@ parents, message or author):
   `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` at one slot's share of the cores
   ([fleet.md](fleet.md#heavy-build-slots)), so a recipe that calls cargo directly (through `just`, without toli's
   cargo shim) cannot take every core. A live-stack project's gate skips the slot, still at one slot's share.
-- `push --gate "<recipe>"` runs the gate this way first and pushes only if it passed on HEAD's tree. The push's hooks
+- `push --gate "<recipe>"` runs the gate this way first and pushes only if it passed on HEAD's tree. In a shared
+  same-branch clone the checkout differs from HEAD whenever another jawan has an edit it has not committed yet, and a
+  gate run on that tree proves nothing about the commit: a pushed file may lean on an edit that is not in it (a new
+  function, a fixed test), and the pass would still be recorded for HEAD's tree. Checking only whether the dirty
+  paths overlap the pushed commit's files cannot catch that, and running the gate on a copy of HEAD would need a
+  second checkout. So the push waits instead: it re-reads the checkout every few seconds for up to `--gate-wait`
+  minutes (default 30; 0 refuses at once, as `gate run` always does) until every edit is committed and the checkout is
+  exactly HEAD again, then runs the gate; when HEAD or the checkout changes under a run, it waits and runs it again on
+  the new tree. At the end of the wait it refuses, naming the paths. The push's hooks
   see `TOLI_GATE_PROJECT`, `TOLI_GATE_SHA`, `TOLI_GATE_TREE` and `TOLI_GATE_RECIPE`: information, not proof. In a
   project with a pre-push hook, `bin/toli push` (with or without `--gate`) runs `git push` in one heavy-build slot the
   same way, since the hook may run the long check itself; a `bin/toli gate run` the hook starts runs inside that slot.
