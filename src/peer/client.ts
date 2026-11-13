@@ -19,7 +19,11 @@ export type Answer = { status: number; value: Record<string, unknown>; addr: str
 /** Why no address of a peer answered. */
 export class Unreachable extends Error {}
 
-/** Whether a TCP connection to `addr` opens within CONNECT_MS (fetch itself has no connect timeout). */
+/**
+ * Whether a TCP connection to `addr` opens within CONNECT_MS (fetch itself has no connect timeout). The probe socket
+ * is destroyed, never just ended: `end()` only half-closes it, and against a peer that never closes its side (a
+ * firewall that drops the reset) the socket sat in FIN-WAIT-2 and kept the process alive for good (T1339).
+ */
 async function opens(addr: string): Promise<string | null> {
     const { host, port } = splitHostPort(addr, DEFAULT_PORT);
     const { promise, resolve } = Promise.withResolvers<string | null>();
@@ -30,11 +34,12 @@ async function opens(addr: string): Promise<string | null> {
     }, CONNECT_MS);
     socket.once("connect", () => {
         clearTimeout(timer);
-        socket.end();
+        socket.destroy();
         resolve(null);
     });
     socket.once("error", (error) => {
         clearTimeout(timer);
+        socket.destroy();
         resolve(error.message);
     });
     return await promise;

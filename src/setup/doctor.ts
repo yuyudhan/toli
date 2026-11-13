@@ -1,52 +1,28 @@
-import { existsSync, readFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { Args } from "../core/args.ts";
-import { hasMachine, inboundOff, loadFleet, loadMachine } from "../core/config.ts";
-import { isGitRepo } from "../core/git.ts";
+import { hasMachine } from "../core/config.ts";
 import { captureLoginEnv, credentialNames, LOGIN_ENV_FLAG, loginShell } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, run } from "../core/util.ts";
-import { leadServiceStatus } from "../fleet/lead-service.ts";
-import { interactiveLeadPid } from "../fleet/lead-state.ts";
-import { availabilityLine, fleetStatus } from "../fleet/pick.ts";
-import { capacityFor } from "../fleet/resources.ts";
 import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
 import { syncShims } from "../harness/sync.ts";
-import { cargoConfigPath } from "../jawans/env.ts";
 import { schedulePath } from "../jobs/os-scheduler.ts";
-import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
 import { hooksDoctorChecks } from "../projects/hooks-gates.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
-import { describeRuntime, runtimeStatus } from "../release/runtime.ts";
-import { outboxCheck, pullCheck } from "./outbox-check.ts";
+import {
+    fleetChecks,
+    leadCheck,
+    machineChecks,
+    projectChecks,
+    runtimeChecks,
+    schedulerChecks,
+} from "./machine-checks.ts";
 import { peerChecks } from "./peer-checks.ts";
 
 export type CheckLevel = "ok" | "warn" | "fail";
 export type Check = { level: CheckLevel; name: string; detail: string };
-
-/**
- * Whether cargo's user config caps build jobs at the machine's `capacity.cargoJobs`, one heavy-build slot's share of
- * the cores. `bin/toli spawn`, `bin/toli build-slot` and a lead session (`bin/toli hook lead-build-env`, inherited by
- * its native subagents) set `CARGO_BUILD_JOBS` themselves; this mirror covers every other cargo run on the machine.
- */
-export function cargoJobsCheck(configText: string | null, cargoJobs: number): Check {
-    const want = `set \`[build] jobs = ${cargoJobs}\` in ${cargoConfigPath()} (capacity.cargoJobs in config/machine.json)`;
-    if (configText === null) return { level: "warn", name: "cargo-jobs", detail: `no cargo config: ${want}` };
-    let jobs: unknown;
-    try {
-        const parsed: unknown = Bun.TOML.parse(configText);
-        const build = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "build") : undefined;
-        jobs = typeof build === "object" && build !== null ? Reflect.get(build, "jobs") : undefined;
-    } catch (error) {
-        return { level: "warn", name: "cargo-jobs", detail: `cargo config unreadable (${String(error)}): ${want}` };
-    }
-    if (jobs === cargoJobs) return { level: "ok", name: "cargo-jobs", detail: `[build] jobs = ${cargoJobs}` };
-    const found = jobs === undefined ? "no [build] jobs" : `[build] jobs = ${String(jobs)}`;
-    return { level: "warn", name: "cargo-jobs", detail: `${found}: ${want}` };
-}
 
 function firstLine(text: string): string {
     return (
@@ -212,153 +188,131 @@ export function serviceEnvCheck(env: Record<string, string | undefined> = proces
     };
 }
 
-export async function runChecks(): Promise<Check[]> {
-    const checks: Check[] = [
-        { level: "ok", name: "bun", detail: `${Bun.version} (${process.execPath})` },
-        ...harnessChecks(),
-        serviceEnvCheck(),
-        toolCheck("git", ["git", "--version"], "fail"),
-        ...forgeChecks(),
-        toolCheck("openssl", ["openssl", "version"], "warn"),
-        ...peerChecks(),
-    ];
-    const noMistakes = Bun.which("no-mistakes", { PATH: process.env.PATH ?? "" });
-    checks.push(
-        noMistakes
-            ? { level: "ok", name: "no-mistakes", detail: noMistakes }
-            : { level: "warn", name: "no-mistakes", detail: "not found (needed only for branch/PR gating)" },
-    );
-    checks.push({ name: "memory", ...memoryCheck() });
-    if (isGitRepo(paths.root())) {
-        const runtime = runtimeStatus();
-        checks.push({
-            level: runtime.state === "stale" || runtime.state === "missing" ? "warn" : "ok",
-            name: "runtime",
-            detail: describeRuntime(runtime),
-        });
-    }
+/** How long one doctor section may take before it is stopped and reported as timed out. */
+const SECTION_MS = 60_000;
+/**
+ * The fleet section probes every other machine at once: over HTTPS (5 s to connect, then up to 120 s for the
+ * answer), then ssh (up to 20 s), so it gets longer than the rest.
+ */
+const FLEET_SECTION_MS = 150_000;
 
+/** One doctor section: a name for its timed-out line, its time limit (default SECTION_MS), and the checks it makes. */
+type Section = { name: string; limitMs?: number; run: () => Check[] | Promise<Check[]> };
+
+/** The sections every machine runs, in order. */
+const SECTIONS: Section[] = [
+    { name: "bun", run: () => [{ level: "ok", name: "bun", detail: `${Bun.version} (${process.execPath})` }] },
+    { name: "harness", run: harnessChecks },
+    { name: "service-env", run: () => [serviceEnvCheck()] },
+    { name: "git", run: () => [toolCheck("git", ["git", "--version"], "fail")] },
+    { name: "forge", run: forgeChecks },
+    { name: "openssl", run: () => [toolCheck("openssl", ["openssl", "version"], "warn")] },
+    { name: "peer", run: peerChecks },
+    {
+        name: "no-mistakes",
+        run: () => {
+            const noMistakes = Bun.which("no-mistakes", { PATH: process.env.PATH ?? "" });
+            return [
+                noMistakes
+                    ? { level: "ok", name: "no-mistakes", detail: noMistakes }
+                    : { level: "warn", name: "no-mistakes", detail: "not found (needed only for branch/PR gating)" },
+            ];
+        },
+    },
+    { name: "memory", run: () => [{ name: "memory", ...memoryCheck() }] },
+    { name: "runtime", run: runtimeChecks },
+];
+
+/** The sections that need config/machine.json, in order after SECTIONS. */
+const MACHINE_SECTIONS: Section[] = [
+    { name: "machine", run: machineChecks },
+    { name: "projects", run: projectChecks },
+    { name: "hooks", run: () => hooksDoctorChecks(loadProjects().map((project) => project.name)) },
+    { name: "fleet", limitMs: FLEET_SECTION_MS, run: fleetChecks },
+    { name: "scheduler", run: schedulerChecks },
+    { name: "lead", run: () => [leadCheck()] },
+];
+
+/** Run one section by name (in src/setup/doctor-worker.ts); a section that throws reports a fail line. */
+export async function runSection(name: string): Promise<Check[]> {
+    const section = [...SECTIONS, ...MACHINE_SECTIONS].find((entry) => entry.name === name);
+    if (section === undefined) return [{ level: "fail", name, detail: "no such doctor section" }];
+    try {
+        return await section.run();
+    } catch (error) {
+        return [{ level: "fail", name, detail: error instanceof Error ? error.message : String(error) }];
+    }
+}
+
+/** A section's time limit; `TOLI_DOCTOR_CHECK_MS` replaces every limit (tests). */
+function sectionLimitMs(section: Section): number {
+    const override = Number(process.env.TOLI_DOCTOR_CHECK_MS);
+    if (Number.isInteger(override) && override > 0) return override;
+    return section.limitMs ?? SECTION_MS;
+}
+
+/**
+ * Run one section in its own worker, so neither a call that blocks (a synchronous child process with no timeout) nor
+ * a handle it leaves open (a socket never closed) can hold doctor up: past its limit the section is reported as
+ * timed out, the worker is terminated, and the next section runs. The worker never keeps the process alive.
+ */
+async function runBounded(section: Section): Promise<Check[]> {
+    const limitMs = sectionLimitMs(section);
+    const worker = new Worker(new URL("./doctor-worker.ts", import.meta.url).href);
+    worker.unref();
+    const { promise, resolve } = Promise.withResolvers<Check[]>();
+    worker.onmessage = (event: MessageEvent<Check[]>) => resolve(event.data);
+    worker.onerror = (event: ErrorEvent) => {
+        event.preventDefault();
+        resolve([{ level: "fail", name: section.name, detail: event.message }]);
+    };
+    const timer = setTimeout(
+        () =>
+            resolve([
+                {
+                    level: "warn",
+                    name: section.name,
+                    detail: `timed out after ${limitMs / 1000} s: the check never finished and was stopped`,
+                },
+            ]),
+        limitMs,
+    );
+    worker.postMessage(section.name);
+    try {
+        return await promise;
+    } finally {
+        clearTimeout(timer);
+        worker.terminate();
+    }
+}
+
+/** Every check, section by section; `report` gets each section's checks as soon as that section finishes. */
+export async function runChecks(report: (checks: Check[]) => void = () => undefined): Promise<Check[]> {
+    const checks: Check[] = [];
+    const add = (found: Check[]): void => {
+        checks.push(...found);
+        report(found);
+    };
+    for (const section of SECTIONS) add(await runBounded(section));
     if (!hasMachine()) {
-        checks.push({ level: "fail", name: "machine", detail: "config/machine.json missing: run bin/toli init" });
+        add([{ level: "fail", name: "machine", detail: "config/machine.json missing: run bin/toli init" }]);
         return checks;
     }
-    let machineOk = false;
-    try {
-        const machine = loadMachine();
-        if (machine.role === "worker" && !machine.coordinator) {
-            checks.push({
-                level: "fail",
-                name: "machine",
-                detail: `${machine.name} is a worker without a coordinator {ssh, root}`,
-            });
-        } else {
-            const coordinator = machine.coordinator
-                ? ` -> coordinator ${machine.coordinator.ssh}:${machine.coordinator.root}`
-                : "";
-            checks.push({ level: "ok", name: "machine", detail: `${machine.name} (${machine.role})${coordinator}` });
-            checks.push(outboxCheck(machine.role === "worker" ? machine.coordinator?.ssh : undefined));
-            const pulling = pullCheck();
-            if (pulling !== null) checks.push(pulling);
-            if (Bun.which("cargo", { PATH: process.env.PATH ?? "" })) {
-                const config = cargoConfigPath();
-                const cargoJobs = capacityFor(machine, availableParallelism()).cargoJobs;
-                checks.push(cargoJobsCheck(existsSync(config) ? readFileSync(config, "utf8") : null, cargoJobs));
-            }
-        }
-        machineOk = true;
-    } catch (error) {
-        checks.push({ level: "fail", name: "machine", detail: error instanceof Error ? error.message : String(error) });
-    }
-
-    const registered = loadProjects();
-    const missing = registered
-        .filter((project) => !isGitRepo(paths.projectDir(project.name)))
-        .map((project) => project.name);
-    checks.push(
-        missing.length === 0
-            ? {
-                  level: "ok",
-                  name: "projects",
-                  detail: `${registered.length} clone${registered.length === 1 ? "" : "s"} present`,
-              }
-            : { level: "warn", name: "projects", detail: `registered but not cloned: ${missing.join(", ")}` },
-    );
-    checks.push(...hooksDoctorChecks(registered.map((project) => project.name)));
-
-    if (machineOk) {
-        try {
-            const fleet = (await fleetStatus()).filter((entry) => !entry.local);
-            const pulling = new Set(
-                loadFleet()
-                    .machines.filter(inboundOff)
-                    .map((machine) => machine.name),
-            );
-            if (fleet.length === 0)
-                checks.push({ level: "ok", name: "fleet", detail: "no other machines in config/fleet.json" });
-            for (const entry of fleet)
-                checks.push({
-                    level: entry.reachable || pulling.has(entry.machine) ? "ok" : "warn",
-                    name: "fleet",
-                    detail: availabilityLine(entry),
-                });
-        } catch (error) {
-            checks.push({
-                level: "fail",
-                name: "fleet",
-                detail: error instanceof Error ? error.message : String(error),
-            });
-        }
-    }
-
-    const schedule = scheduleStatus();
-    if (schedule.otherBin !== null)
-        checks.push({
-            level: "warn",
-            name: "scheduler",
-            detail: `${schedule.scheduler} tick runs ${schedule.otherBin}, not this checkout (bin/toli schedule install moves it here)`,
-        });
-    else
-        checks.push(
-            schedule.installed && schedule.loaded
-                ? { level: "ok", name: "scheduler", detail: `${schedule.scheduler} installed and loaded` }
-                : {
-                      level: "warn",
-                      name: "scheduler",
-                      detail: `${schedule.scheduler} ${schedule.installed ? "installed" : "not installed"}, ${schedule.loaded ? "loaded" : "not loaded"} (bin/toli schedule install)`,
-                  },
-        );
-    if (schedule.missingBun !== null)
-        checks.push({ level: "warn", name: "scheduler", detail: missingBunWarning(schedule.missingBun) });
-    if (schedule.cronLeftover) checks.push({ level: "warn", name: "scheduler", detail: CRON_LEFTOVER_WARNING });
-    checks.push(leadCheck());
+    for (const section of MACHINE_SECTIONS) add(await runBounded(section));
     return checks;
 }
 
-/** The lead is served when its service is installed in the scheduler in use, or an interactive lead is open. */
-function leadCheck(): Check {
-    const service = leadServiceStatus();
-    if (service.installed)
-        return {
-            level: "ok",
-            name: "lead",
-            detail: `${service.scheduler} lead service installed${service.running ? " and running" : ", not running"}`,
-        };
-    const interactive = interactiveLeadPid();
-    if (interactive !== null)
-        return { level: "ok", name: "lead", detail: `interactive lead session open (pid ${interactive})` };
-    return {
-        level: "warn",
-        name: "lead",
-        detail: `${service.scheduler} lead service not installed: run bin/toli lead install`,
-    };
-}
-
-/** Prints `ok|warn|fail <name> <detail>` per check; returns the process exit code (1 only on a fail). */
+/**
+ * Prints `ok|warn|fail <name> <detail>` per check, each section's lines as soon as it finishes; returns the process
+ * exit code (1 only on a fail).
+ */
 export async function doctorCommand(argv: string[]): Promise<number> {
     const args = new Args(argv, { booleans: ["json"] });
     args.maxPositional(0);
-    const checks = await runChecks();
-    if (args.bool("json")) printJson(checks);
-    else for (const check of checks) out(`${check.level} ${check.name} ${check.detail}`);
+    const json = args.bool("json");
+    const checks = await runChecks((found) => {
+        if (!json) for (const check of found) out(`${check.level} ${check.name} ${check.detail}`);
+    });
+    if (json) printJson(checks);
     return checks.some((check) => check.level === "fail") ? 1 : 0;
 }

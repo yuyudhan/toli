@@ -19,6 +19,11 @@ one. See docs/releasing.md.
   its firewall resets every inbound connection, so every HTTPS push to it failed. A pull-only machine now also pulls
   from its peers over HTTPS, its pull says it takes no inbound connection, and each peer records that and queues for
   its pull instead of trying to connect.
+- **`bin/toli doctor` never hangs (T1339).** On itlinux11 (Bun 1.4.4) it printed every check, then never exited:
+  the peer client's connection probe only half-closed its socket, and to priyammac, whose firewall drops the reset,
+  that socket sat in FIN-WAIT-2 and kept the process alive until it was killed at 900 s. The probe now closes its
+  socket fully, and each doctor section runs in its own worker under a time limit (60 s, the fleet 150 s): one that
+  never finishes prints `warn <section> timed out after N s` and the rest still run. Lines print as each section ends.
 
 ### Added
 
