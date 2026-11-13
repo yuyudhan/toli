@@ -123,7 +123,8 @@ const USAGE = `usage: bin/toli <command> [args]
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
         [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
         [--now] [--replace] [--dry-run] [--json]
-  runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
+  runs [--json] [--active]
+  run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
   harness sync [--check] [--json] | status [--json]
   hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin) | lead-build-env
@@ -132,160 +133,235 @@ const USAGE = `usage: bin/toli <command> [args]
   upgrade [vX.Y.Z|--latest] [--check]
   update check [--due] [--json] | status [--json] | snooze <vX.Y.Z> | off | on`;
 
+/** Every command, by its first word; each resolves to the process exit code. */
+const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = {
+    init: (argv) => {
+        initCommand(argv);
+        return 0;
+    },
+    setup: (argv) => {
+        setupCommand(argv);
+        return 0;
+    },
+    doctor: doctorCommand,
+    digest: async (argv) => {
+        await digestCommand(argv);
+        return 0;
+    },
+    project: (argv) => {
+        projectCommand(argv);
+        return 0;
+    },
+    task: async (argv) => {
+        await taskCommand(argv);
+        return 0;
+    },
+    delegate: delegateCommand,
+    delegation: (argv) => {
+        delegationCommand(argv);
+        return 0;
+    },
+    talk: talkCommand,
+    share: (argv) => {
+        shareCommand(argv);
+        return 0;
+    },
+    lead: leadCommand,
+    needs: (argv) => {
+        needsCommand(argv);
+        return 0;
+    },
+    commit: (argv) => {
+        commitCommand(argv);
+        return 0;
+    },
+    branch: (argv) => {
+        branchCommand(argv);
+        return 0;
+    },
+    workspace: (argv) => {
+        workspaceCommand(argv);
+        return 0;
+    },
+    self: (argv) => {
+        runtimeCommand(argv);
+        return 0;
+    },
+    forge: (argv) => {
+        forgeCommand(argv);
+        return 0;
+    },
+    push: async (argv) => {
+        await pushCommand(argv);
+        return 0;
+    },
+    gate: gateCommand,
+    "push-log": (argv) => {
+        pushLogCommand(argv);
+        return 0;
+    },
+    pr: async (argv) => {
+        await prCommand(argv);
+        return 0;
+    },
+    job: async (argv) => {
+        await jobCommand(argv);
+        return 0;
+    },
+    schedule: (argv) => {
+        scheduleCommand(argv);
+        return 0;
+    },
+    helper: helperCommand,
+    inbox: (argv) => {
+        inboxCommand(argv);
+        return 0;
+    },
+    outbox: async (argv) => {
+        await outboxCommand(argv);
+        return 0;
+    },
+    peer: peerCommand,
+    wake: (argv) => {
+        wakeCommand(argv);
+        return 0;
+    },
+    memory: (argv) => {
+        memoryCommand(argv);
+        return 0;
+    },
+    migrate: (argv) => {
+        migrateCommand(argv);
+        return 0;
+    },
+    prune: (argv) => {
+        pruneCommand(argv);
+        return 0;
+    },
+    sync: syncCommand,
+    "build-slot": buildSlotCommand,
+    resources: (argv) => {
+        resourcesCommand(argv);
+        return 0;
+    },
+    disk: (argv) => {
+        diskCommand(argv);
+        return 0;
+    },
+    fleet: async (argv) => {
+        await fleetCommand(argv);
+        return 0;
+    },
+    pick: pickCommand,
+    exec: execCommand,
+    remote: remoteCommand,
+    session: (argv) => {
+        sessionCommand(argv);
+        return 0;
+    },
+    spawn: (argv) => {
+        spawnCommand(argv);
+        return 0;
+    },
+    resume: (argv) => {
+        resumeCommand(argv);
+        return 0;
+    },
+    runs: (argv) => {
+        runsCommand(argv);
+        return 0;
+    },
+    run: async (argv) => {
+        await runCommand(argv);
+        return 0;
+    },
+    harness: (argv) => {
+        harnessCommand(argv);
+        return 0;
+    },
+    hook: (argv) => {
+        hookCommand(argv);
+        return 0;
+    },
+    guidance: (argv) => {
+        guidanceCommand(argv);
+        return 0;
+    },
+    upgrade: upgradeCommand,
+    update: (argv) => {
+        updateCommand(argv);
+        return 0;
+    },
+    version: (argv) => {
+        versionCommand(argv);
+        return 0;
+    },
+    "--version": (argv) => {
+        versionCommand(argv);
+        return 0;
+    },
+};
+
+/** USAGE's entries: each command line with its indented continuation lines. */
+const USAGE_ENTRIES: readonly string[] = USAGE.split("\n")
+    .slice(2)
+    .reduce<string[]>((entries, line) => {
+        if (/^ {2}\S/.test(line)) entries.push(line);
+        else if (entries.length > 0) entries[entries.length - 1] += `\n${line}`;
+        return entries;
+    }, []);
+
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * `<command> ... --help` (or `-h`) anywhere before a bare `--`: its USAGE entries, narrowed to the entries naming
+ * `sub` (its first positional) when any do; a command USAGE does not list (`remote`) gets the whole USAGE.
+ */
+function commandUsage(command: string, sub: string | undefined): string {
+    const own = USAGE_ENTRIES.filter((entry) => entry.startsWith(`  ${command} `) || entry === `  ${command}`);
+    if (own.length === 0) return USAGE;
+    const named =
+        sub === undefined
+            ? []
+            : own.filter((entry) =>
+                  new RegExp(`(?:^ {2}${escapeRegex(command)} |\\| )${escapeRegex(sub)}(?=[ |\\]]|$)`, "m").test(entry),
+              );
+    const chosen = named.length > 0 ? named : own;
+    const only = chosen.length === 1 ? (chosen[0] as string) : undefined;
+    if (only !== undefined && !only.includes("\n")) return `usage: bin/toli ${only.trimStart()}`;
+    return `usage: bin/toli ${command} [args]\n\n${chosen.join("\n")}`;
+}
+
+/** Whether `argv` asks for help: `--help` or `-h` before any bare `--`. */
+function wantsHelp(argv: readonly string[]): boolean {
+    const end = argv.indexOf("--");
+    return (end === -1 ? argv : argv.slice(0, end)).some((word) => word === "--help" || word === "-h");
+}
+
 /** Dispatch one CLI invocation; resolves to the process exit code. */
 export async function main(argv: string[]): Promise<number> {
     const [command, ...rest] = argv;
+    if (command === undefined || command === "help" || command === "--help" || command === "-h") {
+        out(USAGE);
+        return command === undefined ? 2 : 0;
+    }
+    const run = Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
+    if (run === undefined) {
+        warn(`toli: unknown command "${command}"`);
+        warn(USAGE);
+        return 2;
+    }
+    if (wantsHelp(rest)) {
+        out(
+            commandUsage(
+                command,
+                rest.find((word) => !word.startsWith("-")),
+            ),
+        );
+        return 0;
+    }
     try {
-        switch (command) {
-            case "init":
-                initCommand(rest);
-                return 0;
-            case "setup":
-                setupCommand(rest);
-                return 0;
-            case "doctor":
-                return await doctorCommand(rest);
-            case "digest":
-                await digestCommand(rest);
-                return 0;
-            case "project":
-                projectCommand(rest);
-                return 0;
-            case "task":
-                await taskCommand(rest);
-                return 0;
-            case "delegate":
-                return delegateCommand(rest);
-            case "delegation":
-                delegationCommand(rest);
-                return 0;
-            case "talk":
-                return await talkCommand(rest);
-            case "share":
-                shareCommand(rest);
-                return 0;
-            case "lead":
-                return await leadCommand(rest);
-            case "needs":
-                needsCommand(rest);
-                return 0;
-            case "commit":
-                commitCommand(rest);
-                return 0;
-            case "branch":
-                branchCommand(rest);
-                return 0;
-            case "workspace":
-                workspaceCommand(rest);
-                return 0;
-            case "self":
-                runtimeCommand(rest);
-                return 0;
-            case "forge":
-                forgeCommand(rest);
-                return 0;
-            case "push":
-                await pushCommand(rest);
-                return 0;
-            case "gate":
-                return await gateCommand(rest);
-            case "push-log":
-                pushLogCommand(rest);
-                return 0;
-            case "pr":
-                await prCommand(rest);
-                return 0;
-            case "job":
-                await jobCommand(rest);
-                return 0;
-            case "schedule":
-                scheduleCommand(rest);
-                return 0;
-            case "helper":
-                return await helperCommand(rest);
-            case "inbox":
-                inboxCommand(rest);
-                return 0;
-            case "outbox":
-                await outboxCommand(rest);
-                return 0;
-            case "peer":
-                return await peerCommand(rest);
-            case "wake":
-                wakeCommand(rest);
-                return 0;
-            case "memory":
-                memoryCommand(rest);
-                return 0;
-            case "migrate":
-                migrateCommand(rest);
-                return 0;
-            case "prune":
-                pruneCommand(rest);
-                return 0;
-            case "sync":
-                return await syncCommand(rest);
-            case "build-slot":
-                return await buildSlotCommand(rest);
-            case "resources":
-                resourcesCommand(rest);
-                return 0;
-            case "disk":
-                diskCommand(rest);
-                return 0;
-            case "fleet":
-                await fleetCommand(rest);
-                return 0;
-            case "pick":
-                return await pickCommand(rest);
-            case "exec":
-                return await execCommand(rest);
-            case "remote":
-                return remoteCommand(rest);
-            case "session":
-                sessionCommand(rest);
-                return 0;
-            case "spawn":
-                spawnCommand(rest);
-                return 0;
-            case "resume":
-                resumeCommand(rest);
-                return 0;
-            case "runs":
-                runsCommand(rest);
-                return 0;
-            case "run":
-                await runCommand(rest);
-                return 0;
-            case "harness":
-                harnessCommand(rest);
-                return 0;
-            case "hook":
-                hookCommand(rest);
-                return 0;
-            case "guidance":
-                guidanceCommand(rest);
-                return 0;
-            case "upgrade":
-                return await upgradeCommand(rest);
-            case "update":
-                updateCommand(rest);
-                return 0;
-            case "version":
-            case "--version":
-                versionCommand(rest);
-                return 0;
-            case undefined:
-            case "help":
-            case "--help":
-            case "-h":
-                out(USAGE);
-                return command === undefined ? 2 : 0;
-            default:
-                warn(`toli: unknown command "${command}"`);
-                warn(USAGE);
-                return 2;
-        }
+        return await run(rest);
     } catch (error) {
         if (error instanceof ToliError) {
             warn(`toli: ${error.message}`);

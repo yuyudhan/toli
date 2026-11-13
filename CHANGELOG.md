@@ -4,6 +4,16 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.8 - unreleased
+
+### Fixed
+
+- **`--help` and `-h` print a command's usage on every command and subcommand (T1388).** Only `bin/toli --help`
+  was handled; after a command the word reached that command's option parser, which took `--help` for a flag
+  wanting a value (`bin/toli upgrade --help`, `bin/toli task add --help`: "toli: --help needs a value") or refused
+  `-h` as an unknown option. `--help` or `-h` anywhere before a bare `--` now prints that command's synopsis lines
+  (narrowed to the subcommand when it has its own, e.g. `task add`) and exits 0 without running the command.
+
 ## v0.5.7 - 2026-11-13
 
 ### Fixed

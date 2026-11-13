@@ -23,9 +23,10 @@ They exist in every harness that supports project commands; `bin/toli harness sy
 
 ## `bin/toli`
 
-`bin/toli --help` prints the synopsis; every line of it is below, grouped by topic. Most commands take `--json` for
-machine-readable output. Exit code 0 is success, 1 a failure with the reason on stderr, 2 an unknown command or, for
-`pick`, no machine reachable or qualifying.
+`bin/toli --help` prints the synopsis; every line of it is below, grouped by topic. `--help` or `-h` anywhere before a
+bare `--` on any command or subcommand (`bin/toli task add --help`) prints just that command's lines and exits 0,
+without running it. Most commands take `--json` for machine-readable output. Exit code 0 is success, 1 a failure with
+the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable or qualifying.
 
 ### Setup and status
 
@@ -166,7 +167,8 @@ the interactive Sardar's subagents.
     spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
           [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
           [--now] [--replace] [--dry-run] [--json]
-    runs [--json] [--active] | run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
+    runs [--json] [--active]
+    run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
     resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
     harness sync [--check] [--json] | status [--json]
     hook claude-pre-tool|claude-prompt|claude-session-start (hook JSON on stdin) | lead-build-env
