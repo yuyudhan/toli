@@ -161,4 +161,30 @@ describe("a peer that takes no inbound connection only pulls (T1331)", () => {
         expect(bodies(beta)).toContain("pulled later");
         expect(queued(alpha)).toEqual([]);
     });
+
+    test("fleet check reports a pull-only machine that answers over HTTPS as not checked, and the rest runs", async () => {
+        const alpha = peerBox("alpha");
+        const laptop = peerBox("laptop");
+        const listening = await serve(laptop);
+        running.push(listening);
+        // The laptop answers its status over HTTPS, but takes no inbound ssh (as on m5, 2026-11-13 12:30Z).
+        pin(alpha.box, [
+            { name: "laptop", identity: laptop, cert: laptop.cert, addrs: [`127.0.0.1:${listening.port}`] },
+        ]);
+        pin(laptop.box, [{ name: "alpha", identity: alpha, cert: alpha.cert }]);
+        writeFileSync(
+            join(alpha.box.root, "config", "fleet.json"),
+            JSON.stringify({
+                machines: [
+                    { name: "alpha", ssh: "host1", root: alpha.box.root },
+                    { name: "laptop", ssh: "host2", root: laptop.box.root, inbound: false },
+                ],
+            }),
+        );
+        const result = alpha.box.toli(["fleet", "check", "--json"]);
+        expect(result.stderr).not.toContain("takes no inbound ssh");
+        expect(result.code).toBe(0);
+        const check = JSON.parse(result.stdout) as { unchecked: Array<{ machine: string; reason: string }> };
+        expect(check.unchecked).toContainEqual({ machine: "laptop", reason: "pull-only, not checked" });
+    });
 });

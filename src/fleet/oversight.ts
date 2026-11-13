@@ -9,7 +9,9 @@ import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import {
+    type FleetMachine,
     hasMachine,
+    inboundOff,
     loadMachine,
     machineSettings,
     otherFleetMachines,
@@ -215,14 +217,21 @@ export function fleetCheckText(check: FleetCheck): string {
     return lines.join("\n");
 }
 
-async function remoteReport(machine: { name: string; ssh: string; root: string }): Promise<LocalOversight | string> {
-    const result = await runAsync(
-        [
-            ...sshArgs(machine.ssh, REMOTE_CONNECT_SECONDS),
-            remoteToliCommand(machine.root, "fleet check --local --json"),
-        ],
-        { timeoutMs: REMOTE_CAP_MS },
-    );
+/**
+ * One machine's own backlog over ssh, or why it was not checked. A machine that takes no inbound ssh may still answer
+ * its status over HTTPS (a paired peer), so fleet status counts it reachable; it is never ssh-ed into.
+ */
+async function remoteReport(machine: FleetMachine): Promise<LocalOversight | string> {
+    if (inboundOff(machine)) return "pull-only, not checked";
+    let args: string[];
+    try {
+        args = sshArgs(machine.ssh, REMOTE_CONNECT_SECONDS);
+    } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+    }
+    const result = await runAsync([...args, remoteToliCommand(machine.root, "fleet check --local --json")], {
+        timeoutMs: REMOTE_CAP_MS,
+    });
     if (result.timedOut) return `no answer from ${machine.ssh} within ${REMOTE_CAP_MS / 1000}s`;
     if (result.code !== 0)
         return `ssh ${machine.ssh} exited ${result.code}: ${(result.stderr || result.stdout).trim().split("\n")[0] ?? ""}`;
