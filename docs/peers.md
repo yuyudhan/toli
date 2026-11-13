@@ -71,6 +71,12 @@ container or VM on the machine, not the peers. A tunnel (`utun*`, `tun*`, `ppp*`
 (100.64/10, which NetBird's macOS `utun` carries). The address set is rescanned every 15 seconds; when it changes (a
 VPN comes up, a network is joined) the listener rebinds and announces itself to its peers.
 
+Some machines drop every inbound connection to their own network addresses, often because of endpoint security
+software. To check, run `curl -k https://<one of its addresses>:47123/v1/hello` on the machine itself: on such a
+machine it times out, while `127.0.0.1` answers. Run `bin/toli peer listen off` there. That machine then pulls what
+its peers queue for it over HTTPS every minute; with `sshFallback` off, nothing else reaches it (not even the ssh
+pull).
+
 | Endpoint              | Who                      | What                                                              |
 | --------------------- | ------------------------ | ----------------------------------------------------------------- |
 | `GET /v1/hello`       | anyone on the network    | name, version, key, fingerprints, `certSig`: nothing else         |
