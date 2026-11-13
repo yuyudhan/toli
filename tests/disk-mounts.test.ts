@@ -29,20 +29,20 @@ const container = (name: string, status: string, ...mounts: DockerMount[]): Dock
 
 describe("which host folders a live container mounts", () => {
     test("a volume hung on a build folder inside a bind mount holds that folder; the bound tree above does not", () => {
-        // itlinux3's velocityfss stack (T101): ./apps/backend at /app, the volume backend_target at /app/target.
-        const backend = "/srv/velocityfss/apps/backend";
+        // A demo stack (T101): ./apps/backend at /app, the volume backend_target at /app/target.
+        const backend = "/srv/demo/apps/backend";
         const stack = container(
-            "velocityfss-backend",
+            "demo-backend",
             "running",
             bind(backend, "/app"),
-            volume("velocityfss_backend_target", "/app/target"),
+            volume("demo_backend_target", "/app/target"),
         );
         const mounts = hostMounts([stack]);
         expect(mountUse(`${backend}/target`, mounts)).toBe(
-            `container velocityfss-backend (running) mounts volume velocityfss_backend_target at /app/target, over ${backend}/target`,
+            `container demo-backend (running) mounts volume demo_backend_target at /app/target, over ${backend}/target`,
         );
         expect(mountUse(`${backend}/web/node_modules`, mounts)).toBeNull();
-        expect(mountUse("/srv/velocityfss/target", mounts)).toBeNull();
+        expect(mountUse("/srv/demo/target", mounts)).toBeNull();
     });
 
     test("a bind of the folder or below it, or a volume's mountpoint below it, holds it; a stopped container nothing", () => {
@@ -61,7 +61,7 @@ describe("which host folders a live container mounts", () => {
 });
 
 /**
- * itlinux3 on 2026-11-12 (T101): 1 GB free of 200 GB and nothing to gain, so the keeper reaches its last resort.
+ * A Linux worker on 2026-11-12 (T101): 1 GB free of 200 GB and nothing to gain, so the keeper reaches its last resort.
  * beta's target is held by a cargo lock (host cargo) and is the mountpoint a running stack hangs its target volume on,
  * through a bind of the whole checkout; alpha is idle, its target bind-mounted straight into a running container; a
  * stopped container binds beta's web/dist.
@@ -78,14 +78,14 @@ function mountedTree(box: Sandbox, ps: string) {
         JSON.stringify([
             {
                 Id: "c1",
-                Name: "/velocityfss-backend",
+                Name: "/demo-backend",
                 State: { Status: "running" },
                 Mounts: [
                     { Type: "bind", Source: busy, Destination: "/app" },
                     {
                         Type: "volume",
-                        Name: "velocityfss_backend_target",
-                        Source: "/var/lib/docker/volumes/velocityfss_backend_target/_data",
+                        Name: "demo_backend_target",
+                        Source: "/var/lib/docker/volumes/demo_backend_target/_data",
                         Destination: "/app/target",
                     },
                 ],
@@ -130,7 +130,7 @@ esac`,
 const NEVER = "a folder a live container mounts is never deleted";
 
 describe("build folders a running container mounts in the keeper", () => {
-    keeperTest("even at the last resort a target a running container mounts stays (itlinux3's T101)", () => {
+    keeperTest("even at the last resort a target a running container mounts stays (T101)", () => {
         const box = keeperBox();
         const { idle, busy, keep, release } = mountedTree(box, "printf 'c1\\nc2\\nc3\\n'");
         try {
@@ -138,7 +138,7 @@ describe("build folders a running container mounts in the keeper", () => {
             const lines = report.lines.join("\n");
             expect(report.lastResort).toBe(true);
             expect(lines).toContain(
-                `kept ${join(busy, "target")}: container velocityfss-backend (running) mounts volume velocityfss_backend_target at /app/target, over ${join(busy, "target")}; ${NEVER}`,
+                `kept ${join(busy, "target")}: container demo-backend (running) mounts volume demo_backend_target at /app/target, over ${join(busy, "target")}; ${NEVER}`,
             );
             expect(lines).toContain(
                 `kept ${join(idle, "target")}: container alpha-web-1 (running) mounts bind mount ${join(idle, "target")} at /app/target; ${NEVER}`,

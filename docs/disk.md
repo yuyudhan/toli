@@ -128,7 +128,7 @@ them (never sudo)`).
    entry is only a cache miss.
 5. Only under the emergency level (see 7): Docker volumes of idle build output, largest first (sizes from `docker
 system df -v`), until free space is over that level. A volume is build output only when its name says so (ends in
-   `target`, as `kalki_backend_target` or `app-target` do, or contains `cargo` or `node_modules`) or a container mounts
+   `target`, as `demo_backend_target` or `app-target` do, or contains `cargo` or `node_modules`) or a container mounts
    it at a `target` or `node_modules` folder or a `cargo` path (`/app/target`, `/usr/local/cargo/registry`). Never
    one whose name or any mount point may hold data, whatever else matches: a name or mount point containing `pg`,
    `postgres`, `sql`, `maria`, `mongo`, `redis`, `valkey`, `data`, `db`, `upload`, `media`, `minio`, `elastic`,

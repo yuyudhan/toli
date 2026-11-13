@@ -6,7 +6,7 @@ import { isJsonObject, readJson, ToliError } from "./util.ts";
  * worker agents it dispatches. Read from the optional config/persona.json; any field left out keeps its default.
  */
 export type Persona = {
-    /** How the lead addresses the user, e.g. "Malik". */
+    /** How the lead addresses the user (the default is below). */
     user: string;
     /** The lead agent (the one session the user talks to). */
     lead: string;

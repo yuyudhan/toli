@@ -122,9 +122,9 @@ describe("the bind", () => {
         const interfaces = {
             lo0: [entry("127.0.0.1", true)],
             en0: [entry("203.0.113.5"), entry("192.168.1.20"), entry("fe80::1")],
-            wt0: [entry("100.90.1.7"), entry("fd00::7")],
+            wt0: [entry("100.64.1.7"), entry("fd00::7")],
         };
-        expect(privateAddresses(interfaces)).toEqual(["100.90.1.7", "192.168.1.20", "fd00::7"]);
+        expect(privateAddresses(interfaces)).toEqual(["100.64.1.7", "192.168.1.20", "fd00::7"]);
     });
 
     test("an explicit bind list is used as given and must be IP addresses", () => {
@@ -143,9 +143,9 @@ describe("the bind", () => {
         });
         const interfaces = {
             eth0: [entry("192.168.1.20")],
-            wt0: [entry("100.90.1.7")],
+            wt0: [entry("100.64.1.7")],
             tailscale0: [entry("100.101.1.1")],
-            utun100: [entry("100.90.192.100")],
+            utun100: [entry("100.64.192.100")],
             utun4: [entry("10.8.0.2")],
             ppp0: [entry("10.212.134.7")],
             docker0: [entry("172.17.0.1")],
@@ -157,12 +157,12 @@ describe("the bind", () => {
             bridge100: [entry("192.168.139.3")],
             vmnet8: [entry("192.168.56.1")],
         };
-        expect(privateAddresses(interfaces)).toEqual(["100.101.1.1", "100.90.1.7", "100.90.192.100", "192.168.1.20"]);
+        expect(privateAddresses(interfaces)).toEqual(["100.101.1.1", "100.64.1.7", "100.64.192.100", "192.168.1.20"]);
         expect(privateAddresses(interfaces, ["br-3f2a9c", "utun4"])).toEqual([
             "10.8.0.2",
             "100.101.1.1",
-            "100.90.1.7",
-            "100.90.192.100",
+            "100.64.1.7",
+            "100.64.192.100",
             "172.18.0.1",
             "192.168.1.20",
         ]);

@@ -286,11 +286,11 @@ describe("claude hooks", () => {
 });
 
 describe("lead guidance", () => {
-    const REPLY_RULE = /^- Reply to (Malik|the user) in 1-3 short lines unless asked for detail: /;
+    const REPLY_RULE = /^- Reply to (Jane|the user) in 1-3 short lines unless asked for detail: /;
 
     test("the reply-length rule comes first, in the live reminder and the generic rule files alike", () => {
         const persona = {
-            user: "Malik",
+            user: "Jane",
             lead: "Sardar",
             leadPlural: "Saradars",
             worker: "jawan",
@@ -307,7 +307,7 @@ describe("lead guidance", () => {
         const agents = readFileSync(join(import.meta.dir, "..", "AGENTS.md"), "utf8");
         const identity = agents.slice(agents.indexOf("## 1. Identity"), agents.indexOf("## 2. "));
         const bullets = identity.split("\n").filter((line) => line.startsWith("- "));
-        expect(bullets[1]).toStartWith("- Reply in 1-3 short lines unless Malik asks for detail: ");
+        expect(bullets[1]).toStartWith("- Reply in 1-3 short lines unless the user asks for detail: ");
         expect(agents).not.toContain("one or two lines");
     });
 });

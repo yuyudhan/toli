@@ -12,12 +12,12 @@ const NETBIRD = {
         total: 2,
         connected: 1,
         details: [
-            { fqdn: "alpha-laptop.netbird.selfhosted", netbirdIp: "100.90.0.191", status: "Connected" },
-            { fqdn: "beta-box.netbird.selfhosted", netbirdIp: "100.90.4.7/16", status: "Idle" },
+            { fqdn: "alpha-laptop.nb.example", netbirdIp: "100.64.0.191", status: "Connected" },
+            { fqdn: "beta-box.nb.example", netbirdIp: "100.64.4.7/16", status: "Idle" },
         ],
     },
-    netbirdIp: "100.90.1.1/16",
-    fqdn: "self.netbird.selfhosted",
+    netbirdIp: "100.64.1.1/16",
+    fqdn: "self.nb.example",
 };
 
 const TAILSCALE = {
@@ -36,8 +36,8 @@ afterEach(async () => {
 describe("peer discovery", () => {
     test("reads NetBird's peers (address without its prefix length, and name), never itself", () => {
         expect(netbirdCandidates(NETBIRD)).toEqual([
-            { address: "100.90.0.191", name: "alpha-laptop.netbird.selfhosted", source: "netbird" },
-            { address: "100.90.4.7", name: "beta-box.netbird.selfhosted", source: "netbird" },
+            { address: "100.64.0.191", name: "alpha-laptop.nb.example", source: "netbird" },
+            { address: "100.64.4.7", name: "beta-box.nb.example", source: "netbird" },
         ]);
         expect(netbirdCandidates({})).toEqual([]);
     });

@@ -126,7 +126,7 @@ Each tick moves the fleet's messages in one pass: a machine that takes no inboun
 machine at once, with a 5 s `ConnectTimeout`, each machine's items applied as soon as they arrive, so one that is
 down or slow never holds up another's), then the outbox goes out (5 s `ConnectTimeout` too). Within the pass a host
 is tried until its first failure only: its other items wait, in their order, for the next pass, and the tick log has
-one line for them (`outbox: pending 3 items for itlinux4 left queued: ...`). A host the tick's ssh did not reach
+one line for them (`outbox: pending 3 items for linux-4 left queued: ...`). A host the tick's ssh did not reach
 (ssh's own exit 255, or a timeout) is also backed off across ticks in `state/reach.json`: the tick leaves it alone for
 30 s after the first failure, doubling with each one after, at most 10 minutes; any call that reaches it clears that.
 The pull line counts such machines (`pull: 2 waiting, 2 applied, 2 acknowledged; 4 machine(s) held back`). A hand-run

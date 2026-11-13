@@ -1,33 +1,33 @@
 ---
 name: toli-deliver
-description: Land verified jawan work in a project using the right delivery mode and workspace strategy - commit on the current branch (default), a branch plus PR, a per-task branch or worktree with its PR/MR, or the no-mistakes gate - with jawans carrying out every step and Sardar only taking Malik's word (or the project's standing push/PR grant) and relaying the landing. Use after a verifier passes jawan work, or when Malik asks for a branch, a PR, a push, or to ship through no-mistakes.
+description: Land verified jawan work in a project using the right delivery mode and workspace strategy - commit on the current branch (default), a branch plus PR, a per-task branch or worktree with its PR/MR, or the no-mistakes gate - with jawans carrying out every step and Sardar only taking the user's word (or the project's standing push/PR grant) and relaying the landing. Use after a verifier passes jawan work, or when the user asks for a branch, a PR, a push, or to ship through no-mistakes.
 ---
 
 # Delivering work
 
 Delivery happens only after an independent verifier jawan passed the work (`skill://toli-dispatch`, step 6). The
-project's mode comes from `bin/toli project list --json`; Malik's word for a specific change overrides it. Sardar never
-runs a delivery step itself: it takes Malik's word, writes it verbatim into a brief, dispatches a jawan, ends the
-turn, and relays the result.
+project's mode comes from `bin/toli project list --json`; the user's word for a specific change overrides it. Sardar
+never runs a delivery step itself: it takes the user's word, writes it verbatim into a brief, dispatches a jawan, ends
+the turn, and relays the result.
 
 ## Hard limits
 
-- Never push, merge, or open a PR without Malik's explicit word for that specific change. A project's `pr` mode or
+- Never push, merge, or open a PR without the user's explicit word for that specific change. A project's `pr` mode or
   per-task strategy is a preference, not permission. The one exception: a project whose `standing` (in
   `bin/toli project list --json`) grants `push` (and `pr`) lets the verifier push its verified task branch (and open
-  its PR/MR) without asking. Malik sets a grant explicitly (`project set --standing-push yes --standing-pr yes`);
-  never infer one. Merging always needs his word.
-- A brief that pushes, opens a PR, merges, or tags quotes Malik's word for that action verbatim (or names the
+  its PR/MR) without asking. The user sets a grant explicitly (`project set --standing-push yes --standing-pr yes`);
+  never infer one. Merging always needs their word.
+- A brief that pushes, opens a PR, merges, or tags quotes the user's word for that action verbatim (or names the
   standing grant, for push/PR only) in place of the brief's "Never push, merge, or open a PR" rule, and allows
   exactly that action and nothing more.
-- Branches only when Malik asks, when the project's mode (`pr`, `no-mistakes` without a fixed branch) is his
+- Branches only when the user asks, when the project's mode (`pr`, `no-mistakes` without a fixed branch) is their
   standing choice of a work branch per change, or when its workspace strategy is `branch-per-task` /
   `worktree-per-task` (toli creates the task branch itself).
 - Never discard uncommitted work: no `git reset --hard`, `git checkout -- .`, `git stash`, `git clean`, branch
-  deletion, or force push. If git state is in the way, the jawan stops and reports; ask Malik.
-- No AI co-author trailers; `bin/toli commit` strips them. Never put "Malik" in commit messages or PR bodies.
+  deletion, or force push. If git state is in the way, the jawan stops and reports; ask the user.
+- No AI co-author trailers; `bin/toli commit` strips them. Never put the user's name in commit messages or PR bodies.
 - Every push leaves a note on the machine whose clone pushed: `bin/toli push` logs it in that machine's
-  `data/pushes.jsonl` (time, project, branch, old..new sha, issuing machine, task, Malik's quoted word) and its
+  `data/pushes.jsonl` (time, project, branch, old..new sha, issuing machine, task, the user's quoted word) and its
   `bin/toli digest` lists the last week's under "recent pushes". So a jawan there never mistakes it for an
   unexplained push.
 
@@ -35,13 +35,13 @@ turn, and relays the result.
 
 A push from a clone on another fleet machine is that machine's Sardar's work: delegate it (`bin/toli delegate
 <machine> "<title>" --brief <file> --project <project> --for <id>`, `skill://toli-dispatch` step 3) with a brief
-that quotes Malik's word for the push. That machine's jawan runs `bin/toli push` there, which records it in that
+that quotes the user's word for the push. That machine's jawan runs `bin/toli push` there, which records it in that
 machine's push log under its own task; `--by <machine> --for <id>` name the delegating machine and task when the
 brief gives them:
 
-    bin/toli push <project> --task T<n> --by <delegating machine> --for <id> --word "<Malik's word>"
+    bin/toli push <project> --task T<n> --by <delegating machine> --for <id> --word "<the user's word>"
 
-A raw `git push` there (e.g. `--no-verify` on Malik's word) is followed at once by
+A raw `git push` there (e.g. `--no-verify` on the user's word) is followed at once by
 
     bin/toli push-log add <project> --by <delegating machine> --for <id> --word "<...>"
 
@@ -60,7 +60,7 @@ Stages only the given paths, commits on whatever branch the project is on, never
 project's own conventions (its AGENTS.md / recent `git log`).
 
 When the project has a fixed working branch (`branch` in `bin/toli project list`), `bin/toli commit` refuses on any
-other branch. Nobody switches, creates, or reconfigures branches to get past it: tell Malik which branch the clone is
+other branch. Nobody switches, creates, or reconfigures branches to get past it: tell the user which branch the clone is
 on and ask how to proceed (the refusal message lists the options).
 
 ## Strategy: branch-per-task / worktree-per-task
@@ -69,10 +69,10 @@ Each task already has its own `toli/<T-id>-<slug>` branch, prepared by `bin/toli
 `bin/toli workspace prepare` (in the clone, or in `projects/.worktrees/<project>/<T-id>`), and recorded on the task.
 The verifier brief (`docs/verify-brief-template.md`) fills its Workspace section, including **Push / PR**:
 
-- standing grant `push+pr`, or Malik's word for this change quoted: the verifier commits, then runs
+- standing grant `push+pr`, or the user's word for this change quoted: the verifier commits, then runs
 
         bin/toli commit <project> --task <id> -m "<message>" -- <paths...>
-        bin/toli push <project> --task <id> --word "<Malik's word, or the standing grant>"
+        bin/toli push <project> --task <id> --word "<the user's word, or the standing grant>"
         bin/toli pr create <project> --task <id> --title "<title>" --body-file <file> [--draft]
         bin/toli task done <id> --commit <sha> --note "<full PR/MR URL>"
 
@@ -80,28 +80,28 @@ The verifier brief (`docs/verify-brief-template.md`) fills its Workspace section
 
 - push-only grant: it pushes, then holds the task asking for the PR/MR.
 - neither: it commits and holds the task (`bin/toli task hold <id> --question "...push it and open the PR/MR?"`);
-  relay the question, and on Malik's word dispatch a `sonic` jawan whose brief quotes it and runs the push and
+  relay the question, and on the user's word dispatch a `sonic` jawan whose brief quotes it and runs the push and
   `pr create` lines above.
 
-After the PR/MR merges (Malik's word, `bin/toli pr merge`, or on the forge), a jawan runs `bin/toli workspace prune`
+After the PR/MR merges (the user's word, `bin/toli pr merge`, or on the forge), a jawan runs `bin/toli workspace prune`
 to remove finished, merged worktrees and their branches. It never removes live ones or unlanded work (dirty files or
 commits not on the base); it prints `kept: <path>: N unlanded commits / M dirty files`, and no flag overrides that.
 
 ## Mode: pr
 
-When the project's mode is `pr` (Malik chose pull/merge requests at `/add-project` or `/setup-project`), or Malik
+When the project's mode is `pr` (the user chose pull/merge requests at `/add-project` or `/setup-project`), or the user
 asked for a branch or PR on this work. The mode makes a work branch the default; pushing and opening the PR still
-need his word for the change.
+need their word for the change.
 
 1. Same-branch projects only (per-task strategies already have their task branch, see above): branch before the
    implementer starts, if possible: put `bin/toli branch <project> <branch>` as the first step of the implementer's
-   brief (the project's mode, or Malik's request for the branch, is the word for it).
+   brief (the project's mode, or the user's request for the branch, is the word for it).
 2. The verifier commits with `bin/toli commit` as above.
-3. Ask Malik for the go-ahead to push and open the PR, unless he already said so for this change.
-4. Dispatch a `sonic` jawan whose brief quotes his word and runs (readiness first with `bin/toli forge <project>`;
+3. Ask the user for the go-ahead to push and open the PR, unless they already said so for this change.
+4. Dispatch a `sonic` jawan whose brief quotes their word and runs (readiness first with `bin/toli forge <project>`;
    works for GitHub, GitLab incl. self-hosted, and Bitbucket Cloud):
 
-        bin/toli push <project> --word "<Malik's word>"
+        bin/toli push <project> --word "<the user's word>"
         bin/toli pr create <project> --title "<title>" --body-file <file> [--base <branch>] [--draft]
         bin/toli task done <id> --commit <sha> --note "<full PR URL>"
 
@@ -109,14 +109,14 @@ need his word for the change.
     never `gh`/`glab`/the Bitbucket API directly for these steps.
 
 5. Follow-ups (`bin/toli pr status <project> [<id>]`: state, mergeable, CI) go to a jawan too, run as `bash` async or
-   inside a brief. `bin/toli pr merge <project> <id>` only in a brief that quotes Malik's word to merge that PR.
+   inside a brief. `bin/toli pr merge <project> <id>` only in a brief that quotes the user's word to merge that PR.
 
 ## Mode: no-mistakes
 
-When the project's mode is `no-mistakes`, or Malik asked for a branch/PR through the gate on this work. The gate
+When the project's mode is `no-mistakes`, or the user asked for a branch/PR through the gate on this work. The gate
 validates committed history on a non-default branch: the project's fixed branch when it has one, otherwise branch
 first (step 1 above). Let the verifier commit, then dispatch a gate jawan per `skill://toli-nm`. The gate itself pushes
-and opens the PR, so ask Malik for his word on this change first unless he already gave it.
+and opens the PR, so ask the user for their word on this change first unless they already gave it.
 
 ## Landing report
 
@@ -126,4 +126,4 @@ From the jawan's report, outcome first, in plain words:
 - branch and commit sha
 - evidence that passed (test or smoke command)
 - full PR URL, e.g. `https://github.com/owner/repo/pull/123`, never "PR #123"
-- anything Malik must do next (review, merge, answer a question)
+- anything the user must do next (review, merge, answer a question)

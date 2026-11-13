@@ -20,8 +20,8 @@ acceptance lines of the original brief, then either land it or report the gaps. 
 - Workspace: <same-branch | branch-per-task | worktree-per-task>
 - Path: <the implementer's workspace: the clone, or the task's worktree from `bin/toli task list --json`> - check here
 - Branch: <the fixed/current branch, or the task branch `toli/<T-id>-<slug>`>
-- Push / PR: <per-task only: "standing grant: push+pr" (from `bin/toli project list --json`), or Malik's word for this
-  change quoted verbatim, or "not granted"; same-branch: "not part of this landing">
+- Push / PR: <per-task only: "standing grant: push+pr" (from `bin/toli project list --json`), or the user's word for
+  this change quoted verbatim, or "not granted"; same-branch: "not part of this landing">
 
 ## Original brief
 
@@ -125,4 +125,4 @@ the PR/MR?" --option "yes => a jawan pushes and opens the PR/MR" --option "no =>
         $ <command>
         <output excerpt>
     Gaps: <what is missing or wrong, concretely, or "none">
-    Open questions: <anything needing Malik's decision, or "none">
+    Open questions: <anything needing the user's decision, or "none">

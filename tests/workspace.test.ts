@@ -146,7 +146,7 @@ describe("workspace config", () => {
             file,
             JSON.stringify({
                 projects: [
-                    entry("kalki", "commit", "ankur/nightly"),
+                    entry("acme", "commit", "me/nightly"),
                     entry("reviewed", "pr"),
                     entry("gated", "no-mistakes"),
                     entry("gated-fixed", "no-mistakes", "release"),
@@ -155,12 +155,12 @@ describe("workspace config", () => {
         );
         const dry = box.ok(["migrate", "--dry-run"]);
         expect(dry).toContain("would record the workspace strategy of 4 projects");
-        expect(dry).toContain("  kalki: same-branch");
+        expect(dry).toContain("  acme: same-branch");
         expect(JSON.parse(readFileSync(file, "utf8")).projects[0].workspace).toBeUndefined();
         expect(box.ok(["migrate"])).toContain("recorded the workspace strategy of 4 projects");
         const stored = JSON.parse(readFileSync(file, "utf8")).projects as { name: string; workspace: string }[];
         expect(stored.map((project) => [project.name, project.workspace])).toEqual([
-            ["kalki", "same-branch"],
+            ["acme", "same-branch"],
             ["reviewed", "branch-per-task"],
             ["gated", "branch-per-task"],
             ["gated-fixed", "same-branch"],

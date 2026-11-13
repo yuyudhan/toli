@@ -48,7 +48,7 @@ function sessionOmp(argvLog: string): string {
         '    prev="$arg"',
         "done",
         `printf '%s\\n---\\n' "$*" >> "${argvLog}"`,
-        'if [ -n "$resume" ]; then echo "{}" >> "$resume"; echo "Malik, the work is done and committed as abc123."; exit 0; fi',
+        'if [ -n "$resume" ]; then echo "{}" >> "$resume"; echo "Jane, the work is done and committed as abc123."; exit 0; fi',
         'echo "{}" > "$dir/s1.jsonl"',
         NOISE,
         "exec sleep 30",
@@ -100,13 +100,13 @@ async function waitForRuns(box: Sandbox, done: (all: Run[]) => boolean): Promise
 describe("time limits", () => {
     test("harness warnings and errors are no report; any other line is", () => {
         expect(hasReport("")).toBe(false);
-        expect(hasReport('Warning: MCP server "kalki" failed to connect\nWorking...\n\n')).toBe(false);
-        expect(hasReport("Warning: MCP server x failed\nWorking...\nMalik, T93 is done: abc123.\n")).toBe(true);
+        expect(hasReport('Warning: MCP server "acme" failed to connect\nWorking...\n\n')).toBe(false);
+        expect(hasReport("Warning: MCP server x failed\nWorking...\nJane, T93 is done: abc123.\n")).toBe(true);
         // A harness or API error is never the jawan's answer, whatever surrounds it.
         const errors = 'Warning: x\nError: 429 rate_limit_error\nAPI Error: 500 {"type":"error"}\n';
         expect(hasReport(errors)).toBe(false);
         expect(hasReport("Claude AI usage limit reached|1767225600\n")).toBe(false);
-        expect(hasReport(`${errors}Malik, T93 is done: abc123.\n`)).toBe(true);
+        expect(hasReport(`${errors}Jane, T93 is done: abc123.\n`)).toBe(true);
         expect([onlyHarnessErrors(errors), onlyHarnessErrors(""), onlyHarnessErrors(`${errors}done\n`)]).toEqual([
             true,
             false,
@@ -143,13 +143,13 @@ describe("time limits", () => {
             cap: 3,
             previousRun: "j-1",
             stopped: "hit its 180-minute time limit",
-            cwd: "/w/kalki",
+            cwd: "/w/acme",
             previousLog: "/t/runs/j-1/output.log",
         });
         expect(section).toContain("## RESUME (auto, 2)");
         expect(section).toContain("(j-1) hit its 180-minute time limit without writing a report");
         expect(section).toContain("continuation 2 of at most 3");
-        expect(section).toContain("uncommitted in the working tree, /w/kalki");
+        expect(section).toContain("uncommitted in the working tree, /w/acme");
         expect(section).toContain("Its log: /t/runs/j-1/output.log");
     });
 });
@@ -186,7 +186,7 @@ describe("stall detection", () => {
 
     test("a spawned run has no wall-clock limit by default and keeps its omp session in its run dir", () => {
         const box = coordinator({ maxRuns: 2 });
-        box.stub("omp", 'echo "Malik, done."');
+        box.stub("omp", 'echo "Jane, done."');
         const run = spawnJson(box, ["--harness", "omp", "--brief", brief(box, "x"), "--cwd", box.root]);
         expect(run.maxMinutes).toBeNull();
         expect(run.command).not.toContain("--max-time");
@@ -234,7 +234,7 @@ describe("stall detection", () => {
                 'for arg in "$@"; do [ "$prev" = "--session-dir" ] && dir="$arg"; prev="$arg"; done',
                 `printf '%s\\n---\\n' "$*" >> "${argvLog}"`,
                 'echo "{}" >> "$dir/s1.jsonl"',
-                'echo "Malik, done."',
+                'echo "Jane, done."',
             ].join("\n"),
         );
         const first = spawnJson(box, ["--harness", "omp", "--brief", brief(box, "x"), "--cwd", box.root]);
@@ -321,7 +321,7 @@ describe("auto-resume", () => {
 
     test("a run that wrote its report at the limit is not resumed", async () => {
         const box = coordinator({ maxRuns: 2 });
-        box.stub("omp", `${NOISE}; sleep 1.2; echo "Malik, the work is done and committed as abc123."`);
+        box.stub("omp", `${NOISE}; sleep 1.2; echo "Jane, the work is done and committed as abc123."`);
         const started = spawnJson(box, [
             "--harness",
             "omp",

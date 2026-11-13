@@ -1,27 +1,27 @@
 ---
 name: toli-release
-description: Run a project's release from the `## Release` section of its notes file - integration branch into main, release notes file, tag, staging smoke, issue-tracker updates (Jira, GitHub/GitLab issues, Linear, ... through the tools the recipe names) - with jawans doing every step and Sardar taking Malik's word in between. Use when Malik asks to release, cut, tag, or ship a version of a project, or to prepare release notes. Push, merge and tag only on Malik's word for that release.
+description: Run a project's release from the `## Release` section of its notes file - integration branch into main, release notes file, tag, staging smoke, issue-tracker updates (Jira, GitHub/GitLab issues, Linear, ... through the tools the recipe names) - with jawans doing every step and Sardar taking the user's word in between. Use when the user asks to release, cut, tag, or ship a version of a project, or to prepare release notes. Push, merge and tag only on the user's word for that release.
 ---
 
 # Releasing a project
 
 A release follows the project's own recipe, never a guess. The recipe lives in `data/projects/<project>/notes.md` under
-`## Release`. No section means no recipe: ask Malik for the steps once, then dispatch a `sonic` jawan to write them
-into that section (with his confirmation), then continue.
+`## Release`. No section means no recipe: ask the user for the steps once, then dispatch a `sonic` jawan to write them
+into that section (with their confirmation), then continue.
 
-Sardar never runs a release step itself. It runs the release as two jawan phases with Malik's word in between:
-**prepare** (read-only on remotes, no push/merge/tag) and **ship** (only the actions Malik approved, quoted verbatim in
-the brief). Each phase is a background spawn; end the turn after dispatching and relay the result when it arrives.
+Sardar never runs a release step itself. It runs the release as two jawan phases with the user's word in between:
+**prepare** (read-only on remotes, no push/merge/tag) and **ship** (only the actions the user approved, quoted verbatim
+in the brief). Each phase is a background spawn; end the turn after dispatching and relay the result when it arrives.
 
 ## Hard limits
 
-- Push, merge, and tag only on Malik's explicit word for this release. "Prepare the release" is not that word; "ship
+- Push, merge, and tag only on the user's explicit word for this release. "Prepare the release" is not that word; "ship
   v1.4.0" is. When unsure, stop at the step before and ask.
-- The ship brief quotes his word verbatim and allows exactly the approved actions (merge, tag, push) and no others.
-- Never force-push, rewrite tags, delete branches, or move an existing tag. A wrong tag goes to Malik.
+- The ship brief quotes their word verbatim and allows exactly the approved actions (merge, tag, push) and no others.
+- Never force-push, rewrite tags, delete branches, or move an existing tag. A wrong tag goes to the user.
 - Staging is read-only during the smoke: look, do not change data, stop on OTP/captcha and report.
 - Issue tracker: update only the issues that are actually in this release, and only to the states the recipe names.
-- Malik's name never appears in release notes, tags, commits, or PR text.
+- The user's name never appears in release notes, tags, commits, or PR text.
 
 ## What the `## Release` section should give
 
@@ -55,14 +55,14 @@ jawan to:
    and commit it on the integration branch with `bin/toli commit` so the tagged commit contains the notes.
 4. **Report**: version, notes path, flagged issues, and the exact next steps (merge, tag, push) with commands.
 
-## Show Malik
+## Show the user
 
 One message from the prepare report: version, notes path (and a lavish page built by a jawan for long notes), flagged
-issues, and the exact next steps. Wait for his word; record any open question with `bin/toli task hold`.
+issues, and the exact next steps. Wait for their word; record any open question with `bin/toli task hold`.
 
-## Phase 2: ship (jawan, `task` effort med, on Malik's word)
+## Phase 2: ship (jawan, `task` effort med, on the user's word)
 
-The brief quotes his word and asks the jawan to:
+The brief quotes their word and asks the jawan to:
 
 5. **Merge to main** the way the recipe says:
     - via PR/MR: `bin/toli push <p>`,
@@ -79,10 +79,10 @@ The brief quotes his word and asks the jawan to:
    recipe asks for it.
 9. **Report**, then `bin/toli task done <id> --note "<tag>"`.
 
-## Report to Malik
+## Report to the user
 
 Outcome first: tag, main commit, release notes path/URL, PR/MR URL, smoke result with evidence, issues moved (and
-any that could not be), post-deploy steps still open for him.
+any that could not be), post-deploy steps still open for them.
 
 ## When something fails
 

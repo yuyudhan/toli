@@ -1,6 +1,6 @@
 ---
 name: toli-bearings
-description: Give Malik a status overview of this machine (or the whole paltan across the fleet) - projects, work in flight, questions waiting on him, job results, inbox, recent reports. Use for /bearings, at session start, or when Malik asks "what's going on", "status", "where are we", or "catch me up".
+description: Give the user a status overview of this machine (or the whole paltan across the fleet) - projects, work in flight, questions waiting on them, job results, inbox, recent reports. Use for /bearings, at session start, or when the user asks "what's going on", "status", "where are we", or "catch me up".
 ---
 
 # Status overview (/bearings)
@@ -24,9 +24,9 @@ failing the whole overview.
 
 ## Plain digest (default)
 
-Lead with what needs Malik, then what changed, then the rest. Translate everything into plain words:
+Lead with what needs the user, then what changed, then the rest. Translate everything into plain words:
 
-    Ji Malik. Two things need you: <one line each>.
+    Ji <user>. Two things need you: <one line each>.
     Done since last time: <task, project, commit or report>.
     Running now: <task, project>.
     Job results: <job name - one-line outcome>.
@@ -44,23 +44,23 @@ Lead with what needs Malik, then what changed, then the rest. Translate everythi
 - Needs you: one line per held task (id, project, the question, the recommended option). With two or more, offer
   `/ahoy` to answer them together as one numbered list (`skill://toli-ahoy`). A question already raised this session
   and unchanged is counted ("2 questions still open"), not re-asked.
-- A project off its fixed branch needs Malik: say how to switch back (or that he may want to change the configured
+- A project off its fixed branch needs the user: say how to switch back (or that they may want to change the configured
   branch) and never switch it yourself.
 - This layout is also the while-you-were-away block (AGENTS.md section 1): after 30 or more minutes of silence from
-  Malik, lead the next reply with its first three lines (needs you, done, running).
-- In quiet mode (`state/quiet`), keep only what needs him, what finished, and failures.
+  the user, lead the next reply with its first three lines (needs you, done, running).
+- In quiet mode (`state/quiet`), keep only what needs them, what finished, and failures.
 
 ## Lavish page (`/bearings lavish`)
 
-When Malik passes `lavish`, or the digest is too large for chat (many projects or a full fleet), dispatch a jawan to
+When the user passes `lavish`, or the digest is too large for chat (many projects or a full fleet), dispatch a jawan to
 build a display page per `skill://toli-lavish`: one card per machine, a table of projects with git state, a backlog
 board (needs you / running / not started / done), and job results with links to `data/jobs/<name>/<stamp>.md`. The
-brief tells it to run `bin/toli digest --json --fleet` itself (or `--json` off the coordinator). Tell Malik the page
+brief tells it to run `bin/toli digest --json --fleet` itself (or `--json` off the coordinator). Tell the user the page
 is coming and end the turn.
 
 ## After reporting
 
-- Job results and inbox items stay in the digest until acknowledged. Once Malik has seen them in this overview, clear
+- Job results and inbox items stay in the digest until acknowledged. Once the user has seen them in this overview, clear
   them with the ack commands the digest's Next block gives ("Relay N new results ... then ..."), for example:
 
         bin/toli inbox ack --through <stamp>
@@ -68,4 +68,4 @@ is coming and end the turn.
 
     Each covers only the results that digest listed; one that arrived since stays unread and wakes you again.
 
-- Never start new work from the overview alone; wait for Malik's word.
+- Never start new work from the overview alone; wait for the user's word.

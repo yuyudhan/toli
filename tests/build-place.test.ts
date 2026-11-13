@@ -89,7 +89,7 @@ describe("build place guard", () => {
         const { box, log, outside } = placeBox();
         const blank = await start(box, [CARGO_SHIM, "build"], { TOLI_BUILD_PLACE_OVERRIDE: "  " }, outside).done;
         expect(blank.code).toBe(1);
-        const reason = "bisecting v0.1 in a scratch clone, Malik's word";
+        const reason = "bisecting v0.1 in a scratch clone, the user's word";
         const result = await start(box, [CARGO_SHIM, "build"], { TOLI_BUILD_PLACE_OVERRIDE: reason }, outside).done;
         expect(result.code).toBe(0);
         expect(result.stderr).toContain("building outside the clones");

@@ -4,12 +4,28 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.11 - unreleased
+
+### Added
+
+- **An `internal-names` guard keeps the public repository generic (T1399).** `just check`, CI and the `commit-msg`
+  hook fail on the name of a client, a machine, a person, a company email address or a private network host;
+  `just release` refuses a CHANGELOG section or tag message that holds one. The list is stored hashed
+  (`bun scripts/internal-names.ts hash <name>` adds one); `scripts/internal-names-allow.txt` allows the default
+  persona name. See docs/releasing.md "Release notes are generic".
+
+### Changed
+
+- AGENTS.md, the skills and the brief templates call the user "the user" (`<user>` where a phrase is quoted) and
+  take the name from `config/persona.json`, instead of spelling out the default name.
+- Docs, comments, tests and earlier CHANGELOG sections describe machines and projects generically.
+
 ## v0.5.10 - 2026-11-13
 
 ### Fixed
 
-- **`delegate` no longer says a refused delegation is queued (T1396).** A delegation the receiver refused (on
-  itlinux6, a title over 200 characters) printed the refusal and then `queued: <machine> is unreachable; the minute
+- **`delegate` no longer says a refused delegation is queued (T1396).** A delegation the receiver refused (on a
+  Linux worker, a title over 200 characters) printed the refusal and then `queued: <machine> is unreachable; the minute
 tick retries ... do not delegate it again`, though nothing was queued, so the lead never retried. A refusal now
   prints only `not sent: <machine> refused it: <reason> (kept in state/outbox/cancelled/)` and exits non-zero. A
   title over 191 characters or a delegation over 256 KiB (the receiver's limits) now fails before anything is sent
@@ -32,7 +48,7 @@ tick retries ... do not delegate it again`, though nothing was queued, so the le
 
 - **An interactive session left idle no longer blocks the headless lead forever (T1391).** While
   `state/session.json` named a live omp, the lead service skipped every headless turn and the tick left every due
-  job to that session, so an omp left open for two days on itlinux7 let wakes pile up and dispatched nothing. A live
+  job to that session, so an omp left open for two days on a Linux worker let wakes pile up and dispatched nothing. A live
   session now counts only while it reads its wakes: once an inbox item or job result has stayed unacknowledged for
   `lead.idleSessionMinutes` (config/machine.json, default 60), the service runs headless turns (taking what the
   idle session was shown but never acknowledged) and the tick runs due jobs headless. `bin/toli digest` and
@@ -78,7 +94,7 @@ tick retries ... do not delegate it again`, though nothing was queued, so the le
 
 ### Fixed
 
-- **A second interactive omp no longer unregisters the live lead (T1372).** On itlinux6 a jawan drove `omp` in tmux
+- **A second interactive omp no longer unregisters the live lead (T1372).** On a Linux worker a jawan drove `omp` in tmux
   from toli's root to sign in to an MCP server; its extension's `session start` replaced the lead's
   `state/session.json` and its exit removed it, so `lead status` said `interactive: none` while the lead ran and the
   lead service ran headless turns beside it (duplicate tasks, re-spawned jawans). `session start` now keeps a live
@@ -92,36 +108,36 @@ tick retries ... do not delegate it again`, though nothing was queued, so the le
 
 ### Upgrade note
 
-- Machines that refuse inbound connections (priyammac, Ujjwal's laptop): run `bin/toli init ... --inbound off` after
+- Machines that refuse inbound connections (a laptop behind a strict firewall): run `bin/toli init ... --inbound off` after
   upgrading, so the tick pulls and every peer queues for the pull instead of pushing (T1331).
 
 ### Fixed
 
-- **`fleet check` no longer fails on a pull-only machine that answers over HTTPS (T1331).** On m5 at 12:30Z it
-  exited 1 with "macOS-Ujjwal-MacBook-Pro takes no inbound ssh": the laptop, a paired peer, answered its status over
+- **`fleet check` no longer fails on a pull-only machine that answers over HTTPS (T1331).** On the coordinator it
+  exited 1 with `<laptop> takes no inbound ssh`: the laptop, a paired peer, answered its status over
   HTTPS, so `fleet status` counted it reachable, and the check then ssh-ed in for its backlog; the refusal stopped
   the stale and idle checks for every machine. Such a machine is now listed as `pull-only, not checked`, and any
   other ssh refusal is one machine's note, never the whole check's failure.
 - **A machine that takes no inbound ssh pulls once it is set up so (T1331).** Its tick pulled only when its own entry
   in its copy of `config/fleet.json` said `"inbound": false`, a flag that reaches it only through the list, which a
-  coordinator that takes no inbound ssh never sends first: Ujjwal's laptop never pulled, and 146 items waited for it
-  on m5 and macminim4. `bin/toli init ... --inbound off` now writes the flag to its `config/machine.json`, either
+  coordinator that takes no inbound ssh never sends first: a laptop never pulled, and 146 items waited for it
+  on two other machines. `bin/toli init ... --inbound off` now writes the flag to its `config/machine.json`, either
   place makes the tick pull, and each pull carries the flag to the machine pulled from. Setup asks whether others can
   ssh in; `bin/toli doctor` warns (`pull`) on a pull-only machine that has never pulled, and on a sender (`outbox`)
   names a puller that has never asked it for its items, or hints at marking a machine its ssh items pile up for.
-- **A peer that takes no inbound connection only pulls, and is never pushed to (T1331).** priyammac pairs out, but
+- **A peer that takes no inbound connection only pulls, and is never pushed to (T1331).** A laptop pairs out, but
   its firewall resets every inbound connection, so every HTTPS push to it failed. A pull-only machine now also pulls
   from its peers over HTTPS, its pull says it takes no inbound connection, and each peer records that and queues for
   its pull instead of trying to connect.
-- **`bin/toli doctor` never hangs (T1339).** On itlinux11 (Bun 1.4.4) it printed every check, then never exited:
-  the peer client's connection probe only half-closed its socket, and to priyammac, whose firewall drops the reset,
+- **`bin/toli doctor` never hangs (T1339).** On a Linux worker (Bun 1.4.4) it printed every check, then never exited:
+  the peer client's connection probe only half-closed its socket, and to a laptop whose firewall drops the reset,
   that socket sat in FIN-WAIT-2 and kept the process alive until it was killed at 900 s. The probe now closes its
   socket fully, and each doctor section runs in its own worker under a time limit (60 s, the fleet 150 s): one that
   never finishes prints `warn <section> timed out after N s` and the rest still run. Lines print as each section ends.
 
 ### Added
 
-- **Relay for two peers that both refuse inbound connections (T1331).** m5 and Ujjwal's laptop can now exchange
+- **Relay for two peers that both refuse inbound connections (T1331).** Two laptops can now exchange
   messages through a peer both reach: `bin/toli peer trust <other> --key <its key> --via <relay>` on each side, then
   each item goes to the relay sealed for the recipient (X25519, HKDF-SHA256, AES-256-GCM) and signed by its sender,
   the recipient pulls it there and applies it as a message from that sender, and its signed receipt comes back the
@@ -139,8 +155,8 @@ tick retries ... do not delegate it again`, though nothing was queued, so the le
   lead now checks the listener every 5 seconds on its own timer, asks one still running a replaced runtime to stop
   over the control socket and starts the new one at once, and always starts it from the active runtime. Doctor warns
   (`peer-listener`) and the hourly `fleet check` names every machine whose configured listener is down.
-- **A pre-push hook's cargo runs at its build slot's share (T1322).** On itlinux3 a plain `git push`'s hook
-  (VelocityFSS's `just verify push`) ran `cargo test` with 12 rustc at once against a share of 6, with swap full: a
+- **A pre-push hook's cargo runs at its build slot's share (T1322).** On a Linux worker a plain `git push`'s hook
+  (a project's `just verify push`) ran `cargo test` with 12 rustc at once against a share of 6, with swap full: a
   jawan's environment capped `CARGO_BUILD_JOBS` but not the test threads, so rustdoc compiled the doctests one rustc
   per core, and a cargo with nothing left to compile never called toli's rustc wrapper (cargo caches its `rustc -vV`
   probe), so it ran outside any slot. Jawans and lead sessions now get `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS`
@@ -152,7 +168,7 @@ tick retries ... do not delegate it again`, though nothing was queued, so the le
 ### Fixed
 
 - The disk keeper frees the build output finished no-mistakes runs leave in their worktrees (a compose stack's
-  root-owned `docker-data/backend/target`, about 20 GB a run; itlinux4 reached 96% with 130 GB of it). no-mistakes'
+  root-owned `docker-data/backend/target`, about 20 GB a run; one worker reached 96% with 130 GB of it). no-mistakes'
   own state (`$NM_HOME/state.sqlite`, default `~/.no-mistakes`) says which runs are finished; a running, unrecorded
   or unreadable one keeps its output at every step, and nothing outside `$NM_HOME/worktrees/` is touched (T1297).
   Root-owned files go through a throwaway `docker run --rm` container, never sudo. `disk keep --dry-run` and the
@@ -204,7 +220,7 @@ tick retries ... do not delegate it again`, though nothing was queued, so the le
   eight instead of 4-character groups that Sardars relayed as the code. Display only; the protocol is unchanged.
 - The disk keeper never deletes a build folder a running container mounts, at any disk level including the last
   resort: a bind mount's folder, a volume's mountpoint, or the folder a compose stack's volume hangs on inside its
-  bind (itlinux3's `apps/backend/target`, deleted 3 times under live dev containers, which broke the backend) (T1256).
+  bind (a project's `apps/backend/target`, deleted 3 times under live dev containers, which broke the backend) (T1256).
 - `bin/toli commit --merge` no longer prints an error after a successful commit when the merge deletes a file: the
   post-commit checkout skips a deleted file the `git merge` in progress already removed (T1257).
 - A jawan killed by systemd-oomd, the kernel OOM killer or a signal now records an outcome that names the cause
@@ -309,8 +325,8 @@ Peer messaging over HTTPS: see v0.5.0-rc.1 and v0.5.0-rc.2 below, which this rel
   per installation, mode 0600, never committed; a symlinked, foreign or group/other-readable key is refused). A
   project's pre-push hook skips its own run only when `bin/toli gate check` verifies that proof for an identical clean
   tree; edited, copied or invented records, `TOLI_GATE_*` variables and dirty checkouts never skip it. Records from
-  before (keyed by commit, unsealed) are not reused; each gate runs once more. See docs/delivery.md "Gates" (T1241,
-  from itlinux10).
+  before (keyed by commit, unsealed) are not reused; each gate runs once more. See docs/delivery.md "Gates"
+  (T1241).
 
 ## v0.4.5 - 2026-11-12
 
@@ -450,7 +466,7 @@ Peer messaging over HTTPS: see v0.5.0-rc.1 and v0.5.0-rc.2 below, which this rel
   next pass. A host the tick cannot reach is backed off across ticks (`state/reach.json`: 30 s, doubling, at most 10
   minutes; a hand-run `outbox pull` still tries it). `fleet export` resolves every ssh name at once instead of one
   after another. Passes never overlap (a lock), and a tick waiting on a long job run moves messages every minute
-  meanwhile (launchd and systemd start no tick while one runs) (docs/fleet.md#unreachable-machines). m5's tick with
+  meanwhile (launchd and systemd start no tick while one runs) (docs/fleet.md#unreachable-machines). A coordinator's tick with
   three machines down: about 3 minutes before, 7-17 s after.
 - An async call (`runAsync`) no longer hangs after its program exits or is killed while something else holds its
   output open, as a shared ssh connection's master does for a client it served on a stalled link: output still open
@@ -684,7 +700,7 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
   files), not the working tree, which lacks the crates a merge adds until it is committed (T617).
 - `bin/toli commit` runs the project's `commit-msg` hook (`core.hooksPath` honoured) on toli's private index and
   refuses the commit when it rejects the message; a message the hook edits is committed as edited. Commits no longer
-  skip message rules such as VelocityFSS's `Quality-change:` line. Pre-commit hooks stay skipped.
+  skip message rules such as a project's `Quality-change:` line. Pre-commit hooks stay skipped.
 - `bin/toli commit --merge` takes a named, regenerated Cargo.lock or bun.lock when the clean merge leaves the lock
   stale (each side's text merged but missed entries both sides need); the named lock still goes through the lock
   checks (T650).
@@ -729,8 +745,8 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
 ### Fixed
 
 - The disk keeper also never wipes a target while a cargo process runs in its workspace (`cargo test` between two
-  test binaries), and a keeper waiting on a busy target re-reads `state/disk-keep.pause` before every try (from
-  macminim4, merged with the process scan below).
+  test binaries), and a keeper waiting on a busy target re-reads `state/disk-keep.pause` before every try (merged
+  with the process scan below).
 - The SessionStart hook test clears `TOLI_ROLE` and `NO_MISTAKES_GATE` itself, so it passes when run inside a jawan.
 - The disk keeper's process scan fails safe: a process of this user that lsof leaves out (common under load while it
   is exec'ing, such as a test binary cargo just started) is rechecked, read from `ps` (its program path), and otherwise
@@ -923,7 +939,7 @@ run|attach` keeps its lead conversation served by a launchd agent, systemd user 
 - Memory with a token budget, dated entries, staleness checks and archive (`memory`, `prune`), plus `migrate` for
   older layouts.
 - Private per-machine helpers in `local/` (`helper install|run|status`) that are never committed.
-- Persona names from `config/persona.json` (defaults Malik, Sardar, jawan).
+- Persona names from `config/persona.json` (defaults in `src/core/persona.ts`: the user, Sardar, jawan).
 - `doctor`, `digest`, `wake`, `inbox` and `runs` for status at a glance.
 - Repo quality: Biome, Prettier, Taplo, shfmt, shellcheck, actionlint, guards, git hooks, gitleaks and CI.
 - `install.sh` one-line installer, `bin/toli version|upgrade`, and `just release` for tagged releases.

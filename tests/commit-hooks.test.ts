@@ -18,7 +18,7 @@ function commitMsgHook(dir: string, hooksDir: string, body: string): void {
 describe("bin/toli commit runs the project's commit-msg hook", () => {
     test("on the private index: a rejection refuses the commit with the hook's output", () => {
         const dir = repo({ "guard.txt": "limit 1\n", "b.txt": "b\n" });
-        // Like VelocityFSS's guard hook: a change to guard.txt needs a Quality-change: line. It reads the staged set,
+        // Like a client project's guard hook: a change to guard.txt needs a Quality-change: line. It reads the staged set,
         // so it must see toli's private index (only the named path), not the shared one.
         commitMsgHook(
             dir,

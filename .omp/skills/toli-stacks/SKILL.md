@@ -1,6 +1,6 @@
 ---
 name: toli-stacks
-description: Start and stop a project's local stack as background services using only the commands declared in its notes file's `## Local stack` section, and route migrations, logs, health checks, and stack failures to jawans. Use when Malik asks to bring a project's services up or down, restart them, run its migrations, check its logs or health, or when jawan evidence needs the stack running.
+description: Start and stop a project's local stack as background services using only the commands declared in its notes file's `## Local stack` section, and route migrations, logs, health checks, and stack failures to jawans. Use when the user asks to bring a project's services up or down, restart them, run its migrations, check its logs or health, or when jawan evidence needs the stack running.
 ---
 
 # Local stacks
@@ -12,7 +12,7 @@ through `skill://toli-dispatch`. A project without that section has no exception
 
 ## What the section looks like
 
-Malik's notes file declares the stack; Sardar only reads it. Typical shape:
+The user's notes file declares the stack; Sardar only reads it. Typical shape:
 
     ## Local stack
     - Directory: <path relative to the project root, or "root">
@@ -33,21 +33,21 @@ Any key may be missing. A missing key means nobody has permission for that actio
   similar command because the declared one fails.
 - Always as a named `bash` service with a short `ready` check (log regex or port), named `<project>-<action>`, so it
   never blocks the chat. Never `nohup`, `&`, or `disown`. A one-shot `Stop` runs as `bash` with `async: true`.
-- If it is not ready in time, or a command fails: do not dig into it. Tell Malik in one line and, on his word or when
-  a task needs the stack, dispatch a jawan to triage.
-- Stopping: stop only what Sardar started or what Malik asked to stop, with the declared `Stop` command.
+- If it is not ready in time, or a command fails: do not dig into it. Tell the user in one line and, on their word or
+  when a task needs the stack, dispatch a jawan to triage.
+- Stopping: stop only what Sardar started or what the user asked to stop, with the declared `Stop` command.
 
 ## What jawans do
 
 Brief a jawan (`sonic` for a plain migrate/health/logs run, `task` for triage) with the declared commands quoted:
 
 - Migrations: only the declared `Migrate` command. Anything that drops, resets, wipes, or reseeds data is not a
-  migration; it goes to Malik first even if a declared command would do it.
+  migration; it goes to the user first even if a declared command would do it.
 - Health: request the declared URL (`curl -sS -o /dev/null -w '%{http_code}' <url>` or a headless browser) and compare
   with the declared expectation.
 - Logs: read the declared log command or file, report the relevant lines, and never print secrets, tokens, or
   credentials found there (redact them).
-- Never change the project's code, config, `.env` files, containers, or data to make the stack work unless Malik
+- Never change the project's code, config, `.env` files, containers, or data to make the stack work unless the user
   asked for that fix. A failing command is a finding: report it with the output.
 
 Jawan briefs for other tasks may also tell jawans to use the same declared commands for their evidence (logs

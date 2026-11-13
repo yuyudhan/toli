@@ -1,41 +1,41 @@
 ---
 name: toli-dispatch
-description: Turn a request from Malik into dispatched jawan work - resolve the project, record the task, write the brief, spawn background jawans, dispatch an independent verifier that lands the work, and relay the outcome. Use whenever Malik asks for any change, fix, feature, or investigation in a registered project.
+description: Turn a request from the user into dispatched jawan work - resolve the project, record the task, write the brief, spawn background jawans, dispatch an independent verifier that lands the work, and relay the outcome. Use whenever the user asks for any change, fix, feature, or investigation in a registered project.
 ---
 
 # Dispatching work
 
 Sardar never does any work itself, however small. Every change, investigation, evidence check, commit, and report is
 done by jawans (background subagents; on omp, `task` subagents). Sardar's job is intake, briefing, bookkeeping,
-gatekeeping Malik's approvals, and relaying results, and staying free to talk to Malik the whole time.
+gatekeeping the user's approvals, and relaying results, and staying free to talk to the user the whole time.
 
 ## 1. Intake
 
 - Record first: every request that implies work becomes a task in this same turn (step 4's `bin/toli task add`),
-  even small ones and asides given mid-conversation. Nothing Malik asked for may live only in the chat. When you
+  even small ones and asides given mid-conversation. Nothing the user asked for may live only in the chat. When you
   dispatch, record the jawan on the task: `bin/toli task start T<n> --agent <id>` (`bin/toli spawn --task` does it).
-- Keep Malik's exact words. They go verbatim into the brief and, later, into any no-mistakes `--intent`.
-- Decide the shape: **ship** (change code, commit) or **scout** (read-only, report). If Malik asks "why", "find",
-  "check", "how does", it is scout; if he asks to fix, add, change, or build, it is ship. Scout mechanics live in
+- Keep the user's exact words. They go verbatim into the brief and, later, into any no-mistakes `--intent`.
+- Decide the shape: **ship** (change code, commit) or **scout** (read-only, report). If the user asks "why", "find",
+  "check", "how does", it is scout; if they ask to fix, add, change, or build, it is ship. Scout mechanics live in
   `skill://toli-scout`.
-- Acknowledge briefly ("Ji Malik") and move on; do not restate the request back at length.
+- Acknowledge briefly ("Ji <user>") and move on; do not restate the request back at length.
 - Never "just take a quick look" yourself. A request that needs any reading of project code is a scout task.
 
 ## 2. Resolve the project
 
-1. An explicit project name from Malik always wins.
+1. An explicit project name from the user always wins.
 2. Otherwise infer from `bin/toli project list --json` and `data/projects/<project>/notes.md` (stack, paths, vocabulary).
-3. If two or more projects remain plausible, ask Malik one concise question naming the candidates. Never guess on
+3. If two or more projects remain plausible, ask the user one concise question naming the candidates. Never guess on
    ship work.
 4. Unknown project: offer `/add-project` (`skill://toli-projects`).
 5. Note the project's fixed working branch and workspace strategy: `branch` and `workspace` in
    `bin/toli project list --json` (absent or null branch means the current branch). Every brief names them, and
    jawans stay on their branch. If a same-branch clone is on a different branch (`bin/toli digest` flags the
-   mismatch), do not switch it yourself: tell Malik and ask how to proceed.
+   mismatch), do not switch it yourself: tell the user and ask how to proceed.
 
 ## 3. Choose the machine
 
-Malik has several machines and wants them all used. Each machine has its own Sardar that dispatches only its own
+The user has several machines and wants them all used. Each machine has its own Sardar that dispatches only its own
 jawans (docs/sardars.md); you dispatch only here and hand work for another machine to its Sardar. Queues steer where
 work goes, never CPU, load or memory; there is no locking between jawans.
 
@@ -50,28 +50,28 @@ work goes, never CPU, load or memory; there is no locking between jawans.
   to that machine's Sardar:
 
         bin/toli delegate <machine> "<short title>" --brief data/projects/<project>/briefs/T<n>.md \
-          --project <project> --for T<n> --shape ship|scout [--tier <tier>] --note "<Malik's words>"
+          --project <project> --for T<n> --shape ship|scout [--tier <tier>] --note "<the user's words>"
 
     It adds the task to that machine's backlog, wakes its Sardar (who clones the project if needed and dispatches
     its own jawans) and prints the fleet id `<machine>/T<n>`; `--for` marks your local task as active with that id.
-    Unreachable machines get it from `state/outbox/` once they answer. Tell Malik in one line where it went and end
+    Unreachable machines get it from `state/outbox/` once they answer. Tell the user in one line where it went and end
     the turn.
 
 - Several independent tasks (a toli): spread them by delegating to the shortest queues (`bin/toli fleet queues`,
   run async) instead of stacking them on one machine.
 - `pick` exits 2 only when no machine is reachable or qualifies (each machine's reason is printed): queue it with
-  `bin/toli task add ...` (leave it queued) and tell Malik why.
+  `bin/toli task add ...` (leave it queued) and tell the user why.
 
 Work also arrives from other Sardars: a `delegated T<n> from <machine>` wake is a task of ours; dispatch it like any
 other (its brief is already saved). Results and holds of tasks you delegated come back as wakes
-(`<machine>/T<n> done|held|dropped: ...`): relay them, and record Malik's answer to a delegated hold with
-`bin/toli task answer <machine>/T<n> "<his words>"`, which goes to the owning machine.
+(`<machine>/T<n> done|held|dropped: ...`): relay them, and record the user's answer to a delegated hold with
+`bin/toli task answer <machine>/T<n> "<their words>"`, which goes to the owning machine.
 
 ## 4. Record and brief
 
-    bin/toli task add <project> "<short title>" --shape ship|scout --note "<Malik's words>"
+    bin/toli task add <project> "<short title>" --shape ship|scout --note "<the user's words>"
 
-This prints the task id `T<n>`. Fill in `docs/brief-template.md` for the task: Malik's intent verbatim, the goal
+This prints the task id `T<n>`. Fill in `docs/brief-template.md` for the task: the user's intent verbatim, the goal
 (below), project path (`bin/toli project path <project>`), the notes file, the fixed branch (step 2), spec,
 acceptance evidence, out of scope, the rules block unchanged, and the Landing section (keep exactly one option).
 Every brief keeps `TOLI_BRIEF v1` as its exact first line; AGENTS.md uses that line to tell jawans apart from Sardar,
@@ -129,7 +129,7 @@ Build the acceptance lines from the notes file:
 Landing (the brief's Landing section):
 
 - Ship, default: "verified by a second jawan". The implementer self-verifies and reports without committing.
-- Ship, land yourself: only when Malik waived review for this work, or the change is docs/config only.
+- Ship, land yourself: only when the user waived review for this work, or the change is docs/config only.
 - Scout: the jawan writes `data/projects/<project>/reports/T<n>.md` and closes the task itself.
 
 If the stack must be running for the evidence and the notes declare `## Local stack`, tell jawans in the Spec to use
@@ -160,13 +160,13 @@ Every jawan brief keeps the rule: never send signals (STOP, CONT, TERM, KILL, ..
 the lead, or any process you did not start yourself; to pause, stop starting new steps. Native subagents run inside
 the lead's own process, so a signal to it freezes Sardar and every other jawan.
 
-Ship work on a `branch-per-task` or `worktree-per-task` project (opt-in strategies Malik chose for that project)
+Ship work on a `branch-per-task` or `worktree-per-task` project (opt-in strategies the user chose for that project)
 runs on the task's own branch, prepared before the
 jawan starts. `bin/toli spawn --task T<n>` does it itself (switches the clone to `toli/T<n>-<slug>`, or adds the
 worktree `projects/.worktrees/<project>/T<n>`), runs the jawan there, and appends the path and branch to the brief.
 For a native subagent, run `bin/toli workspace prepare T<n>` first (fast bookkeeping) and put the path and branch
 it prints into the brief's Project section. Branch-per-task refuses while another live task holds the clone on a
-different branch: tell Malik, and either wait for that task or offer `same-branch` for the project. The
+different branch: tell the user, and either wait for that task or offer `same-branch` for the project. The
 verifier reuses the same workspace (`spawn --task T<n> --work verify`, or the path from `bin/toli task list --json`).
 Scouts read the plain clone. Finished worktrees are cleaned with `bin/toli workspace prune` (a jawan runs it);
 it keeps live ones and any holding unlanded work (dirty files or commits not on the base), with no flag to override.
@@ -188,8 +188,8 @@ Two ways to start a background jawan, both non-blocking:
     It returns a run id at once; without `--harness` it uses `harness` in `config/machine.json` (default omp, per-work
     overrides), and the model of the work's tier (`--tier` or a `Tier:` line overrides). Its outcome arrives as a
     `[toli wake]` message like any inbox item. `bin/toli runs` lists runs with their model;
-    `bin/toli run status|log|kill <id>`; never poll them while Malik may talk. A missing CLI fails at once with its
-    install command: tell Malik, or pick another harness. Details: `docs/harnesses.md`.
+    `bin/toli run status|log|kill <id>`; never poll them while the user may talk. A missing CLI fails at once with its
+    install command: tell the user, or pick another harness. Details: `docs/harnesses.md`.
 
 ### Which agent (omp `task` tool)
 
@@ -210,12 +210,13 @@ for UI/CLI/API checks. On Claude Code use the general-purpose agent; on `bin/tol
 - Several jawans on the same project in parallel are allowed, even in the same files. Give each its own task id.
 - The brief is the whole context; jawans cannot see this conversation.
 
-**The async rule.** Every spawn is a background job: the call returns at once. Then reply to Malik in one or two
-lines ("Ji Malik, T12 is with a jawan; I'll tell you when it lands.") and end the turn. Never call `wait`, and never
-poll `proc://` or `agent://` while Malik may talk. Results arrive by themselves as new turns. If Malik changes his
-mind about a running jawan, steer it with `write agent://<id>`; do not kill and re-spawn it. `bin/toli spawn --task
-T<n>` refuses while T<n> has a live run and names it; `--replace` stops that run (as `run kill` does) and starts the
-new one, only when the running jawan cannot be steered (wrong harness, model or brief beyond repair).
+**The async rule.** Every spawn is a background job: the call returns at once. Then reply to the user in one or two
+lines ("Ji <user>, T12 is with a jawan; I'll tell you when it lands.") and end the turn. Never call `wait`, and never
+poll `proc://` or `agent://` while the user may talk. Results arrive by themselves as new turns. If the user changes
+their mind about a running jawan, steer it with `write agent://<id>`; do not kill and re-spawn it.
+`bin/toli spawn --task T<n>` refuses while T<n> has a live run and names it; `--replace` stops that run (as `run kill`
+does) and starts the new one, only when the running jawan cannot be steered (wrong harness, model or brief beyond
+repair).
 
 ## 6. Independent verification (ship work)
 
@@ -237,24 +238,24 @@ needs`; if the hold lacks options or a recommendation the answer needs, re-hold 
   it as AGENTS.md section 2 "Needs you" says (batched with any other open questions, never one by one across turns),
   record the reply verbatim with `bin/toli task answer T<n> "<answer>"`, and dispatch the unblocked task in the same
   turn (`skill://toli-ahoy`).
-- Decide, then tell (you and every jawan): when the recommended option follows Malik's earlier words (brief, notes,
+- Decide, then tell (you and every jawan): when the recommended option follows the user's earlier words (brief, notes,
   decisions) and is reversible, take it without holding and report it as `decided: <X>, reversible by <Y>`. Hold
-  only for new scope or behaviour that contradicts his words, destructive or irreversible steps, security-sensitive
+  only for new scope or behaviour that contradicts their words, destructive or irreversible steps, security-sensitive
   changes, money, and push to main, MRs/PRs, merges, tags or releases. A reversible hold is marked `--reversible`
-  (toli refuses the mark on those kinds); it waits for him like any other unless the installation applies the
+  (toli refuses the mark on those kinds); it waits for them like any other unless the installation applies the
   recommendation after a timeout.
 - A jawan that died without a result (session ended, crash): check `bin/toli task list --json`; re-dispatch the task
   with the same brief.
 
 ## 7. Delivery beyond a commit
 
-Default delivery for `same-branch` projects (Malik's standing choice) is the commit the verifier (or the
+Default delivery for `same-branch` projects (the user's standing choice) is the commit the verifier (or the
 land-yourself implementer) made on the working branch, never pushed. `bin/toli commit` refuses when the clone is not
-on the project's fixed branch; never switch branches to get past it, ask Malik. Per-task projects land through a
+on the project's fixed branch; never switch branches to get past it, ask the user. Per-task projects land through a
 pushed task branch and PR/MR. Pushing, PRs, standing grants, other delivery modes (pr, no-mistakes), and branching
-are in `skill://toli-deliver`; releases are in `skill://toli-release`, only on Malik's word.
+are in `skill://toli-deliver`; releases are in `skill://toli-release`, only on the user's word.
 
-## 8. Report to Malik
+## 8. Report to the user
 
 When the verdict arrives: outcome first, in plain words: what changed, which project, commit sha, what evidence
 passed (from the verifier's report). No internal jargon (brief, tick, digest). Full URLs if any PR exists.

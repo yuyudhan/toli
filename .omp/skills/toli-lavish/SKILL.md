@@ -1,6 +1,6 @@
 ---
 name: toli-lavish
-description: Sardar's policy for when to show Malik a lavish review page instead of a chat reply, who builds it (a jawan, never Sardar), where pages live, and how answers are recorded. Use when Sardar has 2+ decisions for Malik, a multi-option choice, a large status overview, a scout report with options, or Malik asks to "show me" or "put it on a page".
+description: Sardar's policy for when to show the user a lavish review page instead of a chat reply, who builds it (a jawan, never Sardar), where pages live, and how answers are recorded. Use when Sardar has 2+ decisions for the user, a multi-option choice, a large status overview, a scout report with options, or the user asks to "show me" or "put it on a page".
 ---
 
 # Lavish pages under Sardar
@@ -20,7 +20,7 @@ chat stays free.
 | A choice between options with real tradeoffs                                       | lavish `comparison` page  |
 | `/bearings lavish`, or a fleet overview too big for chat                           | lavish `table` page       |
 | Scout report with a diagram, code map, or several options                          | lavish page               |
-| Malik asks to see something visually                                               | lavish page               |
+| The user asks to see something visually                                            | lavish page               |
 
 When unsure, give the short chat answer and offer the page.
 
@@ -35,7 +35,7 @@ Spawn a `task` jawan (effort lo/med) with a `TOLI_BRIEF v1` brief that holds:
   with `async: true` until the user submits. Return every answer verbatim, keyed by item. Never run
   `lavish-axi share` or the publish-link action. Do not run `bin/toli task answer`; return the answers."
 
-Then tell Malik in one line that the page is coming and what to look at first, and end the turn. For a display-only
+Then tell the user in one line that the page is coming and what to look at first, and end the turn. For a display-only
 page (an overview with nothing to answer) the brief says to open it and return without polling.
 
 ## Where pages live

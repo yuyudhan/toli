@@ -15,7 +15,7 @@
 // `toli-build-<slot>-<pid>.scope` with a `MemoryMax`, a `MemoryHigh` below it and no swap, so an OOM kill takes the
 // build and not the session that ran it. Without `MemorySwapMax=0` a build at its cap pushes the rest of its memory
 // into swap instead; once the machine's swap fills, systemd-oomd kills the biggest swap user (the whole build) and
-// the cap never held anything (itlinux8, 2026-11-13: MemoryMax set, the scope's 140 processes killed by oomd).
+// the cap never held anything (2026-11-13: MemoryMax set, the scope's 140 processes killed by oomd).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { platform } from "../core/util.ts";

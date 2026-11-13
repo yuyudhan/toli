@@ -14,6 +14,18 @@ temporary bare repository, tags it with package.json's version if needed, and ru
 - `package.json` `version` is the version of the tree; `CHANGELOG.md` has one section per release, newest first.
 - Patch: fixes. Minor: new commands or behaviour. Major: a change that needs users to act (layout, contract).
 
+## Release notes are generic
+
+The repository, its CHANGELOG, tag messages and GitHub Releases are public. Write every CHANGELOG section, commit
+message and release note generically: "a Linux worker", "a laptop behind a strict firewall", "a project with a live
+dev stack", "the user". Never name a client, a client's project, a machine, a person, a company email address, a
+private network address or host, or a ticket key from another tracker. The `internal-names` guard
+(`scripts/internal-names.ts`, run by `just check` and CI over tracked files, and by `.githooks/commit-msg` over commit
+messages) fails on such names; `just release` refuses a CHANGELOG section that holds one before it commits, and
+refuses a tag message that holds one before it publishes the GitHub Release. Add a new internal name with
+`bun scripts/internal-names.ts hash <name>` (the list is stored hashed); allow a needed occurrence (the default
+persona name, an open-source credit) in `scripts/internal-names-allow.txt`.
+
 ## Cutting a release
 
 Feature work lands on `develop` ([development.md](development.md)); `main` moves only here. Releases happen only on

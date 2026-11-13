@@ -101,35 +101,35 @@ describe("which docker volumes hold idle build output", () => {
             "Images space usage:",
             "",
             "REPOSITORY   TAG   IMAGE ID   CREATED   SIZE   SHARED SIZE   UNIQUE SIZE   CONTAINERS",
-            "kalki        dev   0123abcd   2 days    1.2GB  0B            1.2GB         1",
+            "demo         dev   0123abcd   2 days    1.2GB  0B            1.2GB         1",
             "",
             "Local Volumes space usage:",
             "",
             "VOLUME NAME            LINKS     SIZE",
-            "kalki_backend_target   0         23.1GB",
+            "demo_backend_target    0         23.1GB",
             "x_pgdata               1         512MB",
             "",
             "Build cache usage: 0B",
         ].join("\n");
         const sizes = parseVolumeSizes(df);
-        expect([...sizes.keys()]).toEqual(["kalki_backend_target", "x_pgdata"]);
-        expect(sizes.get("kalki_backend_target")).toBeCloseTo(23.1e9 / 1024 ** 3, 6);
+        expect([...sizes.keys()]).toEqual(["demo_backend_target", "x_pgdata"]);
+        expect(sizes.get("demo_backend_target")).toBeCloseTo(23.1e9 / 1024 ** 3, 6);
         expect(parseVolumeSizes("Total reclaimed space: 0B").size).toBe(0);
         const inspected = JSON.stringify([
             {
                 Id: "c1",
                 Name: "/stack-backend-1",
                 State: { Status: "exited" },
-                Config: { Image: "kalki-backend:dev" },
+                Config: { Image: "demo-backend:dev" },
                 Mounts: [
-                    { Type: "volume", Name: "kalki_backend_target", Destination: "/app/target" },
+                    { Type: "volume", Name: "demo_backend_target", Destination: "/app/target" },
                     { Type: "bind", Source: "/home/me/app", Destination: "/app" },
                 ],
             },
         ]);
-        const backend = container("stack-backend-1", "exited", ["kalki_backend_target", "/app/target"]);
+        const backend = container("stack-backend-1", "exited", ["demo_backend_target", "/app/target"]);
         backend.mounts.push({ type: "bind", volume: "/home/me/app", source: "/home/me/app", destination: "/app" });
-        expect(parseContainers(inspected)).toEqual([{ ...backend, id: "c1", image: "kalki-backend:dev" }]);
+        expect(parseContainers(inspected)).toEqual([{ ...backend, id: "c1", image: "demo-backend:dev" }]);
         expect(parseContainers("Total reclaimed space: 0B")).toBeNull();
         expect(parseContainers('[{"Name":"/no-id"}]')).toBeNull();
     });

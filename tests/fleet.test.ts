@@ -142,7 +142,7 @@ describe("run records", () => {
         const jawans = join(box.root, "state", "jawans");
         box.stub("omp", `grep -h '"status"' "${jawans}"/*.json; echo "said ok"`);
         const result = box.toli(["exec", "--from", "m1", "--task", "T4"], {
-            env: { ...ENV, TOLI_EXEC_PROJECT: "kalki" },
+            env: { ...ENV, TOLI_EXEC_PROJECT: "acme" },
             stdin: "[toli remote from m1 to m2]\nheader\n\nreply ok\n",
         });
         expect(result.code).toBe(0);
@@ -159,9 +159,9 @@ describe("run records", () => {
         }[];
         expect(runs).toHaveLength(1);
         const [done] = runs;
-        expect(done).toMatchObject({ status: "done", task: "T4", project: "kalki", harness: "omp", exitCode: 0 });
+        expect(done).toMatchObject({ status: "done", task: "T4", project: "acme", harness: "omp", exitCode: 0 });
         expect(done?.endedAt).not.toBeNull();
-        expect(done?.logPath).toContain(join("data", "projects", "kalki", "runs"));
+        expect(done?.logPath).toContain(join("data", "projects", "acme", "runs"));
         expect(readFileSync(done?.logPath ?? "", "utf8")).toContain("said ok");
         expect(box.ok(["runs", "--active"])).toBe("no active jawan runs");
 
@@ -189,7 +189,7 @@ describe("run records", () => {
         const box = fleet(remoteSnapshot("m2"));
         for (const flags of [
             ["--task", "T118"],
-            ["--project", "kalki"],
+            ["--project", "acme"],
             ["--max-time", "5"],
             ["--max-time", "soon"],
         ]) {

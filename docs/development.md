@@ -163,7 +163,9 @@ Plain `just` lists the recipes; each wraps the matching `bun run` script. `.vsco
 extensions with format-on-save.
 
 The guards (`scripts/guard/*.ts`) cover AI attribution, CLI docs, stray `console.log`, file size, focused tests,
-Markdown links, whitespace, and Mermaid: every ` ```mermaid ` block in tracked Markdown must parse with the `mermaid`
+internal names (a client, a machine or a person never named in this public repository; see
+[releasing.md](releasing.md#release-notes-are-generic)), Markdown links, whitespace, and Mermaid: every ` ```mermaid `
+block in tracked Markdown must parse with the `mermaid`
 version pinned in `package.json`, which is the one GitHub renders with (GitHub shows only a spinner for a block it
 cannot parse). When GitHub moves to a new Mermaid, bump the pin to match.
 
@@ -188,8 +190,8 @@ gitleaks itself, and `just check` runs the formatters, lint and guards before it
 - **pre-commit**: gitleaks over the staged changes, then `scripts/format.ts` formats the staged files of every type
   above and re-stages the ones it changed (so unstaged hunks in a reformatted file get committed too;
   `git stash push --keep-index` first for a partial commit), then the guards over the staged files.
-- **commit-msg**: subject of at most 72 characters with no trailing period, a blank line before the body, and no AI
-  co-author or Generated-by trailers.
+- **commit-msg**: subject of at most 72 characters with no trailing period, a blank line before the body, no AI
+  co-author or Generated-by trailers, and no internal names.
 - **pre-push**: gitleaks over the pushed commits, then `bun run check`
   ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)): skipped when the pushed commit's tree already
   passed as a `bin/toli gate`; run as that gate (and recorded) when the checkout is exactly the pushed commit; otherwise

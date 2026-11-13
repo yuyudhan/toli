@@ -1,0 +1,13 @@
+# Allowed occurrences for scripts/guard/internal-names.ts: "<path> <fragment>", the fragment verbatim to the end of
+# the line. The fragment is cut out of that file's lines before they are scanned, so anything else on the line is
+# still checked. An entry whose fragment no longer appears in its file fails the guard: delete it then.
+#
+# The default persona user name (src/core/persona.ts), its tests, and the legacy preferences file named after it.
+src/core/persona.ts user: "Malik"
+tests/persona.test.ts user: "Malik"
+tests/persona.test.ts the user is "Malik"
+src/records/migrate.ts malik.md
+tests/migrate.test.ts malik.md
+# Credit to the public open-source project toli is inspired by.
+README.md [firstmate](https://github.com/kunchenguid/firstmate)
+README.md no firstmate code

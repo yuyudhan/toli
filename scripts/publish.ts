@@ -38,6 +38,7 @@ import {
     RELEASE_BRANCH,
     releaseBranchProblem,
 } from "../src/release/release.ts";
+import { internalNameHits } from "./internal-names.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const CHANGELOG_INTRO = "# Changelog\n";
@@ -45,6 +46,14 @@ const CHANGELOG_INTRO = "# Changelog\n";
 class ReleaseError extends Error {}
 
 const say = (line: string) => process.stdout.write(`${line}\n`);
+
+/** Release notes are public and generic: refuse any that name an internal client, machine or person. */
+function refuseInternalNames(what: string, notes: string): void {
+    const hits = internalNameHits(notes);
+    if (hits.length === 0) return;
+    const lines = hits.map(({ line, names }) => `  line ${line}: ${names.join(", ")}`).join("\n");
+    throw new ReleaseError(`${what} names internal clients, machines or people; make it generic first:\n${lines}`);
+}
 
 /** Run a command and return trimmed stdout; any failure aborts the release with the command's own message. */
 function capture(cwd: string, cmd: string[]): string {
@@ -161,6 +170,7 @@ function cutRelease(root: string, request: string): string {
 
     const date = now().toISOString().slice(0, 10);
     let updated = changelog;
+    if (seeded) refuseInternalNames(`the ${tag} CHANGELOG section`, changelogBetween(changelog, lastTag, tag));
     if (!seeded) {
         const commits = commitsSince(root, lastTag);
         if (commits.length === 0) throw new ReleaseError(`no commits since ${lastTag}; nothing to release`);
@@ -168,6 +178,7 @@ function cutRelease(root: string, request: string): string {
         updated = changelogHas(changelog, version)
             ? dateChangelogSection(changelog, version, date)
             : prependChangelog(changelog, changelogSection(version, date, commits));
+        refuseInternalNames(`the ${tag} CHANGELOG section`, changelogBetween(updated, `v${current}`, tag));
         writeFileSync(changelogFile, updated);
         const pkgFile = join(root, "package.json");
         const pkgText = readFileSync(pkgFile, "utf8");
@@ -238,6 +249,7 @@ function publishGithubRelease(root: string, remote: string, tag: string): void {
     }
     const notes = capture(root, ["git", "for-each-ref", `refs/tags/${tag}`, "--format=%(contents)"]);
     if (notes === "") throw new ReleaseError(`tag ${tag} has no message to publish as release notes`);
+    refuseInternalNames(`tag ${tag}'s message`, notes);
     const dir = mkdtempSync(join(tmpdir(), "toli-release-notes-"));
     try {
         const file = join(dir, "notes.md");

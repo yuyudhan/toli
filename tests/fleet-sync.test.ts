@@ -14,9 +14,9 @@ const EXPORT = {
     coordinator: "m1",
     machines: [
         { name: "m1", ssh: "m1", root: "/srv/coord" },
-        { name: "w1", ssh: "kalki@w1.example", root: "/srv/w1" },
-        { name: "w2", ssh: "kalki@w2.example", root: "/srv/w2" },
-        { name: "w3", ssh: "kalki@w3.example", root: "/srv/w3" },
+        { name: "w1", ssh: "deploy@w1.example", root: "/srv/w1" },
+        { name: "w2", ssh: "deploy@w2.example", root: "/srv/w2" },
+        { name: "w3", ssh: "deploy@w3.example", root: "/srv/w3" },
     ],
 };
 
@@ -68,7 +68,7 @@ describe("config/fleet.json comes from the coordinator", () => {
             { name: "m1", ssh: "coord", root: "/srv/coord" },
             { name: "w1", ssh: "w1", root: box.root },
             { name: "w2", ssh: "w2-alias", root: "/srv/w2" },
-            { name: "w3", ssh: "kalki@w3.example", root: "/srv/w3" },
+            { name: "w3", ssh: "deploy@w3.example", root: "/srv/w3" },
         ]);
         expect(box.ok(["fleet", "sync"])).toBe("fleet: config/fleet.json already matches the coordinator (4 machines)");
     });
@@ -101,8 +101,8 @@ describe("config/fleet.json comes from the coordinator", () => {
             [
                 'if [ "$1" = -G ]; then',
                 '  case "$2" in',
-                '    w1) printf "user kalki\\nhostname w1.example\\nport 22\\n" ;;',
-                '    *) printf "user ankur\\nhostname $2.example\\nport 2222\\n" ;;',
+                '    w1) printf "user deploy\\nhostname w1.example\\nport 22\\n" ;;',
+                '    *) printf "user me\\nhostname $2.example\\nport 2222\\n" ;;',
                 "  esac; exit 0",
                 "fi",
                 "exit 1",
@@ -112,8 +112,8 @@ describe("config/fleet.json comes from the coordinator", () => {
             coordinator: "m1",
             machines: [
                 { name: "m1", ssh: "m1", root: "/srv/coord" },
-                { name: "w1", ssh: "kalki@w1.example", root: "/srv/w1" },
-                { name: "w2", ssh: "ssh://ankur@w2.example:2222", root: "/srv/w2" },
+                { name: "w1", ssh: "deploy@w1.example", root: "/srv/w1" },
+                { name: "w2", ssh: "ssh://me@w2.example:2222", root: "/srv/w2" },
             ],
         });
         expect(box.ok(["fleet", "sync"])).toBe(

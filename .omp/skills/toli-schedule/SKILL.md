@@ -1,15 +1,15 @@
 ---
 name: toli-schedule
-description: Create and manage recurring Sardar jobs from plain-language schedules ("every day at 5 pm", "weekdays 9:30") and run scheduled jobs when they fire. Use for /schedule add|list|pause|resume|remove, when Malik asks for something to happen regularly, or when a prompt starts with "[toli job <name> <runId>]".
+description: Create and manage recurring Sardar jobs from plain-language schedules ("every day at 5 pm", "weekdays 9:30") and run scheduled jobs when they fire. Use for /schedule add|list|pause|resume|remove, when the user asks for something to happen regularly, or when a prompt starts with "[toli job <name> <runId>]".
 ---
 
 # Scheduled jobs (/schedule)
 
 ## Translating the schedule
 
-Convert Malik's words to a 5-field cron (`minute hour day-of-month month day-of-week`, local time):
+Convert the user's words to a 5-field cron (`minute hour day-of-month month day-of-week`, local time):
 
-| Malik says                 | cron           |
+| The user says              | cron           |
 | -------------------------- | -------------- |
 | every day at 5 pm          | `0 17 * * *`   |
 | weekdays 9:30              | `30 9 * * 1-5` |
@@ -17,7 +17,7 @@ Convert Malik's words to a 5-field cron (`minute hour day-of-month month day-of-
 | every hour                 | `0 * * * *`    |
 | first of the month at 6 am | `0 6 1 * *`    |
 
-Confirm it back in words before adding: "Ji Malik, that runs every weekday at 9:30 am. Adding it." If the time is
+Confirm it back in words before adding: "Ji <user>, that runs every weekday at 9:30 am. Adding it." If the time is
 ambiguous ("in the morning", "evening"), ask once.
 
 ## Commands
@@ -31,7 +31,7 @@ ambiguous ("in the morning", "evening"), ask once.
 - `<name>`: short kebab-case from the purpose (`daily-deps-check`).
 - `--prompt`: a self-contained instruction; the run will not see this conversation.
 - `--shape`: `scout` (default choice for reports and checks) unless the job must change code.
-- Never write a prompt that skips itself while Malik is away (`state/afk`): away mode changes who is asked, never
+- Never write a prompt that skips itself while the user is away (`state/afk`): away mode changes who is asked, never
   what is checked. A status or fleet job starts with `bin/toli fleet check` and reports its findings first.
 - `--machine`: run the job only on that machine (e.g. where the project is cloned), when that is not this one.
 - `bin/toli job run <name>` runs a job once now, for testing. It takes as long as the job (there is no time limit; it
@@ -48,9 +48,9 @@ After adding, check the ticker:
 
 If it is not installed, offer `bin/toli schedule install` (one launchd agent on macOS; on Linux a systemd user timer
 when `systemctl --user` works, else a crontab line; running `bin/toli job tick` every minute). Install only after
-Malik agrees.
+the user agrees.
 
-How jobs run, in plain words for Malik:
+How jobs run, in plain words for the user:
 
 - Jobs never run inside this conversation, so Sardar stays free to talk.
 - **While this session is open**, the Sardar extension checks every minute and starts due jobs in the background
@@ -60,15 +60,15 @@ How jobs run, in plain words for Malik:
   (`bin/toli resources`) while it runs.
 - On a worker machine, results are also sent to the coordinator; undelivered ones retry every minute.
 - New results reach an open session as a `[toli wake]` message (each result once). Relay the outcome and any
-  decision to Malik in plain words, dispatch follow-up work to jawans, then run the ack commands the wake ends with
+  decision to the user in plain words, dispatch follow-up work to jawans, then run the ack commands the wake ends with
   (`bin/toli job ack --through <stamp>` / `bin/toli inbox ack --through <stamp>`; they cover only what it showed).
   Results also appear in `/bearings` until acknowledged.
 
 ## Scheduled-run rules
 
 Every scheduled run: never push, merge, open PRs, or ask questions. Ship jobs commit only with `bin/toli commit` on
-the current branch. Anything needing Malik becomes `bin/toli task hold <id> --question "..."` and is noted in the
-result. A run never answers "skipped" because Malik is away (`state/afk`); it does its job and reports.
+the current branch. Anything needing the user becomes `bin/toli task hold <id> --question "..."` and is noted in the
+result. A run never answers "skipped" because the user is away (`state/afk`); it does its job and reports.
 
 ## Handling `[toli job <name> <runId>]`
 
@@ -81,4 +81,4 @@ to the CLI:
     <outcome, evidence, tasks held, files written>
     EOF
 
-Always call `job finish`, even on failure (say what failed). The live session relays the result to Malik.
+Always call `job finish`, even on failure (say what failed). The live session relays the result to the user.

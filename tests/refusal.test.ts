@@ -8,8 +8,8 @@ const failed = (code: number, stderr: string, timedOut = false) => refusalOf({ c
 describe("refusalOf", () => {
     test("the receiving command's own `toli:` line is a refusal, with that line as the reason", () => {
         expect(failed(1, 'toli: unknown task ""')).toBe('unknown task ""');
-        expect(failed(1, "warning first\ntoli: T60 was delegated by itlinux6, not m5-macbook\n")).toBe(
-            "T60 was delegated by itlinux6, not m5-macbook",
+        expect(failed(1, "warning first\ntoli: T60 was delegated by linux-6, not laptop\n")).toBe(
+            "T60 was delegated by linux-6, not laptop",
         );
     });
 

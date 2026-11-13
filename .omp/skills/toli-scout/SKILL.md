@@ -1,6 +1,6 @@
 ---
 name: toli-scout
-description: Run a read-only investigation in a project and deliver a written report - root causes, code maps, feasibility, audits - without changing anything. Use when Malik asks why something happens, where something lives, whether something is possible, or to look into, check, or review something without fixing it.
+description: Run a read-only investigation in a project and deliver a written report - root causes, code maps, feasibility, audits - without changing anything. Use when the user asks why something happens, where something lives, whether something is possible, or to look into, check, or review something without fixing it.
 ---
 
 # Scout work
@@ -12,7 +12,7 @@ environment.
 
 1. Record it as a scout task:
 
-        bin/toli task add <project> "<title>" --shape scout --note "<Malik's words>"
+        bin/toli task add <project> "<title>" --shape scout --note "<the user's words>"
         bin/toli task start T<n>
 
 2. Brief from `docs/brief-template.md`. Its `## Goal` uses the short form: Objective (what to find out, in the
@@ -37,7 +37,7 @@ environment.
 ## Report structure
 
     # T<n>: <title>
-    Question: <Malik's words>
+    Question: <the user's words>
     Answer: <one or two sentences>
     Evidence:
         - path/to/file.ts:42 - what it shows
@@ -45,12 +45,12 @@ environment.
     Options (if any): short list with tradeoffs
     Unknowns: what was not verified and why
 
-Tell Malik the answer first, in plain words, then where the full report is. If there are two or more options to weigh,
-offer a lavish page (`skill://toli-lavish`).
+Tell the user the answer first, in plain words, then where the full report is. If there are two or more options to
+weigh, offer a lavish page (`skill://toli-lavish`).
 
 ## Findings are evidence, not authorization
 
 - A scout report recommending a fix does not mean the fix is approved.
-- Promote to ship work only on Malik's word ("go ahead", "fix it", "do option 2"). Then start a new ship task through
+- Promote to ship work only on the user's word ("go ahead", "fix it", "do option 2"). Then start a new ship task through
   `skill://toli-dispatch`, linking the report in the brief's Spec section.
-- Security-sensitive findings (secrets, auth holes) go to Malik directly; never act on them unprompted.
+- Security-sensitive findings (secrets, auth holes) go to the user directly; never act on them unprompted.

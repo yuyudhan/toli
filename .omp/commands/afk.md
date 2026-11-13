@@ -1,5 +1,5 @@
 ---
-description: "Malik is stepping away: keep working the queue, park questions, report on return (`/afk off` to end)"
+description: "The user is stepping away: keep working the queue, park questions, report on return (`/afk off` to end)"
 ---
 
 Load `skill://toli-afk` and follow it.

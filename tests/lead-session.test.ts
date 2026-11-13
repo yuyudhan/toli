@@ -1,4 +1,4 @@
-// T1372 (itlinux6): the lead service ran headless turns beside a live interactive lead, and the duplicate runs they
+// T1372: the lead service ran headless turns beside a live interactive lead, and the duplicate runs they
 // queued had to be killed by hand, which left their tasks naming jawans that never started.
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, writeFileSync } from "node:fs";

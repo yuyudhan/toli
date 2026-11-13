@@ -1,6 +1,6 @@
 ---
 name: toli-sync
-description: Keep the toli repo current across Malik's machines, bootstrap a fresh machine, and explain the per-machine Sardars, the coordinator, and how work and results flow between machines. Use for /sync-toli, when setting up Sardar on a new machine, when the digest says a new toli release is out, or when Malik asks about the fleet, other machines, or updating Sardar.
+description: Keep the toli repo current across the user's machines, bootstrap a fresh machine, and explain the per-machine Sardars, the coordinator, and how work and results flow between machines. Use for /sync-toli, when setting up Sardar on a new machine, when the digest says a new toli release is out, or when the user asks about the fleet, other machines, or updating Sardar.
 ---
 
 # Machines and sync (/sync-toli)
@@ -12,8 +12,8 @@ everything private (`projects/ data/ state/ config/ logs/ local/ .env* .lavish/`
 
 - **Every machine has its own Sardar** (docs/sardars.md): a lead service (`bin/toli lead install`) keeps its lead
   conversation served when no terminal session is open. Each Sardar dispatches only its own machine's jawans, and
-  every jawan reports only to the Sardar of the machine it runs on. Malik may talk to any of them.
-- **Coordinator**: the Sardar Malik talks to day to day, and the one that keeps the fleet view. It holds
+  every jawan reports only to the Sardar of the machine it runs on. The user may talk to any of them.
+- **Coordinator**: the Sardar the user talks to day to day, and the one that keeps the fleet view. It holds
   `config/fleet.json` (every machine's name, ssh host, and repo root), sees the whole fleet with
   `bin/toli digest --fleet`, and receives job results and toli alerts from the other machines in its inbox.
 - **Worker**: any other machine. It knows the coordinator from `config/machine.json` (`coordinator: {ssh, root}`).
@@ -49,14 +49,14 @@ not, without asking. An unreachable machine is reported, never fatal.
 Run `sync --all` through `bash` with `async: true` and `timeout: 0` (it reaches every machine over ssh) and end the
 turn; relay its result when it arrives.
 
-- Sync refuses a dirty repo. Report what is uncommitted and ask Malik; never stash, reset, or clean to get past it.
+- Sync refuses a dirty repo. Report what is uncommitted and ask the user; never stash, reset, or clean to get past it.
 - A non-fast-forward (diverged history) is also a stop: report it, do not merge or rebase on your own.
-- After a sync that changed skills or the extension, tell Malik a session restart picks up the new behaviour.
+- After a sync that changed skills or the extension, tell the user a session restart picks up the new behaviour.
 - `--all` from a worker: explain that fleet-wide sync runs from the coordinator.
 - Sync pulls the branch a development clone is on; a release install (detached at a `vX.Y.Z` tag) upgrades to the
   latest tag instead. Workers run release tags; the coordinator (where toli is developed) runs `develop`, where
   `main` moves only at a release. `sync --all` after a release therefore moves every worker to the new tag. Putting
-  a worker on releases (`git checkout --detach vX.Y.Z` there, then `bin/toli self sync`) needs Malik's word, a clean
+  a worker on releases (`git checkout --detach vX.Y.Z` there, then `bin/toli self sync`) needs the user's word, a clean
   tree and no active runs (docs/fleet.md#keeping-machines-in-sync).
 
 ## New toli releases
@@ -64,9 +64,9 @@ turn; relay its result when it arrives.
 Every 3 days the tick checks for a newer toli release in the background (`bin/toli update status`); the next
 digest shows it once as `Update: toli vX.Y.Z is out ...` with its CHANGELOG sections.
 
-- Tell Malik once, in plain words: the new version, the few changes that matter to him, and that it updates only on
-  his word. Never raise the same version again; the digest will not either.
-- He confirms: dispatch a jawan (start a task first) whose brief quotes his word and runs `bin/toli upgrade`, which
+- Tell the user once, in plain words: the new version, the few changes that matter to them, and that it updates only on
+  their word. Never raise the same version again; the digest will not either.
+- They confirm: dispatch a jawan (start a task first) whose brief quotes their word and runs `bin/toli upgrade`, which
   checks out the release, runs `bin/toli migrate` and `bin/toli harness sync`, and installs this machine's lead
   service and tick again where they are installed (each machine's Sardar does the same on its own machine), without
   stopping any running jawan. An upgrade run by the code of an older release does not do that last step, and one
@@ -76,8 +76,8 @@ digest shows it once as `Update: toli vX.Y.Z is out ...` with its CHANGELOG sect
   restart loads the new contract and skills.
 - On a development clone (the notice says `development clone on branch <b>`) `upgrade` refuses: the jawan updates
   it with git instead (fetch the tag, fast-forward or merge into `<b>`), stopping on any conflict.
-- He says "not now" or "skip this one": `bin/toli update snooze vX.Y.Z`. "Stop checking": `bin/toli update off`
-  (no network checks at all; `bin/toli update on` resumes). Never upgrade without his word.
+- They say "not now" or "skip this one": `bin/toli update snooze vX.Y.Z`. "Stop checking": `bin/toli update off`
+  (no network checks at all; `bin/toli update on` resumes). Never upgrade without their word.
 
 ## Bootstrapping a fresh machine
 
@@ -94,7 +94,7 @@ On the new machine, in the directory where the clone should live:
 
 - Run `bin/toli doctor` through `bash` with `async: true`. Relay each failure (bun, omp, git, gh auth, no-mistakes,
   machine config, project clones, fleet reachability and availability, scheduler) in plain words; fixes that need
-  more than Malik's own action go to a jawan.
+  more than the user's own action go to a jawan.
 - On the coordinator, add the new machine to `config/fleet.json` so `--fleet`, `--all`, `fleet status`,
   `fleet queues`, `pick`, `delegate` and `talk` reach it. Workers take the list from the coordinator with their
   next `bin/toli self sync` (or `bin/toli fleet sync` now); never keep a worker's list by hand (docs/fleet.md, "The
@@ -115,5 +115,5 @@ On the new machine, in the directory where the clone should live:
 - Everything sent to another machine (job results, alerts, delegations, delegated-task reports, `talk` messages)
   waits in `state/outbox/` while that machine is unreachable and retries every minute.
 - `bin/toli inbox list --unseen` (and `/bearings`) shows them; `bin/toli inbox ack` then clears what that listing
-  showed after Malik has seen it (anything newer stays unread).
+  showed after the user has seen it (anything newer stays unread).
 - To send a one-off note to another machine's Sardar: `bin/toli talk <machine> "<words>"`.

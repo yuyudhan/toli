@@ -167,7 +167,7 @@ describe("a peer that takes no inbound connection only pulls (T1331)", () => {
         const laptop = peerBox("laptop");
         const listening = await serve(laptop);
         running.push(listening);
-        // The laptop answers its status over HTTPS, but takes no inbound ssh (as on m5, 2026-11-13 12:30Z).
+        // The laptop answers its status over HTTPS, but takes no inbound ssh (as on the laptop, 2026-11-13 12:30Z).
         pin(alpha.box, [
             { name: "laptop", identity: laptop, cert: laptop.cert, addrs: [`127.0.0.1:${listening.port}`] },
         ]);

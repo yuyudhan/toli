@@ -373,15 +373,15 @@ describe("toli push and pr create", () => {
     });
 
     test("glab mr create addresses the forgeHost, never the ssh remote host, for the source project too", () => {
-        const fb = forgeBox("git@gitlab-ssh.int.example:team/app.git");
-        fb.box.ok(["project", "set", "app", "--forge", "gitlab", "--forge-host", "gitlab.int.example"]);
+        const fb = forgeBox("git@gitlab-ssh.example.com:team/app.git");
+        fb.box.ok(["project", "set", "app", "--forge", "gitlab", "--forge-host", "gitlab.example.com"]);
         fb.box.git(fb.dir, ["switch", "-c", "feature"]);
         fb.box.ok(["push", "app"], { env: fb.env });
         fb.box.ok(["pr", "create", "app", "--title", "T", "--body", "B"], { env: fb.env });
         const create = invocations(fb.log).find((argv) => argv[1] === "mr") ?? [];
         // Without --head, glab resolves the source project from the git remotes, i.e. the ssh host.
         expect(create.slice(create.indexOf("--head"), create.indexOf("--head") + 2)).toEqual(["--head", "team/app"]);
-        expect(create.slice(-3)).toEqual(["-R", "team/app", "GITLAB_HOST=gitlab.int.example"]);
+        expect(create.slice(-3)).toEqual(["-R", "team/app", "GITLAB_HOST=gitlab.example.com"]);
         expect(create.join(" ")).not.toContain("gitlab-ssh");
     });
 

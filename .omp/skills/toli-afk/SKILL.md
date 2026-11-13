@@ -1,6 +1,6 @@
 ---
 name: toli-afk
-description: Keep working through the queued backlog while Malik is away, park anything that needs him, and give one batched report when he returns. Use for /afk, /afk off, when Malik says he is stepping away or going offline, or on any message from Malik while state/afk exists.
+description: Keep working through the queued backlog while the user is away, park anything that needs them, and give one batched report when they return. Use for /afk, /afk off, when the user says they are stepping away or going offline, or on any message from the user while state/afk exists.
 ---
 
 # Away mode (/afk)
@@ -11,7 +11,7 @@ description: Keep working through the queued backlog while Malik is away, park a
 
         date -u +%Y-%m-%dT%H:%M:%SZ > state/afk && rm -f state/quiet
 
-2. Reply in one line: "Ji Malik, I'll keep working through the queue and have one report ready when you're back."
+2. Reply in one line: "Ji <user>, I'll keep working through the queue and have one report ready when you're back."
 
 ## While away
 
@@ -26,19 +26,19 @@ Work the backlog under the normal rules; being away never loosens them, and Sard
   results and holds arrive as wakes and go into the report like local ones. Verifier jawans land ship work as usual.
 - Delivery is commit-on-the-working-branch only (the project's fixed branch when it has one). No branches, branch
   switches, pushes, merges, PRs, releases, or no-mistakes runs, even if the project mode prefers them; those need
-  Malik's word for the specific change.
+  the user's word for the specific change.
 - Local stacks: only the declared commands (`skill://toli-stacks`), and only when a queued task's evidence needs
   them. Stop what you started before the report.
-- Anything needing Malik (an ambiguous spec, a design choice, a destructive or security-sensitive step, gaps after two
-  fix rounds) becomes:
+- Anything needing the user (an ambiguous spec, a design choice, a destructive or security-sensitive step, gaps after
+  two fix rounds) becomes:
 
         bin/toli task hold <id> --question "<one crisp question>" \
             --option "<choice> => <what happens then>" --option "<choice> => <what happens then>" \
             --recommend <n> --blocks "<what waits on it>"
 
-    Then move on to the next task. Never guess on his behalf.
+    Then move on to the next task. Never guess on their behalf.
 
-- Scheduled jobs run in the background as usual (`skill://toli-schedule`) and never skip because Malik is away;
+- Scheduled jobs run in the background as usual (`skill://toli-schedule`) and never skip because the user is away;
   their results arrive as `[toli wake]` messages and wait for the report.
 - Oversight never pauses: the tick posts every active task whose run ended with nobody re-dispatching it, and the
   hourly `bin/toli fleet check --wake` names idle machines with queued work for their clones. On such a wake, or on
@@ -52,7 +52,7 @@ Work the backlog under the normal rules; being away never loosens them, and Sard
 
 ## Coming back
 
-Malik is back on any message from him, or `/afk off`.
+The user is back on any message from them, or `/afk off`.
 
 1. Read the start time from `state/afk`, then remove the flag:
 
@@ -61,7 +61,7 @@ Malik is back on any message from him, or `/afk off`.
 2. Give one batched report from `bin/toli task list --json` (tasks whose `updatedAt` is after the start time) and
    `bin/toli digest` (job results, inbox), outcome first:
 
-        Ji Malik, welcome back. While you were away:
+        Ji <user>, welcome back. While you were away:
         Done: <n> tasks - <task, project, commit or report>, one line each.
         Needs your answer: <n> - one numbered line each from `bin/toli needs`: task, question, options, your pick.
         Still running: <n>.
@@ -70,4 +70,4 @@ Malik is back on any message from him, or `/afk off`.
 
 3. Ask the Needs-you questions together in that one report (`skill://toli-ahoy`), never one per message; record each
    reply verbatim with `bin/toli task answer` and dispatch the unblocked task at once.
-4. Then handle whatever his message asked for.
+4. Then handle whatever their message asked for.

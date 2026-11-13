@@ -2,15 +2,15 @@ TOLI_BRIEF v1
 
 <!--
 Jawan brief template. Sardar fills this in for every task before spawning a jawan (on omp, a `task` subagent). The
-brief is the jawan's entire context: it cannot see the conversation with Malik. Copy the whole file, replace each
+brief is the jawan's entire context: it cannot see the conversation with the user. Copy the whole file, replace each
 `<...>`, drop this comment, and keep the Rules section unchanged (the one exception: a brief that carries out a push,
-PR, merge, or tag replaces the "Never push" line with Malik's word for that action, quoted verbatim, or, for a push
+PR, merge, or tag replaces the "Never push" line with the user's word for that action, quoted verbatim, or, for a push
 or PR/MR only, the project's standing grant from `bin/toli project list --json`). A push brief also says how to
 record the push where it runs: `bin/toli push <project> [--task <T-id>] --by <this machine> --for <T-id> --word
-"<Malik's word>"`, run in the toli checkout of the machine whose clone pushes (over ssh for another machine), logs it in
-that machine's `data/pushes.jsonl` and its `bin/toli digest`; after a raw `git push` there, the jawan runs
-`bin/toli push-log add <project> --by <this machine> --for <T-id> --word "<Malik's word>"` on that machine. The first
-line `TOLI_BRIEF v1` must stay the first line of every brief: AGENTS.md uses it to tell jawans apart from Sardar.
+"<the user's word>"`, run in the toli checkout of the machine whose clone pushes (over ssh for another machine), logs
+it in that machine's `data/pushes.jsonl` and its `bin/toli digest`; after a raw `git push` there, the jawan runs
+`bin/toli push-log add <project> --by <this machine> --for <T-id> --word "<the user's word>"` on that machine. The
+first line `TOLI_BRIEF v1` must stay the first line of every brief: AGENTS.md uses it to tell jawans apart from Sardar.
 Independent verification of ship work uses docs/verify-brief-template.md.
 Model tier: the work type picks the jawan's model (docs/harnesses.md "Model tiers": scout and ship standard,
 mechanical light, verify and release deep). A hard brief adds a line `Tier: deep` (or `light`, `standard`) right under
@@ -22,12 +22,12 @@ project and for scouts. `bin/toli spawn` warns when a live-stack project's code 
 
 # Task <T-id>: <short title>
 
-## Malik's intent (verbatim words)
+## The user's intent (verbatim words)
 
-> <Malik's exact words, unedited>
+> <The user's exact words, unedited>
 
-Malik is the user who asked for this work. His name belongs in this brief only; never write it into commits, PR
-bodies, code, or project files (write "the user" if you must refer to him).
+The user is whoever asked for this work. Their name belongs in this brief only; never write it into commits, PR
+bodies, code, or project files (write "the user" if you must refer to them).
 
 ## Goal
 
@@ -68,7 +68,7 @@ report instead.
 ## Spec
 
 <What to do, concretely. Include the current behaviour, the wanted behaviour, relevant files or symbols if known,
-links to scout reports (data/projects/<project>/reports/<T-id>.md), and any decisions Malik already made.>
+links to scout reports (data/projects/<project>/reports/<T-id>.md), and any decisions the user already made.>
 
 Other jawans may be working in the same project at the same time, possibly in the same files. Change only what this
 task needs, and never revert or reformat changes you did not make.
@@ -181,7 +181,7 @@ Toli root: <absolute path of the toli repo>. Run `bin/toli` from there.
 
 - Ship, verified by a second jawan (default): do not commit and do not close the task. Report; a verifier jawan
   checks your evidence and lands the work.
-- Ship, land yourself (Malik waived review, or the change is docs/config only): after your checks pass, commit via
+- Ship, land yourself (the user waived review, or the change is docs/config only): after your checks pass, commit via
   `bin/toli commit` as above, then `bin/toli task done <T-id> --commit <sha> --note "<one line>"`.
 - Scout: write your report (format below) to `<toli root>/data/projects/<project>/reports/<T-id>.md`, then
   `bin/toli task done <T-id> --report data/projects/<project>/reports/<T-id>.md`.
@@ -208,5 +208,5 @@ holds that mention them).
     Evidence:
         $ <command>
         <output excerpt>
-    Findings / decisions made: <anything Malik should know>
-    Open questions: <anything needing Malik's decision, or "none">
+    Findings / decisions made: <anything the user should know>
+    Open questions: <anything needing the user's decision, or "none">

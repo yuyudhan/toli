@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { calls, deliver, lead, once } from "./lead-stub.ts";
 
-/** When the interactive session in the idle-session test registered (itlinux7's, 2026-11-11). */
+/** When the interactive session in the idle-session test registered (on a Linux worker, 2026-11-11). */
 const T0 = "2026-11-11T08:32:00.000Z";
 
 describe("lead run --once", () => {

@@ -7,7 +7,7 @@
 # to the real cargo: the first cargo on PATH that is not this folder's or another copy of this shim (its second line
 # starts "# toli's cargo shim"), so a shim never calls itself or another shim. It marks its environment
 # (TOLI_CARGO_SHIM_ACTIVE) for whatever it execs, so a wrapper placed after it that looks for its own real cargo
-# (kalki-queue's build-guard) knows to skip this shim instead of looping.
+# (a project's own build guard) knows to skip this shim instead of looping.
 shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127
 
 real=""

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_PERSONA } from "../src/core/persona.ts";
 import { commitCommand } from "../src/projects/commit.ts";
 import { projectCommand } from "../src/projects/projects.ts";
 import { buildDigest } from "../src/records/digest.ts";
@@ -29,7 +30,7 @@ describe("fixed working branch", () => {
         }
         expect(refusal).toContain('is on "main", but its working branch is "develop"');
         expect(refusal).toContain(`git -C ${dir} switch develop`);
-        expect(refusal).toContain("ask Malik");
+        expect(refusal).toContain(`ask ${DEFAULT_PERSONA.user}`);
         expect(box.git(dir, ["rev-parse", "HEAD"])).toBe(head);
 
         // No setup items: the checklist probes the host (harness CLIs on PATH, the scheduler), which is not under test.

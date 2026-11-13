@@ -9,7 +9,7 @@ setDefaultTimeout(30_000);
 
 type Outcome = Run & { error: string | null; signal: string | null };
 
-/** systemd-oomd's and the user manager's journal lines for a scope it killed, as itlinux2 logged them (T97). */
+/** systemd-oomd's and the user manager's journal lines for a scope it killed, as a Linux worker logged them (T97). */
 function oomdLines(unit: string): string {
     return [
         `Killed /user.slice/user-1001.slice/user@1001.service/app.slice/${unit} due to memory pressure for /user.slice being 80.10% > 80.00% for > 1min with reclaim activity`,

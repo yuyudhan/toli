@@ -1,6 +1,6 @@
 ---
 name: toli-helpers
-description: Create, schedule, and check private machine helpers (scripts that keep this machine healthy) in the gitignored local/ directory. Use when Malik asks to add a maintenance script, run X every N minutes on this machine, clean disk automatically, reconnect a VPN, keep a local service running, or asks what helpers a machine runs.
+description: Create, schedule, and check private machine helpers (scripts that keep this machine healthy) in the gitignored local/ directory. Use when the user asks to add a maintenance script, run X every N minutes on this machine, clean disk automatically, reconnect a VPN, keep a local service running, or asks what helpers a machine runs.
 ---
 
 # Custom machine helpers
@@ -48,9 +48,9 @@ Keychain via `security`, or `secret-tool` on a Linux desktop; a headless Linux b
   `lowPriorityIO`, `maxFiles` (open-files limit; launchd's default is 256, too low for builds), `env` (`PATH` here
   replaces the default scheduled PATH), `platforms`, `enabled` (default true).
 
-## Creating a helper (Malik asks for one)
+## Creating a helper (the user asks for one)
 
-1. Confirm the schedule back in words ("Ji Malik, a disk cleanup every 15 minutes on this machine"). Ask once if
+1. Confirm the schedule back in words ("Ji <user>, a disk cleanup every 15 minutes on this machine"). Ask once if
    the interval or the machine is unclear.
 2. Dispatch one jawan (`skill://toli-dispatch`) with a brief that says: write `local/scripts/<name>` (executable,
    idempotent, logs what it did to stdout, exits non-zero on failure), add its entry to `local/helpers.json`, run it
@@ -59,7 +59,7 @@ Keychain via `security`, or `secret-tool` on a Linux desktop; a headless Linux b
 3. Relay the outcome in one or two lines: what it does, how often, and that it is installed.
 
 Destructive helpers (anything that deletes) need a dry-run mode, and the jawan shows a dry-run first; install only
-after Malik agrees to what it would remove.
+after the user agrees to what it would remove.
 
 ## Commands
 
@@ -73,7 +73,7 @@ Schedulers: launchd user agents `com.toli.helper.<name>` on macOS; systemd user 
 (+ `.timer`) on Linux; crontab lines tagged `# toli helper <name>` when systemd's user session is unavailable.
 `TOLI_SCHEDULER=launchd|systemd|crontab` forces one (it also picks the tick's scheduler). A helper whose plist is in
 `/Library/LaunchDaemons` stays a system LaunchDaemon: install/uninstall then need root through `sudo -n`, so hold
-for Malik to run `sudo -v` in that terminal (docs/helpers.md).
+for the user to run `sudo -v` in that terminal (docs/helpers.md).
 
 ## Changing or removing
 

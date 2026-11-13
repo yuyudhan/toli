@@ -1,5 +1,5 @@
 ---
-description: "Go through every task waiting on Malik's decision and record the answers"
+description: "Go through every task waiting on the user's decision and record the answers"
 ---
 
 Load `skill://toli-ahoy` and follow it.

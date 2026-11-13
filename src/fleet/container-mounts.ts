@@ -3,7 +3,7 @@
 // mountpoint, or the place one of its mounts sits on inside one of its own bind mounts: a compose stack that binds
 // `./apps/backend` at /app and mounts the volume `backend_target` at /app/target hangs that volume on the host's
 // `apps/backend/target`. Deleting that folder unhooks the volume inside the running container, whose /app/target then
-// falls through to whatever the bind shows (T101 on itlinux3: the live backend lost its 53 GB build cache and broke).
+// falls through to whatever the bind shows (T101: the live backend lost its 53 GB build cache and broke).
 // A folder only above a mount (the bound checkout itself) is not held by it: the keeper never deletes a checkout, and
 // its build folders are judged on their own.
 import { posix } from "node:path";

@@ -87,7 +87,7 @@ function jobBriefProjects(): Map<string, string> {
 /**
  * A brief's project: the project of the scheduled job that uses it; else, for `T<n>.md`, the task's project (as
  * reports are matched); else the project whose name is the file stem; else the one project whose name is a
- * `<project>-` prefix. Several prefixes (kalki, kalki-release) are ambiguous.
+ * `<project>-` prefix. Several prefixes (app, app-release) are ambiguous.
  */
 function briefProject(
     file: string,

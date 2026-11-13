@@ -85,8 +85,9 @@ setup can always be resumed safely.
 
 ## Persona names
 
-The default names are Malik (you), Sardar (the lead, plural Saradars), and jawan (a worker, plural jawans). Pick your
-own in `config/persona.json`; the lead then uses them everywhere (`bin/toli digest` prints the active names):
+The default names are in `src/core/persona.ts`: you are the user, Sardar the lead (plural Saradars), and jawan a
+worker (plural jawans). Pick your own in `config/persona.json`; the lead then uses them everywhere (`bin/toli digest`
+prints the active names):
 
 ```json
 { "user": "Boss", "lead": "Lead", "leadPlural": "Leads", "worker": "worker", "workerPlural": "workers" }

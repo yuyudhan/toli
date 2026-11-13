@@ -1,8 +1,8 @@
 // A jawan's cargo holds a heavy-build slot even when something puts another cargo ahead of toli's cargo shim on PATH
-// (T1223: on itlinux8 a shell profile and git's exec path put `~/.cargo/bin` first, and a pre-push hook's clippy and
+// (T1223: on a Linux worker a shell profile and git's exec path put `~/.cargo/bin` first, and a pre-push hook's clippy and
 // a `just verify push` ran the real cargo outside any slot at once). toli's rustc wrapper, cargo's `RUSTC_WRAPPER` in
 // a jawan's environment (src/jawans/env.ts), catches such a cargo on its first rustc call. That call must come first
-// and the test harnesses must be capped too (T1322: on itlinux3 a plain `git push`'s pre-push hook ran `cargo test`
+// and the test harnesses must be capped too (T1322: on a Linux worker a plain `git push`'s pre-push hook ran `cargo test`
 // with nothing left to compile: cargo's cached rustc probe meant no rustc call ever reached the wrapper, so it ran
 // outside any slot, and rustdoc compiled its doctests one rustc per core, 12 against a share of 6).
 import { describe, expect, test } from "bun:test";
@@ -77,7 +77,7 @@ function jawan(box: Sandbox, liveStack = false): Record<string, string> {
 
 /**
  * Project "app" whose pre-push hook runs its verify script, which (like a login profile, or git's exec path) puts
- * the real cargo `real` first and runs `cargo test`, as VelocityFSS's `just verify push` does; its last build left
+ * the real cargo `real` first and runs `cargo test`, as a client project's `just verify push` does; its last build left
  * cargo's rustc probe cache behind, so that `cargo test` has nothing left to compile. Returns the checkout.
  */
 function pushTestProject(box: Sandbox, real: string): string {

@@ -117,7 +117,7 @@ describe("changelog", () => {
             { sha: "bbb2222", subject: "Release v0.1.0" },
             { sha: "ccc3333", subject: "Fix EPIPE when piping into head" },
             { sha: "ddd4444", subject: "Merge branch 'x'" },
-            { sha: "eee5555", subject: "Rename data/malik.md to data/preferences.md" },
+            { sha: "eee5555", subject: "Rename data/notes.md to data/preferences.md" },
             { sha: "fff6666", subject: "feat: installer" },
         ]);
         expect(section).toBe(
@@ -131,7 +131,7 @@ describe("changelog", () => {
                 "",
                 "### Changed",
                 "",
-                "- Rename data/malik.md to data/preferences.md (eee5555)",
+                "- Rename data/notes.md to data/preferences.md (eee5555)",
                 "",
                 "### Fixed",
                 "",

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_PERSONA } from "../src/core/persona.ts";
 import { nextActions } from "../src/records/next.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
@@ -172,7 +173,7 @@ describe("digest", () => {
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         box.stub("omp", "true");
         const first = box.ok(["digest"], { now: NOW });
-        expect(first.split("\n")[1]).toStartWith('Names: the user is "Malik"');
+        expect(first.split("\n")[1]).toStartWith(`Names: the user is "${DEFAULT_PERSONA.user}"`);
         expect(first).toMatch(/^Setup: \d+ steps? remains? - say "set up toli"/m);
         const next = section(first, "Next");
         expect(next[0]).toBe("Next (1):");
