@@ -4,6 +4,31 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.5 - unreleased
+
+### Fixed
+
+- **A machine that takes no inbound ssh pulls once it is set up so (T1331).** Its tick pulled only when its own entry
+  in its copy of `config/fleet.json` said `"inbound": false`, a flag that reaches it only through the list, which a
+  coordinator that takes no inbound ssh never sends first: Ujjwal's laptop never pulled, and 146 items waited for it
+  on m5 and macminim4. `bin/toli init ... --inbound off` now writes the flag to its `config/machine.json`, either
+  place makes the tick pull, and each pull carries the flag to the machine pulled from. Setup asks whether others can
+  ssh in; `bin/toli doctor` warns (`pull`) on a pull-only machine that has never pulled, and on a sender (`outbox`)
+  names a puller that has never asked it for its items, or hints at marking a machine its ssh items pile up for.
+- **A peer that takes no inbound connection only pulls, and is never pushed to (T1331).** priyammac pairs out, but
+  its firewall resets every inbound connection, so every HTTPS push to it failed. A pull-only machine now also pulls
+  from its peers over HTTPS, its pull says it takes no inbound connection, and each peer records that and queues for
+  its pull instead of trying to connect.
+
+### Added
+
+- **Relay for two peers that both refuse inbound connections (T1331).** m5 and Ujjwal's laptop can now exchange
+  messages through a peer both reach: `bin/toli peer trust <other> --key <its key> --via <relay>` on each side, then
+  each item goes to the relay sealed for the recipient (X25519, HKDF-SHA256, AES-256-GCM) and signed by its sender,
+  the recipient pulls it there and applies it as a message from that sender, and its signed receipt comes back the
+  same way. The relay can neither read nor forge items or receipts; a changed item is dropped and sent again
+  (docs/peers.md "Relay"). `peer status` prints the key to pass on.
+
 ## v0.5.4 - 2026-11-13
 
 ### Fixed

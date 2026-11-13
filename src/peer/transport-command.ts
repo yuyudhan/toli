@@ -5,7 +5,8 @@ import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError } from "../core/util.ts";
 import type { Stat } from "./client.ts";
-import { askStatus, delegationHook, type Flush, flushAll, flushPeer, type OnDelivered, pullPeers } from "./deliver.ts";
+import { askStatus, delegationHook, type Flush, flushAll, flushPeer, type OnDelivered } from "./deliver.ts";
+import { type PeerPull, pullPeers } from "./pull-peers.ts";
 import { requirePeer } from "./store.ts";
 
 /** `peer flush <peer>|--all [--own <id>] [--json]`: deliver now over HTTPS (the outbox runs this as a subprocess). */
@@ -112,6 +113,15 @@ export async function pullCommand(argv: string[]): Promise<void> {
         return;
     }
     if (reports.length === 0) out("no paired peer to pull from");
-    for (const report of reports)
-        out(`${report.peer}: ${report.applied} applied${report.error === undefined ? "" : `; ${report.error}`}`);
+    for (const report of reports) out(pullLine(report));
+}
+
+/** One peer's pull, for `peer pull` and the tick log. */
+export function pullLine(report: PeerPull): string {
+    const { relayed } = report;
+    const through =
+        relayed === undefined
+            ? ""
+            : `; through it: ${relayed.applied} applied${relayed.waiting > 0 ? `, ${relayed.waiting} from keys not trusted here (bin/toli peer trust)` : ""}${relayed.dropped > 0 ? `, ${relayed.dropped} dropped (see logs/peer.log)` : ""}`;
+    return `${report.peer}: ${report.applied} applied${through}${report.error === undefined ? "" : `; ${report.error}`}`;
 }

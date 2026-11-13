@@ -152,9 +152,16 @@ queued and are retried. `task link` that the owner refuses fails at once and lea
 
 **Back online.** A listener that starts, or whose addresses change (VPN up, Wi-Fi joined), announces itself to every
 peer (`POST /v1/announce`, signed). The peer records the addresses and sends what waits for it at once, without
-waiting for its tick. **Pull.** A machine whose listener is off pulls from each peer every minute
-(`POST /v1/outbox/pending`, then `/v1/outbox/ack` with the receipts; by hand: `bin/toli peer pull`). A paired peer
-that is not in `config/fleet.json` is reached this way only: over HTTPS, or by its pull.
+waiting for its tick. **Pull.** A machine whose listener is off, or that takes no inbound connection (`bin/toli init
+... --inbound off`, docs/fleet.md), pulls from each peer every minute (`POST /v1/outbox/pending`, then
+`/v1/outbox/ack` with the receipts; by hand: `bin/toli peer pull`). A paired peer that is not in `config/fleet.json`
+is reached this way only: over HTTPS, or by its pull.
+
+**A peer that takes no inbound connection.** A machine whose firewall resets every inbound connection can still pair
+(it connects out) and pull. Its pull says so (`inbound: false` in the `pending` body, from its `--inbound off` or a
+listener that is off), and each peer it pulls from records `inbound: false` on it in `config/peers.json`: from then
+on nothing is pushed to it, no HTTPS attempt and no ssh, and what is queued for it waits for its next pull. A pull
+without the flag clears it.
 
 **One wake.** The receiver touches `state/peer/receiving` while it applies a batch; the lead's turn and `wake` wait
 until it has been quiet for 5 seconds, so a backlog arrives as one wake. A batch of more than 5 messages from one
@@ -168,6 +175,33 @@ back to ssh.
 
 **Timings.** Every delivery is logged with its transport and time in `state/peer/stats.jsonl`; `bin/toli peer
 stats` shows the count, median and 90th percentile per transport and peer, to compare HTTPS with ssh.
+
+## Relay
+
+Two peers that both refuse inbound connections (a coordinator behind a firewall, a laptop with no inbound at all)
+cannot reach each other, so neither push nor pull works between them. They exchange messages through a **relay**: a
+third peer that both are paired with and both reach (any machine with a listener).
+
+1. Each side pairs with the relay as usual (`peer add <relay host>`).
+2. Each side pins the other with its key, which `bin/toli peer status` prints there (`key: ...`) and its owner passes
+   on: `bin/toli peer trust <other> --key <its key> --via <relay>`. A peer already paired but unreachable keeps its
+   pairing and gains the relay; a key that differs from the pinned one is refused.
+3. From then on the sender's outbox hands each item for the other to the relay (`POST /v1/relay/hold`), and the
+   recipient's minute pull takes it with what the relay holds for it (`relayed` in the `pending` answer). The
+   recipient settles them (`POST /v1/relay/ack`) and leaves the sender one receipt bundle there, which the sender's
+   next hand-over collects; only then does the sender drop the item. `talk` says `queued for <peer> through its relay
+<relay>`.
+
+**What the relay can do.** Each item is the envelope HTTPS delivery sends, signed by the sender's key, then sealed
+for the recipient's key (ephemeral X25519, HKDF-SHA256, AES-256-GCM; src/peer/seal.ts) with its routing header
+(sender, recipient, id, order) bound in. The relay sees only that header and the size: it cannot read an item, and an
+item it changes no longer opens and is dropped (and logged) by the recipient, then handed over again by the sender.
+It cannot forge one: the recipient checks the signature against the key it pinned with `peer trust`, so a message's
+sender is its signer, never the relay. Receipts travel the same way, signed by the recipient and sealed for the
+sender, so the relay cannot fake a delivery either. It can only delay or drop items, and a dropped one is handed
+over again. A relayed envelope may be up to 7 days old (it waits at the relay) and has no nonce check; its id, kept
+30 days, makes a replay a `duplicate`. The relay holds at most 500 items or 64 MiB per recipient, only from and for
+its own active peers, and only a sender's own items.
 
 ## The queue
 

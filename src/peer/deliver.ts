@@ -4,7 +4,7 @@
 // deferred or failed keeps it and everything after it queued. A peer that comes back announces itself, and what
 // waits for it goes out at once. A peer without a listener pulls instead (`/v1/outbox/pending` and `/ack`).
 //
-// The listener's routes for these live here too: announce, status, pending, ack and rotate.
+// The listener's routes for these live here too: announce, status, pending, ack and rotate (relay routes: relay.ts).
 import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadMachine } from "../core/config.ts";
@@ -12,11 +12,14 @@ import { paths } from "../core/paths.ts";
 import { isJsonObject, now, runAsync, warn } from "../core/util.ts";
 import type { OutboxItem, Queued } from "../jobs/outbox.ts";
 import { cancelItems, itemsFor } from "../jobs/outbox-admin.ts";
+import { notePuller } from "../jobs/pull.ts";
 import { controlEnvelope, postPeer, recordStat, Unreachable } from "./client.ts";
-import { applyBatch, type Envelope, type Receipt, sealEnvelope } from "./envelope.ts";
+import { type Envelope, type Receipt, sealEnvelope } from "./envelope.ts";
 import { certSigValid, fingerprintOf, initIdentity, loadIdentity } from "./identity.ts";
+import { heldFor } from "./relay.ts";
+import { flushRelayed } from "./relay-client.ts";
 import { controlRequest, json, type ListenerContext, MAX_BATCH, onBound, readControl, routes } from "./server.ts";
-import { activePeer, loadPeers, type Peer, peerLog, updatePeers } from "./store.ts";
+import { activePeer, loadPeers, type Peer, peerLog, pushable, updatePeers } from "./store.ts";
 
 /** What one flush did for one peer. */
 export type Flush = {
@@ -77,9 +80,11 @@ function release(items: Claimed[]): void {
 
 /**
  * Send what waits for `peer`, batch after batch, until the queue is empty or a batch stops (unreachable, deferred,
- * failed). `onDelivered` sees every applied or duplicate item and what the receiver printed.
+ * failed). `onDelivered` sees every applied or duplicate item and what the receiver printed. A peer with no address
+ * and a relay (`via`) gets its items through that relay instead (src/peer/relay.ts).
  */
 export async function flushPeer(peer: Peer, onDelivered?: OnDelivered): Promise<Flush> {
+    if (!pushable(peer) && peer.via !== undefined) return await flushRelayed(peer, onDelivered);
     const flush: Flush = { peer: peer.name, sent: 0, receipts: [] };
     for (;;) {
         const batch = claimFor(peer);
@@ -141,10 +146,12 @@ export async function flushPeer(peer: Peer, onDelivered?: OnDelivered): Promise<
     }
 }
 
-/** Every active peer with something queued for it, flushed one after another. */
+/** Every active peer with something queued for it, flushed one after another (directly, or through its relay). */
 export async function flushAll(onDelivered?: OnDelivered): Promise<Flush[]> {
     const flushes: Flush[] = [];
-    for (const peer of loadPeers().filter((entry) => entry.status === "active" && entry.addrs.length > 0))
+    for (const peer of loadPeers().filter(
+        (entry) => entry.status === "active" && (pushable(entry) || entry.via !== undefined),
+    ))
         if (itemsFor(peer.name).length > 0) flushes.push(await flushPeer(peer, onDelivered));
     return flushes;
 }
@@ -158,7 +165,7 @@ export async function delegationHook(): Promise<OnDelivered> {
 // Announce: this machine is (back) on these addresses; the peer sends what waits for it here.
 
 async function announceAll(context: ListenerContext, addrs: string[]): Promise<void> {
-    for (const peer of loadPeers().filter((entry) => entry.status === "active" && entry.addrs.length > 0)) {
+    for (const peer of loadPeers().filter(pushable)) {
         try {
             const answer = await postPeer(
                 peer,
@@ -249,10 +256,20 @@ routes.set("POST /v1/outbox/pending", async (request, context) => {
     const control = await readControl(request, context, "pending");
     if (control instanceof Response) return control;
     const peer = control.peer;
+    notePuller(peer.name);
+    const pulling = parsed(control.envelope).inbound === false;
+    if ((peer.inbound === false) !== pulling)
+        updatePeers((peers) => {
+            const entry = peers.find((candidate) => candidate.name === peer.name);
+            if (entry === undefined) return;
+            if (pulling) entry.inbound = false;
+            else delete entry.inbound;
+        });
     const envelopes = itemsFor(peer.name)
         .slice(0, MAX_BATCH)
         .map(({ file, item }) => itemEnvelope(peer, file, item));
-    return json({ envelopes });
+    // What this machine holds for it as a relay, sealed by other peers (src/peer/relay.ts).
+    return json({ envelopes, relayed: heldFor(peer.fingerprint) });
 });
 
 routes.set("POST /v1/outbox/ack", async (request, context) => {
@@ -298,39 +315,6 @@ routes.set("POST /v1/outbox/ack", async (request, context) => {
     if (refused.length > 0) cancelItems(refused, `${control.peer.name} refused them`);
     return json({ acked, cancelled: refused.length });
 });
-
-/** Pull from every active peer what waits there for this machine (a machine whose listener is off). */
-export async function pullPeers(): Promise<Array<{ peer: string; applied: number; error?: string }>> {
-    const self = loadIdentity().fingerprint;
-    const reports: Array<{ peer: string; applied: number; error?: string }> = [];
-    for (const peer of loadPeers().filter((entry) => entry.status === "active" && entry.addrs.length > 0)) {
-        try {
-            const pending = await postPeer(peer, "/v1/outbox/pending", controlEnvelope(peer, "pending", {}));
-            const envelopes = Array.isArray(pending.value.envelopes) ? pending.value.envelopes : [];
-            if (pending.status !== 200 || envelopes.length === 0) {
-                reports.push({
-                    peer: peer.name,
-                    applied: 0,
-                    ...(pending.status === 200 ? {} : { error: `pending: ${pending.status}` }),
-                });
-                continue;
-            }
-            const receipts = await applyBatch(envelopes, self);
-            await postPeer(peer, "/v1/outbox/ack", controlEnvelope(peer, "ack", { receipts }));
-            reports.push({
-                peer: peer.name,
-                applied: receipts.filter((receipt) => receipt.status === "applied").length,
-            });
-        } catch (error) {
-            reports.push({
-                peer: peer.name,
-                applied: 0,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
-    }
-    return reports;
-}
 
 // Rotate: a new key and certificate, announced to every peer signed by the old key; they accept the old one for a
 // week more (src/peer/store.ts `prevKey`), so messages already on their way still verify.

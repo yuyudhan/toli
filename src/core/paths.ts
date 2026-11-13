@@ -120,6 +120,11 @@ export const paths = {
     peerReceiving: () => join(repoRoot(), "state", "peer", "receiving"),
     /** One JSON line per delivery attempt, with its transport and time (`bin/toli peer stats`). */
     peerStats: () => join(repoRoot(), "state", "peer", "stats.jsonl"),
+    /**
+     * On a relay: items held for a peer that pulls them here (`held/<its fingerprint>/`) and its sealed receipts held
+     * for their sender (`receipts/<its fingerprint>/`); on a sender, `sent.json`: what each relay last said it holds.
+     */
+    peerRelayDir: () => join(repoRoot(), "state", "peer", "relay"),
     /** Pairing, permission and revocation events with who did them and why; never a code. */
     peerLog: () => join(repoRoot(), "logs", "peer.log"),
     /**
@@ -127,6 +132,10 @@ export const paths = {
      * and applied here but not yet acknowledged there, one `<machine>.json` each, so a re-pulled item is applied once.
      */
     pulledDir: () => join(repoRoot(), "state", "pulled"),
+    /** On a pulling machine: when its last pull fetched from any machine (`bin/toli doctor`'s `pull` line). */
+    pullLast: () => join(repoRoot(), "state", "pull-last.json"),
+    /** On a sender: when each pulling machine last asked here for its items (`bin/toli doctor`'s `outbox` line). */
+    pullers: () => join(repoRoot(), "state", "pullers.json"),
     /** Fleet hosts the tick's ssh could not reach, with their backoff (src/jobs/reach.ts). */
     reachState: () => join(repoRoot(), "state", "reach.json"),
     /** Reused ssh connections to fleet machines: the generated client config and one control socket per host. */

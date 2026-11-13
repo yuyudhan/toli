@@ -43,7 +43,7 @@ import { setupCommand } from "./setup/setup.ts";
 
 const USAGE = `usage: bin/toli <command> [args]
 
-  init --name <machine> --role coordinator|worker [--coordinator-ssh <host> --coordinator-root <path>]
+  init --name <machine> --role coordinator|worker [--coordinator-ssh <host> --coordinator-root <path>] [--inbound on|off]
   setup status [--json] | notice [--json] | snooze | seed-local
   doctor [--json]
   digest [--json] [--fleet]
@@ -100,6 +100,7 @@ const USAGE = `usage: bin/toli <command> [args]
     [--ssh-fallback on|off]
   peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
   peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
+  peer trust <peer> --key <key> --via <relay> [--by owner|sardar] [--why "..."]
   peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
   peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
   peer scan [--netbird] [--tailscale] [--subnet <cidr>] [--port <n>] [--json]

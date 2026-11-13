@@ -58,13 +58,23 @@ before.
 
 ### Machines that take no inbound ssh
 
-A machine whose entry in the coordinator's list has `"inbound": false` is never ssh-ed into by toli on any other
-machine (a personal computer the fleet must not log into). It still ssh-es out: its delegations and `talk` reach the
-others over ssh as usual.
+A machine that takes no inbound ssh is never ssh-ed into by toli on any other machine (a personal computer the fleet
+must not log into). It still ssh-es out: its delegations and `talk` reach the others over ssh as usual. Mark it in
+either of two places; one is enough:
+
+- **On the machine itself**, at setup: `bin/toli init --name <machine> --role <role> ... --inbound off` writes
+  `"inbound": false` to its `config/machine.json` (`--inbound on` clears it; a rerun without the option keeps it). Its
+  tick pulls from then on, whatever its copy of the list says, and each pull carries the flag to the machine pulled
+  from (below).
+- **On the coordinator's list**, as its entry's `"inbound": false`:
 
 ```json
 { "name": "<machine>", "ssh": "<host>", "root": "/path/to/toli", "inbound": false }
 ```
+
+The list's flag reaches the machine only through `fleet sync` or a pull, so a machine marked only there, whose list
+was copied before the flag was set, never learns it while its coordinator takes no inbound ssh either. Mark such a
+machine on itself.
 
 Everything the others would deliver to it over ssh (job results and alerts, `talk`, delegations, delegated-task
 reports and links, share answers, task answers and escalated answers, queue offers) stays in their
@@ -88,8 +98,27 @@ then on no toli call there ssh-es into it: sends queue for the pull, fleet reads
 `task list --fleet`, `fleet check`, `sync --all`) skip it with the reason, `talk <machine>` without words refuses,
 and a call that forgot the check fails in `sshArgs` before running ssh. `bin/toli doctor` there reports such
 messages as waiting for the pull (a warning only once the oldest is 10 minutes old, i.e. the pulls stopped), never as
-an ssh problem. To take ssh again, drop the flag on the coordinator and run `bin/toli outbox pull` once there: the
-list it carries clears the flag on the others, and their queued items go by ssh from then on.
+an ssh problem. To take ssh again, drop the flag on the coordinator (and run `bin/toli init ... --inbound on` on the
+machine if it was marked there) and run `bin/toli outbox pull` once there: the list it carries clears the flag on the
+others, and their queued items go by ssh from then on.
+
+`bin/toli doctor` catches a machine whose pulls never started:
+
+- On the pulling machine, a `pull` line: a warning while it has never pulled (`state/pull-last.json` records the
+  last pull that reached a machine, over ssh or HTTPS).
+- On a sender, the `outbox` line names a puller that has never asked it for its items (`state/pullers.json` records
+  each one's last ask) once the oldest is 10 minutes old, with the fix: mark it on itself with `--inbound off`.
+- On a sender, items for a machine reached by ssh that have waited over an hour add a hint: if that machine takes no
+  inbound ssh, mark it so it pulls them.
+
+#### Two machines that both take no inbound ssh
+
+Neither can reach the other: a pull skips a sender marked `"inbound": false` (it could not ssh in), and a send to a
+pull-only machine only queues. They exchange messages through a **relay**, a paired peer both reach: each pairs with
+it, and each runs `bin/toli peer trust <other> --key <its key> --via <relay>`. Items then travel sealed for the
+recipient and signed by the sender, so the relay can neither read nor forge them, and the recipient applies each as
+a message from its sender ([peers.md](peers.md#relay)). The ssh pull still never takes items one machine left for
+another: there a machine speaks only for itself.
 
 ### Unreachable machines
 

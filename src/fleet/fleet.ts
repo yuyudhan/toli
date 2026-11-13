@@ -21,13 +21,16 @@ import { activeRuntime, syncRuntime } from "../release/runtime.ts";
 import { upgradeCommand } from "../release/upgrade.ts";
 
 export function initCommand(argv: string[]): void {
-    const args = new Args(argv, { values: ["name", "role", "coordinator-ssh", "coordinator-root"] });
+    const args = new Args(argv, { values: ["name", "role", "coordinator-ssh", "coordinator-root", "inbound"] });
     args.maxPositional(0);
     const name = requireName("machine", args.str("name"));
     const role = args.str("role");
     if (role !== "coordinator" && role !== "worker") throw new ToliError("--role must be coordinator or worker");
     const coordinatorSsh = args.str("coordinator-ssh");
     const coordinatorRoot = args.str("coordinator-root");
+    const inbound = args.str("inbound");
+    if (inbound !== undefined && inbound !== "on" && inbound !== "off")
+        throw new ToliError("--inbound must be on or off");
     // Re-running init (e.g. setup resuming half-done) keeps every other setting: capacity, harness, retention.
     const machine: Machine = { ...machineSettings(), name, role };
     delete machine.coordinator;
@@ -38,13 +41,16 @@ export function initCommand(argv: string[]): void {
     } else if (coordinatorSsh || coordinatorRoot) {
         throw new ToliError("--coordinator-ssh/--coordinator-root apply to workers only");
     }
+    // off: no other machine can ssh in, so this one pulls its messages (src/jobs/pull.ts); on: the default.
+    if (inbound === "off") machine.inbound = false;
+    else if (inbound === "on") delete machine.inbound;
     for (const dir of ["config", "data", "state", "logs", "projects"])
         mkdirSync(join(paths.root(), dir), { recursive: true });
     writeJsonAtomic(paths.machine(), machine);
     if (!existsSync(paths.fleet())) writeJsonAtomic(paths.fleet(), { machines: [] });
     seedLocal();
     out(
-        `initialized ${name} as ${role}${machine.coordinator ? ` (coordinator ${machine.coordinator.ssh}:${machine.coordinator.root})` : ""}`,
+        `initialized ${name} as ${role}${machine.coordinator ? ` (coordinator ${machine.coordinator.ssh}:${machine.coordinator.root})` : ""}${machine.inbound === false ? "; takes no inbound ssh, pulls its messages" : ""}`,
     );
     runHook("post-init");
 }

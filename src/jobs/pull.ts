@@ -35,6 +35,7 @@ import {
     shellQuote,
     ToliError,
     warn,
+    withLock,
     writeJsonAtomic,
 } from "../core/util.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
@@ -95,6 +96,7 @@ function pending(args: Args): void {
             warn(`config/fleet.json kept: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
+    notePuller(puller);
     printJson({ items: queuedFor(puller).map(({ file, item }) => ({ id: file, item })) } satisfies PendingBatch);
 }
 
@@ -259,6 +261,7 @@ async function pullFrom(
         return;
     }
     reach.success(sender.ssh);
+    notePulled(sender.name);
     let batch: PendingBatch;
     try {
         batch = parseBatch(result.stdout);
@@ -289,7 +292,7 @@ async function pullFrom(
  * Pull from every other fleet machine what waits there for this one, apply it here and acknowledge it there, from all
  * of them at once. A machine that does not answer keeps its items for the next pull; one `reach` holds (it failed
  * earlier in the tick's pass, or is backed off: src/jobs/reach.ts) is not tried. With `peer.sshFallback` off a paired
- * peer is not pulled over ssh either: its items wait for the HTTPS pull (src/peer/deliver.ts `pullPeers`). Null when
+ * peer is not pulled over ssh either: its items wait for the HTTPS pull (src/peer/pull-peers.ts). Null when
  * another pull is running.
  */
 export async function pullFleet(reach: Reach = new Reach({ backoff: false })): Promise<PullReport | null> {
@@ -320,11 +323,23 @@ export async function pullFleet(reach: Reach = new Reach({ backoff: false })): P
     }
 }
 
-/** Whether this machine takes no inbound ssh, so its tick pulls (its own entry in config/fleet.json). */
-export function pullsItsMessages(): boolean {
-    const self = loadMachine().name;
-    const entry = loadFleet().machines.find((machine) => machine.name === self);
-    return entry !== undefined && inboundOff(entry);
+/** state/pull-last.json: when this machine's last pull fetched from any machine, and from which. */
+export type PullLast = { at: number; from: string };
+
+/** state/pullers.json on a sender: when each pulling machine last asked here for its items. */
+export type Pullers = Record<string, number>;
+
+/** The puller's side: a pull (ssh or HTTPS) just fetched what waits on `sender`. */
+export function notePulled(sender: string): void {
+    writeJsonAtomic(paths.pullLast(), { at: Date.now(), from: sender } satisfies PullLast);
+}
+
+/** The sender's side: `puller` just asked here (ssh or HTTPS) for what waits for it. */
+export function notePuller(puller: string): void {
+    withLock(paths.lock("pullers"), () => {
+        const pullers = readJson<Pullers>(paths.pullers(), {});
+        writeJsonAtomic(paths.pullers(), { ...pullers, [puller]: Date.now() } satisfies Pullers);
+    });
 }
 
 /** One line for the tick log and `outbox pull`. */

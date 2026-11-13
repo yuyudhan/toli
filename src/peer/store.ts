@@ -35,7 +35,23 @@ export type Peer = {
     prevKey?: string;
     prevKeyUntil?: string;
     version?: string;
+    /**
+     * A peer with no address that neither side can reach (both refuse inbound connections): its messages go through
+     * this paired peer, sealed for it, and it pulls them there (src/peer/relay.ts). Set by `peer trust --via`.
+     */
+    via?: string;
+    /**
+     * false: the peer accepts no inbound connection (a firewall that resets them, `inbound: false` in its
+     * config/machine.json), so nothing is pushed to it: its items wait here and it pulls them. Learned from its own
+     * pulls (`/v1/outbox/pending` carries its setting).
+     */
+    inbound?: boolean;
 };
+
+/** Whether this machine connects to `peer` itself: active, with an address, and taking inbound connections. */
+export function pushable(peer: Peer): boolean {
+    return peer.status === "active" && peer.addrs.length > 0 && peer.inbound !== false;
+}
 
 type PeersFile = { peers: Peer[] };
 

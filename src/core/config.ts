@@ -116,6 +116,12 @@ export type Machine = {
      * and `sshFallback` (default true; false: a paired peer gets nothing over ssh, HTTP only).
      */
     peer?: PeerSettings;
+    /**
+     * false: this machine takes no inbound ssh, so its tick pulls its messages (src/jobs/pull.ts), the same as
+     * `inbound: false` on its own entry in config/fleet.json; either one is enough. Set by `bin/toli init --inbound
+     * off`; each pull carries it to the machine pulled from (docs/fleet.md "Machines that take no inbound ssh").
+     */
+    inbound?: boolean;
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */
@@ -178,6 +184,17 @@ export function otherFleetMachines(): FleetMachine[] {
 /** Whether a fleet machine takes no inbound ssh (`inbound: false`): nothing ssh-es into it, it pulls instead. */
 export function inboundOff(machine: FleetMachine): boolean {
     return machine.inbound === false;
+}
+
+/**
+ * Whether this machine takes no inbound ssh, so its tick pulls: `inbound: false` in its config/machine.json, or on its
+ * own entry in config/fleet.json (the coordinator's flag, which reaches it only with the list).
+ */
+export function pullsItsMessages(): boolean {
+    const machine = loadMachine();
+    if (machine.inbound === false) return true;
+    const entry = loadFleet().machines.find((candidate) => candidate.name === machine.name);
+    return entry !== undefined && inboundOff(entry);
 }
 
 /** Why a call does not ssh into `machine`: the line callers show in place of an ssh error. */

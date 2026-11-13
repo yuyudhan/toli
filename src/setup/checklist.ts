@@ -152,7 +152,7 @@ function toolsItem(probe: SetupProbe): SetupItem {
 }
 
 const MACHINE_FIX =
-    "Question: what should this machine be called, and is it the coordinator (the machine you talk to) or a worker? Then: bin/toli init --name <machine> --role coordinator (a worker adds --coordinator-ssh <host> --coordinator-root <path>)";
+    "Question: what should this machine be called, is it the coordinator (the machine you talk to) or a worker, and can the other machines ssh into it? Then: bin/toli init --name <machine> --role coordinator (a worker adds --coordinator-ssh <host> --coordinator-root <path>; a machine nothing can ssh into adds --inbound off, so it pulls its messages)";
 
 function machineItem(): SetupItem {
     const base = { id: "machine" as const, title: "Machine config (config/machine.json)", who: "user" as const };

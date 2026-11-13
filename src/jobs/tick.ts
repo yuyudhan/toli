@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { Args } from "../core/args.ts";
-import { loadMachine, type Machine } from "../core/config.ts";
+import { loadMachine, type Machine, pullsItsMessages } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { tryPidLock } from "../core/pid-lock.ts";
@@ -21,9 +21,10 @@ import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
-import { pullPeers } from "../peer/deliver.ts";
 import { hasIdentity } from "../peer/identity.ts";
+import { pullPeers } from "../peer/pull-peers.ts";
 import { peerSettings } from "../peer/store.ts";
+import { pullLine } from "../peer/transport-command.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { surfaceStaleTasks } from "../records/stale.ts";
@@ -41,7 +42,7 @@ import {
 } from "./jobs.ts";
 import { deliverOutbox } from "./outbox.ts";
 import { postWaitingAlerts } from "./outbox-admin.ts";
-import { pullFleet, pullsItsMessages, pullText } from "./pull.ts";
+import { pullFleet, pullText } from "./pull.ts";
 import { Reach } from "./reach.ts";
 
 function log(line: string): void {
@@ -72,13 +73,12 @@ async function exchangeMessages(machine: Machine): Promise<void> {
                 if (pulled === null || pulled.pulled > 0 || pulled.errors.length > 0) log(pullText(pulled));
                 for (const error of pulled?.errors ?? []) log(`pull: ${error}`);
             }
-            // A machine without a peer listener pulls from its paired peers over HTTPS.
-            if (hasIdentity() && !peerSettings().listen)
+            // A machine without a peer listener, or one that takes no inbound connection, pulls from its paired peers
+            // over HTTPS, relayed items included.
+            if (hasIdentity() && (!peerSettings().listen || pullsItsMessages()))
                 for (const report of await pullPeers())
-                    if (report.applied > 0 || report.error !== undefined)
-                        log(
-                            `peer pull from ${report.peer}: ${report.applied} applied${report.error ? `; ${report.error}` : ""}`,
-                        );
+                    if (report.applied > 0 || report.relayed !== undefined || report.error !== undefined)
+                        log(`peer pull from ${pullLine(report)}`);
         } catch (error) {
             log(`pull failed: ${error instanceof Error ? error.message : String(error)}`);
         }

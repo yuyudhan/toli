@@ -2,9 +2,10 @@
 // offline loses nothing. Items without a target go to the coordinator's inbox (a worker's job results, prune
 // reports, alerts); items with one go to that machine: a delegation (`bin/toli delegation receive` there) or an
 // inbox message (`bin/toli inbox add` there) such as a delegated task's report or a lead's `talk`. A paired peer gets
-// its items over HTTPS first (src/peer/deliver.ts, docs/peers.md); other machines, and a peer HTTPS cannot reach
-// while `peer.sshFallback` is on, get them over ssh. Items for a machine that takes no inbound ssh (`inbound: false`)
-// and no HTTPS wait here until it pulls them (src/jobs/pull.ts, or /v1/outbox/pending).
+// its items over HTTPS first (src/peer/deliver.ts, docs/peers.md), or through its relay when neither side can reach the
+// other (src/peer/relay.ts); other machines, and a peer HTTPS cannot reach while `peer.sshFallback` is on, get them
+// over ssh. Items for a machine that takes no inbound ssh (`inbound: false`) and no HTTPS wait here until it pulls
+// them (src/jobs/pull.ts, or /v1/outbox/pending).
 import { existsSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -20,7 +21,7 @@ import {
 import { paths } from "../core/paths.ts";
 import { readJson, run, shellQuote, warn, writeJsonAtomic } from "../core/util.ts";
 import { recordStat } from "../peer/client.ts";
-import { flushSync, httpPeer, sshFallback } from "../peer/transport.ts";
+import { flushSync, httpPeer, pullingPeer, relayedPeer, sendRelayed, sshFallback } from "../peer/transport.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { cancelItems } from "./outbox-admin.ts";
 import { Reach } from "./reach.ts";
@@ -97,14 +98,18 @@ function remoteCommand(item: OutboxItem, root: string): string {
 /**
  * Whether `target` takes no inbound ssh, by the current list (an item queued before the flag was set carries an old
  * copy of its machine): by name, else by ssh name (a worker's coordinator is `{ssh, root}`). A paired peer outside
- * the fleet list has no ssh name at all: it is reached over HTTPS or pulls.
+ * the fleet list has no ssh name at all: it is reached over HTTPS or pulls; a paired peer that accepts no inbound
+ * connection and has no relay (src/peer/transport.ts `pullingPeer`) pulls too.
  */
 export function pullOnly(target: { name?: string; ssh: string }, fleet: Fleet = loadFleet()): FleetMachine | null {
     if (target.ssh === "") return { name: target.name ?? "", ssh: "", root: "", inbound: false };
     const entry =
         fleet.machines.find((machine) => target.name !== undefined && machine.name === target.name) ??
         fleet.machines.find((machine) => machine.ssh === target.ssh);
-    return entry !== undefined && inboundOff(entry) ? entry : null;
+    if (entry !== undefined && inboundOff(entry)) return entry;
+    if (pullingPeer(target.name) !== undefined)
+        return { name: target.name ?? "", ssh: target.ssh, root: entry?.root ?? "", inbound: false };
+    return null;
 }
 
 /** The machine an item goes to: its own target, else (on a worker) the coordinator; undefined when neither. */
@@ -178,7 +183,9 @@ export function deliverOutbox(
     // Paired peers first, over HTTPS (one subprocess for all of them); what it could not reach may go over ssh.
     const queuedNow = queuedItems();
     const unreachable = new Map<string, string>();
-    if (queuedNow.some(({ item }) => httpPeer(item.to?.name) !== undefined)) {
+    if (
+        queuedNow.some(({ item }) => httpPeer(item.to?.name) !== undefined || relayedPeer(item.to?.name) !== undefined)
+    ) {
         for (const flush of flushSync(null)) {
             result.delivered += flush.sent;
             if (flush.unreachable !== undefined) unreachable.set(flush.peer, flush.unreachable);
@@ -195,6 +202,11 @@ export function deliverOutbox(
                 result.pending += 1;
                 continue;
             }
+        }
+        // A peer reached only through its relay is never ssh-ed into: the flush above handed its items over.
+        if (relayedPeer(target.name) !== undefined) {
+            result.awaitingPull += 1;
+            continue;
         }
         if (pullOnly(target, fleet) !== null) {
             result.awaitingPull += 1;
@@ -271,12 +283,14 @@ export function notify(machine: Machine, title: string, body: string, outboxId: 
  */
 export type SendResult =
     | { delivered: true; stdout: string }
-    | { delivered: false; pulled: boolean; error: string; refused?: string };
+    | { delivered: false; pulled: boolean; error: string; refused?: string; relayed?: string };
 
 /** What a sender prints for an item not delivered: who picks it up next, or that it was refused. */
-export function queuedText(name: string, sent: { pulled: boolean; refused?: string }): string {
+export function queuedText(name: string, sent: { pulled: boolean; refused?: string; relayed?: string }): string {
     if (sent.refused !== undefined)
         return `not sent: ${name} refused it: ${sent.refused} (kept in state/outbox/cancelled/)`;
+    if (sent.relayed !== undefined)
+        return `queued for ${name} through its relay ${sent.relayed}, where ${name} pulls it every minute (sealed for it, signed here)`;
     return sent.pulled
         ? `queued for ${name}, which pulls its messages from here every minute (it takes no inbound ssh)`
         : `queued for ${name} (unreachable); the minute tick retries`;
@@ -297,6 +311,8 @@ export function sendNow(
 ): SendResult {
     const item: OutboxItem = { from, title, body, to, kind, queuedAt: Date.now() };
     const queued = join(paths.outboxDir(), `${id}.json`);
+    const relayed = relayedPeer(to.name);
+    if (relayed !== undefined) return sendRelayed(relayed, item, queued, id);
     const pulled = pullOnly(to);
     const peer = httpPeer(to.name);
     let httpsFailed: string | null = null;

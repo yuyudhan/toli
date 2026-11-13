@@ -21,7 +21,7 @@ import { hooksDoctorChecks } from "../projects/hooks-gates.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
 import { memoryCheck } from "../records/memory.ts";
 import { describeRuntime, runtimeStatus } from "../release/runtime.ts";
-import { outboxCheck } from "./outbox-check.ts";
+import { outboxCheck, pullCheck } from "./outbox-check.ts";
 import { peerChecks } from "./peer-checks.ts";
 
 export type CheckLevel = "ok" | "warn" | "fail";
@@ -257,6 +257,8 @@ export async function runChecks(): Promise<Check[]> {
                 : "";
             checks.push({ level: "ok", name: "machine", detail: `${machine.name} (${machine.role})${coordinator}` });
             checks.push(outboxCheck(machine.role === "worker" ? machine.coordinator?.ssh : undefined));
+            const pulling = pullCheck();
+            if (pulling !== null) checks.push(pulling);
             if (Bun.which("cargo", { PATH: process.env.PATH ?? "" })) {
                 const config = cargoConfigPath();
                 const cargoJobs = capacityFor(machine, availableParallelism()).cargoJobs;

@@ -57,18 +57,25 @@ async function resolvePortableSsh(name: string): Promise<string> {
     return port === "22" ? `${user}@${host}` : `ssh://${user}@${host}:${port}`;
 }
 
-/** This machine's fleet list as the workers take it; every machine's ssh name resolves at once. */
+/**
+ * This machine's fleet list as the workers take it; every machine's ssh name resolves at once. Its own entry carries
+ * `inbound: false` when its config/machine.json says so, so the machines it pulls from learn the flag.
+ */
 export async function fleetExport(): Promise<FleetExport> {
-    const self = loadMachine().name;
+    const machine = loadMachine();
     return {
-        coordinator: self,
+        coordinator: machine.name,
         machines: await Promise.all(
-            loadFleet().machines.map(async (entry) => ({
-                name: entry.name,
-                root: entry.root,
-                ssh: entry.name === self ? entry.ssh : await portableSsh(entry.ssh),
-                ...(entry.inbound === undefined ? {} : { inbound: entry.inbound }),
-            })),
+            loadFleet().machines.map(async (entry) => {
+                const own = entry.name === machine.name;
+                const inbound = own && machine.inbound === false ? false : entry.inbound;
+                return {
+                    name: entry.name,
+                    root: entry.root,
+                    ssh: own ? entry.ssh : await portableSsh(entry.ssh),
+                    ...(inbound === undefined ? {} : { inbound }),
+                };
+            }),
         ),
     };
 }

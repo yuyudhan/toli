@@ -19,7 +19,7 @@ import { type Peer, type Permission, peerByFingerprint } from "./store.ts";
 
 /** Kinds that carry a message (an outbox item); the rest ask the receiving listener for something. */
 export const MESSAGE_KINDS: readonly OutboxKind[] = ["inbox", "delegation", "update", "link", "share", "answer"];
-export type ControlKind = "announce" | "status" | "pending" | "ack" | "rotate";
+export type ControlKind = "announce" | "status" | "pending" | "ack" | "rotate" | "relay" | "relay-ack";
 export type EnvelopeKind = OutboxKind | ControlKind;
 
 export type Envelope = {
@@ -47,6 +47,11 @@ export type Receipt = { id: string; status: ReceiptStatus; reason?: string; stdo
 
 export const CLOCK_SKEW_MS = 5 * 60_000;
 export const NONCE_KEEP_MS = 10 * 60_000;
+/**
+ * An envelope that came through a relay (src/peer/relay.ts) waits there until its recipient pulls, so it is not held
+ * to the five-minute window: it may be this old, well inside RECEIVED_KEEP_MS, so a replay is always a duplicate.
+ */
+export const RELAYED_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 /** A received id is remembered this long, with its receipt, so a resend is answered without applying it again. */
 const RECEIVED_KEEP_MS = 30 * 24 * 60 * 60_000;
 export const TITLE_MAX = 200;
@@ -117,9 +122,11 @@ export function bodyLimit(kind: EnvelopeKind): number {
  * Check one envelope addressed to `self` (this machine's fingerprint), in this order: the key belongs to an active
  * peer, the signature verifies, it is addressed here, `from` is that peer's name, `sentAt` is within five minutes,
  * the nonce is new, the sizes are within limits, and the peer has the permission its kind needs. The nonce is
- * recorded only for a signed envelope, so nobody without a key can fill the cache.
+ * recorded only for a signed envelope, so nobody without a key can fill the cache. A `relayed` envelope (it waited at
+ * a relay) is instead held to RELAYED_MAX_AGE_MS and no nonce: its id, remembered for 30 days, makes a replay a
+ * duplicate.
  */
-export function verifyEnvelope(value: unknown, self: string): Verified {
+export function verifyEnvelope(value: unknown, self: string, relayed = false): Verified {
     const envelope = shapeOf(value);
     if (envelope === null) return { ok: false, code: 400, reason: "malformed envelope" };
     const found = peerByFingerprint(envelope.fromKey);
@@ -131,9 +138,15 @@ export function verifyEnvelope(value: unknown, self: string): Verified {
     if (envelope.to !== self) return { ok: false, code: 401, reason: "not addressed to this machine" };
     if (envelope.from !== peer.name)
         return { ok: false, code: 401, reason: `from "${envelope.from}" is not the key's peer (${peer.name})` };
-    if (Math.abs(now().getTime() - envelope.sentAt) > CLOCK_SKEW_MS)
-        return { ok: false, code: 401, reason: "sentAt outside the 5-minute window (replayed or clock skew)" };
-    if (!freshNonce(envelope.fromKey, envelope.nonce)) return { ok: false, code: 409, reason: "replayed nonce" };
+    const age = now().getTime() - envelope.sentAt;
+    if (relayed) {
+        if (age < -CLOCK_SKEW_MS || age > RELAYED_MAX_AGE_MS)
+            return { ok: false, code: 401, reason: "relayed envelope older than 7 days (replayed or clock skew)" };
+    } else {
+        if (Math.abs(age) > CLOCK_SKEW_MS)
+            return { ok: false, code: 401, reason: "sentAt outside the 5-minute window (replayed or clock skew)" };
+        if (!freshNonce(envelope.fromKey, envelope.nonce)) return { ok: false, code: 409, reason: "replayed nonce" };
+    }
     if (envelope.title.length > TITLE_MAX)
         return { ok: false, code: 413, reason: `title over ${TITLE_MAX} characters` };
     if (Buffer.byteLength(envelope.body) > bodyLimit(envelope.kind))
@@ -280,13 +293,18 @@ export type Admit = (peer: Peer, envelope: Envelope) => string | null;
  * Verify and apply a batch addressed to `self`, in order, one receipt each. A refused envelope gets its receipt and
  * the batch goes on; the first deferred or failed one stops it (the rest get no receipt and stay queued with their
  * sender, in order). `admit` may defer a verified envelope (a rate limit). More than five new items from one peer
- * also post one header item, so the lead sees one summarised wake.
+ * also post one header item, so the lead sees one summarised wake. `relayed`: the batch came through a relay.
  */
-export async function applyBatch(values: unknown[], self: string, admit: Admit = () => null): Promise<Receipt[]> {
+export async function applyBatch(
+    values: unknown[],
+    self: string,
+    admit: Admit = () => null,
+    relayed = false,
+): Promise<Receipt[]> {
     const receipts: Receipt[] = [];
     const applied = new Map<string, { count: number; oldest: number }>();
     for (const value of values) {
-        const verified = verifyEnvelope(value, self);
+        const verified = verifyEnvelope(value, self, relayed);
         if (!verified.ok) {
             const id = isJsonObject(value) && typeof value.id === "string" ? value.id : "";
             receipts.push({ id, status: "refused", reason: verified.reason, stdout: "", code: verified.code });

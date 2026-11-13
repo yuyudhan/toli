@@ -101,7 +101,7 @@ export type Stat = {
     peer: string;
     id: string;
     kind: string;
-    transport: "https" | "ssh";
+    transport: "https" | "ssh" | "relay";
     ms: number;
     outcome: string;
 };

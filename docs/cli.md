@@ -29,7 +29,7 @@ machine-readable output. Exit code 0 is success, 1 a failure with the reason on 
 
 ### Setup and status
 
-    init --name <machine> --role coordinator|worker [--coordinator-ssh <host> --coordinator-root <path>]
+    init --name <machine> --role coordinator|worker [--coordinator-ssh <host> --coordinator-root <path>] [--inbound on|off]
     setup status [--json] | notice [--json] | snooze | seed-local
     doctor [--json]
     digest [--json] [--fleet]
@@ -271,6 +271,7 @@ Details: [fleet.md](fleet.md).
       [--ssh-fallback on|off]
     peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
     peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
+    peer trust <peer> --key <key> --via <relay> [--by owner|sardar] [--why "..."]
     peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
     peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
     peer scan [--netbird] [--tailscale] [--subnet <cidr>] [--port <n>] [--json]
@@ -290,6 +291,9 @@ set` changes the port (47123), the bind (`private`, the default, or a list of ad
   `peer add <host> --code NNNN` finishes. Pairing
   grants every permission; `peer deny|allow` revokes or restores one, `peer remove` revokes the peer. The Sardar runs
   these only with `--why`, and every one is logged with who and why ([peers.md](peers.md#pairing)).
+- `peer trust <peer> --key <key> --via <relay>` pins a peer that neither side can reach (both refuse inbound
+  connections), with the key `peer status` prints there, passed on by its owner; its messages then go through
+  `relay`, a paired peer both reach, sealed for the recipient and signed by the sender ([peers.md](peers.md#relay)).
 - `peer flush` sends what waits for a peer now (the tick does it every minute), `peer pull` takes what peers hold
   for this machine when its listener is off, `peer stats` compares how long HTTPS and ssh deliveries took,
   `peer ask <peer> status` asks a peer what `resources` and its task list say there, and `peer rotate` replaces this
