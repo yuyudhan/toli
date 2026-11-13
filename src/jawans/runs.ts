@@ -5,6 +5,7 @@ import { paths } from "../core/paths.ts";
 import { now, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import type { Harness, WorkType } from "../harness/harness.ts";
 import { type FallbackRecord, type ModelSource, type Tier, type Usage, usageText } from "../harness/models.ts";
+import { orphanCause } from "./death.ts";
 
 /**
  * `queued`: waiting for a free jawan slot (config/machine.json capacity.maxRuns). `time-limit`: stopped by its explicit
@@ -43,6 +44,8 @@ export type JawanRun = {
     resumeSession?: string;
     status: RunStatus;
     supervisorPid: number | null;
+    /** A termination signal the supervisor caught and outlived to wait for its harness (src/jawans/supervise.ts). */
+    supervisorSignal?: { signal: string; at: string };
     pid: number | null;
     exitCode: number | null;
     signal: string | null;
@@ -93,7 +96,10 @@ export function updateRun(id: string, change: (run: JawanRun) => void): JawanRun
     });
 }
 
-/** Every spawned run, newest first. Active runs whose supervisor died are recorded as failed. */
+/**
+ * Every spawned run, newest first. An active run whose supervisor died is recorded as failed, with the best cause
+ * found (src/jawans/death.ts); the tick posts its outcome (src/jawans/adopt.ts).
+ */
 export function listRuns(): JawanRun[] {
     const dir = paths.jawansDir();
     if (!existsSync(dir)) return [];
@@ -101,16 +107,17 @@ export function listRuns(): JawanRun[] {
         .filter((file) => file.endsWith(".json"))
         .map((file) => readJson<JawanRun>(join(dir, file), {} as JawanRun))
         .filter((run) => typeof run.id === "string")
-        .map((run) =>
-            ACTIVE.includes(run.status) && run.supervisorPid !== null && !pidAlive(run.supervisorPid)
-                ? updateRun(run.id, (stale) => {
-                      if (!ACTIVE.includes(stale.status)) return;
-                      stale.status = "failed";
-                      stale.endedAt = now().toISOString();
-                      stale.error = "the supervisor exited without recording an outcome";
-                  })
-                : run,
-        )
+        .map((run) => {
+            if (!ACTIVE.includes(run.status) || run.supervisorPid === null || pidAlive(run.supervisorPid)) return run;
+            // Read outside the record's lock: the journal can take seconds.
+            const cause = orphanCause(run);
+            return updateRun(run.id, (stale) => {
+                if (!ACTIVE.includes(stale.status)) return;
+                stale.status = "failed";
+                stale.endedAt = now().toISOString();
+                stale.error = cause;
+            });
+        })
         .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id));
 }
 

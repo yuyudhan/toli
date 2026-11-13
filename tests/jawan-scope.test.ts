@@ -32,16 +32,38 @@ function spawn(box: Sandbox, env: Record<string, string>): Run {
 }
 
 describe("each jawan in its own systemd scope", () => {
-    test("on Linux with a user manager the supervisor starts through systemd-run --user --scope", async () => {
+    test("on Linux with a user manager the supervisor and the harness each start in their own scope", async () => {
         const { box, env, log } = linuxBox(true);
         const started = spawn(box, env);
         const done = await waitFor(box, started.id, (run) => run.status === "done" && run.inbox !== null);
         expect(readFileSync(done.logPath, "utf8")).toBe("in scope\n");
-        const line = readFileSync(log, "utf8").trim();
-        expect(line).toStartWith(
-            `--user --scope --quiet --collect --unit=toli-jawan-${started.id}.scope --description=toli jawan `,
+        const [supervisor, harness] = readFileSync(log, "utf8").trim().split("\n");
+        expect(supervisor).toStartWith(
+            `--user --scope --quiet --collect --unit=toli-supervisor-${started.id}.scope --description=toli jawan supervisor -- `,
         );
-        expect(line).toEndWith(`run supervise ${started.id}`);
+        expect(supervisor).toEndWith(`run supervise ${started.id}`);
+        expect(harness).toStartWith(
+            `--user --scope --quiet --collect --unit=toli-jawan-${started.id}.scope --description=toli jawan -- /bin/sh -c `,
+        );
+        expect(harness).toContain("omp");
+    });
+
+    test("a harness scope systemd-run cannot make: the harness runs without one", async () => {
+        const { box, env, log } = linuxBox(true);
+        box.stub(
+            "systemd-run",
+            [
+                `printf '%s\\n' "$*" >> "${log}"`,
+                'case "$*" in *toli-jawan-*) echo "Failed to connect to bus" >&2; exit 1 ;; esac',
+                'while [ "$#" -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done',
+                'exec "$@"',
+            ].join("\n"),
+        );
+        const started = spawn(box, env);
+        const done = await waitFor(box, started.id, (run) => run.status === "done" && run.inbox !== null);
+        const output = readFileSync(done.logPath, "utf8");
+        expect(output).toContain(`systemd-run could not start toli-jawan-${started.id}.scope (exit 1)`);
+        expect(output).toEndWith("in scope\n");
     });
 
     test("without a user manager, or off Linux, it starts as before", async () => {

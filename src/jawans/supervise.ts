@@ -7,32 +7,29 @@
 // limit is resumed: the same omp session continues (`omp --resume`), up to capacity.autoResume times per chain. When
 // a harness exits, the automation browsers its run left open are closed (src/jawans/browsers.ts). The freed slot
 // starts the oldest queued run.
-import { spawn as spawnChild } from "node:child_process";
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { availableParallelism, constants } from "node:os";
 import { relative } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
-import { now, ToliError, warn } from "../core/util.ts";
+import { now, warn } from "../core/util.ts";
 import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../fleet/resources.ts";
-import { harnessConfig, headlessCommand } from "../harness/harness.ts";
+import { harnessConfig } from "../harness/harness.ts";
 import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.ts";
 import { isLiveStack } from "../projects/projects.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { runTaskEnd } from "../records/task-end.ts";
-import { watchBrowsers } from "./browsers.ts";
+import { type Attempt, type ChildExit, KILL_GRACE_MINUTES, outliveSignals, runAttempt } from "./attempt.ts";
 import { autoResume } from "./continue.ts";
+import { signalDeathText } from "./death.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
 import { deadlineSection, hasReport, onlyHarnessErrors, usedTimeLimit } from "./limits.ts";
-import { stallText, watchStall } from "./progress.ts";
+import { stallText } from "./progress.ts";
 import { type JawanRun, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
-import { HARNESS_STOP_GRACE_MS, stopTree } from "./stop.ts";
 
-/** Grace after the harness's own time limit before the supervisor kills the process group. */
-export const KILL_GRACE_MINUTES = 10;
 const OUTPUT_TAIL = 4000;
 
 function tail(path: string, limit: number): string {
@@ -121,89 +118,8 @@ export function drainQueue(options: { diskKept?: boolean } = {}): string[] {
     ];
 }
 
-type ChildExit = { code: number | null; signal: string | null; error: string | null };
-
-type Attempt = { exit: ChildExit; timedOut: boolean; stalled: boolean; elapsedMs: number; output: string };
-
 /** How often a supervisor waiting out a limit checks whether the run was killed meanwhile. */
 const WAIT_POLL_MS = 5000;
-
-/**
- * Run the harness once for the run as recorded now (its model, its brief or resume prompt, its session) and wait for
- * it. The process group is killed when the run stalls (no progress for its stallMinutes, src/jawans/progress.ts) or,
- * only with an explicit `--max-time`, `KILL_GRACE_MINUTES` past that limit. `output` is this attempt's part of the log.
- */
-async function runAttempt(id: string, env: NodeJS.ProcessEnv, logFd: number, minuteMs: number): Promise<Attempt> {
-    const run = loadRun(id);
-    const command = headlessCommand(run.harness, {
-        brief: readFileSync(run.briefPath, "utf8"),
-        cwd: run.cwd,
-        root: paths.root(),
-        model: run.model ?? undefined,
-        maxMinutes: run.maxMinutes,
-        ...(run.sessionDir === undefined ? {} : { session: { dir: run.sessionDir, resume: run.resumeSession } }),
-    });
-    const [program, ...programArgs] = command.argv;
-    if (program === undefined) throw new ToliError("empty harness command");
-    const offset = fstatSync(logFd).size;
-    const launchedAt = Date.now();
-    const child = spawnChild(program, programArgs, {
-        cwd: run.cwd,
-        detached: true,
-        env,
-        stdio: [command.stdin === null ? "ignore" : "pipe", logFd, logFd],
-    });
-    const spawnedAtMs = Date.now();
-    const { promise: exited, resolve: done } = Promise.withResolvers<ChildExit>();
-    child.once("error", (error) => done({ code: null, signal: null, error: error.message }));
-    child.once("exit", (code, signal) => done({ code, signal, error: null }));
-    if (command.stdin !== null) child.stdin?.end(command.stdin);
-    const childPid = child.pid ?? null;
-    if (childPid !== null)
-        updateRun(id, (record) => {
-            if (record.status === "starting") record.status = "running";
-            record.pid = childPid;
-        });
-    const browsers = childPid === null ? null : watchBrowsers({ pid: childPid, spawnedAtMs }, id, minuteMs);
-    let timedOut = false;
-    let stalled = false;
-    const stopping: Promise<number[]>[] = [];
-    const stop = (): void => {
-        // A reaped harness's pid may already be someone else's: only a live (or unreaped) one is stopped.
-        if (childPid === null || stopping.length > 0 || child.exitCode !== null || child.signalCode !== null) return;
-        stopping.push(stopTree({ pid: childPid, spawnedAtMs }, HARNESS_STOP_GRACE_MS));
-    };
-    const timer =
-        run.maxMinutes === null
-            ? undefined
-            : setTimeout(
-                  () => {
-                      timedOut = true;
-                      stop();
-                  },
-                  (run.maxMinutes + KILL_GRACE_MINUTES) * minuteMs,
-              );
-    const stopWatch = watchStall(
-        () => ({ pid: childPid, logPath: run.logPath, sessionDir: run.sessionDir ?? null, cwd: run.cwd }),
-        run.stallMinutes ?? DEFAULT_STALL_MINUTES,
-        minuteMs,
-        () => {
-            stalled = true;
-            writeSync(logFd, `\n[toli] ${stallText(run.stallMinutes ?? DEFAULT_STALL_MINUTES)}: stopping the run\n`);
-            stop();
-        },
-    );
-    const exit = await exited;
-    clearTimeout(timer);
-    stopWatch();
-    // A harness that exits on SIGTERM can leave children that ignore it: the attempt ends once all of them are gone.
-    const survivors = (await Promise.all(stopping)).flat();
-    if (survivors.length > 0) writeSync(logFd, `\n[toli] pid ${survivors.join(", ")} outlived SIGKILL\n`);
-    await browsers?.finish(logFd);
-    const elapsedMs = Date.now() - launchedAt;
-    const output = existsSync(run.logPath) ? readFileSync(run.logPath).subarray(offset).toString("utf8") : "";
-    return { exit, timedOut, stalled, elapsedMs, output };
-}
 
 /** Wait `minutes` run-minutes, returning false early when the run is killed meanwhile. */
 async function waitUnlessKilled(id: string, minutes: number, minuteMs: number): Promise<boolean> {
@@ -280,7 +196,7 @@ async function retryAfterLimit(
     });
     if (waitMinutes > 0 && !(await waitUnlessKilled(id, waitMinutes, minuteMs))) return null;
     refreshDeadline(run.briefPath, run.maxMinutes, minuteMs);
-    return await runAttempt(id, env, logFd, minuteMs);
+    return await runAttempt(id, env, logFd, minuteMs, 2);
 }
 
 /** A run that ends on a task already done or dropped (the jawan closed it itself) runs the task-end hook once more. */
@@ -325,8 +241,9 @@ export async function superviseRun(id: string): Promise<void> {
     );
     const logFd = openSync(initial.logPath, "a");
     const minuteMs = runMinuteMs();
+    const outlive = outliveSignals(id);
     try {
-        const first = await runAttempt(id, env, logFd, minuteMs);
+        const first = await runAttempt(id, env, logFd, minuteMs, 1);
         let last = first;
         try {
             last = (await retryAfterLimit(id, first, env, logFd, minuteMs)) ?? first;
@@ -335,6 +252,11 @@ export async function superviseRun(id: string): Promise<void> {
         }
         const result = last.exit;
         const timedOut = last.timedOut;
+        // A harness killed by a signal toli did not send (systemd-oomd, the kernel OOM killer, someone's kill) names it.
+        const signalled =
+            result.signal !== null && !timedOut && !last.stalled && loadRun(id).status !== "killed"
+                ? await signalDeathText(id, initial.startedAt, result.signal)
+                : null;
         const output = existsSync(initial.logPath) ? readFileSync(initial.logPath, "utf8") : "";
         const reported = hasReport(output);
         const usage = parseUsage(last.output);
@@ -367,6 +289,7 @@ export async function superviseRun(id: string): Promise<void> {
                 (result.code === 0 && !timedOut && !errorOnly) || (last.stalled && reported) ? "done" : "failed";
             if (result.error !== null) run.error = result.error;
             else if (timedOut) run.error = `timed out after ${(run.maxMinutes ?? 0) + KILL_GRACE_MINUTES} minutes`;
+            else if (signalled !== null) run.error = signalled;
             else if (run.status === "failed" && hitLimit(last.output, result.code))
                 run.error = "stopped on a rate/usage limit";
             else if (errorOnly) run.error = "the harness printed only errors, no report";
@@ -387,6 +310,7 @@ export async function superviseRun(id: string): Promise<void> {
         postOutcome(machine, finished);
         endTaskOfRun(finished);
     } finally {
+        outlive();
         closeSync(logFd);
         removeRun(id);
     }

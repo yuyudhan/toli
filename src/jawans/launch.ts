@@ -27,7 +27,7 @@ import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { deadlineSection } from "./limits.ts";
 import { type JawanRun, listRuns, loadRun, RUNNING, runMinuteMs, updateRun } from "./runs.ts";
-import { inJawanScope } from "./scope.ts";
+import { inSupervisorScope } from "./scope.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
@@ -198,9 +198,9 @@ function launch(id: string): JawanRun {
         const supervisorLog = openSync(join(run.runDir, "supervisor.log"), "a");
         let pid: number | undefined;
         try {
-            // On Linux the supervisor (and so its jawan) gets its own systemd scope, outside the lead service's
-            // cgroup, so an OOM kill takes one jawan, not the lead and every jawan (src/jawans/scope.ts).
-            const scoped = inJawanScope(id, [process.execPath, TOLI_SCRIPT, "run", "supervise", id]);
+            // On Linux the supervisor gets its own systemd scope, outside the lead service's cgroup and apart from
+            // its harness's scope, so an OOM kill takes one jawan and its supervisor records it (src/jawans/scope.ts).
+            const scoped = inSupervisorScope(id, [process.execPath, TOLI_SCRIPT, "run", "supervise", id]);
             const [command, ...args] = scoped.argv;
             const supervisor = spawnChild(command, args, {
                 cwd: paths.root(),

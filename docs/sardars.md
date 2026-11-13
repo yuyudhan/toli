@@ -211,15 +211,27 @@ started before this change) is adopted: the minute tick posts its outcome to the
 (`state/lead/adopt.json` marks from when). Job results still reach the coordinator, which keeps the fleet view; work
 results reach other machines only through a delegated task's report.
 
-On Linux each jawan runs in its own systemd scope (`toli-jawan-<run id>.scope` under the user manager, started with
-`systemd-run --user --scope`), not in the lead service's cgroup, so systemd-oomd or a restart of `toli-lead.service`
-takes the lead alone, and an OOM kill takes one jawan, never the lead and all of them. Without systemd-run or a user
-manager the jawan starts as before, in the lead service's cgroup; the unit is `KillMode=process`, so even then stopping
-or restarting it (`lead install`, `bin/toli upgrade`, the loop exiting for a newer runtime) ends only `lead run`, never
-the supervisors, jawans and headless turn left running. A machine whose unit predates `KillMode=process` gets it from
-the next `lead install` (the new unit is loaded before that restart stops the old process). On macOS each jawan's
-supervisor runs in its own session and process group, which launchd leaves alone when it stops or restarts the lead's
-job.
+On Linux each jawan runs in its own systemd scope, not in the lead service's cgroup: its supervisor in
+`toli-supervisor-<run id>.scope` and its harness (with every tool and build it starts) in `toli-jawan-<run id>.scope`
+(`toli-jawan-<run id>-2.scope` for a retry after a rate limit), both under the user manager and started with
+`systemd-run --user --scope`. So systemd-oomd or a restart of `toli-lead.service` takes the lead alone, and an OOM kill
+takes one jawan's harness, never the lead, the other jawans, or that jawan's supervisor, which records the outcome:
+`failed`, with the cause the journal names (`killed by systemd-oomd (SIGKILL, 86 processes): memory pressure for
+...`, `killed by the kernel OOM killer`) or else the signal (`killed by SIGKILL`), and the log tail. Without
+systemd-run or a user manager both start as before, in the lead service's cgroup, and a harness scope systemd-run cannot
+make (no user session bus over ssh) starts the harness without one; the unit is `KillMode=process`, so even then
+stopping or restarting it (`lead install`, `bin/toli upgrade`, the loop exiting for a newer runtime) ends only `lead
+run`, never the supervisors, jawans and headless turn left running. A machine whose unit predates `KillMode=process`
+gets it from the next `lead install` (the new unit is loaded before that restart stops the old process). On macOS the
+supervisor and the harness each run in their own session and process group, which launchd leaves alone when it stops
+or restarts the lead's job; a signal to the harness's group never reaches the supervisor.
+
+A supervisor outlives SIGTERM, SIGHUP and SIGINT while its harness runs, noting the signal in the run record, so a
+logout or service stop that ends the harness still gets its outcome recorded. A supervisor that dies anyway (SIGKILL,
+or a scope from before the split holding both) leaves its run `running`; the next `bin/toli digest`, minute tick or
+`bin/toli runs` records it `failed` with the best cause found: the signal the supervisor noted, the journal's kill of
+either scope, the harness's own last words (`[Stopped by SIGTERM]`), or the end of `supervisor.log`, and whether the
+harness is gone or still running unsupervised. The tick then posts that outcome to the inbox.
 
 ## Sharing learnings between leads
 

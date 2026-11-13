@@ -1,10 +1,15 @@
 // Each jawan in its own systemd scope (docs/sardars.md "Jawans report to their own lead"). On Linux the lead service
 // is a systemd user service: anything it starts lives in its cgroup, so systemd-oomd (or a service restart) killing
 // that cgroup took the lead and every jawan it had spawned with it. A jawan's supervisor therefore starts through
-// `systemd-run --user --scope --unit toli-jawan-<run id>`: the scope is its own cgroup under the user manager, and an
-// OOM kill takes that one jawan. Where systemd-run or the user manager is missing (crontab-only boxes, containers),
-// the supervisor starts as before. On macOS the supervisor is detached into its own process group (setsid), which
-// launchd leaves alone when it stops or restarts the lead's job.
+// `systemd-run --user --scope --unit toli-supervisor-<run id>`, and the supervisor starts the harness through
+// `systemd-run --user --scope --unit toli-jawan-<run id>` (`toli-jawan-<run id>-<n>` for the n-th attempt): two
+// cgroups under the user manager. An OOM kill takes the jawan's scope (the harness, its tools and builds) and leaves
+// the small supervisor, which records the signal and what the journal says sent it (src/jawans/death.ts); with both
+// in one scope (before T1255) oomd took the supervisor too and the run ended without an outcome. Where systemd-run or
+// the user manager is missing (crontab-only boxes, containers), both start as before; a harness scope systemd-run
+// cannot make (no user session bus over ssh) starts the harness unscoped. On macOS the supervisor and the harness are
+// each detached into their own session and process group (setsid), which launchd leaves alone when it stops or
+// restarts the lead's job, and a signal to the harness's group never reaches the supervisor.
 //
 // Heavy builds (`bin/toli build-slot`, src/fleet/build-slots.ts) start the same way, each in its own
 // `toli-build-<slot>-<pid>.scope` with a `MemoryMax`, a `MemoryHigh` below it and no swap, so an OOM kill takes the
@@ -16,9 +21,14 @@ import { join } from "node:path";
 import { platform } from "../core/util.ts";
 import { procFile } from "../fleet/resources.ts";
 
-/** The unit name of a run's scope. */
-export function scopeUnit(runId: string): string {
-    return `toli-jawan-${runId}.scope`;
+/** The unit name of a run's harness scope: `attempt` 1 is the run's first harness, a limit retry is attempt 2. */
+export function scopeUnit(runId: string, attempt = 1): string {
+    return attempt <= 1 ? `toli-jawan-${runId}.scope` : `toli-jawan-${runId}-${attempt}.scope`;
+}
+
+/** The unit name of a run's supervisor scope. */
+export function supervisorScopeUnit(runId: string): string {
+    return `toli-supervisor-${runId}.scope`;
 }
 
 /** The user manager's runtime dir (its private socket lives there), or null when there is none to talk to. */
@@ -52,7 +62,7 @@ function userScope(optOut: string): UserScope | null {
  * Linux when systemd-run and a user manager are there, else unchanged. `TOLI_JAWAN_SCOPE=off` turns it off (tests).
  * `systemd-run --scope` execs the command itself, so the pid spawned is the supervisor's.
  */
-export function inJawanScope(runId: string, argv: Argv): Scoped {
+export function inSupervisorScope(runId: string, argv: Argv): Scoped {
     const scope = userScope("TOLI_JAWAN_SCOPE");
     if (scope === null) return { argv, env: {} };
     return {
@@ -62,11 +72,48 @@ export function inJawanScope(runId: string, argv: Argv): Scoped {
             "--scope",
             "--quiet",
             "--collect",
-            `--unit=${scopeUnit(runId)}`,
-            "--description=toli jawan",
+            `--unit=${supervisorScopeUnit(runId)}`,
+            "--description=toli jawan supervisor",
+            "--",
             ...argv,
         ],
         env: { XDG_RUNTIME_DIR: scope.runtimeDir },
+    };
+}
+
+/** A harness's scoped command line, its unit, and the file its command creates once systemd-run has made the scope. */
+export type HarnessScoped = Scoped & { unit: string; startedFile: string };
+
+/**
+ * The argv and extra environment that start harness `argv` of run `runId`'s `attempt` in its own systemd scope,
+ * `scopeUnit(runId, attempt)`: on Linux when systemd-run and a user manager are there; else null.
+ * `TOLI_JAWAN_SCOPE=off` turns it off (tests). Inside the scope `/bin/sh` creates `startedFile` and execs the harness,
+ * so the pid spawned is the harness's, it leads its own process group, and its exit code or killing signal is the
+ * harness's; a missing `startedFile` after it exited means the scope was never made and the harness never ran.
+ */
+export function inJawanScope(runId: string, attempt: number, argv: Argv, startedFile: string): HarnessScoped | null {
+    const scope = userScope("TOLI_JAWAN_SCOPE");
+    if (scope === null) return null;
+    const unit = scopeUnit(runId, attempt);
+    return {
+        argv: [
+            scope.systemdRun,
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            `--unit=${unit}`,
+            "--description=toli jawan",
+            "--",
+            "/bin/sh",
+            "-c",
+            ': > "$0" && exec "$@"',
+            startedFile,
+            ...argv,
+        ],
+        env: { XDG_RUNTIME_DIR: scope.runtimeDir },
+        unit,
+        startedFile,
     };
 }
 
