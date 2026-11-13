@@ -227,9 +227,17 @@ export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Com
             warn(
                 `toli: committed, but the shared index was not refreshed (git reset -q -- <paths>): ${synced.stderr.trim()}`,
             );
-        // The merged files were clean before the merge: bring the index and the working tree to the merge result.
-        const restored =
+        // The merged files were clean before the merge: bring the index and the working tree to the merge result. A
+        // file the merge deletes that is already out of the index (an adopted `git merge` removed it) is done; naming
+        // it would fail the whole restore, as git knows it from neither side.
+        const pending =
             committed.merged.length === 0
+                ? []
+                : gitOk(request.dir, ["ls-files", `--with-tree=${committed.sha}`, "--", ...committed.merged])
+                      .split("\n")
+                      .filter(Boolean);
+        const restored =
+            pending.length === 0
                 ? null
                 : git(request.dir, [
                       "restore",
@@ -237,7 +245,7 @@ export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Com
                       "--staged",
                       "--worktree",
                       "--",
-                      ...committed.merged,
+                      ...pending,
                   ]);
         if (restored !== null && restored.code !== 0)
             warn(

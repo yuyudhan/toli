@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
@@ -109,6 +109,34 @@ describe("bin/toli commit with a git merge in progress (MERGE_HEAD)", () => {
         expect(git(dir, ["show", `${merged.sha}:shared.txt`])).toBe("one upstream\ntwo\nthree main");
         expect(existsSync(join(dir, ".git", "MERGE_HEAD"))).toBe(false);
         expect(git(dir, ["status", "--porcelain"])).toBe("");
+    });
+
+    test("a merge that deletes a file commits without a warning, adopted or not, leaving index and tree at HEAD", () => {
+        const stderr: string[] = [];
+        const spy = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            stderr.push(String(chunk));
+            return true;
+        });
+        try {
+            for (const adopt of [true, false]) {
+                const dir = repo({ "gone.txt": "gone\n", "kept.txt": "kept\n", "mine.txt": "mine\n" });
+                git(dir, ["switch", "--quiet", "-c", "upstream"]);
+                git(dir, ["rm", "--quiet", "--", "gone.txt"]);
+                writeFileSync(join(dir, "kept.txt"), "kept upstream\n");
+                git(dir, ["commit", "--quiet", "-am", "upstream deletes gone.txt"]);
+                git(dir, ["switch", "--quiet", "main"]);
+                writeFileSync(join(dir, "mine.txt"), "mine on main\n");
+                git(dir, ["commit", "--quiet", "-am", "main work"]);
+                if (adopt) startMerge(dir);
+                const merged = safeCommit({ dir, paths: [], merge: "upstream", message: "Merge upstream" });
+                expect(git(dir, ["ls-tree", "--name-only", merged.sha])).toBe("kept.txt\nmine.txt");
+                expect(existsSync(join(dir, "gone.txt"))).toBe(false);
+                expect(git(dir, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+            }
+        } finally {
+            spy.mockRestore();
+        }
+        expect(stderr).toEqual([]);
     });
 
     test("another --merge ref, or an unnamed merged file edited after the merge, is refused", () => {
