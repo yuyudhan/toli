@@ -4,6 +4,17 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.3 - unreleased
+
+### Fixed
+
+- The disk keeper frees the build output finished no-mistakes runs leave in their worktrees (a compose stack's
+  root-owned `docker-data/backend/target`, about 20 GB a run; itlinux4 reached 96% with 130 GB of it). no-mistakes'
+  own state (`$NM_HOME/state.sqlite`, default `~/.no-mistakes`) says which runs are finished; a running, unrecorded
+  or unreadable one keeps its output at every step, and nothing outside `$NM_HOME/worktrees/` is touched (T1297).
+  Root-owned files go through a throwaway `docker run --rm` container, never sudo. `disk keep --dry-run` and the
+  low-disk alert list these folders too (T1294).
+
 ## v0.5.2 - 2026-11-13
 
 ### Upgrade note

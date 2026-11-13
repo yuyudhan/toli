@@ -2,7 +2,8 @@
 // (capacity.diskKeepGB in config/machine.json, default 60, capped at 15% of the volume's size so a small disk is never
 // emptied), it deletes rebuildable output only, cheapest to rebuild first and oldest first within each step, until
 // free space is back at the floor:
-//   1. whole `target/` folders of project checkouts nothing uses (no running jawan, no process working there);
+//   1. build output finished no-mistakes runs left in their worktrees (no-mistakes-runs.ts), then whole `target/`
+//      folders of project checkouts nothing uses (no running jawan, no process working there);
 //   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/`: builds run
 //      there between jobs (a project's build queue) and cannot reinstall dependencies themselves, while cargo
 //      rebuilds a wiped `target/` on its own (that wipe matches the cargo-sweep helper's: under cargo's locks, only
@@ -66,10 +67,12 @@ import {
     keepDiskDetached,
     machineFloor,
     PAUSE_EXPIRY_MS,
+    pauseHold,
     releaseKeeper,
 } from "./disk-state.ts";
 import { pruneDocker } from "./docker-prune.ts";
 import { freeBuildVolumes } from "./docker-volumes.ts";
+import { freeRunWorktrees } from "./no-mistakes-runs.ts";
 import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep } from "./stale-sweep.ts";
 
@@ -267,6 +270,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 }
             }
         };
+        freeRunWorktrees({ dryRun, checkouts, enough, remove, say });
         // 1 and 2: idle checkouts. The target wipe still takes cargo's locks once, for builds run from elsewhere.
         idleTier(1, ["target"], (dir) => wipeOutcome(dir.path));
         idleTier(2, ["node_modules", "dist"], (dir) => {
@@ -354,10 +358,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
 }
 
 function wipeOutcome(target: string): string | null {
-    const outcome = wipeTargetBetweenBuilds(target, 0, () => {
-        const pause = diskPause();
-        return pause === null ? null : `paused by pid ${pause.pid} (state/disk-keep.pause)`;
-    });
+    const outcome = wipeTargetBetweenBuilds(target, 0, pauseHold);
     return outcome.wiped ? null : outcome.reason;
 }
 

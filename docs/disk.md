@@ -44,7 +44,8 @@ that machine: before a jawan start, in the tick, the background keeper and the f
 nothing on its own; `bin/toli disk keep` run by hand still works as below, and says `automatic deletion: off`. Low
 disk only alerts: before a jawan start and in every tick toli reads free disk, and when it is under 10 GB (or the
 emergency level, when that is higher) it posts one inbox item, at most once per machine every 6 hours
-(`state/disk-alert.stamp`), titled `disk low on <machine>`, naming the biggest build folders so that machine's own
+(`state/disk-alert.stamp`), titled `disk low on <machine>`, naming the biggest build folders (those of no-mistakes
+run worktrees too, each with its run and status) so that machine's own
 lead decides what goes ([sardars.md](sardars.md#each-machines-disk-is-its-own-leads-job)); it is not forwarded to the
 coordinator. The tick posts it from a detached `bin/toli disk alert`, so sizing the
 folders never holds the tick up; `bin/toli disk alert` by hand posts it at once. Any value but `true` or `false` also
@@ -79,10 +80,30 @@ not. Steps 5 to 7 run only under the emergency level and stop as soon as free sp
 use goes only when nothing idle is left. Each item freed is logged with its size and its step (`deleted <path>, freed
 X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0 GB (step 5: idle build volume)`).
 
-1. Whole `target/` folders of project checkouts that nothing uses. A checkout is all registered projects' clones
-   plus their git worktrees. Nothing uses it when no running jawan works in it (or, for a main clone, on its
-   project) and no process has its working directory inside it. The wipe still takes cargo's locks and checks
-   that no process uses the target (see 6), so a build or test started from elsewhere is never cut off.
+1. Build output finished no-mistakes runs left in their worktrees, then whole `target/` folders of project checkouts
+   that nothing uses. A checkout is all registered projects' clones plus their git worktrees. Nothing uses it when no
+   running jawan works in it (or, for a main clone, on its project) and no process has its working directory inside
+   it. The wipe still takes cargo's locks and checks that no process uses the target (see 6), so a build or test
+   started from elsewhere is never cut off.
+
+    no-mistakes runs each gate push in a detached worktree, `$NM_HOME/worktrees/<repo>/<run>` (`NM_HOME` defaults to
+    `~/.no-mistakes`), and removes it when the run ends, best effort: a run whose checks started a compose stack leaves
+    that stack's root-owned `docker-data/backend/target` behind, about 20 GB a run. The keeper looks only under
+    `$NM_HOME/worktrees/`: a run in a worktree root elsewhere is never freed. It reads no-mistakes' own state,
+    `$NM_HOME/state.sqlite`, read only, again just before each deletion:
+    a worktree is finished only when run records name it and every one is terminal (`completed`, `failed`,
+    `cancelled`, `checks_passed`, `handed_off`, `ci_monitor_interrupted`). Anything uncertain counts as in use and
+    keeps its build output at every step, the last resort included: a pending or running run, a status it does not
+    know, a worktree no record names, a database it cannot read (`skipped <path>: no-mistakes run <id> is running`).
+    In a finished run's worktree it takes the build folders a checkout has (see "What it never deletes") plus, inside its other ignored folders
+    (up to 4 levels down, symlinks never followed), a `target` cargo marked as its own (`CACHEDIR.TAG` or
+    `.rustc_info.json`) and `node_modules`; never a nested `dist` or unmarked `target`, nor the database or upload
+    folders beside them. Each one still passes every check a target wipe makes (cargo's locks, processes, open files,
+    live container mounts). Files a container wrote as root go through a throwaway container that binds the folder's
+    parent and removes it (`docker run --rm --network none --user 0:0 ... busybox:latest rm -rf`), never sudo; with no
+    docker to reach the folder stays (`kept <path>: it holds root-owned files, and docker is not reachable to remove
+them (never sudo)`).
+
 2. `node_modules/` and `dist/` of those idle checkouts, unless a process holds a file in them open. A project main
    clone's `node_modules/` is never deleted: builds run there between jobs (a project's build queue) and do not
    reinstall dependencies on their own, while cargo rebuilds a wiped `target/` by itself.
@@ -197,12 +218,12 @@ If `bin/toli` itself cannot run, delete the git-ignored `target/` folders by han
 ## What it never deletes
 
 A candidate is only a folder named `target`, `node_modules` or `dist` that git lists as ignored and wholly untracked
-(`git ls-files --others --ignored --exclude-standard --directory`). So it never touches sources, git data, tracked
-`dist/` folders, or uncommitted work. Beyond those folders it deletes only Playwright's browser builds and sccache
-entries. Of Docker's volumes it removes only the idle build-output ones of step 5 (the name and mount patterns
-there), with the stopped containers that mount them; never a volume that may hold data or one a running container
-uses, and nothing outside this account's registered checkouts and
-its own caches.
+(`git ls-files --others --ignored --exclude-standard --directory`), or, in a finished no-mistakes run's worktree, a
+cargo-marked `target` or a `node_modules` inside such an ignored folder (step 1). So it never touches sources, git
+data, tracked `dist/` folders, or uncommitted work. Beyond those folders it deletes only Playwright's browser builds
+and sccache entries. Of Docker's volumes it removes only the idle build-output ones of step 5 (the name and mount
+patterns there), with the stopped containers that mount them; never a volume that may hold data or one a running
+container uses, and nothing outside this account's registered checkouts, no-mistakes run worktrees and its own caches.
 
 It never deletes a build folder a live (running, paused, restarting or just-created) Docker container mounts, at any
 step, the last resort included: a folder that is a bind mount's host folder, holds a volume's mountpoint, or is where

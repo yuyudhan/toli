@@ -21,6 +21,12 @@ export const GIB = 1024 ** 3;
 
 export const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/** Why the keeper deletes nothing right now: a live pause in state/disk-keep.pause; null when none holds it. */
+export function pauseHold(): string | null {
+    const pause = diskPause();
+    return pause === null ? null : `paused by pid ${pause.pid} (state/disk-keep.pause)`;
+}
+
 /** The machine's floor on a volume of `totalGB`: capacity.diskKeepGB, capped by diskKeepFloor. */
 export function machineFloor(machine: Machine, totalGB: number): { floorGB: number; note?: string } {
     return diskKeepFloor(capacityFor(machine, Math.max(1, cpus().length)).diskKeepGB, totalGB);

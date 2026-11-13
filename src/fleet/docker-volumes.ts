@@ -266,4 +266,4 @@ function removeVolume(volume: BuildVolume, say: (line: string) => void): string 
     return result.code === 0 ? null : `docker volume rm failed: ${firstLine(result.stderr || result.stdout)}`;
 }
 
-const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
+export const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";

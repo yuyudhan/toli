@@ -20,7 +20,7 @@ export type BuildKind = "target" | "node_modules" | "dist";
 
 export type BuildDir = { kind: BuildKind; path: string; checkout: Checkout; mtimeMs: number };
 
-const BUILD_KINDS: readonly BuildKind[] = ["target", "node_modules", "dist"];
+export const BUILD_KINDS: readonly BuildKind[] = ["target", "node_modules", "dist"];
 
 /** `path` with symlinks resolved, or `path` itself when it does not exist. */
 export function real(path: string): string {
@@ -64,23 +64,32 @@ export function projectCheckouts(): Checkout[] {
  * (`git ls-files --others --ignored --directory`), so nothing tracked or merely uncommitted is ever listed.
  */
 export function buildDirs(checkout: Checkout): BuildDir[] {
-    const listed = git(checkout.path, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
-    if (listed.code !== 0) return [];
     const dirs: BuildDir[] = [];
-    for (const entry of listed.stdout.split("\0")) {
-        if (!entry.endsWith("/")) continue;
-        const path = join(checkout.path, entry.slice(0, -1));
+    for (const path of ignoredDirs(checkout)) {
         const kind = BUILD_KINDS.find((name) => name === basename(path));
-        if (kind === undefined) continue;
-        try {
-            const stat = lstatSync(path);
-            if (!stat.isDirectory()) continue;
-            dirs.push({ kind, path, checkout, mtimeMs: newestChildMtime(path, stat.mtimeMs) });
-        } catch {
-            // Gone since git listed it.
-        }
+        if (kind !== undefined) pushBuildDir(dirs, kind, path, checkout);
     }
     return dirs;
+}
+
+/** The checkout's git-ignored, wholly untracked folders, each at its topmost ignored level. */
+export function ignoredDirs(checkout: Checkout): string[] {
+    const listed = git(checkout.path, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
+    if (listed.code !== 0) return [];
+    return listed.stdout
+        .split("\0")
+        .filter((entry) => entry.endsWith("/"))
+        .map((entry) => join(checkout.path, entry.slice(0, -1)));
+}
+
+/** Add `path` as a build folder of `kind` when it is a real folder (not a symlink) still there. */
+export function pushBuildDir(dirs: BuildDir[], kind: BuildKind, path: string, checkout: Checkout): void {
+    try {
+        const stat = lstatSync(path);
+        if (stat.isDirectory()) dirs.push({ kind, path, checkout, mtimeMs: newestChildMtime(path, stat.mtimeMs) });
+    } catch {
+        // Gone since git listed it.
+    }
 }
 
 /** Newest mtime of the folder and its direct children: a build rewrites `target/debug`, `node_modules/.bin`, etc. */

@@ -10,6 +10,7 @@ import { now, out, writeTextAtomic } from "../core/util.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { buildDirs, projectCheckouts, sizeGB } from "./disk-scan.ts";
 import { describe, gb, machineFloor, startDetachedDisk } from "./disk-state.ts";
+import { runBuildDirs, runWorktrees } from "./no-mistakes-runs.ts";
 import { diskEmergencyGB, measureVolume } from "./resources.ts";
 
 /** Free disk (GB) under which the alert goes out, unless the emergency level is higher. */
@@ -72,19 +73,25 @@ export function diskAlertBeforeWork(mode: "inline" | "detached", dryRun: boolean
     }
 }
 
-/** Post the low-disk alert now, naming the biggest build folders; returns the inbox item's path. */
+/**
+ * Post the low-disk alert now, naming the biggest build folders of the project checkouts and of no-mistakes run
+ * worktrees (each with its run and status); returns the inbox item's path.
+ */
 function postDiskAlert(machine: Machine): string {
     const volume = measureVolume(paths.root());
     if (typeof volume === "string") throw new Error(`cannot read free disk: ${volume}`);
     const levelGB = alertLevelGB(machine, volume.totalGB);
-    const folders = projectCheckouts()
-        .flatMap((checkout) => buildDirs(checkout))
+    const dirs = [
+        ...projectCheckouts().flatMap((checkout) => buildDirs(checkout)),
+        ...runWorktrees().flatMap((tree) => runBuildDirs(tree.checkout)),
+    ];
+    const folders = dirs
         .map((dir) => ({ path: dir.path, project: dir.checkout.project, size: sizeGB(dir.path) }))
         .sort((a, b) => b.size - a.size)
         .slice(0, BIGGEST);
     const listed =
         folders.length === 0
-            ? "No build folders in the project checkouts."
+            ? "No build folders in the project checkouts or no-mistakes run worktrees."
             : `Biggest build folders:\n${folders.map((dir) => `- ${gb(dir.size)} ${dir.path} (${dir.project})`).join("\n")}`;
     const title = `disk low on ${machine.name}: ${gb(volume.freeGB)} free`;
     const body = [
