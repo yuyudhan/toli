@@ -10,9 +10,9 @@ import {
     checkLockFiles,
     checkResolved,
     checkReverts,
-    commitMsgHook,
     scanLeaks,
 } from "./commit-checks.ts";
+import { commitMsgHook, preCommitHook } from "./commit-hooks.ts";
 import { cleanMerge, type Merge } from "./commit-merge.ts";
 import { parseHunks } from "./diff-hunks.ts";
 
@@ -114,6 +114,7 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
                       ]),
                   );
         checkReverts(dir, parent, tree, own, request.allowRevert ?? [], brought);
+        preCommitHook(attempt);
         const message = commitMsgHook(attempt, request.message);
         const parents = ["-p", parent, ...(merge === null ? [] : ["-p", merge.commit])];
         const created = git(dir, ["commit-tree", tree, ...parents, "-F", "-"], `${message}\n`);

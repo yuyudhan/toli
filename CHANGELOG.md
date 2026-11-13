@@ -20,6 +20,14 @@ one. See docs/releasing.md.
   take the name from `config/persona.json`, instead of spelling out the default name.
 - Docs, comments, tests and earlier CHANGELOG sections describe machines and projects generically.
 
+### Fixed
+
+- **`bin/toli commit` runs the project's pre-commit hook (T1402).** Its format and lint checks now run on exactly
+  the commit being made: the private index's files written out, with `git diff --cached` listing only the named
+  paths, so other jawans' uncommitted files in the shared checkout neither fail nor pass it. A failing hook refuses
+  the commit with its output; a hook that reformats or re-stages a file is refused, naming the files. See
+  docs/development.md.
+
 ## v0.5.10 - 2026-11-13
 
 ### Fixed

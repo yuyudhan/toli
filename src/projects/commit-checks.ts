@@ -1,6 +1,6 @@
-// The private index and the refusals of `bin/toli commit` (src/projects/commit.ts): leaks, lock files, reverts, and
-// the project's commit-msg hook.
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// The private index and the refusals of `bin/toli commit` (src/projects/commit.ts): leaks, lock files and reverts.
+// The project's own hooks are in commit-hooks.ts.
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { git, gitOk } from "../core/git.ts";
@@ -12,10 +12,10 @@ export const REVERT_WINDOW = 20;
 /** A reverted hunk shorter than this (non-whitespace characters, e.g. a lone `}`) is not evidence of a stale file. */
 const REVERT_MIN_CHARS = 8;
 const LOCK_CHECK_TIMEOUT_MS = 300_000;
-const HOOK_TIMEOUT_MS = 300_000;
 const TAIL_LINES = 20;
 
-function tail(text: string): string {
+/** The last lines of a tool's output, quoted in a refusal. */
+export function tail(text: string): string {
     return text.trimEnd().split("\n").slice(-TAIL_LINES).join("\n");
 }
 
@@ -140,36 +140,6 @@ export function scanLeaks(attempt: Attempt): void {
         throw new ToliError(
             `refusing: gitleaks found a secret in the staged set; nothing was committed. Remove it from the file:\n${tail(`${result.stdout}${result.stderr}`)}`,
         );
-}
-
-/**
- * Run the repo's commit-msg hook (core.hooksPath honoured, as git resolves it) on `message` and return the message as
- * the hook left it; refuse when the hook exits non-zero. It runs from the checkout root with GIT_INDEX_FILE at the
- * private index, so a hook that reads the staged set (`git diff --cached`) sees exactly the commit being made. A
- * missing or non-executable hook is skipped, as git skips it. Pre-commit hooks are not run: toli's own checks cover
- * the staged set, and those hooks often assume the shared index (formatters that re-stage, `git stash`).
- */
-export function commitMsgHook(attempt: Attempt, message: string): string {
-    const hook = gitOk(attempt.dir, ["rev-parse", "--path-format=absolute", "--git-path", "hooks/commit-msg"]);
-    try {
-        accessSync(hook, constants.X_OK);
-    } catch {
-        return message;
-    }
-    const file = attempt.file("COMMIT_EDITMSG");
-    writeFileSync(file, `${message}\n`);
-    const result = run([hook, file], {
-        cwd: attempt.dir,
-        env: { GIT_INDEX_FILE: attempt.index, GIT_EDITOR: ":" },
-        timeoutMs: HOOK_TIMEOUT_MS,
-    });
-    if (result.code !== 0)
-        throw new ToliError(
-            `refusing: the commit-msg hook ${hook} rejected the message; nothing was committed:\n${tail(`${result.stdout}${result.stderr}`)}`,
-        );
-    const edited = readFileSync(file, "utf8").replace(/\s+$/, "");
-    if (edited === "") throw new ToliError(`refusing: the commit-msg hook ${hook} left the message empty`);
-    return edited;
 }
 
 /** A line git writes around a merge conflict. */

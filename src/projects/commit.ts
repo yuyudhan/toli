@@ -2,9 +2,9 @@
 //
 // Each attempt reads the branch tip once (`old`), builds a private temporary index from it (GIT_INDEX_FILE), stages
 // only the named paths and/or applies a patch of hunks, checks the staged set (it changes only the named paths, has
-// no leaks, every staged lock file parses, it does not revert a recent commit), runs the project's commit-msg hook on
-// that private index (pre-commit hooks are skipped, see `commitMsgHook`), writes the commit with `commit-tree` on
-// `old`, and moves the branch with `update-ref <branch> <new> <old>`, which fails if the branch moved meanwhile.
+// no leaks, every staged lock file parses, it does not revert a recent commit), runs the project's pre-commit hook on
+// exactly that commit and its commit-msg hook (commit-hooks.ts), writes the commit with
+// `commit-tree` on `old`, and moves the branch with `update-ref <branch> <new> <old>`, which fails if it moved meanwhile.
 // One retry rebuilds everything from the fresh tip; a second move is a refusal. The shared index and other jawans'
 // staged or unstaged changes are never read, so a stale shared index can no longer revert anyone's commits.
 // `--merge <ref>` starts the private index from the clean `git merge-tree` result instead and adds `<ref>` as second

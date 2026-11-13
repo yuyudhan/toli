@@ -42,12 +42,16 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    once from the new tip; a second move is a refusal ("run the same commit again").
 4. It points the shared index's entries for the committed files at the commit (so `git status` shows no phantom
    staged changes) and strips AI co-author trailers from the message. Before writing the commit it runs the
-   project's `commit-msg` hook (`core.hooksPath` honoured, else `.git/hooks/commit-msg`) on a temporary message file,
-   from the checkout root with `GIT_INDEX_FILE` at the private index, so a hook that reads the staged set sees
-   exactly the named paths; a non-zero exit refuses the commit with the hook's output, and a message the hook edits
-   is committed as edited. There is no bypass flag. Pre-commit hooks do not run: the checks above cover the staged
-   set, and pre-commit hooks often assume the shared index (re-staging formatters, `git stash`), which is why
-   `just check` comes first. Repeated `-m` values become separate paragraphs, as with `git commit`.
+   project's `pre-commit` hook, then its `commit-msg` hook (`core.hooksPath` honoured, else `.git/hooks/`); a
+   non-zero exit refuses the commit with the hook's output. There is no bypass flag. `pre-commit` runs on exactly the
+   commit: its working tree is the private index's files written out to a temporary directory (`GIT_DIR` at the
+   checkout's, `GIT_INDEX_FILE` at the private index), so `git diff --cached` lists only the named paths and every
+   file it reads is the committed version; other jawans' staged or half-edited files neither fail nor pass it. A
+   tracked hook file runs as committed, and the checkout's top-level ignored entries (`node_modules`, a virtualenv)
+   are linked in so its tools resolve. A hook that reformats or re-stages a file is refused, naming the files: run
+   the formatter on them and commit again. `commit-msg` runs on a temporary message file, from the checkout root
+   with `GIT_INDEX_FILE` at the private index, and a message it edits is committed as edited. Repeated `-m` values
+   become separate paragraphs, as with `git commit`.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes, and named
@@ -184,8 +188,8 @@ Every file type has one formatter, all at 4-space indentation, driven by `script
 
 ## Git hooks and CI
 
-The hooks are for contributors committing with plain `git`; `bin/toli commit` does not run them (it scans with
-gitleaks itself, and `just check` runs the formatters, lint and guards before it).
+The hooks run for contributors committing with plain `git`, and `bin/toli commit` runs pre-commit and commit-msg on
+its private index (above), where a reformatted file is a refusal rather than a re-stage; `just check` comes first.
 
 - **pre-commit**: gitleaks over the staged changes, then `scripts/format.ts` formats the staged files of every type
   above and re-stages the ones it changed (so unstaged hunks in a reformatted file get committed too;
