@@ -4,16 +4,6 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
-## v0.5.6 - unreleased
-
-### Fixed
-
-- **`fleet check` no longer fails on a pull-only machine that answers over HTTPS (T1331).** On m5 at 12:30Z it
-  exited 1 with "macOS-Ujjwal-MacBook-Pro takes no inbound ssh": the laptop, a paired peer, answered its status over
-  HTTPS, so `fleet status` counted it reachable, and the check then ssh-ed in for its backlog; the refusal stopped
-  the stale and idle checks for every machine. Such a machine is now listed as `pull-only, not checked`, and any
-  other ssh refusal is one machine's note, never the whole check's failure.
-
 ## v0.5.5 - 2026-11-13
 
 ### Upgrade note
@@ -23,6 +13,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- **`fleet check` no longer fails on a pull-only machine that answers over HTTPS (T1331).** On m5 at 12:30Z it
+  exited 1 with "macOS-Ujjwal-MacBook-Pro takes no inbound ssh": the laptop, a paired peer, answered its status over
+  HTTPS, so `fleet status` counted it reachable, and the check then ssh-ed in for its backlog; the refusal stopped
+  the stale and idle checks for every machine. Such a machine is now listed as `pull-only, not checked`, and any
+  other ssh refusal is one machine's note, never the whole check's failure.
 - **A machine that takes no inbound ssh pulls once it is set up so (T1331).** Its tick pulled only when its own entry
   in its copy of `config/fleet.json` said `"inbound": false`, a flag that reaches it only through the list, which a
   coordinator that takes no inbound ssh never sends first: Ujjwal's laptop never pulled, and 146 items waited for it
