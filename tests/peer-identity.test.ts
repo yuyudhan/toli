@@ -40,7 +40,7 @@ describe("peer identity", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         box.ok(["peer", "init"]);
-        expect(box.ok(["peer", "status"])).toMatch(/fingerprint: ([0-9a-f]{4} ){15}[0-9a-f]{4}/);
+        expect(box.ok(["peer", "status"])).toMatch(/fingerprint: ([0-9a-f]{8}:){7}[0-9a-f]{8}/);
         expect(box.ok(["peer", "list"])).toBe("no peers paired yet: bin/toli peer add <host>");
     });
 
