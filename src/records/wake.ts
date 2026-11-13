@@ -19,24 +19,33 @@ const BODY_LIMIT = 4000;
  * Whose delivery marks a take reads and moves. `session`: the live session's (`toli wake`, and a headless lead turn
  * under the default `lead.dispatch`). `headless`: a headless lead turn's own, under `lead.dispatch: "subagents"`: it
  * skips what any reader was already given, and what it leaves unacknowledged still wakes the interactive session.
+ * `takeover`: a headless lead turn standing in for a live session that left its wakes unread
+ * (src/fleet/idle-session.ts): it also takes what was delivered to that session but never acknowledged, and moves
+ * only the headless marks.
  */
-export type WakeReader = "session" | "headless";
+export type WakeReader = "session" | "headless" | "takeover";
 
+const HEADLESS_DELIVERED: { inbox: AckStream; jobs: AckStream } = {
+    inbox: "inboxHeadlessDelivered",
+    jobs: "jobsHeadlessDelivered",
+};
 const DELIVERED: Record<WakeReader, { inbox: AckStream; jobs: AckStream }> = {
     session: { inbox: "inboxDelivered", jobs: "jobsDelivered" },
-    headless: { inbox: "inboxHeadlessDelivered", jobs: "jobsHeadlessDelivered" },
+    headless: HEADLESS_DELIVERED,
+    takeover: HEADLESS_DELIVERED,
 };
 
 /**
  * Items above the user's ack and the last delivery are new; acknowledged items never wake. A delivery counts only as
  * far as the shown mark reaches: items delivered before the shown marks existed (an upgrade from a toli without them)
  * were never recorded as shown, so they wake once more and then ack as usual. A headless reader also skips what it
- * took itself.
+ * took itself; a takeover skips only that and what was acknowledged.
  */
 function floor(stream: "inbox" | "jobs", reader: WakeReader): string {
     const shown: AckStream = stream === "inbox" ? "inboxShown" : "jobsShown";
     const session = DELIVERED.session[stream];
-    const deliveredAndShown = [ackedThrough(session), ackedThrough(shown)].sort()[0] ?? "";
+    const deliveredAndShown =
+        reader === "takeover" ? "" : ([ackedThrough(session), ackedThrough(shown)].sort()[0] ?? "");
     const own = reader === "session" ? "" : ackedThrough(DELIVERED[reader][stream]);
     return [ackedThrough(stream), deliveredAndShown, own].sort().at(-1) ?? "";
 }

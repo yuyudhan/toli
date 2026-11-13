@@ -39,14 +39,24 @@ Every 15 seconds the service makes one pass:
    or a `lead attach` in progress), the service does nothing: that session takes the wakes itself, as before. The
    record belongs to the first live session: another interactive omp started in toli's root (a jawan driving `omp`
    in tmux, a second terminal) neither replaces it nor removes it when it exits, and the extension re-registers
-   every minute, so a record lost any other way comes back while the lead runs.
+   every minute, so a record lost any other way comes back while the lead runs. A live session counts only while it
+   reads its wakes: once an inbox item or job result has stayed unacknowledged for `lead.idleSessionMinutes`
+   (default 60) after it arrived and after the session registered (an omp left open for days, a session whose own
+   turns fail), the service runs headless turns as if no session were open, and the tick (`bin/toli job tick`) runs
+   due jobs headless instead of leaving them to it. Such a takeover turn also takes what the idle session was shown
+   but never acknowledged, moving only the headless delivery marks, and its prompt says the session is the user's:
+   toli never stops it. The digest (`idle session: ...`) and doctor (`lead-session`) flag it until the session
+   acknowledges its wakes or closes.
 2. Otherwise it takes the new wake items (`bin/toli wake`: inbox items such as delegations, delegated-task results,
    messages from other leads and finished jawans, plus job results) exactly once, and runs one headless turn of the
    lead conversation (`omp -p --resume <the conversation>`) with the wake message, the lead guidance, and the
    headless rules: dispatch only with `bin/toli spawn` (it returns at once; the result comes back as a wake), never
    ask questions (holds go to the Needs-you queue), never wait for jawans.
 3. A turn that fails keeps its wake text in `state/lead/pending.md`; the next pass sends it again with any newer
-   items. The last turn's output is in `logs/lead.log`.
+   items. The last turn's output is in `logs/lead.log`. When omp cannot resume the conversation because the model it
+   is pinned to is gone (`SessionModelRestoreError: Could not restore model ...`), the conversation file moves to
+   `state/lead/sessions/retired/` and the same wake runs at once in a fresh conversation on the configured omp model
+   (`harness.models.omp`, else omp's default), with a line in `logs/lead.log` saying so.
 4. Every `lead.balanceMinutes` (default 30) it compares queues across the fleet (below) and posts an offer or an ask.
 
 **Jawans only as the interactive Sardar's subagents.** With `config/machine.json` `{ "lead": { "dispatch":

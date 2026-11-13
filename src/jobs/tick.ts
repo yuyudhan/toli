@@ -9,12 +9,12 @@ import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../c
 import { resumeDevStacksWhenIdle } from "../fleet/build-slots.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import { capacityFor, type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
 import { harnessConfig } from "../harness/harness.ts";
 import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
 import { headlessOmpArgs } from "../harness/omp-args.ts";
-import { liveSession } from "../harness/session.ts";
 import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
@@ -311,11 +311,13 @@ export async function tick(): Promise<void> {
     } catch (error) {
         log(`fleet check failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    const session = liveSession();
-    if (session) {
-        log(`live session pid ${session.pid}: due jobs left to it`);
+    // A live session that has left its wakes unread past lead.idleSessionMinutes no longer keeps the due jobs.
+    const presence = sessionPresence();
+    if (presence !== null && presence.idle === null) {
+        log(`live session pid ${presence.session.pid}: due jobs left to it`);
         return;
     }
+    if (presence?.idle) log(`interactive session ${idleSessionText(presence.idle)}: due jobs run headless`);
     await keepExchanging(machine, runDueJobs("ticker"));
 }
 

@@ -104,6 +104,18 @@ describe("job tick", () => {
         expect(due(box, "2026-03-04T10:05:00")).toEqual(["every"]);
     });
 
+    test("runs due jobs headless when the live session has left its wakes unread past lead.idleSessionMinutes", () => {
+        const box = tickBox();
+        box.ok(["session", "start", "--pid", String(process.pid)], { now: "2026-03-04T09:00:00" });
+        box.ok(["inbox", "add", "--from", "m2", "--title", "unread"], { stdin: "body", now: "2026-03-04T09:01:00" });
+        box.ok(["job", "tick"], { now: "2026-03-04T10:05:00" });
+        expect(readFileSync(join(box.root, "omp-args"), "utf8")).toContain("[toli job every");
+        expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain(
+            `interactive session pid ${process.pid} has left wakes unread since 2026-03-04T`,
+        );
+        expect(existsSync(join(box.root, "state", "session.json"))).toBe(true);
+    });
+
     test("run-due runs due jobs headless even with a live session, claiming each once", () => {
         const box = tickBox();
         box.ok(["session", "start", "--pid", String(process.pid)]);

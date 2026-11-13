@@ -5,6 +5,7 @@ import { availableParallelism } from "node:os";
 import { inboundOff, loadFleet, loadMachine, type Machine } from "../core/config.ts";
 import { isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
+import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { leadServiceStatus } from "../fleet/lead-service.ts";
 import { interactiveLeadPid } from "../fleet/lead-state.ts";
 import { availabilityLine, fleetStatus } from "../fleet/pick.ts";
@@ -155,5 +156,16 @@ export function leadCheck(): Check {
         level: "warn",
         name: "lead",
         detail: `${service.scheduler} lead service not installed: run bin/toli lead install`,
+    };
+}
+
+/** A warning when the live interactive session has left its wakes unread past `lead.idleSessionMinutes`, else null. */
+export function idleSessionCheck(): Check | null {
+    const idle = sessionPresence()?.idle ?? null;
+    if (idle === null) return null;
+    return {
+        level: "warn",
+        name: "lead-session",
+        detail: `interactive session ${idleSessionText(idle)}: the headless lead takes the turns meanwhile; attend or close that session (toli never stops it)`,
     };
 }

@@ -4,6 +4,22 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.9 - unreleased
+
+### Fixed
+
+- **An interactive session left idle no longer blocks the headless lead forever (T1391).** While
+  `state/session.json` named a live omp, the lead service skipped every headless turn and the tick left every due
+  job to that session, so an omp left open for two days on itlinux7 let wakes pile up and dispatched nothing. A live
+  session now counts only while it reads its wakes: once an inbox item or job result has stayed unacknowledged for
+  `lead.idleSessionMinutes` (config/machine.json, default 60), the service runs headless turns (taking what the
+  idle session was shown but never acknowledged) and the tick runs due jobs headless. `bin/toli digest` and
+  `bin/toli doctor` flag the idle session; toli never stops it.
+- **A lead conversation pinned to a removed model no longer fails every turn (T1391).** When omp cannot resume the
+  lead conversation (`SessionModelRestoreError: Could not restore model ...`), the conversation moves to
+  `state/lead/sessions/retired/` and the same pending wake runs at once in a fresh conversation on the configured
+  omp model, logged in `logs/lead.log`.
+
 ## v0.5.8 - 2026-11-13
 
 ### Fixed

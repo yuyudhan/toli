@@ -15,6 +15,7 @@ import { isGitRepo, type RepoStatus, repoStatus } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { personaLine } from "../core/persona.ts";
 import { now, out, printJson, run, ToliError } from "../core/util.ts";
+import { type IdleSession, idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { availabilityLine, fleetStatus } from "../fleet/pick.ts";
 import { slotText, subagentJawans } from "../fleet/queue.ts";
 import { type FleetEntry as AvailabilityEntry, capacityFor } from "../fleet/resources.ts";
@@ -87,6 +88,8 @@ export type Digest = {
     models?: ModelTotal[];
     /** Recommended next actions for the lead, most urgent first. */
     next?: NextAction[];
+    /** The live interactive session when it has left its wakes unread past `lead.idleSessionMinutes`. */
+    idleSession?: IdleSession;
 };
 
 export type FleetEntry = { machine: string; ok: boolean; digest?: Digest; error?: string };
@@ -163,6 +166,7 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
     const subagents = subagentJawans(tasks, allRuns);
     const needs = needsQueue(tasks);
     const stale = findStaleTasks(tasks);
+    const idleSession = sessionPresence()?.idle ?? null;
     return {
         machine: machine.name,
         role: machine.role,
@@ -203,6 +207,7 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
             missingHarnesses,
             stale,
         }),
+        ...(idleSession === null ? {} : { idleSession }),
     };
 }
 
@@ -256,6 +261,10 @@ function render(digest: Digest, notices: readonly string[] = [], resurface: Read
     const lines = [`machine ${digest.machine} (${digest.role}) at ${digest.generatedAt}`];
     if (digest.persona) lines.push(digest.persona);
     lines.push(...notices);
+    if (digest.idleSession !== undefined)
+        lines.push(
+            `idle session: ${idleSessionText(digest.idleSession)}; the headless lead takes the turns meanwhile (attend or close that session)`,
+        );
     lines.push("");
     // Fleet digests from machines on an older toli lack `needs`; their held tasks still form the queue.
     lines.push(

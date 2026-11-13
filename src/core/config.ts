@@ -105,9 +105,11 @@ export type Machine = {
      * This machine's lead service (src/fleet/lead.ts, docs/sardars.md): every `balanceMinutes` (default 30) it compares
      * queue depths across the fleet and offers or asks for work when the gap is at least `balanceGap` (default 3).
      * `dispatch` (src/fleet/dispatch.ts): "spawn" (default) or "subagents", where only the interactive Sardar's
-     * subagents run jawans and a headless lead turn starts none.
+     * subagents run jawans and a headless lead turn starts none. `idleSessionMinutes` (default 60,
+     * src/fleet/idle-session.ts): a live interactive session that has left a wake unread this long no longer holds
+     * back headless lead turns and due jobs.
      */
-    lead?: { balanceMinutes?: number; balanceGap?: number; dispatch?: string };
+    lead?: { balanceMinutes?: number; balanceGap?: number; dispatch?: string; idleSessionMinutes?: number };
     /**
      * Peer messaging over HTTPS (src/peer/, docs/peers.md): the listener's `port` (default 47123), `bind` ("private",
      * the default: the private-range addresses of the VPN and LAN interfaces, never a container or VM bridge; or a
