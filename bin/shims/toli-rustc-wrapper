@@ -2,10 +2,11 @@
 # toli's rustc wrapper: cargo's RUSTC_WRAPPER for jawans and lead sessions (src/jawans/env.ts), so a heavy cargo run
 # holds a heavy-build slot (src/fleet/build-slots.ts) however it was reached, even when something put another cargo
 # ahead of toli's cargo shim on PATH (a shell profile, git's exec path in a hook). Cargo runs it as
-# `toli-rustc-wrapper <rustc> <args...>` for every rustc call, starting with its `rustc -vV` probe, so the first call
-# of a cargo outside any slot waits here (`bin/toli build-slot --cargo <cargo pid>`) until a holder process holds a
-# slot for that cargo's whole run; later calls of that cargo, of any cargo it starts (cargo-clippy's cargo check) and of
-# its build scripts find the holder through the process ancestry and go straight on. Inside a slot already
+# `toli-rustc-wrapper <rustc> <args...>` for every rustc call, starting with its `rustc -vV` probe (always run: those
+# environments set CARGO_CACHE_RUSTC_INFO=0, or a cargo with nothing left to compile would never call it), so the first
+# call of a cargo outside any slot waits here (`bin/toli build-slot --cargo <cargo pid>`) until a holder process holds
+# a slot for that cargo's whole run; later calls of that cargo, of any cargo it starts (cargo-clippy's cargo check) and
+# of its build scripts find the holder through the process ancestry and go straight on. Inside a slot already
 # (TOLI_BUILD_SLOT set) it goes straight on too. It then runs the wrapper it replaced (TOLI_RUSTC_WRAPPER_NEXT, such as
 # sccache) or rustc itself.
 shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127

@@ -187,9 +187,12 @@ without a scope after one warning line. A build that ran and failed reports its 
 `TOLI_BUILD_SCOPE=off` turns the scope off. `systemctl --user list-units 'toli-build-*'` lists the running ones;
 `systemctl --user show` on a scope already gone (`--collect`) reports the defaults (`MemoryMax=infinity`), not its cap.
 
-`bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH, sets its
-`CARGO_BUILD_JOBS` to `capacity.cargoJobs` and makes toli's rustc wrapper (`bin/shims/toli-rustc-wrapper`) its
-`RUSTC_WRAPPER`. A lead session started in toli's root gets the same variables for
+`bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH, gives it one slot's share of
+the cores (`CARGO_BUILD_JOBS` at `capacity.cargoJobs`, and `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` at the same
+number unless already set) and makes toli's rustc wrapper (`bin/shims/toli-rustc-wrapper`) its `RUSTC_WRAPPER`, with
+`CARGO_CACHE_RUSTC_INFO=0` (below). So every cargo it starts, the pre-push hook of a plain `git push` included, gets
+the share however it reached cargo, and `cargo test` never compiles its doctests one rustc per core (rustdoc runs
+one per test thread, past the rustc wrapper). A lead session started in toli's root gets the same variables for
 itself, so the native subagents it starts (omp `task`, Claude Code's Agent tool), which inherit its environment, build
 the same way: omp's toli extension adopts them into the omp process when it loads (any omp that is not a
 `bin/toli spawn` jawan), and Claude Code's SessionStart hook writes them to `CLAUDE_ENV_FILE`, which Claude sources
@@ -200,7 +203,10 @@ their one-letter aliases) through `bin/toli build-slot`, and runs everything els
 
 PATH order alone is not enough: a login profile, a harness's shell snapshot or git (its exec path, in a hook) can put
 `~/.cargo/bin` ahead of the shim, and that cargo then never sees the shim. The rustc wrapper catches it: cargo calls
-it for every rustc it runs, whichever cargo PATH found, starting with its `rustc -vV` probe. Inside a slot it goes
+it for every rustc it runs, whichever cargo PATH found, starting with its `rustc -vV` probe. Cargo caches that probe
+in the build folder (`target/.rustc_info.json`), so a cargo with nothing left to compile (a `cargo test` that only
+runs its tests and doctests) would never call the wrapper at all; `CARGO_CACHE_RUSTC_INFO=0` turns the cache off, so
+the probe is every cargo's first act and the slot is taken before anything runs. Inside a slot it goes
 straight on. Otherwise, on the first call of a cargo running a heavy command, `bin/toli build-slot --cargo <pid>`
 starts a detached holder (`build-slot --hold <pid>`) that waits in line, takes a slot for that cargo and writes
 `state/build-slots/cargo-<pid>.held`; the call waits (printing the same waiting line) until it holds. Later calls of
@@ -212,8 +218,8 @@ cargo's next rustc call then takes one again. The wrapper then runs the wrapper 
 cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
 
 A build started in a live-stack project's checkout ([projects.md](projects.md#live-stack-mode)) skips the slots, as
-that project's jawans run without the shim or the wrapper. `[build] jobs` in `~/.cargo/config.toml` holds the same
-per-slot number so hand-run cargo gets it too
+that project's jawans run without the shim or the wrapper, at the same share of jobs and test threads. `[build] jobs`
+in `~/.cargo/config.toml` holds the same per-slot number so hand-run cargo gets it too
 (`bin/toli doctor` warns when the two differ). `bin/toli resources` shows the slots as `builds <busy>/<total>`
 (`buildSlots` and `buildSlotsBusy` in `--json`).
 

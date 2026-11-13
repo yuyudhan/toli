@@ -44,22 +44,29 @@ describe("build slot capacity", () => {
         expect(() => capacityFor({ ...machine, capacity: { buildSlots: 1.5 } }, 8)).toThrow("positive integer");
     });
 
-    test("a jawan's PATH starts with the cargo shim and its cargo jobs are one slot's share", () => {
+    test("a jawan's PATH starts with the cargo shim and its cargo jobs and test threads are one slot's share", () => {
         const shims = paths.buildShimsDir();
         const jobs = capacityFor(machine, 18).cargoJobs;
         const env = jawanEnv({ PATH: "/usr/bin:/bin", TOLI_BUILD_SLOT: "2" }, "r1", jobs);
         expect(env.PATH).toBe(`${shims}:/usr/bin:/bin`);
-        expect(env.CARGO_BUILD_JOBS).toBe("6");
+        expect(env).toMatchObject({ CARGO_BUILD_JOBS: "6", RUST_TEST_THREADS: "6", NEXTEST_TEST_THREADS: "6" });
+        // Uncached, cargo's `rustc -vV` probe is its first act, so the rustc wrapper takes the slot before anything runs.
+        expect(env.CARGO_CACHE_RUSTC_INFO).toBe("0");
         expect(env.TOLI_BUILD_SLOT).toBeUndefined();
         expect(jawanEnv({ PATH: `/bin:${shims}` }, "r2", 6).PATH).toBe(`${shims}:/bin`);
+        // A test-thread count already set stands, as in a slot.
+        expect(jawanEnv({ RUST_TEST_THREADS: "1" }, "r3", 6)).toMatchObject({
+            RUST_TEST_THREADS: "1",
+            NEXTEST_TEST_THREADS: "6",
+        });
         expect(existsSync(join(shims, "cargo"))).toBe(true);
     });
 
-    test("a live-stack project's jawan runs without the shim, its cargo jobs still capped", () => {
+    test("a live-stack project's jawan runs without the shim, its cargo jobs and test threads still capped", () => {
         const shims = paths.buildShimsDir();
         const env = jawanEnv({ PATH: `${shims}:/usr/bin`, TOLI_BUILD_SLOT: "1" }, "r1", 6, true);
         expect(env.PATH).toBe("/usr/bin");
-        expect(env.CARGO_BUILD_JOBS).toBe("6");
+        expect(env).toMatchObject({ CARGO_BUILD_JOBS: "6", RUST_TEST_THREADS: "6", NEXTEST_TEST_THREADS: "6" });
         expect(env.TOLI_BUILD_SLOT).toBeUndefined();
     });
 });
@@ -83,6 +90,9 @@ describe("jawan environment", () => {
             TOLI_ROLE: "jawan",
             TOLI_RUN_ID: "r1",
             CARGO_BUILD_JOBS: "12",
+            RUST_TEST_THREADS: "12",
+            NEXTEST_TEST_THREADS: "12",
+            CARGO_CACHE_RUSTC_INFO: "0",
             RUSTC_WRAPPER: join(paths.buildShimsDir(), "toli-rustc-wrapper"),
             TOLI_RUSTC_WRAPPER_NEXT: "",
         });

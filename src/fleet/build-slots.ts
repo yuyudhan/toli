@@ -20,6 +20,7 @@ import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { ToliError, warn } from "../core/util.ts";
+import { slotShareEnv } from "../jawans/env.ts";
 import { type Argv, inBuildScope } from "../jawans/scope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { busyBuildSlots, slotWaiters, takeInTurn } from "./build-queue.ts";
@@ -61,21 +62,6 @@ export type BuildScope = { slot: number; memoryMaxMB: number };
 
 /** What a command run in a slot gets: the variables to add to its environment, and its scope (null: none). */
 export type HeldSlot = { env: Record<string, string>; scope: BuildScope | null };
-
-/** The test harnesses' thread variables: capped at one slot's share like the compile jobs, unless already set. */
-const TEST_THREAD_VARS = ["RUST_TEST_THREADS", "NEXTEST_TEST_THREADS"] as const;
-
-/**
- * One slot's share of the cores for a heavy command: `CARGO_BUILD_JOBS` at `cargoJobs` (always: one setting per
- * machine), and `RUST_TEST_THREADS` / `NEXTEST_TEST_THREADS` at the same number where the caller has not set them, so
- * `cargo test` and nextest never run a test per core either. Cargo reads them from the environment however it was
- * reached (the shim, or a `just` recipe calling the real cargo directly).
- */
-function slotShareEnv(cargoJobs: number): Record<string, string> {
-    const env: Record<string, string> = { CARGO_BUILD_JOBS: String(cargoJobs) };
-    for (const name of TEST_THREAD_VARS) if ((process.env[name] ?? "") === "") env[name] = String(cargoJobs);
-    return env;
-}
 
 /**
  * Spawn `argv` with this process's stdio plus `env`, passing termination signals on: its exit code (a child ended by
@@ -207,7 +193,7 @@ export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Pr
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());
     const memoryMaxMB = buildMemoryMaxMB(machine, capacity.buildSlots, Math.floor(totalmem() / MB));
-    const share = slotShareEnv(capacity.cargoJobs);
+    const share: Record<string, string> = { ...slotShareEnv(process.env, capacity.cargoJobs) };
     if (inLiveStackCheckout(cwd)) return await body({ env: share, scope: null });
     const lock = flock();
     if (lock === null) {

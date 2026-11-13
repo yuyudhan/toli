@@ -1,9 +1,12 @@
 // A jawan's cargo holds a heavy-build slot even when something puts another cargo ahead of toli's cargo shim on PATH
 // (T1223: on itlinux8 a shell profile and git's exec path put `~/.cargo/bin` first, and a pre-push hook's clippy and
 // a `just verify push` ran the real cargo outside any slot at once). toli's rustc wrapper, cargo's `RUSTC_WRAPPER` in
-// a jawan's environment (src/jawans/env.ts), catches such a cargo on its first rustc call.
+// a jawan's environment (src/jawans/env.ts), catches such a cargo on its first rustc call. That call must come first
+// and the test harnesses must be capped too (T1322: on itlinux3 a plain `git push`'s pre-push hook ran `cargo test`
+// with nothing left to compile: cargo's cached rustc probe meant no rustc call ever reached the wrapper, so it ran
+// outside any slot, and rustdoc compiled its doctests one rustc per core, 12 against a share of 6).
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
 import { jawanEnv } from "../src/jawans/env.ts";
@@ -21,7 +24,11 @@ function script(file: string, body: string): void {
  * A real-looking cargo installation (`<root>/.cargo/bin`, as rustup makes it): a cargo that probes rustc through
  * `RUSTC_WRAPPER` first, as cargo does, then logs its run like the fixture's stub cargo and stays busy for up to
  * STUB_SLEEP fifths of a second (until `<log>.done-<label>`); with NESTED set it first runs a nested `cargo check`,
- * as cargo-clippy does. Returns its bin folder.
+ * as cargo-clippy does. Like cargo, it caches the probe in `target/.rustc_info.json` and skips it while that file
+ * is there, unless `CARGO_CACHE_RUSTC_INFO=0` (cargo 1.9x on a fresh `cargo test` calls its `RUSTC_WRAPPER` zero
+ * times; with `CARGO_CACHE_RUSTC_INFO=0` its first call is `rustc -vV`). It logs `<label> held=<yes|no>
+ * threads=<RUST_TEST_THREADS>/<NEXTEST_TEST_THREADS>` to `<log>.share`: whether a slot holder held a slot for it
+ * once it was past its probe, and the test-thread caps it got. Returns its bin folder.
  */
 function realCargo(box: Sandbox, log: string): string {
     const bin = join(box.root, ".cargo", "bin");
@@ -31,8 +38,14 @@ function realCargo(box: Sandbox, log: string): string {
         [
             "ms() { bun -e 'process.stdout.write(String(Date.now()))'; }",
             'here=$(dirname "$0")',
-            'if [ -n "${RUSTC_WRAPPER:-}" ]; then "$RUSTC_WRAPPER" "$here/rustc" -vV >/dev/null || exit 1;',
-            'else "$here/rustc" -vV >/dev/null || exit 1; fi',
+            'cache="$PWD/target/.rustc_info.json"',
+            'if [ "${CARGO_CACHE_RUSTC_INFO:-1}" = 0 ] || [ ! -e "$cache" ]; then',
+            '    if [ -n "${RUSTC_WRAPPER:-}" ]; then "$RUSTC_WRAPPER" "$here/rustc" -vV >/dev/null || exit 1;',
+            '    else "$here/rustc" -vV >/dev/null || exit 1; fi',
+            '    if [ "${CARGO_CACHE_RUSTC_INFO:-1}" != 0 ]; then mkdir -p "$PWD/target" && : >"$cache"; fi',
+            "fi",
+            'held=no; [ -e "$TOLI_ROOT/state/build-slots/cargo-$$.held" ] && held=yes',
+            `echo "\${STUB_LABEL:-x} held=$held threads=\${RUST_TEST_THREADS:-none}/\${NEXTEST_TEST_THREADS:-none}" >> ${log}.share`,
             `echo "start \${STUB_LABEL:-x} $(ms) \${TOLI_BUILD_SLOT:-none} \${CARGO_BUILD_JOBS:-none} $*" >> ${log}`,
             'if [ -n "${NESTED:-}" ]; then NESTED="" STUB_LABEL="${STUB_LABEL:-x}-inner" STUB_SLEEP=0 "$0" check || exit 1; fi',
             `n="\${STUB_SLEEP:-0}"; while [ "$n" -gt 0 ] && [ ! -e "${log}.done-\${STUB_LABEL:-x}" ] &&`,
@@ -43,11 +56,40 @@ function realCargo(box: Sandbox, log: string): string {
     return bin;
 }
 
-/** A jawan's environment over the fixture's PATH, as `bin/toli spawn` builds it, without the host's cargo config. */
-function jawan(box: Sandbox): Record<string, string> {
+/** The `realCargo` share lines of the runs labelled `label`. */
+const shareLines = (log: string, label: string): string[] =>
+    existsSync(`${log}.share`)
+        ? readFileSync(`${log}.share`, "utf8")
+              .trim()
+              .split("\n")
+              .filter((line) => line.startsWith(`${label} `))
+        : [];
+
+/**
+ * A jawan's environment over the fixture's PATH, as `bin/toli spawn` builds it (a live-stack project's with
+ * `liveStack`), without the host's cargo config.
+ */
+function jawan(box: Sandbox, liveStack = false): Record<string, string> {
     const path = [paths.buildShimsDir(), box.stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin"];
-    const env = jawanEnv({ PATH: path.join(":"), CARGO_HOME: join(box.root, ".cargo") }, "r1", 3);
+    const env = jawanEnv({ PATH: path.join(":"), CARGO_HOME: join(box.root, ".cargo") }, "r1", 3, liveStack);
     return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
+/**
+ * Project "app" whose pre-push hook runs its verify script, which (like a login profile, or git's exec path) puts
+ * the real cargo `real` first and runs `cargo test`, as VelocityFSS's `just verify push` does; its last build left
+ * cargo's rustc probe cache behind, so that `cargo test` has nothing left to compile. Returns the checkout.
+ */
+function pushTestProject(box: Sandbox, real: string): string {
+    const dir = withProject(box, "app");
+    script(join(dir, ".githooks", "pre-push"), "bash scripts/verify.sh");
+    script(join(dir, "scripts", "verify.sh"), `PATH="${real}:$PATH"; export PATH\ncargo test --workspace`);
+    box.git(dir, ["config", "core.hooksPath", ".githooks"]);
+    box.git(dir, ["add", "-A"]);
+    box.git(dir, ["commit", "-q", "-m", "hook"]);
+    mkdirSync(join(dir, "target"));
+    writeFileSync(join(dir, "target", ".rustc_info.json"), "{}");
+    return dir;
 }
 
 /** The holder files the rustc wrapper's slot holders leave in state/build-slots. */
@@ -56,6 +98,44 @@ const holderFiles = (box: Sandbox): string[] =>
 
 /** How long a wait on a real process event may take on a machine under load (a full `just check` beside it). */
 const LOADED_MS = 120_000;
+
+/** The host's own build variables, cleared so only the jawan's environment decides what the hook's cargo gets. */
+const HOST_CLEARED = { RUST_TEST_THREADS: "", NEXTEST_TEST_THREADS: "", CARGO_CACHE_RUSTC_INFO: "" };
+
+/** `git push` of the checkout's HEAD to its origin's main. */
+const PUSH = ["git", "push", "-q", "origin", "HEAD:refs/heads/main"];
+
+describe("a cargo a jawan's plain `git push` starts in its pre-push hook (T1322)", () => {
+    test(
+        "with nothing left to compile, it still takes a slot before it runs, at one slot's share of jobs and test threads",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const dir = pushTestProject(box, realCargo(box, log));
+            const push = start(box, PUSH, { ...HOST_CLEARED, ...jawan(box), STUB_LABEL: "t" }, dir);
+            const result = await push.done;
+            expect(result.code).toBe(0);
+            expect(shareLines(log, "t")).toEqual(["t held=yes threads=3/3"]);
+            expect(runs(log).find((run) => run.label === "t")).toMatchObject({ jobs: "3", args: "test --workspace" });
+            await until("the holder's files gone", () => holderFiles(box).length === 0, LOADED_MS);
+        },
+        2 * LOADED_MS,
+    );
+
+    test(
+        "in a live-stack project it skips the slot, still at one slot's share of jobs and test threads",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const dir = pushTestProject(box, realCargo(box, log));
+            box.ok(["project", "set", "app", "--live-stack", "yes"]);
+            const push = start(box, PUSH, { ...HOST_CLEARED, ...jawan(box, true), STUB_LABEL: "l" }, dir);
+            const result = await push.done;
+            expect(result.code).toBe(0);
+            expect(shareLines(log, "l")).toEqual(["l held=no threads=3/3"]);
+            expect(runs(log).find((run) => run.label === "l")).toMatchObject({ jobs: "3", args: "test --workspace" });
+        },
+        2 * LOADED_MS,
+    );
+});
 
 describe("a cargo ahead of the shim on PATH still holds a heavy-build slot", () => {
     test(

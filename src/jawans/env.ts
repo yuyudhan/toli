@@ -56,19 +56,47 @@ export function rustcWrapperEnv(base: Record<string, string | undefined>): {
     return { RUSTC_WRAPPER: ours, TOLI_RUSTC_WRAPPER_NEXT: next };
 }
 
+/** The test harnesses' thread variables: capped at one slot's share like the compile jobs, unless already set. */
+const TEST_THREAD_VARS = ["RUST_TEST_THREADS", "NEXTEST_TEST_THREADS"] as const;
+
+/** One heavy-build slot's share of the cores, as build variables (`slotShareEnv`). */
+export type SlotShare = { CARGO_BUILD_JOBS: string; RUST_TEST_THREADS?: string; NEXTEST_TEST_THREADS?: string };
+
+/**
+ * One heavy-build slot's share of the cores over the environment `base`: `CARGO_BUILD_JOBS` at `cargoJobs` (always:
+ * one setting per machine), and `RUST_TEST_THREADS` / `NEXTEST_TEST_THREADS` at the same number where `base` has not
+ * set them, so `cargo test` (its test binaries, and rustdoc, which compiles one doctest per test thread with a rustc
+ * of its own) and nextest never run one per core. Cargo and the harnesses read them from the environment however
+ * cargo was reached: the shim, a `just` recipe or a pre-push hook calling the real cargo directly.
+ */
+export function slotShareEnv(base: Record<string, string | undefined>, cargoJobs: number): SlotShare {
+    const share: SlotShare = { CARGO_BUILD_JOBS: String(cargoJobs) };
+    for (const name of TEST_THREAD_VARS) if ((base[name] ?? "") === "") share[name] = String(cargoJobs);
+    return share;
+}
+
 /**
  * The build variables of a lead session (`bin/toli hook lead-build-env`) over its environment `base`: toli's cargo
- * shim first on PATH, `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs` and toli's rustc wrapper
- * (`rustcWrapperEnv`). The native harness subagents the lead starts (omp `task`, Claude Code's Agent tool) inherit
- * them, so their heavy cargo commands queue for a heavy-build slot as a `bin/toli spawn` jawan's do.
+ * shim first on PATH, one heavy-build slot's share of the cores (`slotShareEnv`) and toli's rustc wrapper
+ * (`rustcWrapperEnv`), with `CARGO_CACHE_RUSTC_INFO=0`: cargo otherwise caches its `rustc -vV` probe in the build
+ * folder, so a cargo with nothing left to compile (a `cargo test` that only runs its tests and doctests) never calls
+ * the wrapper and never takes a slot; uncached, the probe is every cargo's first act and takes the slot before
+ * anything runs. The native harness subagents the lead starts (omp `task`, Claude Code's Agent tool) inherit them, so
+ * their heavy cargo commands queue for a heavy-build slot as a `bin/toli spawn` jawan's do.
  */
 export function leadBuildEnv(
     base: Record<string, string | undefined>,
     cargoJobs: number,
-): { PATH: string; CARGO_BUILD_JOBS: string; RUSTC_WRAPPER: string; TOLI_RUSTC_WRAPPER_NEXT: string } {
+): SlotShare & {
+    PATH: string;
+    CARGO_CACHE_RUSTC_INFO: string;
+    RUSTC_WRAPPER: string;
+    TOLI_RUSTC_WRAPPER_NEXT: string;
+} {
     return {
         PATH: [paths.buildShimsDir(), ...withoutShims(base.PATH)].join(delimiter),
-        CARGO_BUILD_JOBS: String(cargoJobs),
+        ...slotShareEnv(base, cargoJobs),
+        CARGO_CACHE_RUSTC_INFO: "0",
         ...rustcWrapperEnv(base),
     };
 }
@@ -76,12 +104,13 @@ export function leadBuildEnv(
 /**
  * The jawan's environment: the supervisor's, marked as a jawan run. One code folder, one build folder: a jawan
  * builds into its checkout's own build folder, so an inherited `CARGO_TARGET_DIR` is dropped. toli's cargo shim
- * (bin/shims) goes first on PATH and toli's rustc wrapper is cargo's `RUSTC_WRAPPER`, so heavy cargo commands queue
- * for one of the machine's heavy-build slots (src/fleet/build-slots.ts) even when something puts another cargo ahead
- * of the shim on PATH, and every cargo run is capped with `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs`
- * (one slot's share of the cores), the one setting for this machine; an inherited value never overrides it, and an
- * inherited `TOLI_BUILD_SLOT` is dropped: a jawan's builds never ride on a slot it did not take. A live-stack
- * project's jawan (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim or the wrapper: the
+ * (bin/shims) goes first on PATH and toli's rustc wrapper is cargo's `RUSTC_WRAPPER` (`leadBuildEnv`), so heavy cargo
+ * commands queue for one of the machine's heavy-build slots (src/fleet/build-slots.ts) even when something puts
+ * another cargo ahead of the shim on PATH, and every cargo run, a pre-push hook's of a plain `git push` included, gets
+ * one slot's share of the cores (`slotShareEnv`): `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs`, the one
+ * setting for this machine (an inherited value never overrides it), and the test-thread caps. An inherited
+ * `TOLI_BUILD_SLOT` is dropped: a jawan's builds never ride on a slot it did not take. A live-stack project's jawan
+ * (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim or the wrapper, at the same share: the
  * machine's one build is the running stack's, its own scoped test builds share the checkout's build folder, where
  * cargo's lock already runs them one at a time, so they never also wait for a heavy-build slot.
  */
@@ -99,7 +128,7 @@ export function jawanEnv(
     delete env.TOLI_BUILD_SLOT;
     // A jawan the headless lead started is not that lead turn: it must never inherit its refusals.
     delete env[LEAD_TURN_ENV];
-    env.CARGO_BUILD_JOBS = String(cargoJobs);
+    Object.assign(env, slotShareEnv(base, cargoJobs));
     if (!liveStack) return { ...env, ...leadBuildEnv(base, cargoJobs) };
     env.PATH = withoutShims(base.PATH).join(delimiter);
     // An inherited toli wrapper (a lead's) gives way to the one it chained to.

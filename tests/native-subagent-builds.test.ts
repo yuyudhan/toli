@@ -11,13 +11,16 @@ import { withProject } from "./helpers.ts";
 const LEAD = { TOLI_ROLE: "", NO_MISTAKES_GATE: "" };
 
 describe("a lead session's build variables, inherited by its native subagents", () => {
-    test("put toli's cargo shim first on PATH, once, cap cargo jobs and chain toli's rustc wrapper", () => {
+    test("put toli's cargo shim first on PATH, once, cap cargo jobs and test threads and chain toli's rustc wrapper", () => {
         const shims = paths.buildShimsDir();
         const wrapper = join(shims, "toli-rustc-wrapper");
         const home = { CARGO_HOME: "/nonexistent-cargo-home" };
         expect(leadBuildEnv({ ...home, PATH: "/usr/bin:/bin" }, 4)).toEqual({
             PATH: `${shims}:/usr/bin:/bin`,
             CARGO_BUILD_JOBS: "4",
+            RUST_TEST_THREADS: "4",
+            NEXTEST_TEST_THREADS: "4",
+            CARGO_CACHE_RUSTC_INFO: "0",
             RUSTC_WRAPPER: wrapper,
             TOLI_RUSTC_WRAPPER_NEXT: "",
         });

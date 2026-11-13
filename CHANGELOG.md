@@ -15,6 +15,13 @@ one. See docs/releasing.md.
   lead now checks the listener every 5 seconds on its own timer, asks one still running a replaced runtime to stop
   over the control socket and starts the new one at once, and always starts it from the active runtime. Doctor warns
   (`peer-listener`) and the hourly `fleet check` names every machine whose configured listener is down.
+- **A pre-push hook's cargo runs at its build slot's share (T1322).** On itlinux3 a plain `git push`'s hook
+  (VelocityFSS's `just verify push`) ran `cargo test` with 12 rustc at once against a share of 6, with swap full: a
+  jawan's environment capped `CARGO_BUILD_JOBS` but not the test threads, so rustdoc compiled the doctests one rustc
+  per core, and a cargo with nothing left to compile never called toli's rustc wrapper (cargo caches its `rustc -vV`
+  probe), so it ran outside any slot. Jawans and lead sessions now get `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS`
+  at the share (unless already set), live-stack jawans included, and `CARGO_CACHE_RUSTC_INFO=0`, so every cargo's
+  first act is the probe that takes its slot.
 
 ## v0.5.3 - 2026-11-13
 
