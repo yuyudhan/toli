@@ -37,8 +37,14 @@ const VOLUME_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 /** Container states that start nothing on their own: their volumes may go once they are removed. */
 const STOPPED: Record<string, true> = { exited: true, dead: true };
 
-/** One mount of a container: `volume` is the volume's name for a volume mount, else its source (a bind's host path). */
-export type DockerMount = { type: string; volume: string; destination: string };
+/** A running, paused, restarting or just-created container: it uses its mounts now or is about to. */
+export const liveContainer = (container: DockerContainer): boolean => !Object.hasOwn(STOPPED, container.status);
+
+/**
+ * One mount of a container: `volume` is the volume's name for a volume mount, else its source (a bind's host path);
+ * `source` is the host path behind it (a bind's folder, a volume's mountpoint), "" when Docker gives none.
+ */
+export type DockerMount = { type: string; volume: string; source: string; destination: string };
 export type DockerContainer = { id: string; name: string; status: string; image: string; mounts: DockerMount[] };
 
 /** A named volume mount whose name or mount point says build output and neither may hold data. */
@@ -80,7 +86,7 @@ export function buildVolumes(
             kept.push(`kept docker volume ${name}: ${data === name ? "its name" : `mount ${data}`} may hold data`);
             continue;
         }
-        const live = users.find((container) => !Object.hasOwn(STOPPED, container.status));
+        const live = users.find(liveContainer);
         if (live !== undefined) {
             kept.push(`kept docker volume ${name}: container ${live.name} uses it (${live.status})`);
             continue;
@@ -146,10 +152,12 @@ export function parseContainers(json: string): DockerContainer[] | null {
         // Every mount, binds and tmpfs included: an unknown type counts as more than build output.
         const mounts = (Array.isArray(item.Mounts) ? item.Mounts : []).map((mount) => {
             const type = typeof mount.Type === "string" ? mount.Type : "unknown";
-            const source = type === "volume" ? mount.Name : mount.Source;
+            const source = typeof mount.Source === "string" ? mount.Source : "";
+            const volume = type === "volume" ? mount.Name : source;
             return {
                 type,
-                volume: typeof source === "string" ? source : "",
+                volume: typeof volume === "string" ? volume : "",
+                source,
                 destination: typeof mount.Destination === "string" ? mount.Destination : "",
             };
         });
@@ -162,7 +170,7 @@ export function parseContainers(json: string): DockerContainer[] | null {
 }
 
 /** Every container with its mounts, or why they cannot be read. */
-function listContainers(): DockerContainer[] | string {
+export function listContainers(): DockerContainer[] | string {
     const ids = run(["docker", "ps", "-aq", "--no-trunc"], { timeoutMs: DOCKER_LIST_TIMEOUT_MS });
     if (ids.code !== 0) return `docker ps failed (exit ${ids.code})`;
     const list = ids.stdout.split("\n").filter((id) => /^[0-9a-f]+$/i.test(id.trim()));

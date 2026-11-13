@@ -22,7 +22,8 @@ export type BuildDir = { kind: BuildKind; path: string; checkout: Checkout; mtim
 
 const BUILD_KINDS: readonly BuildKind[] = ["target", "node_modules", "dist"];
 
-function real(path: string): string {
+/** `path` with symlinks resolved, or `path` itself when it does not exist. */
+export function real(path: string): string {
     try {
         return realpathSync(path);
     } catch {

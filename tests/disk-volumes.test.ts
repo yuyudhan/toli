@@ -17,7 +17,7 @@ const container = (name: string, status: string, ...mounts: [string, string][]):
     name,
     status,
     image: "",
-    mounts: mounts.map(([volume, destination]) => ({ type: "volume", volume, destination })),
+    mounts: mounts.map(([volume, destination]) => ({ type: "volume", volume, source: "", destination })),
 });
 
 describe("which docker volumes hold idle build output", () => {
@@ -57,7 +57,7 @@ describe("which docker volumes hold idle build output", () => {
             ...container("stack-postgres-1", "exited", ["x_target", "/app/target"], ["x_pgdata", "/var/lib/data"]),
             image: "postgres:16",
         };
-        postgres.mounts.push({ type: "bind", volume: "/home/me/seed", destination: "/seed" });
+        postgres.mounts.push({ type: "bind", volume: "/home/me/seed", source: "/home/me/seed", destination: "/seed" });
         const { volumes, kept } = buildVolumes(["x_target"], [postgres]);
         expect(volumes).toEqual([]);
         expect(kept).toEqual([
@@ -82,7 +82,12 @@ describe("which docker volumes hold idle build output", () => {
 
     test("a stopped container with only build volumes is still removed with its volume", () => {
         const backend = { ...container("stack-backend-1", "exited", ["x_target", "/app/target"]), image: "rust:1.82" };
-        backend.mounts.push({ type: "volume", volume: "x_cargo", destination: "/usr/local/cargo/registry" });
+        backend.mounts.push({
+            type: "volume",
+            volume: "x_cargo",
+            source: "",
+            destination: "/usr/local/cargo/registry",
+        });
         const { volumes, kept } = buildVolumes(["x_target", "x_cargo"], [backend]);
         expect(kept).toEqual([]);
         expect(volumes.map((volume) => [volume.name, volume.stopped.map((c) => c.name)])).toEqual([
@@ -123,7 +128,7 @@ describe("which docker volumes hold idle build output", () => {
             },
         ]);
         const backend = container("stack-backend-1", "exited", ["kalki_backend_target", "/app/target"]);
-        backend.mounts.push({ type: "bind", volume: "/home/me/app", destination: "/app" });
+        backend.mounts.push({ type: "bind", volume: "/home/me/app", source: "/home/me/app", destination: "/app" });
         expect(parseContainers(inspected)).toEqual([{ ...backend, id: "c1", image: "kalki-backend:dev" }]);
         expect(parseContainers("Total reclaimed space: 0B")).toBeNull();
         expect(parseContainers('[{"Name":"/no-id"}]')).toBeNull();

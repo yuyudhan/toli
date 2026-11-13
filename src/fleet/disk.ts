@@ -23,8 +23,10 @@
 //      build cut off fails once and compiles again. Over the emergency level build output in use is never touched, not
 //      even a sweep of its old artifacts, so a disk a little under its floor never costs a build its output.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
-// touched. Every action goes to logs/disk.log. It runs inline before every jawan start; the minute tick starts it
-// detached (disk-state.ts keepDiskDetached), so a keeper slowed by a starved disk never holds the tick up.
+// touched. A folder a live Docker container mounts (a bind, a volume's mountpoint, a mount hung on it inside a bind)
+// is never deleted at any step, the last resort included (container-mounts.ts). Every action goes to logs/disk.log.
+// It runs inline before every jawan start; the minute tick starts it detached (disk-state.ts keepDiskDetached), so a
+// keeper slowed by a starved disk never holds the tick up.
 // Any long job that must keep its build output for now (a gate, a release build) writes its pid to
 // state/disk-keep.pause; the keeper deletes nothing while that pid is alive and the file was touched within 2 h (a
 // longer job touches it again). It ignores the file once the pid is dead, and drops it, logged once, once it is older.
@@ -40,6 +42,7 @@ import { paths } from "../core/paths.ts";
 import { out, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
 import { wipeTargetBetweenBuilds } from "./cargo-lock.ts";
+import { containerUseOnce } from "./container-mounts.ts";
 import { diskAlertBeforeWork, diskKeepSetting } from "./disk-alert.ts";
 import { playwrightBrowsers, trimSccache } from "./disk-caches.ts";
 import {
@@ -204,8 +207,24 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         /** Folders deleted (or, in a dry run, counted as deleted), and why each other one was kept: in use, or tried. */
         const done = new Set<string>();
         const kept = new Map<string, { reason: string; tried: boolean }>();
+        /**
+         * A folder a live container mounts stays at every step, the last resort included: deleting it unhooks the
+         * mount inside the running container (container-mounts.ts). Each kept folder is logged once.
+         */
+        const containerUse = containerUseOnce();
+        const containerHeld = new Set<string>();
+        const mounted = (path: string): boolean => {
+            if (containerHeld.has(path)) return true;
+            const why = containerUse(path);
+            if (why === null) return false;
+            containerHeld.add(path);
+            kept.set(path, { reason: why, tried: true });
+            say(`kept ${path}: ${why}; a folder a live container mounts is never deleted`);
+            return true;
+        };
         /** Delete `path` (`step` names the step, for the log), or record why it stays. */
         const remove = (path: string, step: string, deleteIt: () => string | null): void => {
+            if (mounted(path)) return;
             if (dryRun) {
                 const size = sizeGB(path);
                 simulated += size;
@@ -285,6 +304,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 say(`kept ${dir.path} in use: free ${gb(free())} is over ${level}`);
                 continue;
             }
+            if (mounted(dir.path)) continue;
             const why = kept.get(dir.path);
             if (why?.tried !== true) {
                 say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps`);
@@ -302,6 +322,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 `free ${gb(free())} is under ${level}: deleting every build folder left, in use or not, until free space is over that level`,
             );
             const force = (path: string): void => {
+                if (mounted(path)) return;
                 const why = kept.get(path)?.reason;
                 if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway`);
                 remove(path, "step 7: last resort", () => forceDelete(path));

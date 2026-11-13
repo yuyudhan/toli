@@ -164,7 +164,8 @@ use or not, until free space is over that level`). Then, while it is still under
    volumes in step 5. Each deletion is logged with what it freed (`deleted <path>, freed X GB (step 7: last
 resort)`), and an in-use folder first with why it was in use
    (`<path> is in use (...): deleting it anyway`); `--json` sets `lastResort`. A build that loses its target fails
-   once and compiles again; the message before a jawan start says so.
+   once and compiles again; the message before a jawan start says so. A folder a live container mounts is the one
+   exception: it stays even here (see "What it never deletes").
 
 ## On a full disk
 
@@ -202,6 +203,17 @@ entries. Of Docker's volumes it removes only the idle build-output ones of step 
 there), with the stopped containers that mount them; never a volume that may hold data or one a running container
 uses, and nothing outside this account's registered checkouts and
 its own caches.
+
+It never deletes a build folder a live (running, paused, restarting or just-created) Docker container mounts, at any
+step, the last resort included: a folder that is a bind mount's host folder, holds a volume's mountpoint, or is where
+one of the container's mounts sits inside one of its bind mounts. A compose stack that binds `./apps/backend` at
+`/app` and mounts the volume `backend_target` at `/app/target` hangs that volume on the host's `apps/backend/target`;
+deleting that folder unhooks the volume inside the running container, whose `/app/target` then falls through to
+whatever the bind shows, and the live backend breaks (T1256). The log says `kept <path>: container <c> (running)
+mounts volume <v> at /app/target, over <path>; a folder a live container mounts is never deleted`. Docker is asked
+once per run, at the first folder about to go. No docker, or a daemon this account cannot reach, means no container
+holds anything; a daemon that answers but whose containers cannot be listed keeps every build folder that run. A
+bind of the whole checkout alone does not hold its build folders.
 
 ## Settings
 

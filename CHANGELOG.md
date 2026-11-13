@@ -4,6 +4,25 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## Unreleased
+
+### Fixed
+
+- **Peers: the pairing code no longer looks like a piece of the fingerprint (T1262).** `peer accept` prints it on its
+  own `Pairing code: NNNN (tell this to <name>'s requester)` line, and fingerprints print in colon-joined groups of
+  eight instead of 4-character groups that Sardars relayed as the code. Display only; the protocol is unchanged.
+- The disk keeper never deletes a build folder a running container mounts, at any disk level including the last
+  resort: a bind mount's folder, a volume's mountpoint, or the folder a compose stack's volume hangs on inside its
+  bind (itlinux3's `apps/backend/target`, deleted 3 times under live dev containers, which broke the backend) (T1256).
+- `bin/toli commit --merge` no longer prints an error after a successful commit when the merge deletes a file: the
+  post-commit checkout skips a deleted file the `git merge` in progress already removed (T1257).
+- A jawan killed by systemd-oomd, the kernel OOM killer or a signal now records an outcome that names the cause
+  (`killed by systemd-oomd (SIGKILL, 86 processes): memory pressure ...`, `killed by SIGKILL`) with its log tail. On
+  Linux the harness runs in its own `toli-jawan-<run id>.scope` and the supervisor in `toli-supervisor-<run id>.scope`,
+  so an OOM kill no longer takes the supervisor with it. A supervisor outlives SIGTERM, SIGHUP and SIGINT while its
+  harness runs. A run whose supervisor died anyway is recorded failed by the next digest or tick with the best cause
+  found, never just "no outcome" (T1255).
+
 ## v0.5.0 - 2026-11-13
 
 Peer messaging over HTTPS: see v0.5.0-rc.1 and v0.5.0-rc.2 below, which this release completes.
