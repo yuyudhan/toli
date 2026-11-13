@@ -14,7 +14,7 @@ import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
 import { busyBuildSlots, POLL_MS, takeInTurn } from "./build-queue.ts";
-import { FORWARDED_SIGNALS, inLiveStackCheckout, resumeDevStacksWhenIdle } from "./build-slots.ts";
+import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
@@ -169,7 +169,7 @@ export async function slotForCargo(cargoPid: number): Promise<number> {
     const argv = processArgv(cargoPid);
     const at = argv.slice(0, 2).findIndex((word) => basename(word) === "cargo");
     if (at < 0 || !heavyCargo(argv.slice(at))) return 0;
-    if (inLiveStackCheckout(process.cwd())) return 0;
+    if (liveStackProjectAt(process.cwd()) !== null) return 0;
     const lock = flock();
     if (lock === null) return 0; // The shim's `build-slot` says so; every rustc call need not.
     mkdirSync(paths.buildSlotsDir(), { recursive: true });

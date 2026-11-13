@@ -249,8 +249,9 @@ cargo's next rustc call then takes one again. The wrapper then runs the wrapper 
 cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
 
 A build started in a live-stack project's checkout ([projects.md](projects.md#live-stack-mode)) skips the slots, as
-that project's jawans run without the shim or the wrapper, at the same share of jobs and test threads. `[build] jobs`
-in `~/.cargo/config.toml` holds the same per-slot number so hand-run cargo gets it too
+that project's jawans run without the shim or the wrapper, at the same share of jobs and test threads, and pauses
+that project's stack auto-rebuild while it runs ([projects.md](projects.md#pausing-the-stack-during-a-build)).
+`[build] jobs` in `~/.cargo/config.toml` holds the same per-slot number so hand-run cargo gets it too
 (`bin/toli doctor` warns when the two differ). `bin/toli resources` shows the slots as `builds <busy>/<total>`
 (`buildSlots` and `buildSlotsBusy` in `--json`).
 
@@ -273,8 +274,10 @@ Docker cannot pause is warned about and left running; the build still runs.
 The paused names are kept in `state/build-slots/stacks.paused`. A failed unpause prints
 `toli: could not unpause <name>: <docker's error>; run \`docker unpause <name>\``, keeps the name there, and is retried
 when the next slot is freed and by the minute tick, which also resumes a stack a killed holder left paused (a holder
-that is killed frees its slot with its lock, but cannot unpause). A live-stack project's declaration is ignored, like
-its builds skip the slots: its running stack is the machine's one build.
+that is killed frees its slot with its lock, but cannot unpause). A live-stack project's declaration is ignored here,
+like its builds skip the slots: its stack is paused only while a build runs in its own checkout
+([projects.md](projects.md#pausing-the-stack-during-a-build)), which the same freed slot and minute tick also
+resume after a killed build.
 
 ## Work on another machine
 

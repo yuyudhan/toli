@@ -10,7 +10,8 @@
 // waiting unpauses them. The paused names are recorded in state/build-slots/stacks.paused, so the unpause needs no
 // notes and a stack paused by a holder that was killed is resumed by the next idle moment (any slot freed, or the
 // minute tick). Containers are only ever paused and unpaused: never stopped, removed or inspected beyond their status.
-// Live-stack projects' declarations are ignored: their stack is the machine's one build (docs/projects.md).
+// A live-stack project's declaration is ignored here: its stack is paused only by builds in its own checkout
+// (src/fleet/live-stack-pause.ts).
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../core/paths.ts";
@@ -80,7 +81,7 @@ function writePaused(names: string[]): void {
 }
 
 /** Run `body` holding the stacks lock (blocking: every docker call inside is bounded by its timeout). */
-function withStackLock(body: () => void): void {
+export function withStackLock(body: () => void): void {
     const lock = flock();
     if (lock === null) {
         body();
@@ -102,6 +103,18 @@ function containerStatus(name: string): string | null {
     return result.code === 0 ? result.stdout.trim() : null;
 }
 
+/** Pause each of `names` that runs; returns those paused. One that cannot be paused is warned about and left running. */
+export function pauseContainers(names: string[]): string[] {
+    const paused: string[] = [];
+    for (const name of names) {
+        if (containerStatus(name) !== "running") continue;
+        const result = run(["docker", "pause", name], { timeoutMs: DOCKER_TIMEOUT_MS });
+        if (result.code === 0) paused.push(name);
+        else warn(`toli: could not pause ${name} for the build: ${result.stderr.trim() || `exit ${result.code}`}`);
+    }
+    return paused;
+}
+
 /**
  * Pause every declared container that runs, once a build holds a slot. Never fails the build: a container that
  * cannot be paused is warned about and left running.
@@ -110,19 +123,7 @@ export function pauseDevStacks(): void {
     try {
         const names = declaredContainers();
         if (names.length === 0) return;
-        withStackLock(() => {
-            const paused = readPaused();
-            for (const name of names) {
-                if (containerStatus(name) !== "running") continue;
-                const result = run(["docker", "pause", name], { timeoutMs: DOCKER_TIMEOUT_MS });
-                if (result.code === 0) paused.push(name);
-                else
-                    warn(
-                        `toli: could not pause ${name} for the build: ${result.stderr.trim() || `exit ${result.code}`}`,
-                    );
-            }
-            writePaused([...new Set(paused)]);
-        });
+        withStackLock(() => writePaused([...new Set([...readPaused(), ...pauseContainers(names)])]));
     } catch (error) {
         warn(`toli: dev stacks not paused: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -132,25 +133,31 @@ export function pauseDevStacks(): void {
 const GONE = /is not paused|no such container|no such object/i;
 
 /**
+ * Unpause each of `names`; returns those still paused. A failed unpause is warned about with the command that fixes it.
+ */
+export function unpauseContainers(names: string[]): string[] {
+    const stuck: string[] = [];
+    for (const name of names) {
+        const result = run(["docker", "unpause", name], { timeoutMs: DOCKER_TIMEOUT_MS });
+        if (result.code === 0 || GONE.test(result.stderr)) continue;
+        warn(
+            `toli: could not unpause ${name}: ${result.stderr.trim() || `exit ${result.code}`}; run \`docker unpause ${name}\``,
+        );
+        stuck.push(name);
+    }
+    return stuck;
+}
+
+/**
  * Unpause the containers `pauseDevStacks` paused, when `idle` says no build holds or awaits a slot (asked under the
- * stacks lock, after a holder freed its slot, so the last one out always sees it). A failed unpause is warned about
- * with the command that fixes it, and the container stays recorded for the next idle moment.
+ * stacks lock, after a holder freed its slot, so the last one out always sees it). A container that fails to unpause
+ * stays recorded for the next idle moment.
  */
 export function resumeDevStacks(idle: () => boolean): void {
     if (!existsSync(pausedFile())) return;
     try {
         withStackLock(() => {
-            if (!idle()) return;
-            const stuck: string[] = [];
-            for (const name of readPaused()) {
-                const result = run(["docker", "unpause", name], { timeoutMs: DOCKER_TIMEOUT_MS });
-                if (result.code === 0 || GONE.test(result.stderr)) continue;
-                warn(
-                    `toli: could not unpause ${name}: ${result.stderr.trim() || `exit ${result.code}`}; run \`docker unpause ${name}\``,
-                );
-                stuck.push(name);
-            }
-            writePaused(stuck);
+            if (idle()) writePaused(unpauseContainers(readPaused()));
         });
     } catch (error) {
         warn(`toli: dev stacks not unpaused: ${error instanceof Error ? error.message : String(error)}; see docker ps`);
