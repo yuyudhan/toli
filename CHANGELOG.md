@@ -9,13 +9,13 @@ one. See docs/releasing.md.
 ### Added
 
 - **Rule 5 is enforced in code: builds outside the clones are refused and flagged (T1393).** Jawans built outside
-  their clone despite the rule in every brief (a git worktree, `git archive` trees, a `/tmp` export). `bin/toli
-build-slot`, and so toli's cargo shim (now inside a slot too), refuses a build whose working tree (the git toplevel
-  of the cwd, or of `--manifest-path`) is not a registered clone, a task worktree toli made, a no-mistakes run
-  worktree or toli's own checkout. `TOLI_BUILD_PLACE_OVERRIDE="<why>"` lets one through and logs it in
-  `logs/build-place.log`. `bin/toli disk keep` and `bin/toli doctor` flag, never delete, folders under `/tmp`,
-  `$TMPDIR` and the home folder that hold a `target/` or `node_modules/` outside those places, and every worktree of
-  a registered clone (or of toli) that toli did not make. See docs/disk.md "Builds outside the clones".
+  their clone despite the rule in every brief (a git worktree, `git archive` trees, a `/tmp` export).
+  `bin/toli build-slot`, and so toli's cargo shim (now inside a slot too), refuses a build whose working tree (the
+  git toplevel of the cwd, or of `--manifest-path`) is not a registered clone, a task worktree toli made, a
+  no-mistakes run worktree or toli's own checkout. `TOLI_BUILD_PLACE_OVERRIDE="<why>"` lets one through and logs
+  it in `logs/build-place.log`. `bin/toli disk keep` and `bin/toli doctor` flag, never delete, folders under
+  `/tmp`, `$TMPDIR` and the home folder that hold a `target/` or `node_modules/` outside those places, and every
+  worktree of a registered clone (or of toli) that toli did not make. See docs/disk.md "Builds outside the clones".
 
 ### Fixed
 

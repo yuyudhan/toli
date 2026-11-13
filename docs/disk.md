@@ -247,16 +247,16 @@ briefs. The known places are a registered project's clone (`data/projects.json`)
   slot too), refuses a build whose working tree is none of those places, before it queues for a slot. The working
   tree is the git toplevel of the cwd, or of the folder of cargo's `--manifest-path` (words after `--` belong to the
   program and are not read), climbing out of submodules; outside git it is the folder itself, which must lie in one of
-  the places. A git worktree a jawan added, a `git archive` export or a `/tmp` copy is refused with `refusing to
-build in <tree>`. Light cargo commands (`metadata`, `fmt`, ...) build nothing and run anywhere.
+  the places. A git worktree a jawan added, a `git archive` export or a `/tmp` copy is refused with
+  `refusing to build in <tree>`. Light cargo commands (`metadata`, `fmt`, ...) build nothing and run anywhere.
 - `TOLI_BUILD_PLACE_OVERRIDE="<why>"` lets one build through anyway, for an exception the user agreed to: it
   prints `building outside the clones` and appends `{at, tree, cwd, command, reason, pid}` to
   `logs/build-place.log`. An empty or blank value overrides nothing.
 - `bin/toli disk keep` (`flagged, not deleted:` lines; `outsideBuilds` and `outsideScanComplete` in `--json`) and
   `bin/toli doctor` (`build-place`, a warning per folder, the first 10) flag, never delete, folders outside those
-  places under `/tmp`, `$TMPDIR` and the home folder that hold a `target/` or `node_modules/`, and every `git worktree
-list` entry of toli's checkout or a registered clone that toli did not make. The scan reads up to 3 levels below
-  each of those folders (10,000 folders each at most), skipping hidden folders and `~/Library`.
+  places under `/tmp`, `$TMPDIR` and the home folder that hold a `target/` or `node_modules/`, and every
+  `git worktree list` entry of toli's checkout or a registered clone that toli did not make. The scan reads up to 3
+  levels below each of those folders (10,000 folders each at most), skipping hidden folders and `~/Library`.
 
 A cargo that bypassed the shim (another cargo ahead of it on PATH) reaches toli only through the rustc wrapper
 ([fleet.md](fleet.md#heavy-build-slots)), which takes a slot but does not check the place. toli has no node or pnpm
