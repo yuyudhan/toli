@@ -32,10 +32,10 @@ import {
     checkResolved,
     checkReverts,
     commitMsgHook,
-    parseHunks,
     scanLeaks,
 } from "./commit-checks.ts";
 import { adoptsMerge, cleanMerge } from "./commit-merge.ts";
+import { parseHunks } from "./diff-hunks.ts";
 import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
 import { perTask } from "./strategy.ts";
 import { refExists, samePath, workDir } from "./workspace.ts";

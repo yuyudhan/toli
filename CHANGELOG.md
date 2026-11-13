@@ -12,6 +12,9 @@ one. See docs/releasing.md.
   listed them C-quoted (`"caf\303\251.txt"`), so they matched no path and stayed stale in the clone after the commit,
   silently since T1257; `commit` now reads its path lists NUL-separated (`-z`) and passes merged names literally
   (T1266).
+- `bin/toli commit` no longer refuses a pure insertion as a revert in a file whose name has non-ASCII characters,
+  quotes or spaces. Its revert check read such names from git's quoted diff headers and found no lines to compare;
+  it now decodes them to the stored name (T1267).
 
 ## v0.5.1 - 2026-11-13
 

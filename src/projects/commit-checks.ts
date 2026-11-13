@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { git, gitOk } from "../core/git.ts";
 import { type RunResult, run, ToliError } from "../core/util.ts";
+import { type Hunk, parseHunks } from "./diff-hunks.ts";
 
 /** Recent commits on the branch whose changes a new commit must not undo. */
 export const REVERT_WINDOW = 20;
@@ -14,50 +15,8 @@ const LOCK_CHECK_TIMEOUT_MS = 300_000;
 const HOOK_TIMEOUT_MS = 300_000;
 const TAIL_LINES = 20;
 
-/**
- * One `-U0` hunk: its removed and added lines, and where it starts on each side. A side with no lines (a pure
- * insertion's old side, a pure removal's new side) starts at the line the gap follows (0: the top of the file).
- */
-export type Hunk = { file: string; removed: string[]; added: string[]; oldStart: number; newStart: number };
-
-const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
-
 function tail(text: string): string {
     return text.trimEnd().split("\n").slice(-TAIL_LINES).join("\n");
-}
-
-/** `git diff -U0` output as hunks: the removed and added lines of each, per file. */
-export function parseHunks(diff: string): Hunk[] {
-    const hunks: Hunk[] = [];
-    let file = "";
-    let current: Hunk | null = null;
-    for (const line of diff.split("\n")) {
-        if (line.startsWith("diff --git ")) {
-            current = null;
-            continue;
-        }
-        if (current === null && line.startsWith("+++ ")) {
-            file = line === "+++ /dev/null" ? file : line.replace(/^\+\+\+ b\//, "");
-            continue;
-        }
-        if (current === null && line.startsWith("--- ")) {
-            if (line !== "--- /dev/null") file = line.replace(/^--- a\//, "");
-            continue;
-        }
-        if (line.startsWith("@@")) {
-            const header = HUNK_HEADER.exec(line);
-            current = {
-                file,
-                removed: [],
-                added: [],
-                oldStart: Number(header?.[1] ?? 0),
-                newStart: Number(header?.[2] ?? 0),
-            };
-            hunks.push(current);
-        } else if (current !== null && line.startsWith("-")) current.removed.push(line.slice(1));
-        else if (current !== null && line.startsWith("+")) current.added.push(line.slice(1));
-    }
-    return hunks;
 }
 
 /** The lines of `file` at `rev` (a commit or tree), empty when it has no such file; cached per rev and file. */

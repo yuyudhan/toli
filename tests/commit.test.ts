@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
-import { parseHunks } from "../src/projects/commit-checks.ts";
+import { parseHunks } from "../src/projects/diff-hunks.ts";
 import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
 
 // safeCommit is git plumbing, and these tests prove it against real repos: the slowest --merge test runs ~175 git
@@ -112,6 +112,21 @@ describe("bin/toli commit (R23 safe commits)", () => {
         writeFileSync(join(dir, "config.rs"), fields("apps", "calc", "emoji", "scripts", "files"));
         expect(() => safeCommit({ dir, paths: ["config.rs"], message: "Mine" })).toThrow(
             `would revert config.rs lines from ${dropped.slice(0, 7)}`,
+        );
+    });
+
+    test("the revert check reads non-ASCII, quoted and spaced file names as stored", () => {
+        const name = 'réglages "x" two.rs';
+        const lines = (...names: string[]) => names.map((field) => `    ${field}: true,\n`).join("");
+        const dir = repo({ [name]: lines("apps", "files", "calc") });
+        // As above: adding back elsewhere a line a recent commit removed is a new change, not a revert.
+        const recent = otherJawan(dir, name, lines("apps", "calc", "emoji", "scripts"));
+        writeFileSync(join(dir, name), lines("apps", "calc", "emoji", "scripts", "files"));
+        expect(safeCommit({ dir, paths: [name], message: "Files provider" }).parent).toBe(recent);
+        const dropped = otherJawan(dir, name, lines("apps", "calc", "emoji", "files"));
+        writeFileSync(join(dir, name), lines("apps", "calc", "emoji", "scripts", "files"));
+        expect(() => safeCommit({ dir, paths: [name], message: "Mine" })).toThrow(
+            `would revert ${name} lines from ${dropped.slice(0, 7)}`,
         );
     });
 
