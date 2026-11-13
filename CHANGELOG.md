@@ -13,6 +13,8 @@ one. See docs/releasing.md.
   `just release` refuses a CHANGELOG section or tag message that holds one. The list is stored hashed
   (`bun scripts/internal-names.ts hash <name>` adds one); `scripts/internal-names-allow.txt` allows the default
   persona name. See docs/releasing.md "Release notes are generic".
+- **Builds in a live-stack checkout pause the project's declared stack services and resume them afterwards
+  (T1411).**
 
 ### Changed
 
