@@ -104,6 +104,8 @@ export function sandbox(): Sandbox {
         PLAYWRIGHT_BROWSERS_PATH: join(root, ".playwright"),
         // The disk keeper frees build output no-mistakes runs left in their worktrees: never the host's runs.
         NM_HOME: join(root, ".no-mistakes"),
+        // `disk keep` and `doctor` flag build folders outside the clones under /tmp, $TMPDIR and home: never the host's.
+        TOLI_BUILD_SCAN_ROOTS: "",
         // The Claude SessionStart hook appends the lead's build variables here: never to the host session's file.
         CLAUDE_ENV_FILE: "",
         ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),

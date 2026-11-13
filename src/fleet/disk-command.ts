@@ -2,6 +2,7 @@
 import { Args } from "../core/args.ts";
 import { out, printJson, ToliError } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
+import { outsideBuildLine, outsideBuilds, PARTIAL_SCAN } from "./build-place.ts";
 import { floorText, type KeepReport, keepDisk } from "./disk.ts";
 import { diskAlertCommand } from "./disk-alert.ts";
 import { describe, gb } from "./disk-state.ts";
@@ -41,8 +42,13 @@ export function diskCommand(argv: string[]): void {
         if (json) printJson({ error: describe(error), fallback: lines });
         throw new ToliError(`disk keeper failed: ${describe(error)}; swept stale artifacts instead`);
     }
-    if (json) printJson(report);
+    const outside = outsideBuilds();
+    if (json) printJson({ ...report, outsideBuilds: outside.found, outsideScanComplete: outside.complete });
     else if (report.lines.length === 0) out(`free ${gb(report.freeBeforeGB)}, ${floorText(report)}: nothing to do`);
+    if (!json) {
+        for (const build of outside.found) out(`flagged, not deleted: ${outsideBuildLine(build)}`);
+        if (!outside.complete) out(`flagged, not deleted: ${PARTIAL_SCAN}`);
+    }
     if (!json && !report.automatic) {
         out(
             "automatic deletion: off (capacity.diskKeep false); toli deletes only when `bin/toli disk keep` is run by hand",

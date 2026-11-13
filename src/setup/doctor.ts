@@ -3,6 +3,7 @@ import { hasMachine } from "../core/config.ts";
 import { captureLoginEnv, credentialNames, LOGIN_ENV_FLAG, loginShell } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, run } from "../core/util.ts";
+import { buildPlaceChecks } from "../fleet/build-place.ts";
 import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
@@ -231,6 +232,7 @@ const MACHINE_SECTIONS: Section[] = [
     { name: "hooks", run: () => hooksDoctorChecks(loadProjects().map((project) => project.name)) },
     { name: "fleet", limitMs: FLEET_SECTION_MS, run: fleetChecks },
     { name: "scheduler", run: schedulerChecks },
+    { name: "build-place", run: buildPlaceChecks },
     { name: "lead", run: () => [leadCheck(), idleSessionCheck()].filter((check) => check !== null) },
 ];
 

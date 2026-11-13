@@ -227,8 +227,10 @@ the same way: omp's toli extension adopts them into the omp process when it load
 `bin/toli spawn` jawan), and Claude Code's SessionStart hook writes them to `CLAUDE_ENV_FILE`, which Claude sources
 before every Bash command; both read them from `bin/toli hook lead-build-env`. The shim sends the heavy cargo
 commands (`build`, `check`, `test`, `clippy`, `nextest`, `run`, `bench`, `doc`, `install`, `rustc`, `rustdoc` and
-their one-letter aliases) through `bin/toli build-slot`, and runs everything else (`cargo --version`, `metadata`,
-`fmt`, ...) and any cargo inside a slot straight away, with the first real cargo on PATH after the shim.
+their one-letter aliases) through `bin/toli build-slot`, inside a slot too, and runs everything else (`cargo
+--version`, `metadata`, `fmt`, ...) straight away, with the first real cargo on PATH after the shim. `build-slot`
+first refuses a build outside the clones, toli's task worktrees and toli's checkout
+([disk.md](disk.md#builds-outside-the-clones)); inside a slot it then runs the command at once.
 
 PATH order alone is not enough: a login profile, a harness's shell snapshot or git (its exec path, in a hook) can put
 `~/.cargo/bin` ahead of the shim, and that cargo then never sees the shim. The rustc wrapper catches it: cargo calls

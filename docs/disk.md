@@ -236,6 +236,33 @@ once per run, at the first folder about to go. No docker, or a daemon this accou
 holds anything; a daemon that answers but whose containers cannot be listed keeps every build folder that run. A
 bind of the whole checkout alone does not hold its build folders.
 
+## Builds outside the clones
+
+AGENTS.md rule 5 (one code folder, one build folder) is enforced in code (`src/fleet/build-place.ts`), not only in
+briefs. The known places are a registered project's clone (`data/projects.json`), a task worktree toli made for a
+`worktree-per-task` project (`projects/.worktrees/<project>/<T-id>`), a no-mistakes run worktree
+(`<NM_HOME>/worktrees/<repo>/<run>`, the gate's own) and toli's own checkout.
+
+- `bin/toli build-slot -- <command>`, and so the cargo shim, which sends every heavy cargo command there (inside a
+  slot too), refuses a build whose working tree is none of those places, before it queues for a slot. The working
+  tree is the git toplevel of the cwd, or of the folder of cargo's `--manifest-path` (words after `--` belong to the
+  program and are not read), climbing out of submodules; outside git it is the folder itself, which must lie in one of
+  the places. A git worktree a jawan added, a `git archive` export or a `/tmp` copy is refused with `refusing to
+build in <tree>`. Light cargo commands (`metadata`, `fmt`, ...) build nothing and run anywhere.
+- `TOLI_BUILD_PLACE_OVERRIDE="<why>"` lets one build through anyway, for an exception the user agreed to: it
+  prints `building outside the clones` and appends `{at, tree, cwd, command, reason, pid}` to
+  `logs/build-place.log`. An empty or blank value overrides nothing.
+- `bin/toli disk keep` (`flagged, not deleted:` lines; `outsideBuilds` and `outsideScanComplete` in `--json`) and
+  `bin/toli doctor` (`build-place`, a warning per folder, the first 10) flag, never delete, folders outside those
+  places under `/tmp`, `$TMPDIR` and the home folder that hold a `target/` or `node_modules/`, and every `git worktree
+list` entry of toli's checkout or a registered clone that toli did not make. The scan reads up to 3 levels below
+  each of those folders (10,000 folders each at most), skipping hidden folders and `~/Library`.
+
+A cargo that bypassed the shim (another cargo ahead of it on PATH) reaches toli only through the rustc wrapper
+([fleet.md](fleet.md#heavy-build-slots)), which takes a slot but does not check the place. toli has no node or pnpm
+wrapper, so `npm`, `pnpm` and `bun` builds are not checked when they start; their `node_modules/` outside the places
+still shows up in `disk keep` and `doctor`.
+
 ## Settings
 
 ```json
