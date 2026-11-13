@@ -134,7 +134,9 @@ function requestId(pair: Pair): string {
 
 function codeFor(pair: Pair, reqId: string): string {
     const out = pair.b.box.ok(["peer", "accept", reqId, "--by", "owner", "--why", "test"]);
-    const code = /pairing code for alpha: (\d{4})/.exec(out)?.[1];
+    const code = /^Pairing code: (\d{4}) \(tell this to alpha's requester\)$/m.exec(out)?.[1];
+    expect(out).toMatch(/^fingerprint: [0-9a-f]{8}(:[0-9a-f]{8}){7}$/m);
+    expect(out).not.toMatch(/\b[0-9a-f]{4} [0-9a-f]{4}\b/);
     if (code === undefined) throw new Error(`no code in: ${out}`);
     return code;
 }

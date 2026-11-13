@@ -280,8 +280,10 @@ Details: [fleet.md](fleet.md).
   is on (the default). `peer listen off` stops it and keeps it off (this machine then pulls from its peers); `peer
 set` changes the port (47123), the bind (`private`, the default, or a list of addresses) and whether a paired peer
   may still get messages over ssh when HTTPS fails ([peers.md](peers.md#the-listener)).
-- `peer add <host>` asks that machine to pair; there `peer accept <request>` prints a 4-digit code (2 minutes, one
-  use, 3 tries) that its owner or Sardar reads to this side, and `peer add <host> --code NNNN` finishes. Pairing
+- `peer add <host>` asks that machine to pair; there `peer accept <request>` prints the code on its own line,
+  `Pairing code: NNNN (tell this to <name>'s requester)` (2 minutes, one use, 3 tries), and the fingerprint apart in
+  colon-joined groups of eight; its owner or Sardar relays only the `Pairing code:` digits, and
+  `peer add <host> --code NNNN` finishes. Pairing
   grants every permission; `peer deny|allow` revokes or restores one, `peer remove` revokes the peer. The Sardar runs
   these only with `--why`, and every one is logged with who and why ([peers.md](peers.md#pairing)).
 - `peer flush` sends what waits for a peer now (the tick does it every minute), `peer pull` takes what peers hold

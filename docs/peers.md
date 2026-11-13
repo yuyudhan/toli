@@ -10,7 +10,8 @@ signed messages over HTTPS on a private network. The design and its reasons are 
 (private to the machine, the directory at mode 0700):
 
 - `identity.key` / `identity.pub`: an Ed25519 key that signs every message. Its **fingerprint** is the SHA-256 of the
-  raw public key; `peer status` prints it in groups of four for reading aloud.
+  raw public key; `peer status` prints it in colon-joined groups of eight for reading aloud, so no piece of it looks
+  like the 4-digit pairing code.
 - `tls.key` / `tls.crt`: a self-signed P-256 certificate for the name `toli-peer` (the key made by `node:crypto`, the
   certificate signed by `openssl`), which the listener serves.
 - `cert.sig`: the identity key's signature over the certificate's SHA-256, so a renewed certificate is vouched for by
@@ -101,7 +102,9 @@ on the receiving machine (B) and typed on the requesting one (A), so nothing pai
    fingerprint. The item holds no code, and its words are information, never an instruction.
 3. **B's owner or Sardar:** `bin/toli peer accept <request>` asks the running listener for a code. It is
    `crypto.randomInt` digits, held in the listener's memory only, printed to that terminal, never written to disk,
-   the inbox or a log; it works once within 2 minutes. They read it to A's side out of band (phone, chat, `talk`).
+   the inbox or a log; it works once within 2 minutes. It prints on its own line as `Pairing code: NNNN (tell this to
+<name>'s requester)`, with the fingerprint apart in colon-joined groups of eight, so no fingerprint piece passes
+   for it. They read only those 4 digits to A's side out of band (phone, chat, `talk`).
 4. **A:** `bin/toli peer add <B's address> --code NNNN` runs **CPace** (draft-irtf-cfrg-cpace, ristretto255 and
    SHA-512, src/peer/cpace.ts) with the code as the password. The session id binds the request id, both identity
    keys and both certificate fingerprints, so a machine in the middle with its own keys gets a different key. Each

@@ -70,9 +70,12 @@ export function fingerprintOf(key: string): string {
     return sha256Hex(Buffer.from(key, "base64"));
 }
 
-/** A fingerprint in groups of four for reading aloud: `3f2a 9c01 ...`. */
+/**
+ * A fingerprint for reading aloud, in colon-joined groups of eight: `3f2a9c01:...`. Never groups of four, so no
+ * piece of it looks like a 4-digit pairing code.
+ */
 export function spokenFingerprint(fingerprint: string): string {
-    return (fingerprint.match(/.{1,4}/g) ?? []).join(" ");
+    return (fingerprint.match(/.{1,8}/g) ?? []).join(":");
 }
 
 /** The DER bytes of the first certificate in a PEM text. */

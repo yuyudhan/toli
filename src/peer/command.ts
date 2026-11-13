@@ -48,8 +48,9 @@ async function add(argv: string[]): Promise<void> {
         out(
             [
                 `asked ${hello.name} to pair (request ${reqId}); its fingerprint: ${spokenFingerprint(hello.fingerprint)}`,
-                `Ask its owner or Sardar to run \`bin/toli peer accept ${reqId}\` there and read you the 4-digit code,`,
-                `then: bin/toli peer add ${target} --code NNNN (the code lives 2 minutes).`,
+                `Ask its owner or Sardar to run \`bin/toli peer accept ${reqId}\` there and read you the`,
+                `4-digit code from its "Pairing code:" line (not a piece of the fingerprint), then:`,
+                `bin/toli peer add ${target} --code NNNN (the code lives 2 minutes).`,
             ].join("\n"),
         );
         return;
@@ -69,9 +70,9 @@ async function accept(argv: string[]): Promise<void> {
     const seconds = Math.round((accepted.expiresAt - Date.now()) / 1000);
     out(
         [
-            `pairing code for ${accepted.name}: ${accepted.code}`,
-            `It works once within ${seconds} s. Read it to ${accepted.name}'s owner or Sardar only after checking its`,
-            `fingerprint with them: ${spokenFingerprint(accepted.fingerprint)}`,
+            `Pairing code: ${accepted.code} (tell this to ${accepted.name}'s requester)`,
+            `It works once within ${seconds} s. Tell it only after checking ${accepted.name}'s fingerprint with them:`,
+            `fingerprint: ${spokenFingerprint(accepted.fingerprint)}`,
         ].join("\n"),
     );
 }
