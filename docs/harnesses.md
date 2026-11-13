@@ -74,15 +74,16 @@ coordinator's inbox. Run records live in `state/jawans/<id>.json`.
 **Jawan slots.** A machine runs at most `capacity.maxRuns` jawans at once (config/machine.json, default a quarter of
 the cores): running spawn runs plus the lead's native subagents, counted as the active tasks recorded with `task
 start --agent <id>` that no spawn run works on (one per distinct agent id). `task start --agent` also records the lead
-session running it (the extension-registered session, else `lead attach`, else a headless turn's omp); a native
-subagent dies with that session, so once its pid is gone the task no longer takes a slot, and the digest's Next block
-lists it for a re-dispatch (`its agent <id> died with its session <pid>`). `spawn` with every slot busy records the
-run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free, from the
-supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run regardless,
-for the lead's explicit use. `run kill` on a queued run cancels it; a task naming that run as its jawan goes back to
-queued with no jawan, ready for the next dispatch. The digest, `bin/toli resources` and `bin/toli
-fleet queues` show the slots as `jawans <n>/<slots> (<k> native subagents)`, and `jawans at cap N/N (...): queue
-instead` once all are taken: the lead then queues new work instead of starting another subagent.
+session that runs it: the extension-registered session, the `lead attach` omp or a headless turn's omp, whichever is
+an ancestor of the command (a lead no record names, such as a Claude Code lead, records none and counts as before). A
+native subagent dies with that session, so once its pid is gone the task no longer takes a slot, and the digest's
+Next block lists it for a re-dispatch (`its agent <id> died with its session <pid>`). `spawn` with every slot busy
+records the run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free,
+from the supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run
+regardless, for the lead's explicit use. `run kill` on a queued run cancels it; a task naming that run as its jawan
+goes back to queued with no jawan, ready for the next dispatch. The digest, `bin/toli resources` and `bin/toli fleet
+queues` show the slots as `jawans <n>/<slots> (<k> native subagents)`, and `jawans at cap N/N (...): queue instead`
+once all are taken: the lead then queues new work instead of starting another subagent.
 
 **Leftover browsers are closed.** When a run's harness exits, the supervisor closes the automation browsers the run
 left open: a browser binary (Chrome, Chromium, its headless shell, Edge, Brave, Firefox) started with remote

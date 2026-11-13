@@ -2,7 +2,37 @@ import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENV, fleet, liveRun, ROOMY, remoteSnapshot, resourcesQueue } from "./fleet-fixture.ts";
-import { type Sandbox, withProject } from "./helpers.ts";
+import { GIT_ENV, type Sandbox, TOLI_BIN, withProject } from "./helpers.ts";
+
+/**
+ * A stand-in lead session: a shell that, once registered with `session start` and told to go, runs `bin/toli <args>`
+ * as its child (as omp's bash tool does), then stays alive until killed.
+ */
+async function leadSession(box: Sandbox, args: string[], now: string): Promise<Bun.Subprocess<"pipe", "pipe">> {
+    const script = 'read go; "$@" >/dev/null && echo ran; read done';
+    const session = Bun.spawn(["sh", "-c", script, "sh", process.execPath, TOLI_BIN, ...args], {
+        cwd: box.root,
+        env: { ...process.env, ...GIT_ENV, TOLI_ROOT: box.root, TOLI_DRY_RUN: "1", TOLI_NOW: now },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+    });
+    box.ok(["session", "start", "--pid", String(session.pid)]);
+    session.stdin.write("go\n");
+    await session.stdin.flush();
+    const reader = session.stdout.getReader();
+    const { value } = await reader.read();
+    reader.releaseLock();
+    expect(new TextDecoder().decode(value)).toBe("ran\n");
+    return session;
+}
+
+type AgentTask = { id: string; agentSession?: { agent: string; pid: number } };
+
+function agentSession(box: Sandbox, id: string): AgentTask["agentSession"] {
+    const tasks = JSON.parse(box.ok(["task", "list", "--json"])) as AgentTask[];
+    return tasks.find((task) => task.id === id)?.agentSession;
+}
 
 /** Coordinator m1 with two jawan slots, project x cloned, and `tasks` queued tasks on it; m2's queue is empty. */
 function twoSlots(tasks: number): Sandbox {
@@ -53,19 +83,32 @@ describe("native subagent jawans share capacity.maxRuns with spawn runs", () => 
     test("a native subagent whose dispatching session died frees its slot and shows as needing a re-dispatch", async () => {
         // T1384: a subagent dies with the omp session that dispatched it; its task kept taking a jawan slot forever.
         const box = twoSlots(2);
-        const session = Bun.spawn(["sleep", "60"]);
+        const lead = await leadSession(box, ["task", "start", "T1", "--agent", "T11Sub"], "2026-03-04T08:00:00.000Z");
         try {
-            box.ok(["session", "start", "--pid", String(session.pid)]);
-            box.ok(["task", "start", "T1", "--agent", "T11Sub"], { now: "2026-03-04T08:00:00.000Z" });
+            expect(agentSession(box, "T1")).toEqual({ agent: "T11Sub", pid: lead.pid });
             expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
             expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).not.toContain("T1 (x) is active");
         } finally {
-            session.kill();
-            await session.exited;
+            lead.kill();
+            await lead.exited;
         }
         expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 0, subagents: 0 });
         expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).toContain(
-            `T1 (x) is active but its agent T11Sub died with its session ${session.pid} (dispatched 60m ago); no answer recorded since: re-dispatch it now`,
+            `T1 (x) is active but its agent T11Sub died with its session ${lead.pid} (dispatched 60m ago); no answer recorded since: re-dispatch it now`,
         );
+    });
+
+    test("a subagent recorded outside the registered session (a Claude Code lead) keeps its slot when that session ends", async () => {
+        const box = twoSlots(2);
+        const other = Bun.spawn(["sleep", "60"]);
+        try {
+            box.ok(["session", "start", "--pid", String(other.pid)]);
+            box.ok(["task", "start", "T1", "--agent", "T11Sub"]);
+            expect(agentSession(box, "T1")).toBeUndefined();
+        } finally {
+            other.kill();
+            await other.exited;
+        }
+        expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
     });
 });

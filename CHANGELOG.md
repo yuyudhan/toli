@@ -21,9 +21,10 @@ one. See docs/releasing.md.
 - **A native subagent that died with its session frees its jawan slot (T1384).** `subagentJawans` counted every
   active task recorded with `task start --agent <id>` as a running jawan, so a subagent that died with the omp
   session that dispatched it took a slot forever. `task start --agent` now records that session's pid (the
-  extension-registered session, else `lead attach`, else a headless turn's omp); once it is gone the task stops
-  counting and the digest lists it as `its agent <id> died with its session <pid>`, to re-dispatch. Tasks recorded
-  before this release carry no session and count as before.
+  extension-registered session, `lead attach` or a headless turn's omp, whichever is an ancestor of the command); once
+  it is gone the task stops counting and the digest lists it as `its agent <id> died with its session <pid>`, to
+  re-dispatch. A lead no record names (Claude Code) records none, and tasks recorded before this release carry none:
+  both count as before.
 
 ## v0.5.6 - 2026-11-13
 
