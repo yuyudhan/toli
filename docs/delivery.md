@@ -60,8 +60,12 @@ glab's config (the host whose `ssh_host` matches). Override only when detection 
 `bin/toli project set <p> --forge github|gitlab|bitbucket --forge-host <host>` (`none` clears either).
 
 Credentials: `gh` logged in for GitHub; `glab` logged in to each GitLab host in use; for Bitbucket Cloud,
-`BITBUCKET_USERNAME` and `BITBUCKET_API_TOKEN` (environment or the gitignored `.env` in toli's root) or a
-bitbucket.org login in the git credential helper. `bin/toli doctor` and `bin/toli forge <p>` check them.
+`BITBUCKET_EMAIL` (the Atlassian account email, not the Bitbucket username) and `BITBUCKET_API_TOKEN` (an Atlassian
+API token with Bitbucket scopes), each from the environment or else the gitignored `.env` in toli's root. Instead of
+`BITBUCKET_API_TOKEN`, the token may be the bitbucket.org password in the git credential helper; the REST API still
+needs `BITBUCKET_EMAIL` unless the helper's username is the email. `BITBUCKET_USERNAME` is not used. A 401 from
+Bitbucket prints where the credentials came from and what to set. `bin/toli doctor` and `bin/toli forge <p>` check
+them.
 
     bin/toli forge <project> [--json]                  # forge, host, repo path, CLI/credential readiness
     bin/toli branch <project> <branch>                 # create a new work branch in the clone and switch to it

@@ -6,7 +6,15 @@ import { tempDir } from "./helpers.ts";
 
 type Recorded = { method: string; path: string; auth: string | null; body: unknown };
 
-const ENV_KEYS = ["BITBUCKET_USERNAME", "BITBUCKET_API_TOKEN", "TOLI_BITBUCKET_API", "TOLI_ROOT"] as const;
+const ENV_KEYS = [
+    "BITBUCKET_EMAIL",
+    "BITBUCKET_USERNAME",
+    "BITBUCKET_API_TOKEN",
+    "TOLI_BITBUCKET_API",
+    "TOLI_ROOT",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 const requests: Recorded[] = [];
 let server: Bun.Server<undefined>;
@@ -43,6 +51,7 @@ beforeAll(() => {
             if (url.pathname === `${repo}/pullrequests/5`) return Response.json(pr(5, "feature"));
             if (url.pathname === `${repo}/pullrequests/404`)
                 return Response.json({ error: { message: "Not found" } }, { status: 404 });
+            if (url.pathname === `${repo}/pullrequests/401`) return new Response("", { status: 401 });
             if (url.pathname === `${repo}/commit/abc123/statuses` && url.searchParams.get("page") === "2")
                 return Response.json({ values: [{ key: "lint", name: "lint", state: "INPROGRESS" }] });
             if (url.pathname === `${repo}/commit/abc123/statuses`)
@@ -74,11 +83,26 @@ afterEach(() => {
 
 function useStub(): void {
     process.env.TOLI_BITBUCKET_API = api;
-    process.env.BITBUCKET_USERNAME = "bob";
+    process.env.BITBUCKET_EMAIL = "bob@example.com";
     process.env.BITBUCKET_API_TOKEN = "tok";
 }
 
-const BASIC = `Basic ${Buffer.from("bob:tok").toString("base64")}`;
+const BASIC = `Basic ${Buffer.from("bob@example.com:tok").toString("base64")}`;
+
+/** A toli root with an empty `.env` and a global git config whose credential helper prints `lines`. */
+function isolate(...lines: string[]): void {
+    const root = tempDir("bb");
+    writeFileSync(join(root, ".env"), "");
+    process.env.TOLI_ROOT = root;
+    const gitconfig = join(root, "gitconfig");
+    const body = lines.map((line) => `echo ${line};`).join(" ") || "true;";
+    writeFileSync(gitconfig, `[credential]\n\thelper = "!f() { ${body} }; f"\n`);
+    process.env.GIT_CONFIG_GLOBAL = gitconfig;
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    delete process.env.BITBUCKET_EMAIL;
+    delete process.env.BITBUCKET_USERNAME;
+    delete process.env.BITBUCKET_API_TOKEN;
+}
 
 describe("Bitbucket Cloud client", () => {
     test("creates a pull request with env credentials and returns its URL", async () => {
@@ -152,23 +176,76 @@ describe("Bitbucket Cloud client", () => {
         expect(String(failure)).toContain("HTTP 404 Not found");
     });
 
+    test("a 401 names what to set and never prints the token", async () => {
+        useStub();
+        const marker = "fixture-401-marker";
+        process.env.BITBUCKET_API_TOKEN = marker;
+        const failure = await new BitbucketClient("ws/app").status({ id: "401" }).then(
+            () => undefined,
+            (error: unknown) => error,
+        );
+        expect(String(failure)).toContain("HTTP 401");
+        expect(String(failure)).toContain("rejected the credentials from environment (email bob@example.com)");
+        expect(String(failure)).toContain("BITBUCKET_EMAIL (the Atlassian account email)");
+        expect(String(failure)).not.toContain(marker);
+        expect(String(failure)).not.toContain(Buffer.from(`bob@example.com:${marker}`).toString("base64"));
+    });
+
     test("missing credentials fail with the setup hint", () => {
-        expect(() => new BitbucketClient("ws/app", null)).toThrow("BITBUCKET_USERNAME and BITBUCKET_API_TOKEN");
+        expect(() => new BitbucketClient("ws/app", null)).toThrow("BITBUCKET_EMAIL (the Atlassian account email)");
+    });
+
+    test("BITBUCKET_USERNAME is never the basic-auth user; the hint says so", () => {
+        isolate();
+        process.env.BITBUCKET_USERNAME = "bob";
+        process.env.BITBUCKET_API_TOKEN = "tok";
+        expect(bitbucketCredentials()).toBeNull();
+        expect(() => new BitbucketClient("ws/app")).toThrow(
+            "BITBUCKET_USERNAME is not used, API tokens authenticate with the account email",
+        );
     });
 
     test("credentials come from env first, then the repo-root .env", () => {
         const root = tempDir("bb");
         writeFileSync(
             join(root, ".env"),
-            '# comment\nexport BITBUCKET_USERNAME="dot"\nBITBUCKET_API_TOKEN=dottok # trailing\n',
+            '# comment\nexport BITBUCKET_EMAIL="dot@example.com"\nBITBUCKET_API_TOKEN=dottok # trailing\n',
         );
         process.env.TOLI_ROOT = root;
-        delete process.env.BITBUCKET_USERNAME;
+        delete process.env.BITBUCKET_EMAIL;
         delete process.env.BITBUCKET_API_TOKEN;
-        expect(bitbucketCredentials()).toEqual({ username: "dot", token: "dottok", source: ".env" });
-        process.env.BITBUCKET_USERNAME = "envuser";
+        expect(bitbucketCredentials()).toEqual({ email: "dot@example.com", token: "dottok", source: ".env" });
+        process.env.BITBUCKET_EMAIL = "env@example.com";
         process.env.BITBUCKET_API_TOKEN = "envtok";
-        expect(bitbucketCredentials()).toEqual({ username: "envuser", token: "envtok", source: "environment" });
+        expect(bitbucketCredentials()).toEqual({ email: "env@example.com", token: "envtok", source: "environment" });
+    });
+
+    test("the email and the token may come from different places", () => {
+        isolate();
+        writeFileSync(join(process.env.TOLI_ROOT as string, ".env"), "BITBUCKET_API_TOKEN=dottok\n");
+        process.env.BITBUCKET_EMAIL = "env@example.com";
+        expect(bitbucketCredentials()).toEqual({
+            email: "env@example.com",
+            token: "dottok",
+            source: "environment and .env",
+        });
+    });
+
+    test("the git credential helper's token pairs with BITBUCKET_EMAIL, not the git username", async () => {
+        isolate("username=bob", "password=helpertok");
+        expect(bitbucketCredentials()).toBeNull();
+        process.env.BITBUCKET_EMAIL = "bob@example.com";
+        const source = "git credential helper (bitbucket.org)";
+        expect(bitbucketCredentials()).toEqual({ email: "bob@example.com", token: "helpertok", source });
+        process.env.TOLI_BITBUCKET_API = api;
+        await new BitbucketClient("ws/app").list();
+        expect(requests[0]?.auth).toBe(`Basic ${Buffer.from("bob@example.com:helpertok").toString("base64")}`);
+    });
+
+    test("a git credential helper login whose username is the email needs no BITBUCKET_EMAIL", () => {
+        isolate("username=bob@example.com", "password=helpertok");
+        const source = "git credential helper (bitbucket.org)";
+        expect(bitbucketCredentials()).toEqual({ email: "bob@example.com", token: "helpertok", source });
     });
 
     test("parseDotenv handles quotes and comments", () => {

@@ -6,6 +6,11 @@ one. See docs/releasing.md.
 
 ## v0.5.2 - unreleased
 
+### Upgrade note
+
+- Machines that use Bitbucket: set `BITBUCKET_EMAIL` to the Atlassian account email of the API token's owner, in the
+  environment or toli's `.env`, after upgrading; `BITBUCKET_USERNAME` is no longer read (T1277).
+
 ### Added
 
 - `config/machine.json` `lead.dispatch: "subagents"` (default `"spawn"`): jawans run only as the interactive
@@ -27,6 +32,9 @@ one. See docs/releasing.md.
   command holds a slot it is paused (`docker pause`, data kept) and unpaused when the last holder frees its slot, or
   by the minute tick if a holder was killed. A failed unpause is reported with the `docker unpause` command to run.
   Live-stack projects are unchanged (T1272).
+- Bitbucket API calls (`bin/toli pr create|status|list|merge`) no longer fail with HTTP 401: they authenticate with
+  `BITBUCKET_EMAIL` (the Atlassian account email) and the API token, as Bitbucket API tokens require, instead of
+  `BITBUCKET_USERNAME`, which is no longer read. A 401 prints the credential source and what to set (T1277).
 
 ## v0.5.1 - 2026-11-13
 

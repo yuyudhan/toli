@@ -12,7 +12,7 @@ import { requirePushHooks } from "../projects/hooks-gates.ts";
 import { type Forge, findProject, loadProjects, type Project, projectCloneDir } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import { appendPush, pushAttribution, pushLine } from "../records/push-log.ts";
-import { BITBUCKET_CREDENTIALS_HELP, BitbucketClient, bitbucketCredentials } from "./bitbucket.ts";
+import { BitbucketClient, bitbucketCredentials, bitbucketCredentialsHelp } from "./bitbucket.ts";
 import {
     type ForgeClient,
     GhClient,
@@ -166,8 +166,8 @@ export function forgeReadiness(forge: Forge, host: string): Readiness {
     if (forge === "bitbucket") {
         const credentials = bitbucketCredentials();
         return credentials
-            ? { ready: true, detail: `credentials from ${credentials.source} (user ${credentials.username})` }
-            : { ready: false, detail: BITBUCKET_CREDENTIALS_HELP };
+            ? { ready: true, detail: `credentials from ${credentials.source} (email ${credentials.email})` }
+            : { ready: false, detail: bitbucketCredentialsHelp() };
     }
     const cli = forge === "github" ? "gh" : "glab";
     const result = run([cli, "auth", "status", "--hostname", host], { timeoutMs: 30_000 });

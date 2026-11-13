@@ -61,7 +61,7 @@ case "$1 $2" in
     "mr view") cat "${join(box.root, "glab-view.json")}";;
 esac`,
     );
-    const env = { GLAB_CONFIG_DIR: glabDir, BITBUCKET_USERNAME: "", BITBUCKET_API_TOKEN: "", GIT_LOG: "" };
+    const env = { GLAB_CONFIG_DIR: glabDir, BITBUCKET_EMAIL: "", BITBUCKET_API_TOKEN: "", GIT_LOG: "" };
     return { box, dir, log, env };
 }
 
@@ -138,13 +138,13 @@ describe("toli forge detection", () => {
 
     test("bitbucket over ssh and https, never printing secrets", () => {
         const fb = forgeBox("git@bitbucket.org:ws/app.git");
-        const env = { ...fb.env, BITBUCKET_USERNAME: "bob", BITBUCKET_API_TOKEN: "s3cret-token" };
+        const env = { ...fb.env, BITBUCKET_EMAIL: "bob@example.com", BITBUCKET_API_TOKEN: "s3cret-token" };
         for (const url of ["git@bitbucket.org:ws/app.git", "https://someone@bitbucket.org/ws/app.git"]) {
             pointOrigin(fb, url);
             const output = fb.box.ok(["forge", "app"], { env });
             expect(output).toContain("forge: bitbucket");
             expect(output).toContain("repo: ws/app");
-            expect(output).toContain("ready: credentials from environment (user bob)");
+            expect(output).toContain("ready: credentials from environment (email bob@example.com)");
             expect(output).not.toContain("s3cret-token");
         }
     });

@@ -142,7 +142,8 @@ the interactive Sardar's subagents.
 - `workspace` prepares, lists, and prunes per-task branches and worktrees
   ([projects.md](projects.md#workspace-strategy)).
 - `forge`, `push`, `pr`: GitHub, GitLab, and Bitbucket Cloud; never forced, and only on your word or a standing
-  grant ([delivery.md](delivery.md#forges-push-and-pull-requests)).
+  grant ([delivery.md](delivery.md#forges-push-and-pull-requests)). Bitbucket calls authenticate with
+  `BITBUCKET_EMAIL` (the Atlassian account email) and `BITBUCKET_API_TOKEN`; an HTTP 401 says what to set.
 - `push` logs each push that moved origin's branch in this machine's `data/pushes.jsonl` (old..new sha, the issuing
   machine and task, the owner's quoted word; inside `exec`, the issuing machine and task by default), and `digest`
   shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog. `push`
