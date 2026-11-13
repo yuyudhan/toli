@@ -4,6 +4,17 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.10 - unreleased
+
+### Fixed
+
+- **`delegate` no longer says a refused delegation is queued (T1396).** A delegation the receiver refused (on
+  itlinux6, a title over 200 characters) printed the refusal and then `queued: <machine> is unreachable; the minute
+tick retries ... do not delegate it again`, though nothing was queued, so the lead never retried. A refusal now
+  prints only `not sent: <machine> refused it: <reason> (kept in state/outbox/cancelled/)` and exits non-zero. A
+  title over 191 characters or a delegation over 256 KiB (the receiver's limits) now fails before anything is sent
+  or queued.
+
 ## v0.5.9 - 2026-11-13
 
 ### Added

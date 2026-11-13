@@ -43,6 +43,36 @@ describe("delegate", () => {
         expect(m1.toli(["delegate", "m2", "x"]).stderr).toContain("delegate needs --brief <file>");
     });
 
+    test("a title or brief the receiver would refuse fails here, before anything is sent or queued", () => {
+        const { m1, m2 } = pair();
+        const long = m1.toli(["delegate", "m2", "x".repeat(192), "--brief", brief(m1)]);
+        expect(long.code).toBe(1);
+        expect(long.stderr.trim()).toBe(
+            "toli: the title is 192 characters; a delegation title takes at most 191 (the receiver refuses longer ones)",
+        );
+        expect(long.stdout).toBe("");
+        const big = m1.toli(["delegate", "m2", "big", "--brief", brief(m1, "x".repeat(256 * 1024))]);
+        expect(big.code).toBe(1);
+        expect(big.stderr).toContain("bytes; a delegation takes at most 262144 (the receiver refuses larger ones)");
+        expect(existsSync(join(m1.root, "state", "outbox"))).toBe(false);
+        expect(existsSync(join(m2.root, "data", "backlog.json"))).toBe(false);
+        expect(m1.ok(["delegate", "m2", "y".repeat(191), "--brief", brief(m1)])).toContain("delegated to m2/T1");
+    });
+
+    test("a refused delegation prints only the refusal, exits non-zero and leaves nothing queued", () => {
+        const { m1 } = pair();
+        m1.stub("ssh", 'echo "toli: no room for it here" >&2; exit 1');
+        const run = m1.toli(["delegate", "m2", "refused work", "--brief", brief(m1)]);
+        expect(run.code).toBe(1);
+        expect(run.stdout).toBe("");
+        expect(run.stderr.trim()).toBe(
+            "toli: not sent: m2 refused it: no room for it here (kept in state/outbox/cancelled/)",
+        );
+        const outbox = join(m1.root, "state", "outbox");
+        expect(readdirSync(outbox).filter((file) => file.endsWith(".json"))).toHaveLength(0);
+        expect(readdirSync(join(outbox, "cancelled")).filter((file) => file.endsWith(".json"))).toHaveLength(1);
+    });
+
     test("a repeated delivery of the same delegation makes one task", () => {
         const { m2 } = pair();
         const delegation = JSON.stringify({ id: "m1-1", from: "m1", title: "once", brief: "b" });

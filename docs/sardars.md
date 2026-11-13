@@ -124,7 +124,10 @@ work under a new id while the first task is still open: the same delegator, `--f
 (a lead that ran `delegate` again), or the same title for the same `--for` task (a copy queued for the tick that lands
 after a retry went through). When the target is unreachable, the delegation waits in `state/outbox/` and the minute
 tick retries it; running `delegate` again for the same work then queues no second copy. When it lands, the fleet id
-arrives here as a wake.
+arrives here as a wake. A title over 191 characters or a delegation over 256 KiB (the receiver's limits,
+[peers.md](peers.md)) fails here before anything is sent or queued. A refusal by the receiver is final: `delegate`
+prints only `not sent: <machine> refused it: <reason>`, keeps the item in `state/outbox/cancelled/` and exits
+non-zero; nothing waits for the tick.
 
 ### Results and questions go back
 

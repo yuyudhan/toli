@@ -22,6 +22,7 @@ import {
 } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { type Delivered, type OutboxItem, queuedText, sendNow } from "../jobs/outbox.ts";
+import { bodyLimit, TITLE_MAX } from "../peer/envelope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
 import { fleetId } from "../records/delegation-report.ts";
@@ -51,6 +52,9 @@ export type Delegation = {
 /** The project a delegation without `--project` is filed under: work on toli itself or on the machine. */
 const DEFAULT_PROJECT = "toli";
 const ACCEPTED = /^delegation-accepted (\S+) (created|existing)$/m;
+/** The outbox title of a delegation: the receiver refuses one over TITLE_MAX characters (src/peer/envelope.ts). */
+const TITLE_PREFIX = "delegate ";
+const DELEGATION_TITLE_MAX = TITLE_MAX - TITLE_PREFIX.length;
 
 function parseDelegation(text: string): Delegation {
     let value: unknown;
@@ -301,6 +305,10 @@ export function delegateCommand(argv: string[]): number {
     const targetName = requireName("machine", args.pos(0, "machine"));
     const title = args.pos(1, "title").trim();
     if (title === "") throw new ToliError("delegate needs a task title");
+    if (title.length > DELEGATION_TITLE_MAX)
+        throw new ToliError(
+            `the title is ${title.length} characters; a delegation title takes at most ${DELEGATION_TITLE_MAX} (the receiver refuses longer ones)`,
+        );
     const self = loadMachine().name;
     if (targetName === self)
         throw new ToliError(
@@ -335,10 +343,18 @@ export function delegateCommand(argv: string[]): number {
         ...(shape === undefined ? {} : { shape }),
         ...(tier === undefined ? {} : { tier }),
     };
+    const body = JSON.stringify(delegation);
+    const size = Buffer.byteLength(body);
+    if (size > bodyLimit("delegation"))
+        throw new ToliError(
+            `the delegation is ${size} bytes; a delegation takes at most ${bodyLimit("delegation")} (the receiver refuses larger ones): shorten the brief`,
+        );
     const earlier = queuedCopy(target.name, delegationKey(delegation));
     const outboxId = `delegation-${delegation.id}`;
-    const sent = sendNow(self, target, "delegation", `delegate ${title}`, JSON.stringify(delegation), outboxId);
+    const sent = sendNow(self, target, "delegation", `${TITLE_PREFIX}${title}`, body, outboxId);
     if (!sent.delivered) {
+        // A refusal is final and the item already sits in state/outbox/cancelled/: nothing is queued to retry.
+        if (sent.refused !== undefined) throw new ToliError(queuedText(target.name, sent));
         if (!sent.pulled) warn(sent.error);
         if (earlier !== null) {
             // The same work already waits in the outbox: keep that copy, never a second one for the target to receive.
