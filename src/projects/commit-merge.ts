@@ -2,7 +2,7 @@
 // `git merge` in progress (MERGE_HEAD) it adopts.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { checkoutDirty, git, gitOk, resolveSha } from "../core/git.ts";
+import { checkoutDirty, git, gitOk, gitPaths, nulPaths, resolveSha } from "../core/git.ts";
 import { ToliError } from "../core/util.ts";
 import { isLockFile } from "./commit-checks.ts";
 
@@ -40,11 +40,12 @@ export function cleanMerge(
     if (commit === null) throw new ToliError(`--merge ${ref}: no such commit`);
     if (git(dir, ["merge-base", "--is-ancestor", commit, parent]).code === 0)
         throw new ToliError(`nothing to commit: ${ref} (${commit.slice(0, 12)}) is already merged`);
-    const merged = git(dir, ["merge-tree", "--write-tree", "--name-only", "--no-messages", parent, commit]);
+    // -z: names as stored, not C-quoted (core.quotePath), so they match real paths later (see commit.ts).
+    const merged = git(dir, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", parent, commit]);
     if (merged.code !== 0 && merged.code !== 1)
         throw new ToliError(`git merge-tree failed: ${(merged.stderr || merged.stdout).trim()}`);
-    const [tree = "", ...listed] = merged.stdout.trim().split("\n");
-    const conflicts = [...new Set(listed.filter(Boolean))];
+    const [tree = "", ...listed] = nulPaths(merged.stdout);
+    const conflicts = [...new Set(listed)];
     if (merged.code === 1 && !resolved)
         throw new ToliError(
             `refusing: merging ${ref} has conflicts in ${conflicts.join(", ")}; nothing was committed. ` +
@@ -53,7 +54,7 @@ export function cleanMerge(
         );
     if (merged.code === 0 && resolved)
         throw new ToliError(`refusing: --resolved, but merging ${ref} has no conflicts; drop --resolved`);
-    const files = gitOk(dir, ["diff", "--name-only", "--no-renames", parent, tree]).split("\n").filter(Boolean);
+    const files = gitPaths(dir, ["diff", "--name-only", "-z", "--no-renames", parent, tree]);
     const regenerated = files.filter((file) => isLockFile(file) && named.includes(file));
     const checked = files.filter(
         (file) => !conflicts.includes(file) && !regenerated.includes(file) && !(adopted && named.includes(file)),
@@ -62,9 +63,16 @@ export function cleanMerge(
         const edited =
             checked.length === 0
                 ? []
-                : gitOk(dir, ["diff", "--name-only", "--no-renames", tree, "--", ...checked])
-                      .split("\n")
-                      .filter(Boolean);
+                : gitPaths(dir, [
+                      "--literal-pathspecs",
+                      "diff",
+                      "--name-only",
+                      "-z",
+                      "--no-renames",
+                      tree,
+                      "--",
+                      ...checked,
+                  ]);
         if (edited.length > 0)
             throw new ToliError(
                 `refusing: ${edited.join(", ")} differ from the result of merging ${ref}; name them to commit your version`,

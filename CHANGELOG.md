@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## Unreleased
+
+### Fixed
+
+- `bin/toli commit --merge` checks out merged files whose names have non-ASCII characters (`café.txt`) too. git
+  listed them C-quoted (`"caf\303\251.txt"`), so they matched no path and stayed stale in the clone after the commit,
+  silently since T1257; `commit` now reads its path lists NUL-separated (`-z`) and passes merged names literally
+  (T1266).
+
 ## v0.5.1 - 2026-11-13
 
 ### Fixed

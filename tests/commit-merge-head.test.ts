@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, existsSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
 import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
@@ -131,6 +131,38 @@ describe("bin/toli commit with a git merge in progress (MERGE_HEAD)", () => {
                 const merged = safeCommit({ dir, paths: [], merge: "upstream", message: "Merge upstream" });
                 expect(git(dir, ["ls-tree", "--name-only", merged.sha])).toBe("kept.txt\nmine.txt");
                 expect(existsSync(join(dir, "gone.txt"))).toBe(false);
+                expect(git(dir, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+            }
+        } finally {
+            spy.mockRestore();
+        }
+        expect(stderr).toEqual([]);
+    });
+
+    test("merged files with non-ASCII names and spaces are checked out, a deleted one removed, adopted or not", () => {
+        const stderr: string[] = [];
+        const spy = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            stderr.push(String(chunk));
+            return true;
+        });
+        try {
+            for (const adopt of [true, false]) {
+                const dir = repo({ "naïve gone.txt": "gone\n", "two words.txt": "two\n", "mine.txt": "mine\n" });
+                git(dir, ["switch", "--quiet", "-c", "upstream"]);
+                git(dir, ["rm", "--quiet", "--", "naïve gone.txt"]);
+                writeFileSync(join(dir, "two words.txt"), "two upstream\n");
+                writeFileSync(join(dir, "café.txt"), "café\n");
+                git(dir, ["add", "--all"]);
+                git(dir, ["commit", "--quiet", "-m", "upstream: non-ASCII and spaced names"]);
+                git(dir, ["switch", "--quiet", "main"]);
+                writeFileSync(join(dir, "mine.txt"), "mine on main\n");
+                git(dir, ["commit", "--quiet", "-am", "main work"]);
+                if (adopt) startMerge(dir);
+                const merged = safeCommit({ dir, paths: [], merge: "upstream", message: "Merge upstream" });
+                expect(merged.merged.toSorted()).toEqual(["café.txt", "naïve gone.txt", "two words.txt"]);
+                expect(readFileSync(join(dir, "café.txt"), "utf8")).toBe("café\n");
+                expect(readFileSync(join(dir, "two words.txt"), "utf8")).toBe("two upstream\n");
+                expect(existsSync(join(dir, "naïve gone.txt"))).toBe(false);
                 expect(git(dir, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
             }
         } finally {

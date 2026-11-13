@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Args } from "../core/args.ts";
-import { currentBranch, git, gitOk, headSha } from "../core/git.ts";
+import { currentBranch, git, gitOk, gitPaths, headSha, nulPaths } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, ToliError, warn } from "../core/util.ts";
@@ -85,6 +85,14 @@ export type Committed = {
 /** Test seam: runs after the commit object is written and before the branch moves. */
 export type CommitHooks = { beforeUpdateRef?: (attempt: number) => void };
 
+/** `attempt.gitOk` for a `-z` path listing, untrimmed (see nulPaths in core/git.ts). */
+function attemptPaths(attempt: Attempt, args: string[]): string[] {
+    const result = attempt.git(args);
+    if (result.code !== 0)
+        throw new ToliError(`git ${args.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
+    return nulPaths(result.stdout);
+}
+
 function attemptCommit(
     request: CommitRequest,
     attemptNo: number,
@@ -115,16 +123,25 @@ function attemptCommit(
         if (added.length > 0) attempt.gitOk(["add", "--all", "--", ...added]);
         const fromPatch = applyPatches(attempt, request.patches ?? []);
         const tree = attempt.gitOk(["write-tree"]);
-        const files = gitOk(dir, ["diff", "--name-only", "--no-renames", parent, tree]).split("\n").filter(Boolean);
+        // Path listings use -z throughout: git C-quotes non-ASCII names otherwise, and those match no real path.
+        const files = gitPaths(dir, ["diff", "--name-only", "-z", "--no-renames", parent, tree]);
         if (files.length === 0 && merge === null)
             throw new ToliError(`nothing to commit: the named paths match ${branch} (${parent.slice(0, 12)})`);
-        const own = gitOk(dir, ["diff", "--name-only", "--no-renames", start, tree]).split("\n").filter(Boolean);
+        const own = gitPaths(dir, ["diff", "--name-only", "-z", "--no-renames", start, tree]);
         const named = new Set(
             own.length === 0
                 ? []
-                : gitOk(dir, ["diff", "--name-only", "--no-renames", start, tree, "--", ...request.paths, ...fromPatch])
-                      .split("\n")
-                      .filter(Boolean),
+                : gitPaths(dir, [
+                      "diff",
+                      "--name-only",
+                      "-z",
+                      "--no-renames",
+                      start,
+                      tree,
+                      "--",
+                      ...request.paths,
+                      ...fromPatch,
+                  ]),
         );
         const stray = own.filter((file) => !named.has(file));
         if (stray.length > 0)
@@ -143,12 +160,7 @@ function attemptCommit(
             );
         if (conflicts.length > 0) {
             const listed = new Set(
-                request.paths.length === 0
-                    ? []
-                    : attempt
-                          .gitOk(["ls-files", "--", ...request.paths])
-                          .split("\n")
-                          .filter(Boolean),
+                request.paths.length === 0 ? [] : attemptPaths(attempt, ["ls-files", "-z", "--", ...request.paths]),
             );
             checkResolved(attempt, conflicts, (file) => named.has(file) || listed.has(file) || deleted.includes(file));
         }
@@ -229,17 +241,24 @@ export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Com
             );
         // The merged files were clean before the merge: bring the index and the working tree to the merge result. A
         // file the merge deletes that is already out of the index (an adopted `git merge` removed it) is done; naming
-        // it would fail the whole restore, as git knows it from neither side.
+        // it would fail the whole restore, as git knows it from neither side. The merged names are file names, not
+        // patterns: both calls read them literally, so a name holding `*` or `[` matches only itself.
         const pending =
             committed.merged.length === 0
                 ? []
-                : gitOk(request.dir, ["ls-files", `--with-tree=${committed.sha}`, "--", ...committed.merged])
-                      .split("\n")
-                      .filter(Boolean);
+                : gitPaths(request.dir, [
+                      "--literal-pathspecs",
+                      "ls-files",
+                      "-z",
+                      `--with-tree=${committed.sha}`,
+                      "--",
+                      ...committed.merged,
+                  ]);
         const restored =
             pending.length === 0
                 ? null
                 : git(request.dir, [
+                      "--literal-pathspecs",
                       "restore",
                       `--source=${committed.sha}`,
                       "--staged",

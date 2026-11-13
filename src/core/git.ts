@@ -16,6 +16,24 @@ export function gitOk(dir: string, args: string[]): string {
     return result.stdout.trim();
 }
 
+/** The names of a `-z` path listing: NUL-separated, never C-quoted the way core.quotePath quotes non-ASCII names. */
+export function nulPaths(stdout: string): string[] {
+    return stdout.split("\0").filter(Boolean);
+}
+
+/**
+ * Run a git command that lists paths with `-z` and return the names as git stores them (see nulPaths); stdout is not
+ * trimmed, which would eat a name's leading or trailing spaces. Throws like gitOk.
+ */
+export function gitPaths(dir: string, args: string[]): string[] {
+    const result = git(dir, args);
+    if (result.code !== 0) {
+        const detail = (result.stderr || result.stdout).trim();
+        throw new ToliError(`git ${args.join(" ")} failed in ${dir}${detail ? `: ${detail}` : ""}`);
+    }
+    return nulPaths(result.stdout);
+}
+
 const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 /**
