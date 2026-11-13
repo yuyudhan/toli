@@ -13,7 +13,7 @@ import { headlessOmpFlags } from "../harness/omp-args.ts";
 import { liveSession } from "../harness/session.ts";
 import { sessionFile } from "../jawans/launch.ts";
 import { receivingNow } from "../peer/receiving.ts";
-import { ensureListener } from "../peer/server.ts";
+import { ensureListener } from "../peer/supervise.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
 import { type LeadDispatch, machineDispatch } from "./dispatch.ts";
@@ -24,6 +24,11 @@ import { balancePass } from "./queues.ts";
 
 /** How often the service makes a pass; `TOLI_LEAD_POLL_MS` overrides for tests. */
 const POLL_MS = 15_000;
+/**
+ * How often the service checks the peer listener, on its own timer so a pass busy with a long headless turn never
+ * keeps a dead or replaced listener down; `TOLI_LEAD_LISTENER_MS` overrides for tests.
+ */
+const LISTENER_POLL_MS = 5_000;
 /** How often `lead attach` looks again while a headless turn is still running. */
 const ATTACH_POLL_MS = 2_000;
 
@@ -198,39 +203,65 @@ async function leadPass(): Promise<void> {
     }
 }
 
-function pollMs(): number {
-    const raw = process.env.TOLI_LEAD_POLL_MS;
-    if (raw === undefined || raw === "") return POLL_MS;
+function intervalMs(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (raw === undefined || raw === "") return fallback;
     const value = Number(raw);
     if (!Number.isInteger(value) || value <= 0)
-        throw new ToliError(`TOLI_LEAD_POLL_MS must be a positive integer (got "${raw}")`);
+        throw new ToliError(`${name} must be a positive integer (got "${raw}")`);
     return value;
+}
+
+/** One listener check (src/peer/server.ts ensureListener); a failure is logged, never thrown. */
+async function listenerPass(): Promise<void> {
+    try {
+        const line = await ensureListener();
+        if (line !== null) logLine(line);
+    } catch (error) {
+        logLine(`peer listener not started: ${errorText(error)}`);
+    }
+}
+
+/** Check the listener now, then every `interval` ms (never two checks at once); returns the stop function. */
+async function superviseListener(interval: number): Promise<() => void> {
+    await listenerPass();
+    let checking = false;
+    const timer = setInterval(() => {
+        if (checking) return;
+        checking = true;
+        void listenerPass().finally(() => {
+            checking = false;
+        });
+    }, interval);
+    return () => clearInterval(timer);
 }
 
 /**
  * `lead run [--once]`: the service loop, one pass every poll interval; `--once` makes one pass (the crontab form).
  * The loop imported its code once, so after a pass that saw `self sync` install a newer runtime it exits cleanly and
- * the service manager (launchd KeepAlive, systemd Restart=always) starts it again on that runtime.
+ * the service manager (launchd KeepAlive, systemd Restart=always) starts it again on that runtime. The long-running
+ * form keeps the peer listener up on its own timer, between and during passes.
  */
 async function serve(once: boolean): Promise<number> {
-    const interval = pollMs();
-    if (!once) out(`${now().toISOString()} lead service started on ${codeRoot()}`);
-    for (;;) {
-        if (!once) {
-            try {
-                const started = ensureListener();
-                if (started !== null) logLine(started);
-            } catch (error) {
-                logLine(`peer listener not started: ${errorText(error)}`);
-            }
-        }
+    const interval = intervalMs("TOLI_LEAD_POLL_MS", POLL_MS);
+    if (once) {
         await leadPass();
-        if (once) return 0;
-        if (runtimeSuperseded()) {
-            logLine("a newer runtime is installed: exiting so the service restarts on it");
-            return 0;
+        return 0;
+    }
+    const listenerInterval = intervalMs("TOLI_LEAD_LISTENER_MS", LISTENER_POLL_MS);
+    out(`${now().toISOString()} lead service started on ${codeRoot()}`);
+    const stopSupervising = await superviseListener(listenerInterval);
+    try {
+        for (;;) {
+            await leadPass();
+            if (runtimeSuperseded()) {
+                logLine("a newer runtime is installed: exiting so the service restarts on it");
+                return 0;
+            }
+            await Bun.sleep(interval);
         }
-        await Bun.sleep(interval);
+    } finally {
+        stopSupervising();
     }
 }
 

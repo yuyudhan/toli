@@ -1,9 +1,9 @@
 // `bin/toli fleet status|queues|check` (queues: src/fleet/queues.ts). The check is oversight that never pauses, away
 // mode included: every reachable machine with no active run while queued work (or an active task no live run works
-// on) exists for a project cloned there is an idle machine, and every active task with no live run on this machine
-// or any reachable one is named. `--wake` posts the findings as one inbox item (a `[toli wake]` for the lead); the
-// coordinator's tick starts `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no job prompt
-// can skip it.
+// on) exists for a project cloned there is an idle machine, every active task with no live run on this machine or
+// any reachable one is named, and so is every machine whose configured peer listener is down. `--wake` posts the
+// findings as one inbox item (a `[toli wake]` for the lead); the coordinator's tick starts `fleet check --wake` every
+// `oversight.fleetCheckMinutes` (default 60), so no job prompt can skip it.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { relative, resolve } from "node:path";
@@ -29,6 +29,7 @@ import {
     writeJsonAtomic,
 } from "../core/util.ts";
 import { waitingLines } from "../jobs/outbox-admin.ts";
+import { listenerProblem } from "../peer/supervise.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
@@ -62,6 +63,8 @@ export type LocalOversight = {
     /** One line per stale active task (src/records/stale.ts staleLine), with what to do about it. */
     stale: { line: string; command: string }[];
     waiting: WaitingWork[];
+    /** Why its configured peer listener does not serve, or null (absent from an older toli's report). */
+    listener: string | null;
 };
 
 export type IdleMachine = { machine: string; waiting: WaitingWork[] };
@@ -71,12 +74,14 @@ export type FleetCheck = {
     /** Stale active tasks per machine whose backlog holds them. */
     stale: { machine: string; line: string; command: string }[];
     idle: IdleMachine[];
+    /** Machines whose configured peer listener is down or stuck on a replaced runtime. */
+    listeners: { machine: string; problem: string }[];
     unreachable: { machine: string; reason: string }[];
     /** Reachable machines whose own backlog could not be read (an older toli there). */
     unchecked: { machine: string; reason: string }[];
 };
 
-/** This machine's stale active tasks and waiting work, from its own backlog. */
+/** This machine's stale active tasks and waiting work, from its own backlog, and its peer listener. */
 export function localOversight(tasks: Task[], at: Date = now()): LocalOversight {
     // A task waiting on something (`task wait`) needs no dispatch, so it is neither stale nor waiting work here.
     const stale = findStaleTasks(tasks, at).filter((task) => task.reason !== "waiting");
@@ -87,6 +92,7 @@ export function localOversight(tasks: Task[], at: Date = now()): LocalOversight 
         waiting: tasks
             .filter((task) => task.status === "queued" || (task.status === "active" && staleIds.has(task.id)))
             .map((task) => ({ id: task.id, project: task.project, status: task.status, title: task.title })),
+        listener: listenerProblem(),
     };
 }
 
@@ -104,6 +110,7 @@ export function parseLocalOversight(text: string): LocalOversight {
         if (typeof field !== "string") throw new Error(`field ${key} is not a string`);
         return field;
     };
+    const listener = value.listener;
     return {
         machine: value.machine,
         stale: list("stale").map((entry) => ({ line: str(entry, "line"), command: str(entry, "command") })),
@@ -113,13 +120,14 @@ export function parseLocalOversight(text: string): LocalOversight {
             status: str(entry, "status"),
             title: str(entry, "title"),
         })),
+        listener: typeof listener === "string" ? listener : null,
     };
 }
 
 /**
  * The findings: idle machines (reachable, no active run) with waiting work for a project cloned there, from this
- * machine's backlog and the machine's own, and every stale active task. `reports` maps a machine to its own backlog's
- * report, or the reason it could not be read.
+ * machine's backlog and the machine's own, every stale active task, and every configured peer listener that is down.
+ * `reports` maps a machine to its own backlog's report, or the reason it could not be read.
  */
 export function checkFleet(
     entries: FleetEntry[],
@@ -129,7 +137,14 @@ export function checkFleet(
     const self = entries.find((entry) => entry.local)?.machine ?? "";
     const own = reports.get(self);
     const shared = typeof own === "object" ? own.waiting : [];
-    const check: FleetCheck = { at: at.toISOString(), stale: [], idle: [], unreachable: [], unchecked: [] };
+    const check: FleetCheck = {
+        at: at.toISOString(),
+        stale: [],
+        idle: [],
+        listeners: [],
+        unreachable: [],
+        unchecked: [],
+    };
     for (const entry of entries) {
         if (!entry.reachable || entry.resources === null) {
             check.unreachable.push({ machine: entry.machine, reason: entry.reasons.join("; ") || "not reachable" });
@@ -139,6 +154,7 @@ export function checkFleet(
         if (typeof report === "string") check.unchecked.push({ machine: entry.machine, reason: report });
         const mine = typeof report === "object" ? report : undefined;
         for (const stale of mine?.stale ?? []) check.stale.push({ machine: entry.machine, ...stale });
+        if (mine?.listener) check.listeners.push({ machine: entry.machine, problem: mine.listener });
         if (entry.resources.activeRuns > 0) continue;
         const clones = new Set(entry.resources.projects);
         const seen = new Set<string>();
@@ -155,17 +171,22 @@ export function checkFleet(
 
 /** Whether the check found anything the lead must act on. */
 export function needsAction(check: FleetCheck): boolean {
-    return check.stale.length > 0 || check.idle.length > 0;
+    return check.stale.length > 0 || check.idle.length > 0 || check.listeners.length > 0;
 }
 
-/** The one batched message: stale tasks first, then idle machines, then what could not be checked. */
+function listenersDown(check: FleetCheck): string {
+    const count = check.listeners.length;
+    return count === 0 ? "" : `, ${count} peer listener${count === 1 ? "" : "s"} down`;
+}
+
+/** The one batched message: stale tasks first, then idle machines, then down listeners, then what was not checked. */
 export function fleetCheckText(check: FleetCheck): string {
     if (!needsAction(check)) {
         const notes = [...check.unreachable, ...check.unchecked].map((entry) => `${entry.machine} (${entry.reason})`);
         return `fleet check at ${check.at}: all clear, no idle machine has waiting work and no active task lacks a live run${notes.length === 0 ? "" : `; not checked: ${notes.join(", ")}`}`;
     }
     const lines = [
-        `fleet check at ${check.at}: ${check.stale.length} active task${check.stale.length === 1 ? "" : "s"} with no live run, ${check.idle.length} idle machine${check.idle.length === 1 ? "" : "s"} with waiting work`,
+        `fleet check at ${check.at}: ${check.stale.length} active task${check.stale.length === 1 ? "" : "s"} with no live run, ${check.idle.length} idle machine${check.idle.length === 1 ? "" : "s"} with waiting work${listenersDown(check)}`,
         "Lead: dispatch now (toli-dispatch skill), spreading the waiting work over the idle machines; away mode changes nothing here.",
     ];
     if (check.stale.length > 0) {
@@ -178,6 +199,13 @@ export function fleetCheckText(check: FleetCheck): string {
             lines.push(
                 `- ${entry.machine}: ${entry.waiting.map((work) => `${work.id} (${work.project}, ${work.status}): ${work.title}`).join("; ")}`,
             );
+    }
+    if (check.listeners.length > 0) {
+        lines.push(
+            "",
+            "Peer listeners configured but down (that machine's lead service restarts its listener within seconds, so one still down means its lead service is not running there; bin/toli doctor on it says why):",
+        );
+        for (const entry of check.listeners) lines.push(`- ${entry.machine}: ${entry.problem}`);
     }
     if (check.unreachable.length > 0 || check.unchecked.length > 0) {
         lines.push("", "Not checked:");
@@ -225,7 +253,7 @@ export function postFleetCheck(check: FleetCheck): string | null {
     if (!needsAction(check)) return null;
     return addInboxItem(
         hasMachine() ? loadMachine().name : "toli",
-        `fleet check: ${check.stale.length} stale task${check.stale.length === 1 ? "" : "s"}, ${check.idle.length} idle machine${check.idle.length === 1 ? "" : "s"} with waiting work`,
+        `fleet check: ${check.stale.length} stale task${check.stale.length === 1 ? "" : "s"}, ${check.idle.length} idle machine${check.idle.length === 1 ? "" : "s"} with waiting work${listenersDown(check)}`,
         fleetCheckText(check),
     );
 }

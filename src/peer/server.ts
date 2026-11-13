@@ -1,5 +1,6 @@
 // The HTTPS listener (`bin/toli peer serve`, docs/peers.md "The listener"). The lead service keeps it running
-// (src/fleet/lead.ts); it binds only private addresses (src/peer/bind.ts) and serves this installation's certificate.
+// (src/peer/supervise.ts); it binds only private addresses (src/peer/bind.ts) and serves this installation's
+// certificate.
 //
 //   GET  /v1/hello            name, version, keys and fingerprints only (unauthenticated)
 //   POST /v1/pair/...         pairing with a 4-digit code (src/peer/pair.ts)
@@ -11,18 +12,17 @@
 // Every POST but pairing needs a pinned peer's signature. Requests are at most 512 KiB and batches 50 envelopes; past
 // 60 envelopes a minute from one peer the rest are deferred (429), and stay queued with their sender. A unix socket in
 // state/peer/ (mode 0600) takes local commands: `peer accept` asks it for a code, `peer listen off` stops it.
-import { spawn } from "node:child_process";
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Server } from "bun";
 import { loadMachine } from "../core/config.ts";
 import { codeRoot, paths } from "../core/paths.ts";
 import { tryPidLock } from "../core/pid-lock.ts";
-import { isJsonObject, now, pidAlive, readJson, ToliError, warn, writeJsonAtomic } from "../core/util.ts";
+import { isJsonObject, now, readJson, ToliError, warn, writeJsonAtomic } from "../core/util.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
 import { bindAddresses, hostPort } from "./bind.ts";
 import { applyBatch, type Envelope, verifyEnvelope } from "./envelope.ts";
-import { hasIdentity, type Identity, initIdentity, loadIdentity } from "./identity.ts";
+import { type Identity, initIdentity, loadIdentity } from "./identity.ts";
 import { type Peer, peerLog, peerSettings } from "./store.ts";
 
 export const MAX_REQUEST_BYTES = 512 * 1024;
@@ -38,6 +38,8 @@ export type ListenerRecord = {
     startedAt: string;
     fingerprint: string;
     version: string;
+    /** The code it runs (its runtime snapshot, or the working tree); absent in records written before 0.5.3. */
+    code?: string;
 };
 
 export function readListener(): ListenerRecord | null {
@@ -257,6 +259,7 @@ export async function runListener(): Promise<number> {
             startedAt: now().toISOString(),
             fingerprint: identity.fingerprint,
             version,
+            code: codeRoot(),
         } satisfies ListenerRecord);
     const rebind = (): void => {
         if (!existsSync(paths.machine())) {
@@ -322,33 +325,5 @@ export async function controlRequest(path: string, body?: unknown): Promise<{ st
         return { status: response.status, body: await response.json() };
     } catch {
         return null;
-    }
-}
-
-/**
- * The lead service's pass (src/fleet/lead.ts): start `bin/toli peer serve` detached when `peer.listen` is on, this
- * installation has its peer identity (`peer init`, which `upgrade` runs: a checkout that never opted in, a test
- * sandbox included, never binds the machine's addresses) and no listener runs. Returns the log line when it started
- * one (or, with TOLI_DRY_RUN, would have), else null.
- */
-export function ensureListener(): string | null {
-    if (!peerSettings().listen || !hasIdentity()) return null;
-    const running = readListener();
-    if (running !== null && pidAlive(running.pid)) return null;
-    if (process.env.TOLI_DRY_RUN === "1") return "would start the peer listener (TOLI_DRY_RUN)";
-    mkdirSync(paths.logsDir(), { recursive: true });
-    const log = openSync(paths.peerLog(), "a");
-    const { TOLI_LEAD_TURN: _turn, ...env } = process.env;
-    try {
-        const child = spawn(process.execPath, [paths.codeBin(), "peer", "serve"], {
-            cwd: paths.root(),
-            detached: true,
-            stdio: ["ignore", log, log],
-            env,
-        });
-        child.unref();
-        return `started the peer listener (pid ${child.pid ?? "?"})`;
-    } finally {
-        closeSync(log);
     }
 }

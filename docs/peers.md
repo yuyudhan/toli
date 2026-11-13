@@ -53,9 +53,15 @@ delegated that task here, and `delegation receive|update|link --from <m>` unless
 
 `bin/toli peer serve` serves HTTPS with this installation's certificate. The lead service (`bin/toli lead run`)
 starts it, detached, whenever `peer.listen` is on (the default), this installation has its identity (`peer init`,
-which `upgrade` runs) and none runs. It exits by itself when a newer runtime is installed, so the lead restarts it
-on that, and when the checkout's `config/machine.json` is gone; a machine whose lead runs from crontab has no
-listener unless `peer serve` is run, and pulls from its peers instead. Settings live in `config/machine.json` `peer`:
+which `upgrade` runs) and none runs. The lead checks every 5 seconds on a timer of its own, so a listener that died
+is back within seconds even while a long headless turn runs, and it always starts the listener from the checkout's
+active runtime. A listener exits by itself when a newer runtime is installed (at its next 15-second rescan) and when
+the checkout's `config/machine.json` is gone; after `upgrade` restarts the lead service, the new lead does not wait
+for that rescan: it asks a listener still running the replaced runtime to stop over the control socket and starts
+the new one at once. `bin/toli doctor` warns (`peer-listener`) and the coordinator's hourly `fleet check` names a
+machine when `peer.listen` is on and no listener runs, or one is stuck on a replaced runtime. A machine whose lead
+runs from crontab has no listener unless `peer serve` is run, and pulls from its peers instead. Settings live in
+`config/machine.json` `peer`:
 
 | Setting       | Default   | Meaning                                                                                                                                        |
 | ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |

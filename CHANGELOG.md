@@ -4,6 +4,18 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.4 - unreleased
+
+### Fixed
+
+- **The peer listener comes back right after `bin/toli upgrade` and whenever it dies (T1317).** The lead service
+  checked the listener only between its passes, so a listener that exited (after an upgrade, on a crash) stayed down
+  for as long as a pass ran, a headless turn included; and the lead that `upgrade` restarted found the old listener
+  still running (its unit stops only `lead run`), skipped it, and left the restart to that listener's own rescan. The
+  lead now checks the listener every 5 seconds on its own timer, asks one still running a replaced runtime to stop
+  over the control socket and starts the new one at once, and always starts it from the active runtime. Doctor warns
+  (`peer-listener`) and the hourly `fleet check` names every machine whose configured listener is down.
+
 ## v0.5.3 - 2026-11-13
 
 ### Fixed

@@ -2,7 +2,7 @@
 // with a 4-digit code, the HTTPS listener, discovery and delivery timings.
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
-import { isJsonObject, out, pidAlive, printJson, readStdin, ToliError } from "../core/util.ts";
+import { isJsonObject, out, printJson, readStdin, ToliError } from "../core/util.ts";
 import { cancelItems, itemsFor } from "../jobs/outbox-admin.ts";
 import { bindAddresses } from "./bind.ts";
 import { rotateIdentity } from "./deliver.ts";
@@ -11,7 +11,7 @@ import { applyBatch } from "./envelope.ts";
 import { hasIdentity, initIdentity, loadIdentity, spokenFingerprint } from "./identity.ts";
 import { acceptRequest, declineRequest, loadRequests } from "./pair.ts";
 import { completePairing, requestPairing } from "./pair-client.ts";
-import { controlRequest, type ListenerRecord, readListener, runListener } from "./server.ts";
+import { controlRequest, runListener } from "./server.ts";
 import {
     actorFrom,
     isPermission,
@@ -23,6 +23,7 @@ import {
     updatePeerSettings,
     updatePeers,
 } from "./store.ts";
+import { liveListener } from "./supervise.ts";
 import { askCommand, flushCommand, pullCommand, statsCommand } from "./transport-command.ts";
 
 const USAGE = `usage: toli peer init | status [--json] | list [--json] | apply (envelopes on stdin)
@@ -143,12 +144,6 @@ function remove(argv: string[]): void {
     out(
         `removed ${name}: its key is refused here from now on${cancelled.length > 0 ? `; ${cancelled.length} queued item(s) for it moved to state/outbox/cancelled/` : ""}`,
     );
-}
-
-/** The running listener's record, or null when none runs. */
-function liveListener(): ListenerRecord | null {
-    const record = readListener();
-    return record !== null && pidAlive(record.pid) ? record : null;
 }
 
 async function listen(argv: string[]): Promise<void> {

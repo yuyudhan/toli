@@ -2,8 +2,32 @@
 // TOLI_PEER_PORT), reached with its certificate pinned the way a paired peer reaches it.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isJsonObject, pidAlive } from "../src/core/util.ts";
 import { GIT_ENV, TOLI_BIN } from "./helpers.ts";
 import type { PeerBox } from "./peer-fixture.ts";
+
+/** The pid of the live listener `state/peer/listener.json` names in the checkout `root`, or null. */
+export function livePid(root: string): number | null {
+    const record = join(root, "state", "peer", "listener.json");
+    if (!existsSync(record)) return null;
+    const parsed: unknown = JSON.parse(readFileSync(record, "utf8"));
+    const pid = isJsonObject(parsed) ? parsed.pid : undefined;
+    return typeof pid === "number" && pidAlive(pid) ? pid : null;
+}
+
+/**
+ * Poll `probe` until it returns a value, or throw after `ms`. The processes it watches (a lead service, detached
+ * listeners) run on the real clock in other processes, so there is no fake timer to advance.
+ */
+export async function until<T>(what: string, ms: number, probe: () => T | null): Promise<T> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+        const value = probe();
+        if (value !== null) return value;
+        if (Date.now() > deadline) throw new Error(`timed out after ${ms} ms waiting for ${what}`);
+        await Bun.sleep(50);
+    }
+}
 
 export type Listening = {
     base: string;

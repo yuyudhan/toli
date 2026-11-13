@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runtimeCommand } from "../src/release/runtime.ts";
 import { commandIn, GIT_ENV } from "./helpers.ts";
+import { livePid, until } from "./peer-serve-fixture.ts";
 
 const REPO = resolve(import.meta.dir, "..");
 const temps: string[] = [];
@@ -202,6 +203,61 @@ describe("installed runtime", () => {
             service.kill();
             workingTree.kill();
             await Promise.all([service.exited, workingTree.exited]);
+        }
+    }, 60_000);
+
+    test("after an upgrade the restarted lead service replaces a listener still on the old runtime at once", async () => {
+        const live = checkout();
+        expect(live.toli(["peer", "init"]).code).toBe(0);
+        expect(live.toli(["self", "sync"]).code).toBe(0);
+        // Bound to 127.0.0.1 on a free port; a rescan every 10 minutes keeps the old listener from leaving on its own.
+        const env = {
+            ...process.env,
+            ...GIT_ENV,
+            TOLI_RUNTIME_HOME: live.runtimeHome,
+            TOLI_ROOT: undefined,
+            TOLI_DEV: undefined,
+            TOLI_DRY_RUN: undefined,
+            TOLI_PEER_BIND: "127.0.0.1",
+            TOLI_PEER_PORT: "0",
+            TOLI_PEER_RESCAN_MS: "600000",
+        };
+        const spawnIn = (args: string[], extra: Record<string, string> = {}) =>
+            Bun.spawn([process.execPath, join(live.dir, "bin", "toli"), ...args], {
+                cwd: live.dir,
+                env: { ...env, ...extra },
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "ignore",
+            });
+        const listenerFile = join(live.dir, "state", "peer", "listener.json");
+        const old = spawnIn(["peer", "serve"]);
+        let lead: Bun.Subprocess | null = null;
+        try {
+            await until("the old listener", 20_000, () => (livePid(live.dir) === old.pid ? old.pid : null));
+
+            // `upgrade`: the checkout moves, `self sync` installs the new runtime, `lead install` restarts the lead.
+            writeFileSync(join(live.dir, "newer.txt"), "newer\n");
+            live.git(["add", "newer.txt"]);
+            live.git(["commit", "--quiet", "-m", "newer"]);
+            const second = String(JSON.parse(live.toli(["self", "sync", "--json"]).stdout).runtime);
+            lead = spawnIn(["lead", "run"], { TOLI_LEAD_POLL_MS: "600000", TOLI_LEAD_LISTENER_MS: "100" });
+
+            expect(await old.exited).toBe(0);
+            const replacement = await until("the new listener", 20_000, () => {
+                const pid = livePid(live.dir);
+                return pid !== null && pid !== old.pid ? pid : null;
+            });
+            expect(realpathSync(JSON.parse(readFileSync(listenerFile, "utf8")).code)).toBe(realpathSync(second));
+            expect(readFileSync(join(live.dir, "logs", "lead.log"), "utf8")).toContain(
+                `stopped the peer listener on a replaced runtime (pid ${old.pid}); started the peer listener (pid ${replacement})`,
+            );
+        } finally {
+            old.kill();
+            lead?.kill();
+            await Promise.all([old.exited, lead?.exited]);
+            const left = livePid(live.dir);
+            if (left !== null) process.kill(left, "SIGTERM");
         }
     }, 60_000);
 });

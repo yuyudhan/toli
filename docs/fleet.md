@@ -280,10 +280,11 @@ Nothing may sit idle silently, away mode (`/afk`) included. Two checks run from 
   work call it for the tasks they hold back.
 - **Idle machines.** `fleet check` probes every machine (as `fleet status` does) and reads each reachable one's own
   backlog (`fleet check --local --json` over ssh). A reachable machine with no active run while queued work, or a
-  stale active task, exists for a project cloned there is idle; every machine's stale tasks are named too. `--wake`
-  posts the findings as one batched inbox item, only when there is something to act on. The coordinator's tick runs
-  `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), detached when other machines must be
-  reached over ssh, in-process on a lone machine.
+  stale active task, exists for a project cloned there is idle; every machine's stale tasks are named too, and so is
+  every machine whose peer listener is configured (`peer.listen`) but down or stuck on a replaced runtime
+  ([peers.md](peers.md#the-listener)). `--wake` posts the findings as one batched inbox item, only when there is
+  something to act on. The coordinator's tick runs `fleet check --wake` every `oversight.fleetCheckMinutes` (default
+  60), detached when other machines must be reached over ssh, in-process on a lone machine.
 
 Both intervals live in `config/machine.json` (defaults shown):
 
