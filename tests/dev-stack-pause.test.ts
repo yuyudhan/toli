@@ -41,7 +41,8 @@ function dockerBox(slots: number, names: string[]): { box: Sandbox; log: string;
     return { box, log, cargoLog, state };
 }
 
-function declare(box: Sandbox, project: string): void {
+// Not named `declare`: Bun 1.3 parses a statement `declare(...)` as a TypeScript `declare` and drops the call.
+function declareStack(box: Sandbox, project: string): void {
     withProject(box, project);
     mkdirSync(join(box.root, "data", "projects", project), { recursive: true });
     writeFileSync(join(box.root, "data", "projects", project, "notes.md"), NOTES);
@@ -61,7 +62,7 @@ describe("a project's declared dev-stack containers", () => {
 
     test("are paused while a build holds a slot and unpaused after, databases and others untouched", async () => {
         const { box, log, state } = dockerBox(1, ["app-watch", "app-web", "app-db"]);
-        declare(box, "app");
+        declareStack(box, "app");
         const seen = join(box.root, ".seen");
         const built = await start(
             box,
@@ -80,7 +81,7 @@ describe("a project's declared dev-stack containers", () => {
 
     test("stay paused until the last of several builds frees its slot", async () => {
         const { box, cargoLog, state } = dockerBox(2, ["app-watch"]);
-        declare(box, "app");
+        declareStack(box, "app");
         const holder = await holdSlot(box, cargoLog);
         const quick = await start(box, toliArgs("build-slot", "--", "true")).done;
         expect(quick.code).toBe(0);
@@ -92,7 +93,7 @@ describe("a project's declared dev-stack containers", () => {
 
     test("a failed unpause is reported with the fix and retried at the next idle moment", async () => {
         const { box, state } = dockerBox(1, ["app-watch"]);
-        declare(box, "app");
+        declareStack(box, "app");
         writeFileSync(join(state, ".unpause-fails"), "");
         const failed = await start(box, toliArgs("build-slot", "--", "true")).done;
         expect(failed.code).toBe(0);
@@ -107,7 +108,7 @@ describe("a project's declared dev-stack containers", () => {
 
     test("of a live-stack project are never paused: its stack is the machine's one build", async () => {
         const { box, log, state } = dockerBox(1, ["app-watch"]);
-        declare(box, "app");
+        declareStack(box, "app");
         box.ok(["project", "set", "app", "--live-stack", "yes"]);
         const built = await start(box, toliArgs("build-slot", "--", "true")).done;
         expect(built.code).toBe(0);
