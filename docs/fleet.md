@@ -217,6 +217,28 @@ per-slot number so hand-run cargo gets it too
 (`bin/toli doctor` warns when the two differ). `bin/toli resources` shows the slots as `builds <busy>/<total>`
 (`buildSlots` and `buildSlotsBusy` in `--json`).
 
+#### Dev stacks and heavy builds
+
+A dev container that rebuilds its project on every save (a backend under a file watcher, compiling inside Docker) is a
+build outside every slot: beside a gate it doubles the load and fills the disk with its own target copy. A project
+declares such containers in its notes' `## Local stack` section, on one line (see
+[projects.md](projects.md#dev-stacks-that-rebuild-on-save)):
+
+    - Pause during builds: app-backend, app-frontend
+
+While any command holds a slot (`bin/toli build-slot`, a gate or push check, a cargo the rustc wrapper holds a slot
+for), each declared container that runs is paused with `docker pause`: its processes freeze and its memory and data
+stay. The first holder in pauses them, and the last holder out unpauses them, once no command holds a slot and none
+waits for one, so a queue of builds pauses the stack once. Containers are only paused and unpaused, never stopped or
+removed, and only those named: a database is never touched. Nothing is paused that is not running, and a container
+Docker cannot pause is warned about and left running; the build still runs.
+
+The paused names are kept in `state/build-slots/stacks.paused`. A failed unpause prints
+`toli: could not unpause <name>: <docker's error>; run \`docker unpause <name>\``, keeps the name there, and is retried
+when the next slot is freed and by the minute tick, which also resumes a stack a killed holder left paused (a holder
+that is killed frees its slot with its lock, but cannot unpause). A live-stack project's declaration is ignored, like
+its builds skip the slots: its running stack is the machine's one build.
+
 ## Work on another machine
 
 No machine starts a jawan on another. Work for another machine goes to its lead, which dispatches its own jawans

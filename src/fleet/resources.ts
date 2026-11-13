@@ -8,7 +8,7 @@ import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writeJsonAtomic } from "../core/util.ts";
 import { type ModelTotal, modelTotalsToday } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
-import { busyBuildSlots } from "./build-slots.ts";
+import { busyBuildSlots } from "./build-queue.ts";
 import { availabilityLine } from "./pick.ts";
 import { localQueue, type Queue } from "./queue.ts";
 

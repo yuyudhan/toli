@@ -1,14 +1,16 @@
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { Args } from "../core/args.ts";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { tryPidLock } from "../core/pid-lock.ts";
 import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
+import { resumeDevStacksWhenIdle } from "../fleet/build-slots.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
-import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
+import { capacityFor, type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
 import { harnessConfig } from "../harness/harness.ts";
 import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
 import { headlessOmpArgs } from "../harness/omp-args.ts";
@@ -277,6 +279,12 @@ export async function tick(): Promise<void> {
     // on, so a keeper slowed by a starved disk never holds up a tick. The queue drain below leaves the disk to it.
     const disk = keepDiskBeforeWork("detached");
     if (disk) log(disk);
+    // A dev stack a killed build holder left paused (src/fleet/stack-pause.ts) is unpaused once no build holds a slot.
+    try {
+        resumeDevStacksWhenIdle(capacityFor(machine, availableParallelism()).buildSlots);
+    } catch (error) {
+        log(`dev stacks not unpaused: ${error instanceof Error ? error.message : String(error)}`);
+    }
     // Queued jawan runs start as slots free; the finishing run's supervisor does this too, this catches the rest.
     try {
         for (const note of drainQueue({ diskKept: true })) log(note);

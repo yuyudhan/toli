@@ -13,9 +13,11 @@ import { basename, join, resolve } from "node:path";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
-import { busyBuildSlots, FORWARDED_SIGNALS, inLiveStackCheckout, POLL_MS, takeInTurn } from "./build-slots.ts";
+import { busyBuildSlots, POLL_MS, takeInTurn } from "./build-queue.ts";
+import { FORWARDED_SIGNALS, inLiveStackCheckout, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { capacityFor } from "./resources.ts";
+import { pauseDevStacks } from "./stack-pause.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
@@ -135,6 +137,7 @@ export async function holdForCargo(cargoPid: number): Promise<number> {
         if (held !== null) {
             lock(held.fd, LOCK_UN);
             closeSync(held.fd);
+            resumeDevStacksWhenIdle(capacity.buildSlots);
         }
         rmSync(claimFile(cargoPid), { force: true });
         closeSync(claimFd);
@@ -148,6 +151,7 @@ export async function holdForCargo(cargoPid: number): Promise<number> {
             release();
             process.exit(0);
         });
+    pauseDevStacks();
     writeTextAtomic(heldFile(cargoPid), `${process.pid} ${held.index + 1}\n`);
     while (pidAlive(cargoPid)) await Bun.sleep(POLL_MS);
     release();

@@ -120,6 +120,21 @@ jawan building and testing on its own:
   jawans the machine runs at once (16 for 8-16 jawans; the default is a quarter of the cores, [fleet.md](fleet.md)).
   Spawns beyond it queue.
 
+## Dev stacks that rebuild on save
+
+A project that is not in live-stack mode can still have a dev container that recompiles on every save. Left alone it
+competes with the heavy builds that hold a build slot (a gate, `just verify`, a jawan's cargo). Declare it in the
+notes' `## Local stack` section and toli pauses it for as long as a build holds a slot:
+
+    ## Local stack
+    - Start: `docker compose up -d`
+    - Pause during builds: app-backend, app-frontend
+
+List only the watch or dev containers (never a database): they are paused with `docker pause` and unpaused afterwards,
+data kept, never stopped or removed. The details, and what happens when an unpause fails, are in
+[fleet.md](fleet.md#dev-stacks-and-heavy-builds). A live-stack project's declaration is ignored: its running stack is
+the machine's one build, which its jawans code against, and its builds skip the slots.
+
 ## Setting up an existing project
 
 Projects registered before the interview, imported clones, and notes that drifted get the same treatment:

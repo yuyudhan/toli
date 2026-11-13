@@ -22,6 +22,11 @@ one. See docs/releasing.md.
 - `bin/toli commit` no longer refuses a pure insertion as a revert in a file whose name has non-ASCII characters,
   quotes or spaces. Its revert check read such names from git's quoted diff headers and found no lines to compare;
   it now decodes them to the stored name (T1267).
+- A project's dev-stack container that recompiles on save no longer competes with heavy builds outside the build slot:
+  list it on a `- Pause during builds: <container>, ...` line of the notes' `## Local stack` section, and while any
+  command holds a slot it is paused (`docker pause`, data kept) and unpaused when the last holder frees its slot, or
+  by the minute tick if a holder was killed. A failed unpause is reported with the `docker unpause` command to run.
+  Live-stack projects are unchanged (T1272).
 
 ## v0.5.1 - 2026-11-13
 

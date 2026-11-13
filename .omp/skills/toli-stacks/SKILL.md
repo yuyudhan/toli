@@ -22,6 +22,7 @@ Malik's notes file declares the stack; Sardar only reads it. Typical shape:
     - Migrate: `<command>`
     - Logs: `<command>` or <log file path>
     - Health: <local URL> (expect <status or text>)
+    - Pause during builds: <watch/dev container names>   (toli pauses them while a heavy build holds a slot; docs/fleet.md)
 
 Any key may be missing. A missing key means nobody has permission for that action.
 
