@@ -39,6 +39,7 @@ import {
 } from "../core/util.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { fleetExport, takePullerExport } from "../fleet/fleet-sync.ts";
+import { activePeer, peerSettings } from "../peer/store.ts";
 import { deliveryArgv, itemTarget, type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
 import { cancelItems, outboxAdminCommand } from "./outbox-admin.ts";
 import { Reach } from "./reach.ts";
@@ -287,7 +288,9 @@ async function pullFrom(
 /**
  * Pull from every other fleet machine what waits there for this one, apply it here and acknowledge it there, from all
  * of them at once. A machine that does not answer keeps its items for the next pull; one `reach` holds (it failed
- * earlier in the tick's pass, or is backed off: src/jobs/reach.ts) is not tried. Null when another pull is running.
+ * earlier in the tick's pass, or is backed off: src/jobs/reach.ts) is not tried. With `peer.sshFallback` off a paired
+ * peer is not pulled over ssh either: its items wait for the HTTPS pull (src/peer/deliver.ts `pullPeers`). Null when
+ * another pull is running.
  */
 export async function pullFleet(reach: Reach = new Reach({ backoff: false })): Promise<PullReport | null> {
     const lock = paths.lock("pull");
@@ -296,8 +299,10 @@ export async function pullFleet(reach: Reach = new Reach({ backoff: false })): P
         const self = loadMachine().name;
         const report: PullReport = { pulled: 0, applied: 0, acked: 0, held: [], errors: [] };
         const senders: FleetMachine[] = [];
+        const sshForPeers = peerSettings().sshFallback;
         for (const entry of loadFleet().machines) {
             if (entry.name === self || inboundOff(entry)) continue;
+            if (!sshForPeers && activePeer(entry.name) !== undefined) continue;
             const why = reach.held(entry.ssh);
             if (why === null) senders.push(entry);
             else report.held.push(`${entry.name}: ${why}`);
