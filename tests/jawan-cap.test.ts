@@ -49,4 +49,23 @@ describe("native subagent jawans share capacity.maxRuns with spawn runs", () => 
         expect(run.status).toBe("queued");
         expect(box.ok(["run", "kill", run.id])).toBe(`killed ${run.id} (omp) before it started`);
     });
+
+    test("a native subagent whose dispatching session died frees its slot and shows as needing a re-dispatch", async () => {
+        // T1384: a subagent dies with the omp session that dispatched it; its task kept taking a jawan slot forever.
+        const box = twoSlots(2);
+        const session = Bun.spawn(["sleep", "60"]);
+        try {
+            box.ok(["session", "start", "--pid", String(session.pid)]);
+            box.ok(["task", "start", "T1", "--agent", "T11Sub"], { now: "2026-03-04T08:00:00.000Z" });
+            expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+            expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).not.toContain("T1 (x) is active");
+        } finally {
+            session.kill();
+            await session.exited;
+        }
+        expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 0, subagents: 0 });
+        expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).toContain(
+            `T1 (x) is active but its agent T11Sub died with its session ${session.pid} (dispatched 60m ago); no answer recorded since: re-dispatch it now`,
+        );
+    });
 });

@@ -1,6 +1,7 @@
 // A machine's work queue (docs/sardars.md): what ranks machines for new work, published in `resources --json`.
 import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
+import { agentSessionGone } from "../records/stale.ts";
 import { currentFull, type Full } from "./full.ts";
 
 /**
@@ -52,8 +53,9 @@ export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun
 /**
  * The native harness subagents working on this machine's tasks, one per distinct agent id: active tasks whose jawan
  * was recorded with `task start --agent <id>` and is not a `bin/toli spawn` run (`j-...`, counted as a run while it
- * lives). Left out: a task a live run works on (counted as that run), one waiting on something (`task wait`), and one
- * delegated to another machine (its agent is the delegation's fleet id).
+ * lives). Left out: a task a live run works on (counted as that run), one waiting on something (`task wait`), one
+ * delegated to another machine (its agent is the delegation's fleet id), and one whose subagent died with the lead
+ * session that recorded it (`agentSession`; oversight lists it for a re-dispatch, src/records/stale.ts).
  */
 export function subagentJawans(tasks: Task[], runs: JawanRun[]): number {
     const working = workedByRuns(runs);
@@ -64,7 +66,8 @@ export function subagentJawans(tasks: Task[], runs: JawanRun[]): number {
             !task.agent.startsWith("j-") &&
             task.waitingOn === undefined &&
             !working.has(task.id) &&
-            !delegatedAway(task)
+            !delegatedAway(task) &&
+            !agentSessionGone(task)
                 ? [task.agent]
                 : [],
         ),

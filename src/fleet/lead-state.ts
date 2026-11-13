@@ -62,3 +62,14 @@ export function interactiveLeadPid(): number | null {
     if (session !== null) return session.pid;
     return withLock(leadLock(), attachPidLocked);
 }
+
+/**
+ * The lead session running this command, whose native harness subagents die with it: the interactive session (the
+ * extension-registered one, else `lead attach`), else the omp of a headless turn in progress; null when none is.
+ */
+export function dispatchingSessionPid(): number | null {
+    const interactive = interactiveLeadPid();
+    if (interactive !== null) return interactive;
+    const { ompPid } = readLeadState();
+    return ompPid !== null && pidAlive(ompPid) ? ompPid : null;
+}

@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { hasMachine, loadMachine, machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { isValidName, now, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { isValidName, now, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { ACTIVE, type JawanRun, listRuns } from "../jawans/runs.ts";
 import type { Task } from "./backlog.ts";
 import { addInboxItem } from "./inbox.ts";
@@ -51,12 +51,15 @@ export type StaleTask = {
     changedAt: string;
     /**
      * `none`: no jawan recorded; `ended`: its recorded run finished; `gone`: its spawn run's record is missing;
+     * `session`: its native subagent's lead session (`session`) is no longer running, so the subagent died with it;
      * `waiting`: deliberately waits on `waitingOn` (`task wait`), so it needs no re-dispatch.
      */
-    reason: "none" | "ended" | "gone" | "waiting";
+    reason: "none" | "ended" | "gone" | "session" | "waiting";
+    /** The pid of the lead session a `session` task's subagent died with; null otherwise. */
+    session: number | null;
     /** What a `waiting` task waits on; null otherwise. */
     waitingOn: string | null;
-    /** When the run ended (`gone`: when the task last changed); null for `none`. */
+    /** When the run ended (`gone`: when the task last changed; `session`: when the agent was recorded); null for `none`. */
     endedAt: string | null;
     /** The run's last report line (its outcome inbox item or remote output), when there is one. */
     lastLine: string | null;
@@ -117,6 +120,15 @@ export function listRemoteRecords(sinceMs: number): RemoteRunRecord[] {
 /** Whether `text` names task `id` as a whole word. */
 export function mentions(text: string | null | undefined, id: string): boolean {
     return text !== null && text !== undefined && new RegExp(`\\b${id}\\b`).test(text);
+}
+
+/**
+ * Whether the task's native harness subagent died with the lead session that recorded it: `agentSession` names the
+ * current agent and its pid is no longer running. An agent recorded without a session counts as alive.
+ */
+export function agentSessionGone(task: Pick<Task, "agent" | "agentSession">): boolean {
+    const session = task.agentSession;
+    return session !== undefined && session.agent === task.agent && !pidAlive(session.pid);
 }
 
 /**
@@ -182,6 +194,7 @@ export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
         if (task.answeredAt !== undefined && input.at.getTime() - Date.parse(task.answeredAt) < graceMs) continue;
         const base = {
             waitingOn: null,
+            session: null,
             id: task.id,
             project: task.project,
             title: task.title,
@@ -189,7 +202,7 @@ export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
             changedAt: task.updatedAt,
         };
         const dispatched = task.dispatchedAt ?? task.startedAt ?? task.createdAt;
-        let end: Pick<StaleTask, "reason" | "endedAt" | "lastLine" | "evidence">;
+        let end: Pick<StaleTask, "reason" | "endedAt" | "lastLine" | "evidence"> & Partial<Pick<StaleTask, "session">>;
         if (task.waitingOn !== undefined) {
             found.push({
                 ...base,
@@ -226,14 +239,24 @@ export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
                 )
                 .sort((a, b) => a.finishedAt.localeCompare(b.finishedAt))
                 .at(-1);
-            // A harness agent id with no finished run record may still be working; toli cannot tell.
-            if (record === undefined) continue;
-            end = {
-                reason: "ended",
-                endedAt: record.finishedAt,
-                lastLine: record.lastLine,
-                evidence: relative(paths.root(), record.path),
-            };
+            // A harness agent id with no finished run record may still be working; toli cannot tell, unless the lead
+            // session that dispatched it has ended, which ends its native subagents too.
+            if (record !== undefined)
+                end = {
+                    reason: "ended",
+                    endedAt: record.finishedAt,
+                    lastLine: record.lastLine,
+                    evidence: relative(paths.root(), record.path),
+                };
+            else if (agentSessionGone(task))
+                end = {
+                    reason: "session",
+                    session: task.agentSession?.pid ?? null,
+                    endedAt: dispatched,
+                    lastLine: null,
+                    evidence: null,
+                };
+            else continue;
         }
         if (end.endedAt !== null && input.at.getTime() - Date.parse(end.endedAt) < graceMs) continue;
         found.push({ ...base, ...end, answers: answersSince(task, tasks, end.endedAt ?? dispatched, end.lastLine) });
@@ -269,7 +292,9 @@ export function staleLine(task: StaleTask, at: Date = now()): string {
             ? "no running jawan is recorded on it"
             : task.reason === "gone"
               ? `its run ${task.agent} has no record left (task last changed ${ago(at, task.endedAt ?? "")})`
-              : `its run ${task.agent} ended ${ago(at, task.endedAt ?? "")}${task.evidence === null ? "" : ` (${task.evidence})`}`;
+              : task.reason === "session"
+                ? `its agent ${task.agent} died with its session ${task.session ?? "?"} (dispatched ${ago(at, task.endedAt ?? "")})`
+                : `its run ${task.agent} ended ${ago(at, task.endedAt ?? "")}${task.evidence === null ? "" : ` (${task.evidence})`}`;
     const last = task.lastLine === null ? "" : `; last report line: "${task.lastLine}"`;
     const answers =
         task.reason === "none"

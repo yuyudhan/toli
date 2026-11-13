@@ -4,6 +4,17 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.7 - unreleased
+
+### Fixed
+
+- **A native subagent that died with its session frees its jawan slot (T1384).** `subagentJawans` counted every
+  active task recorded with `task start --agent <id>` as a running jawan, so a subagent that died with the omp
+  session that dispatched it took a slot forever. `task start --agent` now records that session's pid (the
+  extension-registered session, else `lead attach`, else a headless turn's omp); once it is gone the task stops
+  counting and the digest lists it as `its agent <id> died with its session <pid>`, to re-dispatch. Tasks recorded
+  before this release carry no session and count as before.
+
 ## v0.5.6 - 2026-11-13
 
 ### Fixed

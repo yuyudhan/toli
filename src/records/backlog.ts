@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { dispatchingSessionPid } from "../fleet/lead-state.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { updateRun } from "../jawans/runs.ts";
 import { findProject } from "../projects/projects.ts";
@@ -67,6 +68,11 @@ export type Task = {
     agent?: string;
     /** When `agent` was last recorded; a run that finished after it is the recorded jawan's (src/records/stale.ts). */
     dispatchedAt?: string;
+    /**
+     * The lead session (dispatchingSessionPid) that recorded native subagent `agent`; the subagent dies with it, so a
+     * gone pid frees its jawan slot and the task needs a re-dispatch (src/records/stale.ts agentSessionGone).
+     */
+    agentSession?: { agent: string; pid: number };
     /**
      * `task wait --on "<what>"`: the task is active but deliberately waits on something outside a jawan (a deferred
      * spawn, a push, another task); oversight reports it as waiting, never as needing a re-dispatch. Recording a new
@@ -211,6 +217,9 @@ function start(argv: string[]): void {
             entry.agent = agent;
             entry.dispatchedAt = now().toISOString();
             delete entry.waitingOn;
+            const session = agent.startsWith("j-") ? null : dispatchingSessionPid();
+            if (session === null) delete entry.agentSession;
+            else entry.agentSession = { agent, pid: session };
         }
     });
     if (agent !== undefined && isValidName(agent) && existsSync(paths.jawanRecord(agent)))
