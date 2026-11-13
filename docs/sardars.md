@@ -131,8 +131,10 @@ commit, report text (truncated) and, for a hold, the question and its options. *
 delegated work's questions itself**: `bin/toli task answer <owner>/T<n> "<answer>"` from any machine forwards the
 words to the owner's `task answer` (an `answer` outbox item, over HTTPS or ssh). Only the machine that delegated the
 task may answer it, and only the task's owner may send its updates: anything else is refused there. The answer
-releases the task and wakes the owner's lead, who resumes the work
-at once. A question only the user can decide (push, merge, release, money, security, a destructive step, his taste)
+releases the task and wakes the owner's lead, who resumes the work at once. An answer that reaches the owner after it
+took the hold up again itself (the task is no longer held) is never refused or dropped: it becomes a note on the task
+and an inbox item (`answer from <machine> for T<n> (<status>)`) that wakes the owner's lead, which passes it to the
+jawan. A question only the user can decide (push, merge, release, money, security, a destructive step, his taste)
 goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task with `<owner>/T<n> asks: <question>` and its
 options, so it sits in this machine's Needs-you queue; his `task answer T<n> "<words>"` there is recorded here and
 forwarded to the owner too.

@@ -8,6 +8,10 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- **A delegator's answer to a hold the owner already took up again is delivered, never dropped (T1382).** When the
+  owner reactivated a delegated hold before the answer arrived, its `task answer --from` refused it ("T256 is active,
+  not waiting on an answer") and the sender moved it to state/outbox/cancelled/. The owner now records it as a note
+  on the task and posts `answer from <machine> for T<n> (<status>)` to its inbox, which wakes its lead.
 - **A native subagent that died with its session frees its jawan slot (T1384).** `subagentJawans` counted every
   active task recorded with `task start --agent <id>` as a running jawan, so a subagent that died with the omp
   session that dispatched it took a slot forever. `task start --agent` now records that session's pid (the

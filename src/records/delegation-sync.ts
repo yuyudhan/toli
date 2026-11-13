@@ -25,6 +25,7 @@ import { sendNow } from "../jobs/outbox.ts";
 import { loadBacklog, type Task, updateTask } from "./backlog.ts";
 import { type DelegateState, type DelegationUpdate, fleetId, REPORTED, splitFleetId } from "./delegation-report.ts";
 import { forwardAnswer } from "./fleet-tasks.ts";
+import { matchOption } from "./hold-options.ts";
 import { addInboxItem } from "./inbox.ts";
 
 /** What `task link` sends the owner (JSON on `delegation link`'s stdin). */
@@ -182,6 +183,34 @@ export function requireDelegator(task: Task, from: string): void {
             ? `${task.id} was not delegated here: only this machine's lead or user answers it, not ${from}`
             : `${task.id} was delegated by ${by}, not ${from}: only it may answer`,
     );
+}
+
+/**
+ * `task answer` for a task that is not held: false when it is held (answer it as usual). This machine's own answer is
+ * refused. The delegator's (`--from`) is never refused or dropped (T1382): when this machine took the hold up again
+ * before the answer arrived, it becomes a note on the task and an inbox item that wakes this lead, like a message
+ * about the task, so its jawan still hears it.
+ */
+export function noteLateAnswer(task: Task, from: string | undefined, reply: string): boolean {
+    if (task.status === "held") return false;
+    if (from === undefined) throw new ToliError(`${task.id} is ${task.status}, not waiting on an answer`);
+    requireDelegator(task, from);
+    const chosen = matchOption(task.options ?? [], reply);
+    const answer = `Q: ${task.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}`;
+    task.notes.push(`answer from ${from}'s lead while ${task.id} is ${task.status}: ${answer}`);
+    addInboxItem(
+        from,
+        `answer from ${from} for ${task.id} (${task.status})`,
+        [
+            `${from}'s lead answered ${task.id}'s question after this machine took it up again: ${task.id} is ${task.status}, so the answer did not release it. It is a note on the task now.`,
+            "",
+            answer,
+            "",
+            `Pass it to the jawan working on ${task.id}, or put it in its next brief (bin/toli task list).`,
+        ].join("\n"),
+    );
+    out(`${task.id} is ${task.status}: the answer from ${from} is noted on it and its lead woken`);
+    return true;
 }
 
 /** `task link <T<n>> <machine>/T<n>`: make another machine's task (delegated without `--for`) report to this one. */

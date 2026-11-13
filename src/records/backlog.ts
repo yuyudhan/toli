@@ -10,7 +10,7 @@ import type { Workspace } from "../projects/strategy.ts";
 import { answerWake } from "./answer-wake.ts";
 import { recordDecision } from "./decisions.ts";
 import { type DelegationFields, reportDue, reportToDelegator } from "./delegation-report.ts";
-import { delegationTaskCommand, forwardEscalatedAnswer, requireDelegator } from "./delegation-sync.ts";
+import { delegationTaskCommand, forwardEscalatedAnswer, noteLateAnswer, requireDelegator } from "./delegation-sync.ts";
 import { listFleet, routeToOwner } from "./fleet-tasks.ts";
 import {
     HOLD_OPTIONS_MAX,
@@ -324,11 +324,9 @@ function hold(argv: string[]): void {
 }
 
 /**
- * `task answer <id> "<answer>" [--from <machine>]`: record the user's words verbatim, release the task, say it is
- * ready to dispatch, and name every task waiting on it, so the lead that ran this dispatches them in the same turn.
- * It posts no wake: that wake reaches the lead after it dispatched and makes it dispatch the same tasks again (a task
- * nobody dispatched stays queued, or is raised by the tick, src/records/stale.ts). `--from`: another machine's lead
- * forwarded the answer (`task answer <this machine>/T<n>` there); no lead here ran this, so a wake is posted.
+ * `task answer <id> "<answer>" [--from <machine>]`: record the user's words verbatim, release the task and name every
+ * task waiting on it, so the lead that ran this dispatches them in the same turn (no wake: it would dispatch them
+ * twice). `--from`: the delegator's lead forwarded it, so a wake is posted; noteLateAnswer when it is not held.
  */
 function answer(argv: string[]): void {
     const args = new Args(argv, { values: ["from"] });
@@ -336,8 +334,10 @@ function answer(argv: string[]): void {
     const reply = args.pos(1, "answer");
     const from = args.str("from");
     let heldFrom: string | undefined;
+    let late = false;
     const task = updateTask(args.pos(0, "id"), (entry) => {
-        if (entry.status !== "held") throw new ToliError(`${entry.id} is ${entry.status}, not waiting on an answer`);
+        late = noteLateAnswer(entry, from, reply);
+        if (late) return;
         if (from !== undefined) requireDelegator(entry, from);
         const chosen = matchOption(entry.options ?? [], reply);
         entry.answer = reply;
@@ -349,6 +349,7 @@ function answer(argv: string[]): void {
         delete entry.heldFrom;
     });
     out(describe(task));
+    if (late) return;
     if (isValidName(task.project)) recordDecision(task, reply);
     const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
     out(`unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${brief})`);

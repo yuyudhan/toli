@@ -176,6 +176,29 @@ describe("a delegated task's question goes to the delegating lead", () => {
         expect(after.status).toBe("active");
         expect(after.heldFrom).toBeUndefined();
     });
+
+    test("an answer for a hold its owner already reactivated becomes a note that wakes the owner's lead", () => {
+        // T1382: the answer was refused ("T1 is active, not waiting on an answer") and dropped to state/outbox/cancelled.
+        const { m1, m2, down, up } = delegated();
+        m2.ok(["task", "hold", "T1", "--question", "Ship it?", "--option", "yes => push", "--option", "no => wait"]);
+        m1.ok(["task", "escalate", "m2/T1"]);
+        // The owner takes the hold up again while its update to m1 is still queued, and m1's user answers the hold.
+        down("m1");
+        m2.ok(["task", "start", "T1", "--agent", "OwnSub"]);
+        up("m1");
+
+        const answered = m1.ok(["task", "answer", "T1", "yes"]);
+        expect(answered).toContain("m2 recorded the answer for m2/T1:");
+        expect(answered).toContain("T1 is active: the answer from m1 is noted on it and its lead woken");
+        expect(cancelled(m1)).toEqual([]);
+        expect(outboxFiles(m1)).toEqual([]);
+        const [owned] = tasks(m2);
+        expect(owned).toMatchObject({ status: "active", agent: "OwnSub" });
+        expect(owned).not.toHaveProperty("answer");
+        expect(owned?.notes.at(-1)).toBe("answer from m1's lead while T1 is active: Q: Ship it?\nA: yes (= yes)");
+        const wake = inbox(m2).find((item) => item.title === "answer from m1 for T1 (active)");
+        expect(readFileSync(wake?.path ?? "", "utf8")).toContain("T1 is active, so the answer did not release it");
+    });
 });
 
 describe("task link", () => {
