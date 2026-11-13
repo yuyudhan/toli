@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox } from "./helpers.ts";
+import { loadMachine } from "../src/core/config.ts";
+import { beginJob, dueJobs, finishJob, jobSubcommands, loadJobState } from "../src/jobs/jobs.ts";
+import { commandIn, inProcess, type Sandbox, sandbox } from "./helpers.ts";
 
 type Due = { name: string }[];
 type Begun = { runId: string; prompt: string };
@@ -212,5 +214,56 @@ describe("worker outbox", () => {
             name: "outbox",
             detail: "no results waiting for the coordinator",
         });
+    });
+});
+
+describe("a job's schedule and prompt (in process)", () => {
+    test("due only on its machine and outside a run; the prompt carries the run id, shape rules and finish line", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        const NOW = { TOLI_NOW: "2026-03-04T10:00:30" };
+        const add = commandIn(box.root, jobSubcommands.add, NOW);
+        expect(add(["hourly", "--cron", "0 * * * *", "--prompt", "check things"])).toBe("added job hourly (0 * * * *)");
+        add(["release", "--cron", "0 * * * *", "--prompt", "ship it", "--shape", "ship"]);
+        add(["elsewhere", "--cron", "0 * * * *", "--prompt", "not here", "--machine", "m2"]);
+        expect(() => add(["hourly", "--cron", "0 * * * *", "--prompt", "again"])).toThrow(
+            'job "hourly" already exists',
+        );
+        expect(() => add(["bad", "--cron", "0 * * * *", "--prompt", "x", "--shape", "big"])).toThrow(
+            "--shape must be scout or ship",
+        );
+        const dueAt = (at: string): string[] => {
+            let names: string[] = [];
+            inProcess(box.root, () => {
+                names = dueJobs(new Date(at), loadMachine()).map((job) => job.name);
+            });
+            return names;
+        };
+        expect(dueAt("2026-03-04T10:59:00")).toEqual([]);
+        expect(dueAt("2026-03-04T11:00:10")).toEqual(["hourly", "release"]);
+        let scout = "";
+        let ship = "";
+        inProcess(
+            box.root,
+            () => {
+                scout = beginJob("hourly", "session").prompt;
+                ship = beginJob("release", "headless").prompt;
+            },
+            { TOLI_NOW: "2026-03-04T11:00:10" },
+        );
+        const runId = /^\[toli job hourly (\d{8}T\d{6}Z-[0-9a-f]{6})\]$/m.exec(scout)?.[1];
+        if (runId === undefined) throw new Error(`no run id in: ${scout}`);
+        expect(scout).toContain(`Scheduled toli job "hourly" on machine m1 (run ${runId}, via session).`);
+        expect(scout).toContain("- This is a scout job: read and report only; do not edit files.");
+        expect(scout).toContain(`bin/toli job finish hourly ${runId} <<'EOF'`);
+        expect(ship).toContain("use `bin/toli commit <project>");
+        expect(ship).toContain("via headless");
+        expect(dueAt("2026-03-04T12:00:10")).toEqual([]);
+        inProcess(box.root, () => finishJob("hourly", runId, "all good", "ok"), { TOLI_NOW: "2026-03-04T11:05:00" });
+        inProcess(box.root, () => {
+            expect(loadJobState().hourly).toMatchObject({ lastStatus: "ok" });
+            expect(loadJobState().hourly?.running).toBeUndefined();
+        });
+        expect(dueAt("2026-03-04T12:00:10")).toEqual(["hourly"]);
     });
 });

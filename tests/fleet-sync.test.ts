@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, SSH_STUB_ARGS, sandbox } from "./helpers.ts";
+import { type FleetSyncResult, fleetSyncText, takePullerExport } from "../src/fleet/fleet-sync.ts";
+import { inProcess, type Sandbox, SSH_STUB_ARGS, sandbox } from "./helpers.ts";
 
-type FleetFile = { machines: { name: string; ssh: string; root: string }[] };
+type FleetFile = { machines: { name: string; ssh: string; root: string; inbound?: boolean }[] };
 
 function fleetOf(box: Sandbox): FleetFile {
     return JSON.parse(readFileSync(join(box.root, "config", "fleet.json"), "utf8")) as FleetFile;
@@ -118,6 +119,60 @@ describe("config/fleet.json comes from the coordinator", () => {
         });
         expect(box.ok(["fleet", "sync"])).toBe(
             "fleet: this machine is the coordinator; its config/fleet.json is the list",
+        );
+    });
+});
+
+describe("a pulling machine's fleet export (in process)", () => {
+    const take = (box: Sandbox, text: string, puller: string): FleetSyncResult => {
+        let result: FleetSyncResult | undefined;
+        inProcess(box.root, () => {
+            result = takePullerExport(text, puller);
+        });
+        if (result === undefined) throw new Error("takePullerExport returned nothing");
+        return result;
+    };
+
+    test("an export that is not JSON, lists no machines, has a malformed one or is another machine's is refused", () => {
+        const box = worker();
+        const before = fleetOf(box);
+        const malformed = { coordinator: "m1", machines: [{ name: "m1", ssh: "m1" }] };
+        const refusals: [string, string, string][] = [
+            ["not json", "m1", "the coordinator's fleet export is not JSON: not json"],
+            [JSON.stringify({ coordinator: "m1" }), "m1", "the coordinator's fleet export has no machines"],
+            [
+                JSON.stringify({ coordinator: "m1", machines: {} }),
+                "m1",
+                "the coordinator's fleet export has no machines",
+            ],
+            [JSON.stringify(malformed), "m1", "the coordinator's fleet export has a malformed machine"],
+            [JSON.stringify(EXPORT), "w2", "the fleet export is m1's, not w2's"],
+        ];
+        for (const [text, puller, message] of refusals) expect(() => take(box, text, puller)).toThrow(message);
+        expect(fleetOf(box)).toEqual(before);
+    });
+
+    test("from this worker's coordinator it is the whole list; from any other machine only its inbound", () => {
+        const box = worker();
+        const fleet = fleetOf(box);
+        const listed = fleet.machines.map((entry) => (entry.name === "m1" ? { ...entry, ssh: "coord" } : entry));
+        writeFileSync(join(box.root, "config", "fleet.json"), JSON.stringify({ machines: listed }));
+        const synced = take(box, JSON.stringify(EXPORT), "m1");
+        expect(fleetSyncText(synced)).toBe(
+            "fleet: config/fleet.json updated from the coordinator (4 machines; added w3; removed gone)",
+        );
+        expect(fleetOf(box).machines).toEqual([
+            { name: "m1", ssh: "coord", root: "/srv/coord" },
+            { name: "w1", ssh: "w1", root: box.root },
+            { name: "w2", ssh: "w2-alias", root: "/srv/w2" },
+            { name: "w3", ssh: "deploy@w3.example", root: "/srv/w3" },
+        ]);
+        const w2 = { coordinator: "w2", machines: [{ name: "w2", ssh: "w2", root: "/srv/w2", inbound: false }] };
+        const inbound = take(box, JSON.stringify(w2), "w2");
+        expect(inbound).toEqual({ changed: true, added: [], removed: [], machines: 4 });
+        expect(fleetOf(box).machines[2]).toEqual({ name: "w2", ssh: "w2-alias", root: "/srv/w2", inbound: false });
+        expect(fleetSyncText(take(box, JSON.stringify(w2), "w2"))).toBe(
+            "fleet: config/fleet.json already matches the coordinator (4 machines)",
         );
     });
 });

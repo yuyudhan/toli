@@ -3,8 +3,9 @@
 # (the real CLI surface), so their src/ coverage is invisible here and these numbers understate it;
 # tests/helpers.ts `inProcess`/`commandIn` call command functions in-process so they do count.
 # Bun applies coverageThreshold to every reported file, not to the total, so the threshold must stay at or
-# below the weakest in-process file (src/release/update-check.ts, ~16% of lines; several files have 0% of
-# functions, so functions is pinned to 0; leaving it out makes Bun reuse the lines value).
+# below the weakest in-process file (every file loaded in-process is reported, even one no test calls in-process:
+# give such a file an in-process test rather than lowering this; several files have 0% of functions, so functions
+# is pinned to 0; leaving it out makes Bun reuse the lines value). CI measures it on Linux only.
 # Raise both as in-process tests are added.
 # Discover tests only in tests/: projects/ holds full clones whose own test files must never run here.
 root = "tests"

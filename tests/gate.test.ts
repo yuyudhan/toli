@@ -2,6 +2,9 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pidAlive } from "../src/core/util.ts";
+import { changedWhileRunning, changesText, checkoutChanges, parseGateWait } from "../src/forge/gate.ts";
+import type { GateRecord as SrcGateRecord } from "../src/forge/gate-record.ts";
+import { repo } from "./commit-fixture.ts";
 import { commitFile, type GateRecord, gatesLog, recipe, records, runs, setup } from "./gate-fixture.ts";
 import { GIT_ENV, type Sandbox, TOLI_BIN } from "./helpers.ts";
 
@@ -307,5 +310,52 @@ describe("gate", () => {
         expect(result.stdout).toContain("running it again on the new tree");
         expect(runs(box)).toBe(2);
         expect(box.git(dir, ["ls-remote", "origin", "refs/heads/feature"])).toContain(sha);
+    });
+});
+
+describe("gate helpers (in process)", () => {
+    const record = (fields: Partial<SrcGateRecord>): SrcGateRecord => ({
+        project: "app",
+        sha: "0".repeat(40),
+        tree: "1".repeat(40),
+        recipe: "just verify",
+        dir: "/tmp/app",
+        status: "failed",
+        pid: null,
+        startedAt: "2026-11-14T00:00:00.000Z",
+        endedAt: "2026-11-14T00:01:00.000Z",
+        lastOutputAt: null,
+        exitCode: 0,
+        log: "/tmp/app.log",
+        stallMinutes: 30,
+        ...fields,
+    });
+
+    test("--gate-wait: 30 minutes by default, 0 means not at all, anything else but whole minutes is refused", () => {
+        expect(parseGateWait(undefined)).toBe(30);
+        expect(parseGateWait("0")).toBe(0);
+        expect(parseGateWait("12")).toBe(12);
+        for (const bad of ["-1", "1.5", "soon"])
+            expect(() => parseGateWait(bad)).toThrow("--gate-wait must be a whole number of minutes");
+    });
+
+    test("only a passing recipe voided by a change while it ran is run again", () => {
+        expect(changedWhileRunning(record({ reason: "HEAD moved while it ran" }))).toBe(true);
+        expect(changedWhileRunning(record({ exitCode: 1, reason: "HEAD moved while it ran" }))).toBe(false);
+        expect(changedWhileRunning(record({ reason: "stalled: no output for 30 minutes" }))).toBe(false);
+        expect(changedWhileRunning(record({ status: "passed" }))).toBe(false);
+    });
+
+    test("the checkout's changes: null when it is exactly HEAD, else at most five paths named", () => {
+        const dir = repo({ "a.txt": "a\n" });
+        expect(checkoutChanges(dir)).toBeNull();
+        writeFileSync(join(dir, "a.txt"), "edited\n");
+        writeFileSync(join(dir, "new.txt"), "new\n");
+        const changes = checkoutChanges(dir);
+        expect(changes).toEqual([" M a.txt", "?? new.txt"]);
+        expect(changesText(changes ?? [])).toBe("a.txt, new.txt");
+        expect(changesText([])).toBe("changes git status did not list");
+        const many = ["a", "b", "c", "d", "e", "f", "g"].map((name) => ` M ${name}`);
+        expect(changesText(many)).toBe("a, b, c, d, e and 2 more");
     });
 });

@@ -1,10 +1,10 @@
-// The disk keeper's floor, its use probes on Linux, its deletion order and its pause marker's expiry.
+// The disk keeper's floor, its use probes on Linux, its deletion order, its pause marker's expiry, and its skips.
 import { describe, expect } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { KeepReport } from "../src/fleet/disk.ts";
+import { floorText, type KeepReport, keepDisk } from "../src/fleet/disk.ts";
 import { age, buildOutput, dfLine, holdLock, keeperBox, keeperTest, setCapacity } from "./disk-fixture.ts";
-import { type Sandbox, tempDir, withProject } from "./helpers.ts";
+import { inProcess, type Sandbox, tempDir, withProject } from "./helpers.ts";
 
 /** A sandbox with registered projects, each clone holding cargo-like build output; returns the resolved clones. */
 function clones(box: Sandbox, names: string[]): string[] {
@@ -211,5 +211,42 @@ describe("the disk keeper switched off (capacity.diskKeep false)", () => {
         expect(box.ok(["disk", "keep", "--dry-run"], { env })).toContain(
             "automatic deletion: off (capacity.diskKeep false)",
         );
+    });
+});
+
+describe("the disk keeper in process", () => {
+    keeperTest("a pause, then a live keeper, holds it off; each reason is logged once", () => {
+        const box = keeperBox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        mkdirSync(join(box.root, "state"), { recursive: true });
+        const keep = (floorGB: number): KeepReport => {
+            let report: KeepReport | undefined;
+            inProcess(box.root, () => {
+                report = keepDisk({ floorGB });
+            });
+            if (report === undefined) throw new Error("keepDisk returned nothing");
+            return report;
+        };
+        expect(keep(0)).toMatchObject({ ran: false, floorGB: 0, lines: [] });
+        writeFileSync(join(box.root, "state", "disk-keep.pause"), `${process.pid} rebuilding the docs\n`);
+        for (const _ of [1, 2]) {
+            const report = keep(1_000_000_000);
+            expect(report).toMatchObject({ ran: false, pausedBy: process.pid, dryRun: false, lastResort: false });
+            expect(floorText(report)).toBe("floor 1000000000.0 GB");
+            expect(report.lines).toEqual([
+                `free ${report.freeBeforeGB.toFixed(1)} GB < floor 1000000000.0 GB: paused by pid ${process.pid} (rebuilding the docs) (state/disk-keep.pause)`,
+            ]);
+        }
+        rmSync(join(box.root, "state", "disk-keep.pause"));
+        writeFileSync(join(box.root, "state", "disk-keep.lock"), String(process.pid));
+        for (const _ of [1, 2]) {
+            const report = keep(1_000_000_000);
+            expect(report.pausedBy).toBeUndefined();
+            expect(report.lines.join("\n")).toContain(`another disk keeper (pid ${process.pid}) is already running`);
+        }
+        const log = readFileSync(join(box.root, "logs", "disk.log"), "utf8").split("\n");
+        expect(log.filter((line) => line.includes("paused by pid"))).toHaveLength(1);
+        expect(log.filter((line) => line.includes("already running"))).toHaveLength(1);
+        expect(readFileSync(join(box.root, "state", "disk-keep.skip"), "utf8")).toBe(`keeper ${process.pid}`);
     });
 });

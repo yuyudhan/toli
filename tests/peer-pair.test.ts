@@ -19,6 +19,8 @@ import {
     transcriptIr,
 } from "../src/peer/cpace.ts";
 import { loadNoble } from "../src/peer/deps.ts";
+import { certFingerprintOf } from "../src/peer/identity.ts";
+import { fetchHello, serverCertificate } from "../src/peer/pair-client.ts";
 import { type PeerBox, peerBox, sender } from "./peer-fixture.ts";
 import { type Listening, serve } from "./peer-serve-fixture.ts";
 
@@ -281,5 +283,30 @@ describe("pairing with a 4-digit code", () => {
         const log = readFileSync(join(pair.b.box.root, "logs", "peer.log"), "utf8");
         expect(log).toContain("denied alpha delegate by the owner: test");
         expect(log).toContain("removed alpha by the sardar: machine retired");
+    });
+});
+
+describe("reading a peer's hello before pairing (in process)", () => {
+    test("the served certificate is read unpinned, then the hello is checked against it", async () => {
+        const pair = await pairBoxes();
+        const cert = await serverCertificate("127.0.0.1", pair.listening.port);
+        expect(certFingerprintOf(cert)).toBe(certFingerprintOf(pair.b.cert));
+        const { hello } = await fetchHello("127.0.0.1", pair.listening.port);
+        expect(hello).toMatchObject({ name: "beta", key: pair.b.key, fingerprint: pair.b.fingerprint });
+        expect(hello.certFingerprint).toBe(certFingerprintOf(pair.b.cert));
+    });
+
+    test("a host that accepts but never answers TLS times out; a closed port is refused", async () => {
+        const silent = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        try {
+            const timedOut = await serverCertificate("127.0.0.1", silent.port, 300).catch(String);
+            expect(timedOut).toContain(`127.0.0.1:${silent.port} did not answer within 0.3 s`);
+        } finally {
+            silent.stop(true);
+        }
+        const closed = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        const port = closed.port;
+        closed.stop(true);
+        expect(await serverCertificate("127.0.0.1", port, 5_000).catch(String)).toContain(`127.0.0.1:${port}: `);
     });
 });

@@ -27,6 +27,11 @@ one. See docs/releasing.md.
   paths, so other jawans' uncommitted files in the shared checkout neither fail nor pass it. A failing hook refuses
   the commit with its output; a hook that reformats or re-stages a file is refused, naming the files. See
   docs/development.md.
+- **CI's coverage step passes again (T1405).** Bun checks the coverage threshold per file, and six files that tests
+  loaded in-process but drove only through `bin/toli` subprocesses sat under it: the disk keeper, the fleet list
+  sync, the push gate, scheduled jobs, the pairing client and the repo guards' helpers. Each now has in-process
+  tests of its real behaviour; the threshold is unchanged. The step runs on the Linux job only, which is why macOS
+  passed.
 
 ## v0.5.10 - 2026-11-13
 
