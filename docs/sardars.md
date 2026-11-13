@@ -46,6 +46,15 @@ Every 15 seconds the service makes one pass:
    items. The last turn's output is in `logs/lead.log`.
 4. Every `lead.balanceMinutes` (default 30) it compares queues across the fleet (below) and posts an offer or an ask.
 
+**Jawans only as the interactive Sardar's subagents.** With `config/machine.json` `{ "lead": { "dispatch":
+"subagents" } }` (default `"spawn"`, the rules above) a headless turn starts no jawan: `bin/toli spawn`,
+`bin/toli resume` and queued-run starts (`bin/toli job tick` included) refuse when `TOLI_LEAD_TURN=headless`, and the
+turn's prompt says to leave every item that needs a jawan to the interactive Sardar and to ack only through the last
+item before the first one it leaves. Its take moves its own delivery marks (`inboxHeadlessDelivered`,
+`jobsHeadlessDelivered` in `state/acks.json`), never the session's, so whatever it leaves unacknowledged wakes the
+interactive session once it opens, which dispatches it as its own subagents. Commands the interactive Sardar runs are
+never refused; jawan supervisors drop `TOLI_LEAD_TURN`, so their own queued starts and resumes go on.
+
 The loop imports its code once, so it runs the runtime it started on (`bin/toli self sync`, docs/releasing.md). After
 each pass it checks `state/runtime`: when a newer runtime is installed it logs that and exits 0, and launchd
 (KeepAlive) or systemd (`Restart=always`) starts it again on the new one. The per-minute crontab form starts afresh

@@ -16,6 +16,7 @@ import { receivingNow } from "../peer/receiving.ts";
 import { ensureListener } from "../peer/server.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
+import { type LeadDispatch, machineDispatch } from "./dispatch.ts";
 import { currentFull, fullCommand, fullText, LEAD_TURN_ENV } from "./full.ts";
 import { installLeadService, leadStatus, printStatus, uninstallLeadService } from "./lead-service.ts";
 import { attachPidLocked, type LeadAttach, type LeadState, leadLock, readLeadState, turnPid } from "./lead-state.ts";
@@ -38,11 +39,13 @@ function logLine(line: string): void {
 
 /**
  * The prompt of one headless turn: who and where the lead is, the per-turn lead guidance, the rules that differ when
- * nobody is watching (no questions, no waiting, dispatch only through `bin/toli spawn`), and the wake items.
+ * nobody is watching (no questions, no waiting, dispatch only through `bin/toli spawn`, or under `lead.dispatch:
+ * "subagents"` no dispatch at all, the work left unacknowledged for the interactive Sardar), and the wake items.
  */
-export function headlessPrompt(machine: string, wake: string): string {
+export function headlessPrompt(machine: string, wake: string, dispatch: LeadDispatch): string {
     const user = persona().user;
     const full = currentFull();
+    const subagents = dispatch === "subagents";
     return [
         `[toli lead ${machine}] headless turn`,
         "",
@@ -50,7 +53,9 @@ export function headlessPrompt(machine: string, wake: string): string {
         "",
         "[toli] Headless rules for this turn:",
         `- You are this machine's lead between conversations. Nobody reads this reply live; ${user} reads it when he attaches (\`bin/toli lead attach\`), so keep it to what happened and what waits on him.`,
-        "- Dispatch jawans ONLY with `bin/toli spawn --task T<n> --brief <file>`: it returns at once and the result arrives as a later wake. Never use native or harness subagents, and never wait for or poll a jawan.",
+        subagents
+            ? '- Start no jawan in this turn: on this machine jawans run only as the interactive Sardar\'s own subagents (config/machine.json `lead.dispatch: "subagents"`), so `bin/toli spawn`, `bin/toli resume` and queued-run starts refuse here. Never use native or harness subagents either. Leave each item that needs a jawan to the interactive Sardar and say what waits.'
+            : "- Dispatch jawans ONLY with `bin/toli spawn --task T<n> --brief <file>`: it returns at once and the result arrives as a later wake. Never use native or harness subagents, and never wait for or poll a jawan.",
         ...(full === null
             ? []
             : [
@@ -59,19 +64,23 @@ export function headlessPrompt(machine: string, wake: string): string {
         `- Never ask questions: a decision for ${user} is \`bin/toli task hold <id> --question "..."\` (the Needs-you queue).`,
         '- Work for another machine goes by `bin/toli delegate <machine> "<title>" --brief <file>`, never `bin/toli remote`. Reply to another machine\'s lead with `bin/toli talk <machine> "<words>"`.',
         `- A delegated task's question (\`<machine>/T<n> held\`) is yours to answer: \`bin/toli task answer <machine>/T<n> "<answer>"\`. Only one that needs ${user} (push, merge, release, money, security, destructive, taste) goes to \`bin/toli task escalate <machine>/T<n>\`.`,
-        "- After handling the items, run every ack command the wake text below ends with (`bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>`): each covers exactly the items it showed, and anything newer stays unread and wakes the next turn.",
+        subagents
+            ? "- Acknowledge only what you settled. Each ack command is a watermark that covers every older item of its stream, so run it `--through` the stamp of the last item before the first one you leave (`bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>`), and none for a stream whose first item you leave. What stays unacknowledged stays unread and wakes the interactive Sardar's next session."
+            : "- After handling the items, run every ack command the wake text below ends with (`bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>`): each covers exactly the items it showed, and anything newer stays unread and wakes the next turn.",
         "",
         wake,
     ].join("\n");
 }
 
-type Claim = { wake: string; resume: string | null; turn: number };
+type Claim = { wake: string; resume: string | null; turn: number; dispatch: LeadDispatch };
 
 /**
  * Claim the next headless turn, or null when there is nothing to do: an interactive session is open (it takes the
  * wakes itself), a turn is already running, or no wake items and no pending text. The wake is taken here, under the
  * lead lock, so two passes never take the same items; the combined text is written to pending.md before the turn so
- * a turn that fails, or a service that dies mid-turn, leaves it for the next pass.
+ * a turn that fails, or a service that dies mid-turn, leaves it for the next pass. Under `lead.dispatch:
+ * "subagents"` the take moves only the headless marks, so the interactive session is still woken by what this turn
+ * leaves unacknowledged.
  */
 function claimTurn(): Claim | null {
     return withLock(leadLock(), () => {
@@ -80,14 +89,15 @@ function claimTurn(): Claim | null {
         if (turnPid(state) !== null) return null;
         // A peer's batch is being applied: wait until it is all in, so it wakes this lead once.
         if (receivingNow()) return null;
+        const dispatch = machineDispatch();
         const pendingPath = paths.leadPending();
         const pending = existsSync(pendingPath) ? readFileSync(pendingPath, "utf8").trim() : "";
-        const fresh = wakeMessage(takeWake());
+        const fresh = wakeMessage(takeWake(dispatch === "subagents" ? "headless" : "session"));
         const wake = [pending, fresh].filter((text) => text !== "").join("\n\n");
         if (wake === "") return null;
         writeTextAtomic(pendingPath, `${wake}\n`);
         writeJsonAtomic(paths.leadState(), { ...state, pid: process.pid, ompPid: null } satisfies LeadState);
-        return { wake, resume: sessionFile(paths.leadSessionsDir()), turn: state.turns + 1 };
+        return { wake, resume: sessionFile(paths.leadSessionsDir()), turn: state.turns + 1, dispatch };
     });
 }
 
@@ -105,7 +115,7 @@ async function runTurn(claim: Claim): Promise<number> {
     mkdirSync(paths.logsDir(), { recursive: true });
     const argv = [
         ...headlessOmpFlags(root, root, null, { dir: sessions, resume: claim.resume ?? undefined }),
-        headlessPrompt(machineName(), claim.wake),
+        headlessPrompt(machineName(), claim.wake, claim.dispatch),
     ];
     const logFd = openSync(paths.leadLog(), "a");
     try {

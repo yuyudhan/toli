@@ -20,6 +20,8 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
+import { LEAD_TURN_ENV } from "../fleet/full.ts";
 import { subagentJawans } from "../fleet/queue.ts";
 import { capacityFor, stallMinutes } from "../fleet/resources.ts";
 import { type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
@@ -202,11 +204,14 @@ function launch(id: string): JawanRun {
             // its harness's scope, so an OOM kill takes one jawan and its supervisor records it (src/jawans/scope.ts).
             const scoped = inSupervisorScope(id, [process.execPath, TOLI_SCRIPT, "run", "supervise", id]);
             const [command, ...args] = scoped.argv;
+            // The supervisor is not the headless lead turn that may have started it: its queued starts and resumes
+            // must never inherit that turn's refusals.
+            const { [LEAD_TURN_ENV]: _turn, ...env } = process.env;
             const supervisor = spawnChild(command, args, {
                 cwd: paths.root(),
                 detached: true,
                 stdio: ["ignore", supervisorLog, supervisorLog],
-                env: { ...process.env, ...scoped.env },
+                env: { ...env, ...scoped.env },
             });
             supervisor.unref();
             pid = supervisor.pid;
@@ -259,9 +264,11 @@ export type DrainResult = { started: JawanRun[]; failed: { run: JawanRun; error:
 
 /**
  * Start queued runs, oldest first, while jawan slots are free. A run that cannot start is recorded failed.
- * `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached).
+ * `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached). A headless lead
+ * turn under `lead.dispatch: "subagents"` is refused and starts none.
  */
 export function startQueued(options: { diskKept?: boolean } = {}): DrainResult {
+    refuseHeadlessDispatch("start queued runs");
     if (options.diskKept !== true) keepDiskBeforeWork();
     return withLock(paths.lock(SLOTS_LOCK), () => {
         const result: DrainResult = { started: [], failed: [] };

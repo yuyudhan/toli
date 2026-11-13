@@ -16,13 +16,29 @@ const MAX_FULL_ITEMS = 10;
 const BODY_LIMIT = 4000;
 
 /**
+ * Whose delivery marks a take reads and moves. `session`: the live session's (`toli wake`, and a headless lead turn
+ * under the default `lead.dispatch`). `headless`: a headless lead turn's own, under `lead.dispatch: "subagents"`: it
+ * skips what any reader was already given, and what it leaves unacknowledged still wakes the interactive session.
+ */
+export type WakeReader = "session" | "headless";
+
+const DELIVERED: Record<WakeReader, { inbox: AckStream; jobs: AckStream }> = {
+    session: { inbox: "inboxDelivered", jobs: "jobsDelivered" },
+    headless: { inbox: "inboxHeadlessDelivered", jobs: "jobsHeadlessDelivered" },
+};
+
+/**
  * Items above the user's ack and the last delivery are new; acknowledged items never wake. A delivery counts only as
  * far as the shown mark reaches: items delivered before the shown marks existed (an upgrade from a toli without them)
- * were never recorded as shown, so they wake once more and then ack as usual.
+ * were never recorded as shown, so they wake once more and then ack as usual. A headless reader also skips what it
+ * took itself.
  */
-function floor(acked: AckStream, delivered: AckStream, shown: AckStream): string {
-    const deliveredAndShown = [ackedThrough(delivered), ackedThrough(shown)].sort()[0] ?? "";
-    return [ackedThrough(acked), deliveredAndShown].sort().at(-1) ?? "";
+function floor(stream: "inbox" | "jobs", reader: WakeReader): string {
+    const shown: AckStream = stream === "inbox" ? "inboxShown" : "jobsShown";
+    const session = DELIVERED.session[stream];
+    const deliveredAndShown = [ackedThrough(session), ackedThrough(shown)].sort()[0] ?? "";
+    const own = reader === "session" ? "" : ackedThrough(DELIVERED[reader][stream]);
+    return [ackedThrough(stream), deliveredAndShown, own].sort().at(-1) ?? "";
 }
 
 function readBody(path: string): string {
@@ -31,19 +47,20 @@ function readBody(path: string): string {
 }
 
 /**
- * Take every result that arrived since the last call and mark it delivered and shown, so each item wakes the session
- * exactly once. The user's ack watermarks are untouched: the digest keeps showing items until acknowledged.
+ * Take every result that arrived since the last call and mark it delivered (to `reader`) and shown, so each item
+ * wakes that reader exactly once. The user's ack watermarks are untouched: the digest keeps showing items until
+ * acknowledged.
  */
-export function takeWake(): WakeItem[] {
+export function takeWake(reader: WakeReader = "session"): WakeItem[] {
     return withLock(paths.lock("wake"), () => {
-        const inboxFloor = floor("inbox", "inboxDelivered", "inboxShown");
+        const inboxFloor = floor("inbox", reader);
         const inbox = listInbox().filter((item) => item.stamp > inboxFloor);
-        const jobsFloor = floor("jobs", "jobsDelivered", "jobsShown");
+        const jobsFloor = floor("jobs", reader);
         const jobs = listResults().filter((result) => result.stamp > jobsFloor);
         const lastInbox = inbox.at(-1);
-        if (lastInbox) ackThrough("inboxDelivered", lastInbox.stamp);
+        if (lastInbox) ackThrough(DELIVERED[reader].inbox, lastInbox.stamp);
         const lastJob = jobs.at(-1);
-        if (lastJob) ackThrough("jobsDelivered", lastJob.stamp);
+        if (lastJob) ackThrough(DELIVERED[reader].jobs, lastJob.stamp);
         markShown(
             "inbox",
             inbox.map((item) => item.stamp),

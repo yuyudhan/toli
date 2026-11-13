@@ -6,6 +6,13 @@ one. See docs/releasing.md.
 
 ## Unreleased
 
+### Added
+
+- `config/machine.json` `lead.dispatch: "subagents"` (default `"spawn"`): jawans run only as the interactive
+  Sardar's subagents. A headless lead turn's `bin/toli spawn`, `resume` and queued-run starts refuse, its prompt
+  says to leave that work to the interactive Sardar, and what it leaves unacknowledged stays unread and wakes the
+  interactive session (T1274).
+
 ### Fixed
 
 - `bin/toli commit --merge` checks out merged files whose names have non-ASCII characters (`café.txt`) too. git

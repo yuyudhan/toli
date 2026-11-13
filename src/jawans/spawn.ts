@@ -10,6 +10,7 @@ import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError, warn } from "../core/util.ts";
+import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
 import { refuseHeadlessSpawnWhenFull } from "../fleet/full.ts";
 import {
     defaultHarness,
@@ -228,6 +229,7 @@ export function spawnCommand(argv: string[]): void {
         return;
     }
     refuseHeadlessSpawnWhenFull("spawn");
+    refuseHeadlessDispatch("spawn");
     const run = spawnJawan(options);
     if (args.bool("json")) {
         printJson(run);
@@ -270,6 +272,7 @@ export function resumeCommand(argv: string[]): void {
     const args = new Args(argv, { booleans: ["json", "now"], values: ["note", "max-time"] });
     args.maxPositional(1);
     refuseHeadlessSpawnWhenFull("resume");
+    refuseHeadlessDispatch("resume");
     listRuns();
     const run = loadRun(args.pos(0, "run id"));
     if (ACTIVE.includes(run.status)) throw new ToliError(`refusing: ${run.id} is still ${run.status}`);

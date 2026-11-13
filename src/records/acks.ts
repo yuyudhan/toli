@@ -5,6 +5,8 @@ import { out, readJson, ToliError, withLock, writeJsonAtomic } from "../core/uti
 /**
  * Per-stream watermarks: file stamps at or below are covered. `jobs`/`inbox` mark what the user acknowledged;
  * `jobsDelivered`/`inboxDelivered` mark what was already pushed into the live session (`toli wake`);
+ * `jobsHeadlessDelivered`/`inboxHeadlessDelivered` mark what a headless lead turn took under `lead.dispatch:
+ * "subagents"`, which leaves the session's marks alone (src/records/wake.ts);
  * `jobsShown`/`inboxShown` mark the newest item toli has shown a reader (a wake, `inbox list`, `job results`), the
  * most a plain `ack` may cover, so a result that arrives after the reader looked is never acknowledged unseen.
  */
@@ -13,6 +15,8 @@ type Acks = {
     inbox?: string;
     jobsDelivered?: string;
     inboxDelivered?: string;
+    jobsHeadlessDelivered?: string;
+    inboxHeadlessDelivered?: string;
     jobsShown?: string;
     inboxShown?: string;
 };

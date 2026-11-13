@@ -113,7 +113,9 @@ dropped; a question wakes this lead, who answers it or `task escalate`s it to th
 attaches a delegation made without `--for`; `delegation receive|update|link` is what runs on the other side. `talk`
 attaches to a machine's lead conversation, or sends it words. `share` sends a learning to other leads, who adopt,
 adapt or decline it (the answer comes back; `share --list` shows them). `lead` manages this machine's lead service,
-which serves wakes in headless turns when no lead session is open ([sardars.md](sardars.md)).
+which serves wakes in headless turns when no lead session is open ([sardars.md](sardars.md)); with `lead.dispatch:
+"subagents"` (`config/machine.json`, default `"spawn"`) those turns start no jawan and leave that work unread for
+the interactive Sardar's subagents.
 
 ### Landing work
 
@@ -174,7 +176,8 @@ which serves wakes in headless turns when no lead session is open ([sardars.md](
   A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
   Runs have no time limit unless given `--max-time`; a run that shows no progress for `capacity.stallMinutes`
   (default 30), or uses its explicit limit, without a report is resumed in the same omp session
-  (`capacity.autoResume`, default 3). `resume` lets the lead continue any finished run's session.
+  (`capacity.autoResume`, default 3). `resume` lets the lead continue any finished run's session. Under
+  `lead.dispatch: "subagents"`, `spawn`, `resume` and queued-run starts refuse in a headless lead turn.
 - `harness sync` links skills and commands into every harness; `harness status` shows installed CLIs and logins.
 - `hook`, `guidance`, `session`: called by the harness integrations (Claude Code hooks, the omp extension), not by
   hand. `guidance` prints the lead reminder they inject; `session` registers the live lead session.

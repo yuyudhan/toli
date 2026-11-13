@@ -290,6 +290,41 @@ describe("lead run --once", () => {
         expect(calls(setup)).toHaveLength(0);
         expect((JSON.parse(box.ok(["wake", "--json"])) as { items: unknown[] }).items).toHaveLength(1);
     });
+
+    test('under lead.dispatch "subagents" the turn starts no jawan, and what it leaves unacked wakes the interactive session', () => {
+        const setup = lead();
+        const { box } = setup;
+        const file = join(box.root, "config", "machine.json");
+        writeFileSync(
+            file,
+            JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), lead: { dispatch: "subagents" } }),
+        );
+        deliver(box, "delegated T1 from m2: build", "build body");
+        once(box);
+        const [first] = calls(setup);
+        expect(first).toContain("Start no jawan in this turn");
+        expect(first).toContain('`lead.dispatch: "subagents"`');
+        expect(first).toContain("Acknowledge only what you settled");
+        expect(first).not.toContain("bin/toli spawn --task T<n> --brief <file>");
+        expect(first).toContain("build body");
+
+        // The turn acked nothing (the stub runs no command): the next pass takes nothing new...
+        once(box);
+        expect(calls(setup)).toHaveLength(1);
+        // ...and the interactive session is still woken by the item, once.
+        const wake = JSON.parse(box.ok(["wake", "--json"])) as { items: { body: string }[] };
+        expect(wake.items).toHaveLength(1);
+        expect(wake.items[0]?.body).toContain("build body");
+        expect((JSON.parse(box.ok(["wake", "--json"])) as { items: unknown[] }).items).toHaveLength(0);
+
+        // An item the turn acknowledges never reaches the interactive session.
+        deliver(box, "message from m2", "settled body");
+        once(box);
+        expect(calls(setup)[1]).toContain("settled body");
+        const shown = JSON.parse(box.ok(["inbox", "list", "--json"])) as { stamp: string }[];
+        box.ok(["inbox", "ack", "--through", shown.at(-1)?.stamp ?? ""]);
+        expect((JSON.parse(box.ok(["wake", "--json"])) as { items: unknown[] }).items).toHaveLength(0);
+    });
 });
 
 describe("lead status and attach", () => {
