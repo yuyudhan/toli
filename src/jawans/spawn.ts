@@ -34,18 +34,8 @@ import { findProject, isLiveStack } from "../projects/projects.ts";
 import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { continueRun } from "./continue.ts";
-import { jawanSlots, startOrQueue } from "./launch.ts";
-import {
-    ACTIVE,
-    activeRuns,
-    type JawanRun,
-    killRun,
-    listRuns,
-    loadRun,
-    modelText,
-    runLine,
-    updateRun,
-} from "./runs.ts";
+import { jawanSlots, startOrQueue, stopRun } from "./launch.ts";
+import { ACTIVE, activeRuns, type JawanRun, listRuns, loadRun, modelText, runLine, updateRun } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
@@ -141,7 +131,7 @@ function supersedeLiveRuns(task: string, replace: boolean): string[] {
             `${task} already has a live jawan: ${names}. Steer it with \`write agent://${first}\`, or pass --replace to stop it and start this one`,
         );
     }
-    return live.map((run) => killRun(run.id).id);
+    return live.map((run) => stopRun(run.id).id);
 }
 
 /**
@@ -346,7 +336,7 @@ export async function runCommand(argv: string[]): Promise<void> {
         case "kill": {
             const args = new Args(rest);
             args.maxPositional(1);
-            const run = killRun(args.pos(0, "run id"));
+            const run = stopRun(args.pos(0, "run id"));
             if (run.pid === null && run.supervisorPid === null)
                 out(`killed ${run.id} (${run.harness}) before it started`);
             else out(`killing ${run.id} (${run.harness}); its outcome is posted to the inbox when it stops`);

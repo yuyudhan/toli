@@ -4,6 +4,20 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.6 - unreleased
+
+### Fixed
+
+- **A second interactive omp no longer unregisters the live lead (T1372).** On itlinux6 a jawan drove `omp` in tmux
+  from toli's root to sign in to an MCP server; its extension's `session start` replaced the lead's
+  `state/session.json` and its exit removed it, so `lead status` said `interactive: none` while the lead ran and the
+  lead service ran headless turns beside it (duplicate tasks, re-spawned jawans). `session start` now keeps a live
+  holder's record, and the extension repeats it every tick, so a lost record comes back within a minute.
+- **A run killed while queued gives its task back (T1372).** `bin/toli run kill` (or `spawn --replace`) on a queued
+  run left its task active and naming a jawan that never started, so it looked dispatched and someone had to re-point
+  it by hand. The task now goes back to queued with no jawan. A live-stack project's backend recompile is not a jawan
+  and never counted against the jawan slots; no toli guard kills queued runs.
+
 ## v0.5.5 - 2026-11-13
 
 ### Upgrade note

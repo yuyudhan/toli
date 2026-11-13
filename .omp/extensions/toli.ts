@@ -21,7 +21,8 @@
 //     pushes them into the chat: a new turn when idle, a follow-up when busy;
 //   - a failing bin/toli (e.g. a broken checkout) is reported once per distinct
 //     error with a pointer to `bin/toli doctor` (src/harness/cli-health.ts); the tick
-//     keeps retrying quietly, re-registers the session if that failed, and
+//     keeps retrying quietly, re-registers the session every tick (so a record
+//     lost while this session runs comes back), and
 //     recovers silently once the CLI works again;
 //   - session_shutdown unregisters the session so the OS ticker takes over.
 // Headless runs (omp -p: the ticker, the lead service's turns, spawned jawans) and subagent
@@ -136,7 +137,7 @@ function isMainInteractiveSession(ctx: Context): boolean {
 export default function toliExtension(pi: ExtensionAPI): void {
     pi.setLabel("toli lead");
     adoptLeadBuildEnv();
-    // Set once `bin/toli session start` succeeded (retried by the tick until it does).
+    // Set once `bin/toli session start` succeeded; the tick repeats it, so a lost record comes back.
     let registered = false;
     let ticking = false;
     let guidance = "";
@@ -169,7 +170,9 @@ export default function toliExtension(pi: ExtensionAPI): void {
         ticking = true;
         try {
             await guarded(ctx, async () => {
-                if (!registered) await register();
+                // Every tick, not only until it first succeeds: `session start` keeps a live holder, so this is a
+                // no-op while the record names this session and re-registers it if the record went missing.
+                await register();
                 const due = JSON.parse(await runToli(["job", "due", "--json"])) as DueJob[];
                 if (due.length > 0)
                     startDueJobs(

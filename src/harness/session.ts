@@ -5,12 +5,18 @@ import { now, out, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } fr
 
 export type SessionFile = { pid: number; startedAt: string };
 
+/** The session's pid when it is a well-formed pid of a running process, else null. */
+function livePid(session: SessionFile | null): number | null {
+    if (session === null || !Number.isInteger(session.pid) || session.pid <= 0) return null;
+    return pidAlive(session.pid) ? session.pid : null;
+}
+
 /** The live interactive session, or null. A recorded pid that is no longer running is stale and removed. */
 export function liveSession(): SessionFile | null {
     const path = paths.session();
     if (!existsSync(path)) return null;
     const session = readJson<SessionFile | null>(path, null);
-    if (session && Number.isInteger(session.pid) && session.pid > 0 && pidAlive(session.pid)) return session;
+    if (session !== null && livePid(session) !== null) return session;
     withLock(paths.lock("session"), () => {
         const current = readJson<SessionFile | null>(path, null);
         if (current?.pid === session?.pid) rmSync(path, { force: true });
@@ -30,14 +36,27 @@ export function sessionCommand(argv: string[]): void {
     args.maxPositional(0);
     switch (sub) {
         case "start": {
+            // The first live session keeps the record: a second interactive omp started in toli's root (a jawan
+            // driving omp in tmux, another terminal) must not take it, or its `session end` on exit would leave the
+            // still-running lead unregistered and the lead service would run headless turns beside it. The extension
+            // repeats `start` every tick, so a record lost any other way comes back within a minute.
             const pid = parsePid(args);
-            withLock(paths.lock("session"), () => {
-                writeJsonAtomic(paths.session(), {
-                    pid,
-                    startedAt: now().toISOString(),
-                } satisfies SessionFile);
+            const holder = withLock(paths.lock("session"), () => {
+                const current = readJson<SessionFile | null>(paths.session(), null);
+                const live = livePid(current);
+                if (live !== null && live !== pid) return live;
+                if (current?.pid !== pid)
+                    writeJsonAtomic(paths.session(), {
+                        pid,
+                        startedAt: now().toISOString(),
+                    } satisfies SessionFile);
+                return pid;
             });
-            out(`session ${pid} registered`);
+            out(
+                holder === pid
+                    ? `session ${pid} registered`
+                    : `session ${pid} not registered: session ${holder} is open`,
+            );
             break;
         }
         case "end": {

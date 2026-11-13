@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { liveSession } from "../src/harness/session.ts";
 import { sandbox } from "./helpers.ts";
@@ -57,6 +57,34 @@ describe("session command", () => {
         expect(existsSync(join(box.root, "state", "session.json"))).toBe(true);
         expect(box.ok(["session", "end", "--pid", "4242"])).toBe("session 4242 ended");
         expect(existsSync(join(box.root, "state", "session.json"))).toBe(false);
+    });
+
+    test("start keeps a live holder's record, so the other session's end cannot remove it", () => {
+        const box = sandbox();
+        const other = Bun.spawn(["sleep", "60"]);
+        try {
+            const file = recordSession(box.root, process.pid);
+            expect(box.ok(["session", "start", "--pid", String(other.pid)])).toBe(
+                `session ${other.pid} not registered: session ${process.pid} is open`,
+            );
+            box.ok(["session", "end", "--pid", String(other.pid)]);
+            expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+                pid: process.pid,
+                startedAt: "2026-03-04T10:00:00Z",
+            });
+        } finally {
+            other.kill();
+        }
+    });
+
+    test("start replaces a dead holder and keeps its own record as it was when repeated", () => {
+        const box = sandbox();
+        const file = recordSession(box.root, Bun.spawnSync(["true"]).pid);
+        expect(box.ok(["session", "start", "--pid", String(process.pid)])).toBe(`session ${process.pid} registered`);
+        const first = readFileSync(file, "utf8");
+        expect(JSON.parse(first)).toMatchObject({ pid: process.pid });
+        expect(box.ok(["session", "start", "--pid", String(process.pid)])).toBe(`session ${process.pid} registered`);
+        expect(readFileSync(file, "utf8")).toBe(first);
     });
 
     test("start rejects a missing or non-numeric pid", () => {

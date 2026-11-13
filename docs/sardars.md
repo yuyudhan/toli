@@ -36,7 +36,10 @@ it again, and reports both errors if that fails too. The tick and helper install
 Every 15 seconds the service makes one pass:
 
 1. When an interactive lead session is live on this machine (`state/session.json`, registered by the omp extension,
-   or a `lead attach` in progress), the service does nothing: that session takes the wakes itself, as before.
+   or a `lead attach` in progress), the service does nothing: that session takes the wakes itself, as before. The
+   record belongs to the first live session: another interactive omp started in toli's root (a jawan driving `omp`
+   in tmux, a second terminal) neither replaces it nor removes it when it exits, and the extension re-registers
+   every minute, so a record lost any other way comes back while the lead runs.
 2. Otherwise it takes the new wake items (`bin/toli wake`: inbox items such as delegations, delegated-task results,
    messages from other leads and finished jawans, plus job results) exactly once, and runs one headless turn of the
    lead conversation (`omp -p --resume <the conversation>`) with the wake message, the lead guidance, and the

@@ -28,7 +28,7 @@ import { type Harness, headlessCommand, type WorkType } from "../harness/harness
 import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { deadlineSection } from "./limits.ts";
-import { type JawanRun, listRuns, loadRun, RUNNING, runMinuteMs, updateRun } from "./runs.ts";
+import { type JawanRun, killRun, listRuns, loadRun, RUNNING, runMinuteMs, updateRun } from "./runs.ts";
 import { inSupervisorScope } from "./scope.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
@@ -257,6 +257,27 @@ export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun
         return updateRun(run.id, (record) => {
             record.queuedAt = record.startedAt;
         });
+    });
+}
+
+/**
+ * Stop a run (`run kill`, `spawn --replace`) as killRun does. A run killed while still queued never worked on its task,
+ * so a task that names it as its jawan goes back to queued with no jawan: nothing works on it, and it waits for the
+ * next dispatch instead of looking dispatched. Under the slots lock, so a queued run cannot start meanwhile.
+ */
+export function stopRun(id: string): JawanRun {
+    return withLock(paths.lock(SLOTS_LOCK), () => {
+        const wasQueued = loadRun(id).status === "queued";
+        const run = killRun(id);
+        const task = run.task;
+        if (wasQueued && task !== null && loadBacklog().tasks.some((entry) => entry.id === task))
+            updateTask(task, (entry) => {
+                if (entry.status !== "active" || entry.agent !== run.id) return;
+                entry.status = "queued";
+                delete entry.agent;
+                delete entry.dispatchedAt;
+            });
+        return run;
     });
 }
 

@@ -76,7 +76,8 @@ the cores): running spawn runs plus the lead's native subagents, counted as the 
 start --agent <id>` that no spawn run works on (one per distinct agent id). `spawn` with every slot busy records the
 run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free, from the
 supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run regardless,
-for the lead's explicit use. `run kill` on a queued run cancels it. The digest, `bin/toli resources` and `bin/toli
+for the lead's explicit use. `run kill` on a queued run cancels it; a task naming that run as its jawan goes back to
+queued with no jawan, ready for the next dispatch. The digest, `bin/toli resources` and `bin/toli
 fleet queues` show the slots as `jawans <n>/<slots> (<k> native subagents)`, and `jawans at cap N/N (...): queue
 instead` once all are taken: the lead then queues new work instead of starting another subagent.
 
