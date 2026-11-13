@@ -6,6 +6,11 @@ one. See docs/releasing.md.
 
 ## v0.5.5 - unreleased
 
+### Upgrade note
+
+- Machines that refuse inbound connections (priyammac, Ujjwal's laptop): run `bin/toli init ... --inbound off` after
+  upgrading, so the tick pulls and every peer queues for the pull instead of pushing (T1331).
+
 ### Fixed
 
 - **A machine that takes no inbound ssh pulls once it is set up so (T1331).** Its tick pulled only when its own entry
