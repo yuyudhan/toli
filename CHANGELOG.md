@@ -17,6 +17,11 @@ one. See docs/releasing.md.
   Sardar's subagents. A headless lead turn's `bin/toli spawn`, `resume` and queued-run starts refuse, its prompt
   says to leave that work to the interactive Sardar, and what it leaves unacknowledged stays unread and wakes the
   interactive session (T1274).
+- **`bin/toli commit toli --patch-out <file>`: toli work on a release install (T1288).** A checkout detached at a
+  release tag cannot take a commit, and jawans there made plain `git commit`s on stray branches. `--patch-out` builds
+  the commit from HEAD in the usual private index (all checks run), writes it as `git format-patch` text to `<file>`
+  and its sha256 to `<file>.sha256`, and leaves HEAD, every ref, the runtime and the checkout's object store alone; the
+  development machine applies it with `git am`. The refusal on a detached toli checkout now names it.
 
 ### Fixed
 

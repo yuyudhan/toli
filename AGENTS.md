@@ -39,6 +39,11 @@ tries uncommitted code. Feature work lands on `develop`; `main` moves only at a 
 `just verify` adds CLI and installer smoke checks. Paste the tail of the run as evidence. Details:
 `docs/development.md`.
 
+On a release install (`bin/toli version` shows a tag, HEAD is detached) never commit, branch or switch in the checkout:
+edit in place, run `just check`, then `bin/toli commit toli -m "<message>" --patch-out <file> -- <paths you changed>`.
+That writes a `git format-patch` file and its `.sha256` and moves nothing; the report names both for the development
+machine, which applies the patch with `git am`. Details: `docs/development.md`.
+
 toli is a common product for the public: only generic features go into it. Work specific to one user, machine or
 project (a project's queue, paths, guard tables, keychain names) stays in that machine's gitignored `local/` or the
 project's own notes, not in toli's code, docs or defaults.

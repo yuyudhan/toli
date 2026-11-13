@@ -70,6 +70,27 @@ For toli, it then refreshes the installed runtime (below), so the live session r
 the runtime stays on the previous commit and the commit says so. Run `just check` on the merge, then
 `bin/toli self sync`.
 
+### On a release install: produce a patch, never commit
+
+A machine installed from a release tag (`bin/toli version` prints the tag; HEAD is detached, no `develop`) is not a
+development checkout: `bin/toli commit toli` refuses there, and a plain `git commit` or a local branch would move
+the install. Edit the files in place, run `just check`, then export the change as a patch for the development
+machine, which applies it on `develop`:
+
+```sh
+bin/toli commit toli -m "Fix the digest's footer" --patch-out data/outbox/T1.patch -- src/records/digest.ts tests/digest.test.ts
+```
+
+It runs steps 1 and 2 above on HEAD (private index, every check, the `commit-msg` hook), but writes nothing to the
+checkout: no ref moves, the shared index, the working tree and the runtime stay as they are, and the commit's objects
+live in a private temporary object directory (the checkout's own is read-only). The output is `git format-patch`
+text at `<file>` and its checksum at `<file>.sha256` (`sha256sum` format); it prints both and the release commit the
+patch is on. `--patch` hunks and `--allow-revert` work as usual; `--merge` is refused, since a patch is one commit.
+Send the patch and its checksum to the development machine (`bin/toli delegate` or the task's report); there, in the
+patch's folder, `sha256sum -c <file>.sha256 && git am <file>` on `develop` lands it with the original author, date and
+message. This is a flag of the existing private-index commit code and not a local `develop` branch or a plain
+`git commit` on the install, so the install moves only through `bin/toli upgrade`.
+
 ## The live session runs an installed runtime
 
 The checkout you start `omp` in is live: Sardar's session, the extension's minute tick (`bin/toli job due`,

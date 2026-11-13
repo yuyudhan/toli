@@ -119,7 +119,7 @@ the interactive Sardar's subagents.
 
 ### Landing work
 
-    commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [-- <path>...]
+    commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]

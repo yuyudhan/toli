@@ -15,27 +15,21 @@
 // A `git merge` in progress (MERGE_HEAD) must be landed with `--merge <its sha>`: the commit then adopts it (merged
 // files not named must match the merge result in the working tree, named ones may change it) and ends it with
 // `git merge --quit`. Any other commit is refused while it is in progress, since it would drop the merged parent.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+// `--patch-out` (toli's own checkout, e.g. a release install detached at a tag) runs the same build on HEAD in a
+// private object directory and returns it as `git format-patch` text; no ref, index, working tree or runtime moves.
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { Args } from "../core/args.ts";
-import { currentBranch, git, gitOk, gitPaths, headSha, nulPaths } from "../core/git.ts";
+import { currentBranch, git, gitOk, gitPaths, headSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, ToliError, warn } from "../core/util.ts";
 import { DEVELOP_BRANCH } from "../release/release.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
-import {
-    Attempt,
-    absentPaths,
-    applyPatches,
-    checkLockFiles,
-    checkResolved,
-    checkReverts,
-    commitMsgHook,
-    scanLeaks,
-} from "./commit-checks.ts";
-import { adoptsMerge, cleanMerge } from "./commit-merge.ts";
-import { parseHunks } from "./diff-hunks.ts";
+import { buildCommit } from "./commit-build.ts";
+import { adoptsMerge } from "./commit-merge.ts";
 import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
 import { perTask } from "./strategy.ts";
 import { refExists, samePath, workDir } from "./workspace.ts";
@@ -85,14 +79,6 @@ export type Committed = {
 /** Test seam: runs after the commit object is written and before the branch moves. */
 export type CommitHooks = { beforeUpdateRef?: (attempt: number) => void };
 
-/** `attempt.gitOk` for a `-z` path listing, untrimmed (see nulPaths in core/git.ts). */
-function attemptPaths(attempt: Attempt, args: string[]): string[] {
-    const result = attempt.git(args);
-    if (result.code !== 0)
-        throw new ToliError(`git ${args.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
-    return nulPaths(result.stdout);
-}
-
 function attemptCommit(
     request: CommitRequest,
     attemptNo: number,
@@ -104,101 +90,55 @@ function attemptCommit(
     if (branch === null) throw new ToliError(`refusing: ${dir} is on a detached HEAD; commit on a branch`);
     const ref = `refs/heads/${branch}`;
     const parent = headSha(dir, ref);
-    const merge =
-        request.merge === undefined
-            ? null
-            : cleanMerge(dir, parent, request.merge, {
-                  resolved: request.resolved === true,
-                  named: request.paths,
-                  adopted,
-              });
-    // The named paths and patch apply on top of the merge result; the merge itself needs no naming, except the
-    // conflicted paths of a resolved merge, whose working-tree versions replace merge-tree's conflict markers.
-    const start = merge?.tree ?? parent;
-    const attempt = new Attempt(dir);
-    try {
-        attempt.gitOk(["read-tree", start]);
-        const deleted = absentPaths(attempt, request.paths, merge);
-        const added = request.paths.filter((file) => !deleted.includes(file));
-        if (added.length > 0) attempt.gitOk(["add", "--all", "--", ...added]);
-        const fromPatch = applyPatches(attempt, request.patches ?? []);
-        const tree = attempt.gitOk(["write-tree"]);
-        // Path listings use -z throughout: git C-quotes non-ASCII names otherwise, and those match no real path.
-        const files = gitPaths(dir, ["diff", "--name-only", "-z", "--no-renames", parent, tree]);
-        if (files.length === 0 && merge === null)
-            throw new ToliError(`nothing to commit: the named paths match ${branch} (${parent.slice(0, 12)})`);
-        const own = gitPaths(dir, ["diff", "--name-only", "-z", "--no-renames", start, tree]);
-        const named = new Set(
-            own.length === 0
-                ? []
-                : gitPaths(dir, [
-                      "diff",
-                      "--name-only",
-                      "-z",
-                      "--no-renames",
-                      start,
-                      tree,
-                      "--",
-                      ...request.paths,
-                      ...fromPatch,
-                  ]),
+    const { sha, subject, files, merge } = buildCommit(request, parent, branch, adopted);
+    hooks.beforeUpdateRef?.(attemptNo);
+    const moved = git(dir, ["update-ref", "-m", `toli commit: ${subject}`, ref, sha, parent]);
+    if (moved.code !== 0) return null;
+    // A path the merge touches that ends as in `parent` (a conflict resolved by deleting it) has nothing to check out.
+    const merged = merge?.files.filter((file) => files.includes(file)) ?? [];
+    return { sha, branch, parent, files, merged, attempts: attemptNo };
+}
+
+/** A commit built for export: `patch` is its `git format-patch` text; no ref, index or working tree moved. */
+export type PatchExport = { sha: string; parent: string; files: string[]; patch: string };
+
+/**
+ * Build the commit for the named paths and/or patch hunks on HEAD (a branch tip or a detached release tag) and
+ * return it as `git format-patch` text, writing nothing to the checkout: no ref moves, and every object git writes
+ * goes to a private object directory (the checkout's own is an alternate, read only) that is removed afterwards. All
+ * the usual checks run. `--merge` has no patch form and is refused.
+ */
+export function exportPatch(request: CommitRequest): PatchExport {
+    if (request.merge !== undefined || request.resolved === true)
+        throw new ToliError("--patch-out cannot carry a merge: a patch is one commit on HEAD");
+    if (request.paths.length === 0 && (request.patches ?? []).length === 0)
+        throw new ToliError(
+            'a patch needs paths after -- or --patch <file>: toli commit toli --patch-out <file> -m "..." -- <path>...',
         );
-        const stray = own.filter((file) => !named.has(file));
-        if (stray.length > 0)
-            throw new ToliError(`refusing: the staged set changes paths that were not named: ${stray.join(", ")}`);
-        const conflicts = merge?.conflicts ?? [];
-        const overlap =
-            merge === null || merge.adopted
-                ? []
-                : own.filter(
-                      (file) =>
-                          merge.files.includes(file) && !conflicts.includes(file) && !merge.regenerated.includes(file),
-                  );
-        if (overlap.length > 0)
-            throw new ToliError(
-                `refusing: ${overlap.join(", ")} changed by both the merge and the named paths; commit the merge first, then your edits`,
-            );
-        if (conflicts.length > 0) {
-            const listed = new Set(
-                request.paths.length === 0 ? [] : attemptPaths(attempt, ["ls-files", "-z", "--", ...request.paths]),
-            );
-            checkResolved(attempt, conflicts, (file) => named.has(file) || listed.has(file) || deleted.includes(file));
-        }
-        scanLeaks(attempt);
-        checkLockFiles(attempt, files);
-        // Only the committer's own changes on top of the merge result can revert; what the merged ref brings cannot,
-        // including the ref's own hunks a conflict resolution kept as they are.
-        const brought =
-            merge === null || conflicts.length === 0
-                ? []
-                : parseHunks(
-                      gitOk(dir, [
-                          "diff",
-                          "-U0",
-                          "--no-color",
-                          "--no-ext-diff",
-                          "--no-renames",
-                          gitOk(dir, ["merge-base", parent, merge.commit]),
-                          merge.commit,
-                          "--",
-                          ...conflicts,
-                      ]),
-                  );
-        checkReverts(dir, parent, tree, own, request.allowRevert ?? [], brought);
-        const message = commitMsgHook(attempt, request.message);
-        const parents = ["-p", parent, ...(merge === null ? [] : ["-p", merge.commit])];
-        const created = git(dir, ["commit-tree", tree, ...parents, "-F", "-"], `${message}\n`);
-        if (created.code !== 0)
-            throw new ToliError(`git commit-tree failed: ${(created.stderr || created.stdout).trim()}`);
-        const sha = created.stdout.trim();
-        hooks.beforeUpdateRef?.(attemptNo);
-        const moved = git(dir, ["update-ref", "-m", `toli commit: ${message.split("\n")[0]}`, ref, sha, parent]);
-        if (moved.code !== 0) return null;
-        // A path the merge touches that ends as in `parent` (a conflict resolved by deleting it) has nothing to check out.
-        const merged = merge?.files.filter((file) => files.includes(file)) ?? [];
-        return { sha, branch, parent, files, merged, attempts: attemptNo };
+    const { dir } = request;
+    const parent = headSha(dir);
+    const objects = gitOk(dir, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
+    const scratch = mkdtempSync(join(tmpdir(), "toli-patch-"));
+    mkdirSync(join(scratch, "objects"));
+    const saved = {
+        directory: process.env.GIT_OBJECT_DIRECTORY,
+        alternates: process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+    };
+    process.env.GIT_OBJECT_DIRECTORY = join(scratch, "objects");
+    process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [objects, saved.alternates].filter(Boolean).join(delimiter);
+    try {
+        const { sha, files } = buildCommit(request, parent, "HEAD", false);
+        const patch = gitOk(dir, ["format-patch", "--stdout", "--no-signature", "-1", sha]);
+        return { sha, parent, files, patch: `${patch}\n` };
     } finally {
-        attempt.dispose();
+        for (const [key, value] of [
+            ["GIT_OBJECT_DIRECTORY", saved.directory],
+            ["GIT_ALTERNATE_OBJECT_DIRECTORIES", saved.alternates],
+        ] as const) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+        rmSync(scratch, { recursive: true, force: true });
     }
 }
 
@@ -299,9 +239,15 @@ function commitDir(name: string, taskId: string | undefined): string {
     const root = toliSelfCheckout(name);
     if (root !== null) {
         const branch = currentBranch(root);
+        if (branch === null)
+            throw new ToliError(
+                "refusing: toli's checkout is on a detached HEAD (a release install), which commits move nowhere; " +
+                    'produce a patch for the development machine instead: bin/toli commit toli --patch-out <file> -m "<message>" -- <paths>. ' +
+                    "It leaves HEAD, the branches and the runtime alone (docs/development.md, release installs).",
+            );
         if (refExists(root, `refs/heads/${DEVELOP_BRANCH}`) && branch !== DEVELOP_BRANCH)
             throw new ToliError(
-                `refusing: toli's checkout is on ${branch === null ? "a detached HEAD" : `"${branch}"`}; toli's own work lands on ${DEVELOP_BRANCH}`,
+                `refusing: toli's checkout is on "${branch}"; toli's own work lands on ${DEVELOP_BRANCH}`,
             );
         return root;
     }
@@ -325,27 +271,46 @@ function commitDir(name: string, taskId: string | undefined): string {
     return target.dir;
 }
 
+/** Write `exported` to `file` and its sha256 (`sha256sum` format) to `<file>.sha256`, and say what was written. */
+function writePatch(exported: PatchExport, file: string): void {
+    const sha256 = createHash("sha256").update(exported.patch).digest("hex");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, exported.patch);
+    writeFileSync(`${file}.sha256`, `${sha256}  ${basename(file)}\n`);
+    out(`patch: ${file}`);
+    out(`sha256: ${sha256}`);
+    out(`on: ${exported.parent.slice(0, 12)} (${exported.files.length} files: ${exported.files.join(", ")})`);
+    out("nothing was committed: HEAD, the branches and the runtime are unchanged; apply with git am on develop");
+}
+
 /**
  * `toli commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]...
- * [--allow-revert <sha>]... [-- <path>...]`; repeated `-m` values become separate paragraphs, as with `git commit`,
- * and repeated `--patch` files all apply, in the order given.
+ * [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]`; repeated `-m` values become separate paragraphs, as
+ * with `git commit`, and repeated `--patch` files all apply, in the order given. `--patch-out` (toli's own checkout
+ * only) writes the commit as `git format-patch` text to `<file>`, with its sha256 in `<file>.sha256`, instead of
+ * committing.
  */
 export function commitCommand(argv: string[]): void {
     const args = new Args(argv, {
         booleans: ["resolved"],
-        values: ["message", "task", "patch", "allow-revert", "merge"],
+        values: ["message", "task", "patch", "allow-revert", "merge", "patch-out"],
     });
     args.maxPositional(1);
-    const dir = commitDir(args.pos(0, "project"), args.str("task"));
+    const name = args.pos(0, "project");
+    const patchOut = args.str("patch-out");
+    const toliRoot = patchOut === undefined ? null : toliSelfCheckout(name);
+    if (patchOut !== undefined && toliRoot === null)
+        throw new ToliError("--patch-out is for toli's own checkout: bin/toli commit toli --patch-out <file> ...");
+    const dir = toliRoot ?? commitDir(name, args.str("task"));
     const paragraphs = args.all("message");
     if (paragraphs.length === 0) throw new ToliError('commit needs -m "<message>"');
     const message = stripAiTrailers(paragraphs.join("\n\n"));
     if (message.trim() === "") throw new ToliError("commit message is empty after removing AI trailers");
     const patches = args
         .all("patch")
-        .map((name) => ({ name, diff: readFileSync(resolve(process.cwd(), name), "utf8") }));
+        .map((file) => ({ name: file, diff: readFileSync(resolve(process.cwd(), file), "utf8") }));
     const merge = args.str("merge");
-    const committed = safeCommit({
+    const request: CommitRequest = {
         dir,
         paths: args.rest.filter((file) => file !== ""),
         patches,
@@ -353,7 +318,12 @@ export function commitCommand(argv: string[]): void {
         resolved: args.bool("resolved"),
         message,
         allowRevert: args.all("allow-revert"),
-    });
+    };
+    if (patchOut !== undefined) {
+        writePatch(exportPatch(request), resolve(process.cwd(), patchOut));
+        return;
+    }
+    const committed = safeCommit(request);
     out(committed.sha);
     // toli's own checkout: the live session runs the installed runtime, so move it to the new commit. Not after a
     // merge: the merged code has not passed `just check` here yet, so the runtime waits for `bin/toli self sync`.
