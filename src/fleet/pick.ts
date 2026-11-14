@@ -11,6 +11,7 @@ import { out, printJson, runAsync } from "../core/util.ts";
 import { httpPeer } from "../peer/transport.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { type Full, fullText } from "./full.ts";
+import { outsideBuildText } from "./outside-builds.ts";
 import { perSlot, type Queue, queueText, slotText } from "./queue.ts";
 import { type FleetEntry, localResources, type Resources } from "./resources.ts";
 
@@ -28,6 +29,7 @@ export function availabilityLine(entry: FleetEntry): string {
         `disk ${r.diskFreeGB} GB free`,
         `runs ${r.activeRuns}/${r.maxRuns}`,
         ...(r.buildSlots === undefined ? [] : [`builds ${r.buildSlotsBusy ?? 0}/${r.buildSlots}`]),
+        ...(r.buildsOutsideSlots ?? []).map((build) => `build outside the slots: ${outsideBuildText(build)}`),
         `projects ${r.projects.length === 0 ? "none" : r.projects.join(",")}`,
     ].join(", ");
     return `${name}: ${state} (${detail})`;

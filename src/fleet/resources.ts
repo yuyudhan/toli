@@ -8,7 +8,8 @@ import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, platform, printJson, readJson, run, ToliError, writeJsonAtomic } from "../core/util.ts";
 import { type ModelTotal, modelTotalsToday } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
-import { busyBuildSlots } from "./build-queue.ts";
+import { buildsOutsideSlots, busyBuildSlots } from "./build-queue.ts";
+import type { OutsideBuild } from "./outside-builds.ts";
 import { availabilityLine } from "./pick.ts";
 import { localQueue, type Queue } from "./queue.ts";
 
@@ -91,9 +92,14 @@ export type Resources = {
     at: string;
     /** Today's jawan runs per harness and model; absent from machines on an older toli. */
     models?: ModelTotal[];
-    /** Heavy-build slots (src/fleet/build-slots.ts) and how many are held now; absent from machines on an older toli. */
+    /**
+     * Heavy-build slots (src/fleet/build-slots.ts) and the heavy builds running now: those holding a slot plus those
+     * outside every slot (src/fleet/outside-builds.ts), listed in `buildsOutsideSlots`; absent from machines on an
+     * older toli.
+     */
     buildSlots?: number;
     buildSlotsBusy?: number;
+    buildsOutsideSlots?: OutsideBuild[];
     /** The work queue that ranks machines; null from a machine on a toli older than queue ranking. */
     queue: Queue | null;
 };
@@ -309,6 +315,7 @@ export function localResources(): Resources {
     const { load1, load5 } = measureLoad();
     const memory = measureMemory();
     const disk = measureDisk(paths.root());
+    const outside = buildsOutsideSlots();
     const measured: Measured = {
         cpus: cpuCount,
         load1: round2(load1),
@@ -329,7 +336,8 @@ export function localResources(): Resources {
         maxRuns: capacity.maxRuns,
         maxLoadPerCpu: capacity.maxLoadPerCpu,
         buildSlots: capacity.buildSlots,
-        buildSlotsBusy: busyBuildSlots(capacity.buildSlots),
+        buildSlotsBusy: busyBuildSlots() + outside.length,
+        buildsOutsideSlots: outside,
         projects: loadProjects()
             .map((project) => project.name)
             .filter((name) => isGitRepo(paths.projectDir(name))),

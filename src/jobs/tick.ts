@@ -1,5 +1,4 @@
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { Args } from "../core/args.ts";
 import { loadMachine, type Machine, pullsItsMessages } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
@@ -11,7 +10,7 @@ import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
-import { capacityFor, type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
+import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
 import { harnessConfig } from "../harness/harness.ts";
 import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
 import { headlessOmpArgs } from "../harness/omp-args.ts";
@@ -281,7 +280,7 @@ export async function tick(): Promise<void> {
     if (disk) log(disk);
     // A dev stack a killed build holder left paused (src/fleet/stack-pause.ts) is unpaused once no build holds a slot.
     try {
-        resumeDevStacksWhenIdle(capacityFor(machine, availableParallelism()).buildSlots);
+        resumeDevStacksWhenIdle();
     } catch (error) {
         log(`dev stacks not resumed: ${error instanceof Error ? error.message : String(error)}`);
     }

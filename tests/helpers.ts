@@ -96,6 +96,8 @@ export function sandbox(): Sandbox {
         // No LaunchDaemons unless a test writes one here: never the host's /Library/LaunchDaemons.
         TOLI_LAUNCH_DAEMONS_DIR: join(root, "daemons"),
         TOLI_BUILD_SCOPE: "off",
+        // Heavy builds outside the slots are read from this table, never from the host's own builds' processes.
+        TOLI_PROCESS_TABLE: join(root, ".process-table"),
         // A run's cause of death is never read from the host's journal; a test with a stub journalctl turns it on.
         TOLI_JOURNAL: "off",
         // Harnesses start without the host user's login shell (src/core/login-env.ts); a test turns it on.

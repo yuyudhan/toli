@@ -170,6 +170,13 @@ memory; a stopped one frees it. The details, and what happens when a resume fail
 [fleet.md](fleet.md#dev-stacks-and-heavy-builds). A live-stack project's declaration is used for every heavy build on
 the machine instead ([above](#pausing-the-stack-during-a-build)).
 
+A container's cargo never sees toli's cargo shim, rustc wrapper or `CARGO_BUILD_JOBS`: it compiles with the
+container's own environment, at one job per core of the machine. While a build holds a slot it is paused or stopped
+as above; while it rebuilds and no build holds a slot, a build that wants one counts it as busy (on Linux, where the
+host sees a container's processes) and waits for it to finish ([fleet.md](fleet.md#builds-outside-the-slots)). To cap
+its width too, give the container one slot's share in its own environment: `CARGO_BUILD_JOBS` in its compose file at
+the machine's `capacity.cargoJobs` ([fleet.md](fleet.md#heavy-build-slots)).
+
 ## Setting up an existing project
 
 Projects registered before the interview, imported clones, and notes that drifted get the same treatment:

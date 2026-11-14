@@ -10,16 +10,17 @@
 // starts, of its build scripts) through the process ancestry. The holder frees the slot once the cargo exits or is
 // killed, and a killed holder frees it with its flock.
 import { spawn as spawnChild } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
-import { busyBuildSlots, POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
+import { buildsOutsideSlots, busyBuildSlots, POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
 import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
+import { heldFile, holderHolds } from "./outside-builds.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
 
@@ -27,8 +28,6 @@ import { pauseDevStacks } from "./stack-pause.ts";
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 /** How often a cargo's `rustc -vV` probe looks again for the holder of its slot. */
 const HOLDER_POLL_MS = 100;
-/** Where a cargo's slot holder says it holds the slot: `<holder pid> <slot>` (read by bin/shims/toli-rustc-wrapper). */
-const heldFile = (cargoPid: number): string => join(paths.buildSlotsDir(), `cargo-${cargoPid}.held`);
 /** Flocked by the one holder of a cargo's slot while it waits for and holds it. */
 const claimFile = (cargoPid: number): string => join(paths.buildSlotsDir(), `cargo-${cargoPid}.claim`);
 const HOLDER_FILE = /^cargo-(\d+)\.(held|claim)$/;
@@ -79,15 +78,29 @@ function processArgv(pid: number): string[] {
     return line === "" ? [] : line.split(/\s+/);
 }
 
-/** Whether `cargoPid`'s slot holder is alive and says it holds the slot. */
-function holderHolds(cargoPid: number): boolean {
-    let text: string;
-    try {
-        text = readFileSync(heldFile(cargoPid), "utf8");
-    } catch {
-        return false;
+/** A process's parent pid, or 0 when it is gone. */
+function parentPid(pid: number): number {
+    const result = run(["ps", "-o", "ppid=", "-p", String(pid)], { timeoutMs: 5000 });
+    const ppid = result.code === 0 ? Number(result.stdout.trim()) : 0;
+    return Number.isInteger(ppid) ? ppid : 0;
+}
+
+/**
+ * The cargo whose run a slot is for: `cargoPid` when it runs a heavy command, climbing through each parent that is a
+ * cargo (or a cargo subcommand binary) running a heavy command too, so the slot spans the outer command's whole run:
+ * `cargo nextest run` (cargo-nextest) runs `cargo test --no-run` and then the test binaries itself, which a slot held
+ * only for the inner cargo would leave outside. Null when `cargoPid` runs no heavy command. The cargo binary itself,
+ * or an interpreter running a cargo script (`/bin/sh /path/to/cargo build`).
+ */
+function heavyCargoRun(cargoPid: number): number | null {
+    let chosen: number | null = null;
+    for (let pid = cargoPid, depth = 0; pid > 1 && depth < 16; pid = parentPid(pid), depth++) {
+        const argv = processArgv(pid);
+        const at = argv.slice(0, 2).findIndex((word) => /^cargo(-[\w-]+)?$/.test(basename(word)));
+        if (at < 0 || !heavyCargo(argv.slice(at))) break;
+        chosen = pid;
     }
-    return pidAlive(Number(text.split(" ")[0]));
+    return chosen;
 }
 
 /** Whether some process flocks `cargoPid`'s claim file: a holder waiting for or holding its slot. */
@@ -136,14 +149,14 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
     sweepHolderFiles(lock);
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());
-    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd), () => pidAlive(cargoPid));
+    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd), cargoPid, () => pidAlive(cargoPid));
     const release = (): void => {
         rmSync(heldFile(cargoPid), { force: true });
         if (held !== null) {
             lock(held.fd, LOCK_UN);
             closeSync(held.fd);
             resumeLiveStacks();
-            resumeDevStacksWhenIdle(capacity.buildSlots);
+            resumeDevStacksWhenIdle();
         }
         rmSync(claimFile(cargoPid), { force: true });
         closeSync(claimFd);
@@ -168,14 +181,12 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
 /**
  * `bin/toli build-slot --cargo <cargo pid>` (bin/shims/toli-rustc-wrapper, on a cargo's `rustc -vV` probe outside any
  * slot): when that cargo runs a heavy command outside a live-stack project's checkout, return only once a holder
- * (`holdForCargo`) holds a slot for it, starting one when none is waiting, and saying once that it waits. Any other
- * cargo returns at once. Never fails: a build runs even when toli cannot take a slot for it.
+ * (`holdForCargo`) holds a slot for its run (`heavyCargoRun`), starting one when none is waiting, and saying once that
+ * it waits. Any other cargo returns at once. Never fails: a build runs even when toli cannot take a slot for it.
  */
-export async function slotForCargo(cargoPid: number): Promise<number> {
-    // The cargo binary itself, or an interpreter running a cargo script (`/bin/sh /path/to/cargo build`).
-    const argv = processArgv(cargoPid);
-    const at = argv.slice(0, 2).findIndex((word) => basename(word) === "cargo");
-    if (at < 0 || !heavyCargo(argv.slice(at))) return 0;
+export async function slotForCargo(probingCargo: number): Promise<number> {
+    const cargoPid = heavyCargoRun(probingCargo);
+    if (cargoPid === null) return 0;
     if (liveStackProjectAt(process.cwd()) !== null) return 0;
     const lock = flock();
     if (lock === null) return 0; // The shim's `build-slot` says so; every rustc call need not.
@@ -193,7 +204,7 @@ export async function slotForCargo(cargoPid: number): Promise<number> {
             holder.unref();
         }
         await Bun.sleep(HOLDER_POLL_MS);
-        if (!told && !holderHolds(cargoPid) && busyBuildSlots(slots) >= slots) {
+        if (!told && !holderHolds(cargoPid) && busyBuildSlots() + buildsOutsideSlots(cargoPid).length >= slots) {
             warn(`toli: waiting for a heavy-build slot (${slots} busy)`);
             told = true;
         }

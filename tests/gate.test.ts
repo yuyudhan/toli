@@ -28,6 +28,7 @@ function spawnToli(box: Sandbox, args: string[], env: Record<string, string> = {
             PATH: [box.stubs, dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
             TOLI_ROOT: box.root,
             TOLI_DRY_RUN: "1",
+            TOLI_PROCESS_TABLE: join(box.root, ".process-table"),
             ...env,
         },
         stdin: "ignore",

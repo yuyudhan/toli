@@ -4,6 +4,18 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.20 - unreleased
+
+### Fixed
+
+- Heavy-build slots count every heavy build on the machine before one more starts. A build that took its slot before
+  `capacity.buildSlots` was lowered went uncounted, so a second build started beside it while `bin/toli resources`
+  showed `builds 1/1`. A cargo that never reaches toli's shim or rustc wrapper (a reset environment, the user's
+  terminal, another harness, a dev container on Linux) now counts as a busy slot while it compiles: the next build
+  waits for it and says which one, and `bin/toli resources` names it (`buildsOutsideSlots` in `--json`). Stopped and
+  paused (frozen) builds are not counted. A `cargo nextest run` that reached a slot through the rustc wrapper now keeps
+  it while its test binaries run, not only while it compiles (T1477).
+
 ## v0.5.19 - 2026-11-14
 
 ### Added

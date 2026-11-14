@@ -225,6 +225,40 @@ describe("a cargo ahead of the shim on PATH still holds a heavy-build slot", () 
     );
 
     test(
+        "cargo nextest outside the shim holds its slot while the test binaries run, not only while it compiles",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const real = realCargo(box, log);
+            // cargo-nextest runs `cargo test --no-run` (its build), then the test binaries itself until `<log>.done-tests`.
+            script(
+                join(real, "cargo-nextest"),
+                [
+                    'STUB_SLEEP=0 "$(dirname "$0")/cargo" test --no-run || exit 1',
+                    `: > "${log}.tests-running"`,
+                    `n=1500; while [ "$n" -gt 0 ] && [ ! -e "${log}.done-tests" ]; do sleep 0.2; n=$((n - 1)); done`,
+                ].join("\n"),
+            );
+            const env = { ...jawan(box), PATH: `${real}:${jawan(box).PATH}`, STUB_LABEL: "t" };
+            const nextest = start(box, [join(real, "cargo-nextest"), "nextest", "run"], env);
+            await until("the test binaries running", () => existsSync(`${log}.tests-running`), LOADED_MS);
+            expect(holderFiles(box).some((name) => name.endsWith(".held"))).toBe(true);
+            const next = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "n" });
+            await until(
+                "the next build waiting",
+                () => next.stderr.join("").includes("waiting for a heavy-build slot"),
+                LOADED_MS,
+            );
+            expect(runs(log).some((run) => run.label === "n")).toBe(false);
+            writeFileSync(`${log}.done-tests`, "");
+            const [tested, built] = await Promise.all([nextest.done, next.done]);
+            expect([tested.code, built.code]).toEqual([0, 0]);
+            expect(runs(log).find((run) => run.label === "n")).toMatchObject({ slot: "1", args: "build" });
+            await until("the holder's files gone", () => holderFiles(box).length === 0, LOADED_MS);
+        },
+        4 * LOADED_MS,
+    );
+
+    test(
         "light cargo commands run past the wrapper at once while every slot is busy",
         async () => {
             const { box, log } = slotBox(1, 3);

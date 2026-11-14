@@ -47,11 +47,11 @@ const MB = 1024 * 1024;
  * one, and resume each live stack whose builds all died (src/fleet/live-stack-pause.ts): called after a holder freed
  * its slot, and by the minute tick for a stack a killed holder left paused.
  */
-export function resumeDevStacksWhenIdle(slots: number): void {
+export function resumeDevStacksWhenIdle(): void {
     resumeAbandonedLiveStacks();
     const lock = flock();
     if (lock === null) return;
-    resumeDevStacks(() => busyBuildSlots(slots) === 0 && !slotWaiters(lock));
+    resumeDevStacks(() => busyBuildSlots() === 0 && !slotWaiters(lock));
 }
 
 /**
@@ -230,7 +230,7 @@ export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Pr
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
         return await whileLiveStacksPaused(() => body({ env: capped, scope: { slot: 0, memoryMaxMB } }));
     }
-    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd));
+    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd), process.pid);
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;
@@ -240,7 +240,7 @@ export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Pr
     } finally {
         lock(held.fd, LOCK_UN);
         closeSync(held.fd);
-        resumeDevStacksWhenIdle(capacity.buildSlots);
+        resumeDevStacksWhenIdle();
     }
 }
 

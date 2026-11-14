@@ -191,7 +191,9 @@ in arrival order: each holds a numbered ticket in `state/build-slots/queue/` and
 that frees, so a later build never passes an earlier one. A slot is a lock on `state/build-slots/<n>.lock` held by the
 `build-slot` process, and a ticket is a lock held the same way, so a holder or waiter that is killed or crashes frees
 its slot or its place in line at once. The lock files stay once made, one per slot number ever used (a `2.lock` on a
-machine now at one slot is from when it had two); only the lock on a file says its slot is busy. Inside a slot
+machine now at one slot is from when it had two); only the lock on a file says its slot is busy. A held slot counts
+whatever its number: a build that took slot 2 before `capacity.buildSlots` dropped to 1 keeps the next build waiting
+until it ends, and counts in `builds <busy>/<total>`. Inside a slot
 already (`TOLI_BUILD_SLOT` set), it runs the command at once: a nested build never waits on its own slot.
 
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
@@ -261,7 +263,10 @@ a call that waited there for a slot whose build waits for the lock would deadloc
 any cargo it starts (cargo-clippy's `cargo check`) and of its build scripts find the holder through their process
 ancestry and go straight on, so a nested cargo reuses the slot and never deadlocks on it; a later call without a
 holder (a cargo in a live-stack checkout compiling a registry crate from that crate's folder, or one whose holder was
-killed) runs at once too. The holder frees the slot when the cargo exits or is killed (it polls the pid), and a
+killed) runs at once too. The slot is held for the outermost of the cargo processes right above the probing one that
+run a heavy command, so `cargo nextest run` (cargo-nextest runs `cargo test --no-run`, then the test binaries itself)
+keeps its slot while its tests run, not only while the inner cargo compiles. The holder frees the slot when that
+cargo exits or is killed (it polls the pid), and a
 killed holder frees it with its lock. The wrapper then runs the wrapper it replaced (an inherited
 `RUSTC_WRAPPER`, else `[build] rustc-wrapper` in `~/.cargo/config.toml`, such as sccache), or rustc itself. Such a
 cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
@@ -277,6 +282,31 @@ build, that one or one holding a slot, pauses every live-stack project's stack a
 `[build] jobs` in `~/.cargo/config.toml` holds the same per-slot number so hand-run cargo gets it too
 (`bin/toli doctor` warns when the two differ). `bin/toli resources` shows the slots as `builds <busy>/<total>`
 (`buildSlots` and `buildSlotsBusy` in `--json`).
+
+#### Builds outside the slots
+
+The shim and the wrapper reach only a cargo whose environment toli set. A cargo started with a reset environment
+(`env -i`, a script that rebuilds PATH and unsets `RUSTC_WRAPPER`), from the user's own terminal, by another harness or
+a lead's native subagent that never got the build variables, or inside a Docker container (its own PATH and
+toolchain, a dev loop such as `watchexec -- cargo run`) compiles at full width beside the slots. toli cannot stop
+such a cargo, so it counts it: before a waiter takes a free slot it reads the machine's process table (`ps -A`, every
+user's processes, a Linux container's included; Docker Desktop's VM on macOS is out of sight) and counts each heavy
+build outside the slots as a busy slot. A heavy build is a rustc (or clippy-driver, rustdoc) compiling a crate, the
+probes cargo runs (`rustc -vV`, the `___` target-info crate) left out, grouped under the outermost cargo above it;
+it is inside a slot when a slot holder is among its ancestors (the pid in a slot's lock file, or a cargo the rustc
+wrapper holds a slot for). A stopped process and one in a frozen cgroup (a container a build paused with `docker
+pause`) uses no CPU and is never counted, so a dev stack a build paused never holds up the next build; a build
+waiting for a slot from inside an outside build (its build script's cargo) never waits for that build. The waiter
+says what it waits for once:
+
+    toli: counting heavy builds outside the slots as busy: pid 724445 `cargo build --release` in /work/app compiling a, b
+
+`bin/toli resources` counts them in `builds <busy>/<total>` and names each (`buildsOutsideSlots` in `--json`, with
+its pid, command, directory on Linux and the crates compiling), so a lead finds the build to stop or wait for. A
+build outside the slots is seen only while it compiles: test binaries it runs after its last rustc, or a server it
+started with `cargo run`, are not heavy builds. A wrapper whose rustc runs under its own daemon (sccache's server) is
+counted as one build outside the slots while it compiles, even for a build in a slot. A live-stack checkout's build,
+which skips the slots, counts as a build outside them while it compiles, so a build that wants a slot waits for it.
 
 #### Dev stacks and heavy builds
 

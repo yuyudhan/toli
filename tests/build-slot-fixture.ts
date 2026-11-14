@@ -54,6 +54,7 @@ export function start(box: Sandbox, argv: string[], env: Record<string, string> 
             TOLI_ROOT: box.root,
             TOLI_BUILD_SLOT: "",
             TOLI_BUILD_SCOPE: "off",
+            TOLI_PROCESS_TABLE: join(box.root, ".process-table"),
             ...env,
         },
         stdin: "ignore",

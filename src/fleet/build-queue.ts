@@ -3,6 +3,9 @@
 // that dies leaves the line with it); only the oldest live ticket may take a free slot. src/fleet/build-slots.ts runs
 // commands in a slot, src/fleet/cargo-slot.ts holds one for a cargo that bypassed the shim. A holder writes where its
 // build runs into the slot's lock file, so the disk keeper never deletes the target it builds into (live-builds.ts).
+// Every slot number ever used counts while held (a build keeps its slot when `capacity.buildSlots` drops), and so does
+// each heavy build running outside the slots (src/fleet/outside-builds.ts): a waiter takes a slot only while all of
+// them together number fewer than `capacity.buildSlots`.
 import {
     closeSync,
     ftruncateSync,
@@ -18,6 +21,7 @@ import { join, resolve } from "node:path";
 import { paths } from "../core/paths.ts";
 import { ToliError, warn } from "../core/util.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
+import { heldCargoPids, type OutsideBuild, outsideBuilds, outsideBuildText } from "./outside-builds.ts";
 
 /** How often a waiter looks again for a free slot, and a cargo's slot holder whether its cargo still runs. */
 export const POLL_MS = 500;
@@ -118,24 +122,32 @@ function leaveLine(ticket: Ticket, lock: Flock): void {
 }
 
 /**
- * Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait. Gives up
- * (null) once `wanted` says the slot is no longer needed.
+ * Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait, and once
+ * which builds outside the slots it waits for. `waiter` is the process the slot is for (its own ancestors are never
+ * waited for). Gives up (null) once `wanted` says the slot is no longer needed.
  */
 export async function takeInTurn(
     slots: number,
     lock: Flock,
     holder: SlotHolder,
+    waiter: number,
     wanted: () => boolean = () => true,
 ): Promise<{ index: number; fd: number } | null> {
     const ticket = takeTicket(lock);
     try {
         let told = false;
+        let toldOutside = false;
         for (;;) {
             if (!wanted()) return null;
-            const held = firstInLine(ticket, lock) ? tryTake(slots, lock, holder) : null;
-            if (held !== null) return held;
+            const taken = firstInLine(ticket, lock) ? tryTake(slots, lock, holder, waiter) : null;
+            if (taken !== null && "fd" in taken) return taken;
             if (!told) warn(`toli: waiting for a heavy-build slot (${slots} busy)`);
             told = true;
+            if (!toldOutside && taken !== null && taken.outside.length > 0) {
+                const builds = taken.outside.map(outsideBuildText).join("; ");
+                warn(`toli: counting heavy builds outside the slots as busy: ${builds}`);
+                toldOutside = true;
+            }
             await Bun.sleep(POLL_MS);
         }
     } finally {
@@ -143,10 +155,56 @@ export async function takeInTurn(
     }
 }
 
-/** Take a free slot without waiting, recording `holder` in it: its index and fd, or null when every slot is busy. */
-function tryTake(slots: number, lock: Flock, holder: SlotHolder): { index: number; fd: number } | null {
+/**
+ * Every slot index a build holds now, up to the highest slot ever used: a build that took slot 3 before
+ * `capacity.buildSlots` dropped to 2 still holds it, and still counts.
+ */
+function heldSlots(lock: Flock): Set<number> {
+    const held = new Set<number>();
+    let names: string[];
+    try {
+        names = readdirSync(paths.buildSlotsDir());
+    } catch {
+        return held; // No slot taken yet on this machine.
+    }
+    for (const name of names) {
+        const match = SLOT.exec(name);
+        if (match === null) continue;
+        let fd: number;
+        try {
+            fd = openSync(join(paths.buildSlotsDir(), name), "r");
+        } catch {
+            continue;
+        }
+        if (lock(fd, LOCK_EX | LOCK_NB) === 0) lock(fd, LOCK_UN);
+        else held.add(Number(match[1]) - 1);
+        closeSync(fd);
+    }
+    return held;
+}
+
+/** The heavy builds running outside every slot now, `waiter`'s own ancestors left out (src/fleet/outside-builds.ts). */
+export function buildsOutsideSlots(waiter: number | null = null): OutsideBuild[] {
+    return outsideBuilds([...busySlots().map((slot) => slot.pid), ...heldCargoPids()], waiter);
+}
+
+/**
+ * Take a free slot without waiting, recording `holder` in it: its index and fd. While the builds holding slots and
+ * the heavy builds outside them (`buildsOutsideSlots`) number `slots` or more, none is free: then the outside builds.
+ */
+function tryTake(
+    slots: number,
+    lock: Flock,
+    holder: SlotHolder,
+    waiter: number,
+): { index: number; fd: number } | { outside: OutsideBuild[] } {
     mkdirSync(paths.buildSlotsDir(), { recursive: true });
+    const held = heldSlots(lock);
+    if (held.size >= slots) return { outside: [] };
+    const outside = buildsOutsideSlots(waiter);
+    if (held.size + outside.length >= slots) return { outside };
     for (let index = 0; index < slots; index++) {
+        if (held.has(index)) continue;
         const fd = openSync(slotFile(index), "a");
         if (lock(fd, LOCK_EX | LOCK_NB) === 0) {
             recordHolder(fd, holder);
@@ -154,7 +212,7 @@ function tryTake(slots: number, lock: Flock, holder: SlotHolder): { index: numbe
         }
         closeSync(fd);
     }
-    return null;
+    return { outside };
 }
 
 /** Write `holder` and this pid over the slot's lock file; best effort, since a full disk never stops a build. */
@@ -217,23 +275,13 @@ export function busySlots(): BusySlot[] {
     return held;
 }
 
-/** How many of the first `slots` build slots a command holds right now (0 where flock is unavailable). */
-export function busyBuildSlots(slots: number): number {
+/**
+ * How many build slots a command holds right now, every slot number counted, so a build that took its slot before
+ * `capacity.buildSlots` dropped still counts (0 where flock is unavailable).
+ */
+export function busyBuildSlots(): number {
     const lock = flock();
-    if (lock === null) return 0;
-    let busy = 0;
-    for (let index = 0; index < slots; index++) {
-        let fd: number;
-        try {
-            fd = openSync(slotFile(index), "r");
-        } catch {
-            continue; // Never taken yet: free.
-        }
-        if (lock(fd, LOCK_EX | LOCK_NB) === 0) lock(fd, LOCK_UN);
-        else busy += 1;
-        closeSync(fd);
-    }
-    return busy;
+    return lock === null ? 0 : heldSlots(lock).size;
 }
 
 /** Whether a build waits in line for a slot: a ticket in the queue whose owner is alive (its flock is held). */
