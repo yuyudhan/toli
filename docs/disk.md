@@ -163,7 +163,10 @@ stopped container <c> mounts it and its image postgres:16 keeps data`, `... it a
    machine's own build tools (`capacity.diskBuildTools`, below) working in, above, or naming that workspace; when a
    cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) runs in the folder holding the target (`cargo test`
    drops its locks before it runs the test binaries one after
-   another); or when any process holds a file under it open. A process table it cannot read counts as in use. On
+   another); or when any process holds a file under it open. A process table it cannot read counts as in use. A
+   process of the user's that cannot be inspected (lsof leaves out one caught mid-exec; Linux hides the files of one
+   that is not dumpable, such as `systemd --user`) counts as in use only when its command line could run from the
+   target: its program is a relative path, or the command line names the target or its workspace. On
    Linux every one of these checks, and the working directories and open files of steps 1 and 2, reads `/proc`
    (`/proc/<pid>/cwd`, `exe`, `maps`, `fd/*`, `comm`), so they hold where `lsof` is not installed. Each skip is
    logged with its reason. Only then does it rename the folder aside under the locks, release them, and delete

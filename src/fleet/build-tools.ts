@@ -1,4 +1,4 @@
-// The build tools whose process keeps a cargo target in use for the disk keeper (src/fleet/disk-scan.ts targetUse):
+// The build tools whose process keeps a cargo target in use for the disk keeper (src/fleet/target-use.ts targetUse):
 // generic ones that start binaries from a workspace's target at any moment, even between holding cargo's locks, plus
 // the machine's own (capacity.diskBuildTools in config/machine.json), such as a project's build queue.
 import { basename } from "node:path";

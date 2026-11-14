@@ -18,13 +18,12 @@ import {
     checkoutUse,
     currentHolders,
     heldOpenBelow,
-    LIVE_PROBES,
     projectCheckouts,
-    type UseProbes,
     within,
 } from "./disk-scan.ts";
 import { DiskLog, describe, diskPause, GIB, gb } from "./disk-state.ts";
 import { DEFAULT_DISK_SWEEP_STALE_MINUTES, diskSweepStaleMinutes, procFile } from "./resources.ts";
+import { LIVE_PROBES, type UseProbes } from "./target-use.ts";
 
 /** The folders of a cargo profile dir whose entries cargo rebuilds when they are missing. */
 const ARTIFACT_DIRS: Readonly<Record<string, true>> = {

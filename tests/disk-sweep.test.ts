@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { dirname, join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import type { KeepReport } from "../src/fleet/disk.ts";
-import type { ProcessUse, UseProbes } from "../src/fleet/disk-scan.ts";
 import { atimeVerdict, sweepLine, sweepStaleArtifacts } from "../src/fleet/stale-sweep.ts";
+import type { ProcessUse, UseProbes } from "../src/fleet/target-use.ts";
 import { age, agedTarget, artifact, buildOutput, dfLine, holdLock, keeperBox, setCapacity } from "./disk-fixture.ts";
 import { sandbox, tempDir, withProject } from "./helpers.ts";
 

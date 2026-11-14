@@ -6,8 +6,9 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, type Dirent, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { cargoRunsIn, LIVE_PROBES, openBelow, targetUse, type UseProbes } from "./disk-scan.ts";
+import { openBelow } from "./disk-scan.ts";
 import { liveBuildUse } from "./live-builds.ts";
+import { cargoRunsIn, LIVE_PROBES, targetUse, type UseProbes } from "./target-use.ts";
 
 /** The lock files cargo holds while it compiles; only a whole-target wipe under them ever removes one. */
 export const CARGO_LOCKS: Readonly<Record<string, true>> = {
