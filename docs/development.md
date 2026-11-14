@@ -48,12 +48,12 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    repository of its own (a `.git` file pointing at a private git directory whose HEAD, objects and refs are the
    checkout's and whose index is the private one), so `git diff --cached` lists only the named paths and every file it
    reads is the committed version, even for a hook that `cd`s to the top level and unsets `GIT_DIR`, `GIT_WORK_TREE`
-   and `GIT_INDEX_FILE`; other jawans' staged or half-edited files neither fail nor pass it. A
-   tracked hook file runs as committed, and the checkout's top-level ignored entries (`node_modules`, a virtualenv)
-   are linked in so its tools resolve. A hook that reformats or re-stages a file is refused, naming the files: run
-   the formatter on them and commit again. `commit-msg` runs on a temporary message file, from the checkout root
-   with `GIT_INDEX_FILE` at the private index, and a message it edits is committed as edited. Repeated `-m` values
-   become separate paragraphs, as with `git commit`.
+   and `GIT_INDEX_FILE`; other jawans' staged or half-edited files neither fail nor pass it. A tracked hook file runs
+   as committed, and the checkout's ignored entries at any depth (`node_modules` of a nested package, a virtualenv,
+   `target`) are linked in at the same paths so its tools resolve. A hook that reformats or re-stages a file is
+   refused, naming the files: run the formatter on them and commit again. `commit-msg` runs on a temporary message
+   file, from the checkout root with `GIT_INDEX_FILE` at the private index, and a message it edits is committed as
+   edited. Repeated `-m` values become separate paragraphs, as with `git commit`.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes, and named

@@ -167,4 +167,23 @@ describe("bin/toli commit runs the project's pre-commit hook", () => {
         const committed = safeCommit({ dir, paths: ["README.md"], message: "Change the readme" });
         expect(head(dir)).toBe(committed.sha);
     });
+
+    test("the clone's ignored tools at any depth are at hand (a nested package's node_modules)", () => {
+        const dir = repo({ ".gitignore": "node_modules/\n" });
+        mkdirSync(join(dir, "apps/x"), { recursive: true });
+        writeFileSync(join(dir, "apps/x/index.js"), "x\n");
+        git(dir, ["add", "apps/x/index.js"]);
+        git(dir, ["commit", "--quiet", "-m", "x"]);
+        installHook(dir, ".git/hooks", "pre-commit", "apps/x/node_modules/.bin/check");
+        installHook(dir, "apps/x/node_modules/.bin", "check", 'echo "pre-commit: nested check ran" >&2; exit 0');
+        writeFileSync(join(dir, "apps/x/index.js"), "x changed\n");
+        const committed = safeCommit({ dir, paths: ["apps/x/index.js"], message: "Change x" });
+        expect(head(dir)).toBe(committed.sha);
+        installHook(dir, "apps/x/node_modules/.bin", "check", 'echo "pre-commit: nested check rejects" >&2; exit 1');
+        writeFileSync(join(dir, "apps/x/index.js"), "x changed again\n");
+        expect(() => safeCommit({ dir, paths: ["apps/x/index.js"], message: "Change x again" })).toThrow(
+            "nested check rejects",
+        );
+        expect(head(dir)).toBe(committed.sha);
+    });
 });

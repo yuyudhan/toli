@@ -1,6 +1,6 @@
 // The project's own git hooks as `bin/toli commit` (src/projects/commit.ts) runs them on its private index:
 // pre-commit on exactly the commit being made, then commit-msg on its message.
-import { accessSync, constants, existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { gitOk } from "../core/git.ts";
 import { run, ToliError } from "../core/util.ts";
@@ -24,15 +24,37 @@ function hookPath(attempt: Attempt, name: string): string {
 }
 
 /**
+ * Link the checkout's ignored `entry` (a path git lists relative to `root`, a directory ending in `/`) into the staged
+ * `tree` at the same place, so a hook finds a nested package's node_modules or a virtualenv as under `git commit`.
+ * Missing parent directories are created; an entry the tree already has, or one under a link (into the checkout,
+ * where creating anything would touch the shared working tree), is left alone.
+ */
+function linkIgnored(root: string, tree: string, entry: string): void {
+    const name = entry.replace(/\/$/, "");
+    if (name === "") return;
+    const parts = name.split("/");
+    let parent = tree;
+    for (const part of parts.slice(0, -1)) {
+        parent = join(parent, part);
+        const stat = lstatSync(parent, { throwIfNoEntry: false });
+        if (stat === undefined) mkdirSync(parent);
+        else if (!stat.isDirectory()) return;
+    }
+    const target = join(tree, name);
+    if (lstatSync(target, { throwIfNoEntry: false }) !== undefined) return;
+    symlinkSync(join(root, name), target);
+}
+
+/**
  * Run the repo's pre-commit hook on exactly the commit being made, and refuse when it exits non-zero or changes what
  * is committed. Its working tree is the private index's files written out (Attempt.staged), made a linked repository
  * of its own (Attempt.linkStaged: HEAD and objects the checkout's, index the private one), so `git diff --cached`
  * lists only the named paths and every file it reads is the committed version, even for a hook that unsets GIT_DIR,
  * GIT_WORK_TREE and GIT_INDEX_FILE: other jawans' staged or half-edited files in the shared checkout can neither fail
- * nor pass it. A hook file that is tracked runs as committed; the checkout's top-level ignored entries (node_modules, a
- * virtualenv) are linked in so its tools resolve. A hook that reformats or re-stages a file is refused rather than
- * followed: the commit would then differ from the working tree. A missing or non-executable hook is skipped, as git
- * skips it.
+ * nor pass it. A hook file that is tracked runs as committed; the checkout's ignored entries at any depth (node_modules
+ * of a nested package, a virtualenv, target) are linked in so its tools resolve. A hook that reformats or re-stages a
+ * file is refused rather than followed: the commit would then differ from the working tree. A missing or
+ * non-executable hook is skipped, as git skips it.
  */
 export function preCommitHook(attempt: Attempt): void {
     const hook = hookPath(attempt, "pre-commit");
@@ -44,11 +66,7 @@ export function preCommitHook(attempt: Attempt): void {
     const program = inside && executable(join(tree, rel)) ? join(tree, rel) : hook;
     const shown = inside ? rel : hook;
     const ignored = attempt.git(["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
-    for (const entry of ignored.code === 0 ? ignored.stdout.split("\0") : []) {
-        const name = entry.replace(/\/$/, "");
-        if (name === "" || name.includes("/") || existsSync(join(tree, name))) continue;
-        symlinkSync(join(root, name), join(tree, name));
-    }
+    for (const entry of ignored.code === 0 ? ignored.stdout.split("\0") : []) linkIgnored(root, tree, entry);
     const before = attempt.gitOk(["write-tree"]);
     const env = { GIT_DIR: attempt.linkStaged(), GIT_WORK_TREE: tree, GIT_INDEX_FILE: attempt.index };
     const result = run([program], { cwd: tree, env, timeoutMs: HOOK_TIMEOUT_MS });
