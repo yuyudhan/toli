@@ -205,6 +205,9 @@ Details: [harnesses.md](harnesses.md).
 - `job due` lists due jobs; `run-due` runs them (the live session); `tick` is the per-minute OS ticker; `begin` and
   `finish` claim a run and record its result. `finish --quiet` marks an idle run (nothing done, nothing found): it is
   recorded but never unseen, never wakes the lead and is not sent to the coordinator; a failed run is never quiet.
+  A headless run's omp session (`state/job-sessions/<runId>/`) is deleted when the run ends ok; a failed or stopped
+  run keeps it, and its result names the `omp --session-dir ... --resume ...` command that continues it, until
+  `bin/toli prune` removes it ([memory.md](memory.md#pruning)).
 - `schedule` installs the ticker (launchd on macOS; a systemd user timer on Linux when `systemctl --user` works,
   else crontab).
 - `inbox` holds messages from jawans and other machines; `wake` takes everything new once, for the chat.

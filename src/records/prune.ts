@@ -22,7 +22,7 @@ export const DEFAULT_RETENTION: Retention = {
 /** How often the tick posts the dry-run listing to the user's inbox. */
 export const PRUNE_REPORT_DAYS = 7;
 
-export type PruneKind = "job-result" | "task" | "log" | "inbox";
+export type PruneKind = "job-result" | "job-session" | "task" | "log" | "inbox";
 
 export type PruneItem = {
     kind: PruneKind;
@@ -85,6 +85,26 @@ function jobResultItems(at: number, retention: Retention): PruneItem[] {
     return items;
 }
 
+/** omp sessions a failed or stopped job run kept for its resume command (src/jobs/tick.ts), as old as job results. */
+function jobSessionItems(at: number, retention: Retention): PruneItem[] {
+    const base = join(paths.root(), "state", "job-sessions");
+    if (!existsSync(base)) return [];
+    const items: PruneItem[] = [];
+    for (const runId of readdirSync(base).sort()) {
+        const dir = paths.jobSessionDir(runId);
+        const info = statSync(dir);
+        if (!info.isDirectory() || at - info.mtimeMs <= retention.jobResultsDays * DAY_MS) continue;
+        items.push({
+            kind: "job-session",
+            target: relative(paths.root(), dir),
+            ageDays: Math.floor((at - info.mtimeMs) / DAY_MS),
+            action: "delete",
+            detail: "omp session a failed job run kept for resuming",
+        });
+    }
+    return items;
+}
+
 /** Finished or dropped tasks old enough to leave the active backlog. */
 function oldTasks(tasks: Task[], at: number, retention: Retention): Task[] {
     return tasks.filter(
@@ -139,7 +159,13 @@ export function planPrune(at: Date = now()): PruneItem[] {
         action: "archive" as const,
         detail: `${task.status} task "${task.title}" -> data/archive/${TASK_ARCHIVE}`,
     }));
-    return [...jobResultItems(time, retention), ...tasks, ...logItems(time, retention), ...inboxItems(time, retention)];
+    return [
+        ...jobResultItems(time, retention),
+        ...jobSessionItems(time, retention),
+        ...tasks,
+        ...logItems(time, retention),
+        ...inboxItems(time, retention),
+    ];
 }
 
 /**
@@ -164,7 +190,7 @@ function archiveTasks(ids: Set<string>, at: Date): number {
 
 export function applyPrune(items: PruneItem[], at: Date = now()): void {
     for (const item of items) {
-        if (item.kind !== "task") rmSync(join(paths.root(), item.target), { force: true });
+        if (item.kind !== "task") rmSync(join(paths.root(), item.target), { recursive: true, force: true });
     }
     const taskIds = new Set(items.filter((item) => item.kind === "task").map((item) => item.target));
     if (taskIds.size > 0) archiveTasks(taskIds, at);

@@ -162,6 +162,46 @@ describe("job tick", () => {
         const results = JSON.parse(box.ok(["job", "results", "--json"])) as { status: string }[];
         expect(results.map((result) => result.status)).toEqual(["failed"]);
     });
+
+    test("keeps a failed run's omp session for its resume hint, deletes an ok run's, and prune removes old ones", () => {
+        const box = tickBox();
+        const exitFlag = join(box.root, "omp-exit");
+        box.stub(
+            "omp",
+            [
+                'while [ "$#" -gt 0 ]; do if [ "$1" = --session-dir ]; then dir="$2"; fi; shift; done',
+                'mkdir -p "$dir" && echo "{}" > "$dir/s1.jsonl"',
+                'echo "[Recovery] Main: omp --resume s1"',
+                `exit "$(cat "${exitFlag}" 2>/dev/null || echo 0)"`,
+            ].join("\n"),
+        );
+        const sessions = join(box.root, "state", "job-sessions");
+        const resultText = (): string => {
+            const dir = join(box.root, "data", "jobs", "every");
+            const newest = readdirSync(dir).sort().at(-1) as string;
+            return readFileSync(join(dir, newest), "utf8");
+        };
+        box.ok(["job", "run", "every"], { now: "2026-03-04T10:05:00" });
+        expect(existsSync(sessions) ? readdirSync(sessions) : []).toEqual([]);
+        expect(resultText()).not.toContain("Session kept");
+
+        writeFileSync(exitFlag, "1");
+        box.ok(["job", "run", "every"], { now: "2026-03-04T10:06:00" });
+        const kept = readdirSync(sessions);
+        expect(kept.length).toBe(1);
+        const file = join(sessions, kept[0] as string, "s1.jsonl");
+        expect(existsSync(file)).toBe(true);
+        expect(resultText()).toContain(`--session-dir ${join(sessions, kept[0] as string)} --resume ${file}`);
+
+        type Pruned = { items: { kind: string; target: string }[] };
+        const fresh = JSON.parse(box.ok(["prune", "--json"])) as Pruned;
+        expect(fresh.items.filter((item) => item.kind === "job-session")).toEqual([]);
+        const later = JSON.parse(box.ok(["prune", "--apply", "--json"], { now: "2099-01-01T00:00:00" })) as Pruned;
+        expect(later.items.filter((item) => item.kind === "job-session").map((item) => item.target)).toEqual([
+            join("state", "job-sessions", kept[0] as string),
+        ]);
+        expect(readdirSync(sessions)).toEqual([]);
+    });
 });
 
 describe("worker outbox", () => {

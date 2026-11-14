@@ -37,6 +37,7 @@ facts there are corrected, as a normal task.
 | Pruned by `bin/toli prune --apply`                    | Default rule                                  | What happens                       |
 | ----------------------------------------------------- | --------------------------------------------- | ---------------------------------- |
 | Job results `data/jobs/<name>/*.md`                   | older than 30 days; the newest 5 per job stay | deleted                            |
+| Kept job sessions `state/job-sessions/<runId>/`       | older than 30 days (`jobResultsDays`)         | deleted                            |
 | Done or dropped tasks in `data/backlog.json`          | finished more than 90 days ago                | moved to `data/archive/tasks.json` |
 | Files in `logs/`                                      | not written for 14 days                       | deleted                            |
 | Inbox items `data/inbox/*.md`                         | acknowledged and older than 14 days           | deleted                            |

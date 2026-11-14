@@ -16,6 +16,7 @@ import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveM
 import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
+import { sessionFile } from "../jawans/launch.ts";
 import { stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
@@ -25,7 +26,7 @@ import { pullPeers } from "../peer/pull-peers.ts";
 import { peerSettings } from "../peer/store.ts";
 import { pullLine } from "../peer/transport-command.ts";
 import { loadBacklog } from "../records/backlog.ts";
-import { weeklyPruneReport } from "../records/prune.ts";
+import { loadRetention, weeklyPruneReport } from "../records/prune.ts";
 import { surfaceStaleTasks } from "../records/stale.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
 import {
@@ -186,12 +187,23 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
         }
     } finally {
         removeRun(begun.runId);
-        rmSync(sessionDir, { recursive: true, force: true });
     }
     if (stalled) fallback += `; stopped: ${stallText(stall)}`;
     const ran = `omp ${choiceText({ ...choice, model })}${fallback}`;
     const stillRunning = loadJobState()[name]?.running?.runId === begun.runId;
-    if (!stillRunning) return `job ${name} ${begun.runId}: finished by the agent (${ran}, exit ${result.code})`;
+    const failed = stalled || result.code !== 0 || (!stillRunning && loadJobState()[name]?.lastStatus === "failed");
+    // A failed run's session stays for the resume command omp printed; `bin/toli prune` removes it later.
+    const session = failed ? sessionFile(sessionDir) : null;
+    if (session === null) rmSync(sessionDir, { recursive: true, force: true });
+    const resume =
+        session === null
+            ? []
+            : [
+                  "",
+                  `Session kept: resume it with \`omp --cwd ${paths.root()} --session-dir ${sessionDir} --resume ${session}\` (\`bin/toli prune\` removes it after ${loadRetention().jobResultsDays} days).`,
+              ];
+    if (!stillRunning)
+        return `job ${name} ${begun.runId}: finished by the agent (${ran}, exit ${result.code})${session === null ? "" : `; session kept in ${sessionDir}`}`;
     const body = [
         `omp exited ${result.code} without calling \`bin/toli job finish\`; captured output follows.`,
         `Model: ${ran}.`,
@@ -199,6 +211,7 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
         "```text",
         result.output.trimEnd(),
         "```",
+        ...resume,
     ].join("\n");
     const path = finishJob(name, begun.runId, body, result.code === 0 ? "ok" : "failed");
     return `job ${name} ${begun.runId}: ${ran}, exit ${result.code}, result ${path}`;
