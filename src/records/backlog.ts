@@ -70,7 +70,7 @@ export type Task = {
     dispatchedAt?: string;
     /**
      * The lead session (dispatchingSessionPid) that recorded native subagent `agent`; the subagent dies with it, so a
-     * gone pid frees its jawan slot and the task needs a re-dispatch (src/records/stale.ts agentSessionGone).
+     * gone pid frees its jawan slot and the task needs a re-dispatch (src/records/agents.ts agentSessionGone).
      */
     agentSession?: { agent: string; pid: number };
     /**

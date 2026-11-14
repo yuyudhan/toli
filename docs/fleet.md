@@ -304,12 +304,13 @@ Nothing may sit idle silently, away mode (`/afk`) included. Two checks run from 
 - **Active tasks with no live run.** An active task whose recorded run ended `oversight.staleTaskMinutes` ago
   (default 15) is stale: a `bin/toli spawn` run no longer queued or running, a run started by `bin/toli remote
 --task` before the cutover whose saved output says it finished after the task's jawan was recorded, or no jawan
-  recorded at all. A task delegated with `--for` counts as active with the fleet id as its jawan. A harness subagent
-  id toli cannot look up counts as live until such a record shows its run ended. The digest's Next block lists stale
-  tasks first, with the run's last report line and any answer recorded since; every tick posts newly stale ones to
-  the inbox once per ended run, so the lead gets a `[toli wake]` naming them. A task answered less than the grace
-  minutes ago is not stale: its lead dispatches it in the turn that recorded the answer (`task answer` posts no wake
-  of its own; only an answer forwarded from another machine's lead does). Recording a new jawan
+  recorded at all. A task delegated with `--for` counts as active with the fleet id as its jawan. A native harness
+  subagent is stale once it reported its end, stopped reporting running, never reported running, or died with its
+  lead session (docs/harnesses.md "Jawan slots"); a live lead session alone never keeps it live. The digest's Next
+  block lists stale tasks first, with the run's last report line and any answer recorded since; every tick posts
+  newly stale ones to the inbox once per ended run, so the lead gets a `[toli wake]` naming them. A task answered
+  less than the grace minutes ago is not stale: its lead dispatches it in the turn that recorded the answer (`task
+answer` posts no wake of its own; only an answer forwarded from another machine's lead does). Recording a new jawan
   (`task start --agent`, `spawn --task`) clears it. A task is live while the run it names, or the latest run of that
   run's resume or replace chain, is queued or running, even when that run carries no task id (`task start --agent`
   also records the task on a run spawned without `--task`).

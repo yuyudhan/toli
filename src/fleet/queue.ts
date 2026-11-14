@@ -1,7 +1,9 @@
 // A machine's work queue (docs/sardars.md): what ranks machines for new work, published in `resources --json`.
+import { now } from "../core/util.ts";
 import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
+import { agentState, delegatedAway, nativeAgent } from "../records/agents.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
-import { agentSessionGone } from "../records/stale.ts";
+import { staleTaskMinutes } from "../records/stale.ts";
 import { currentFull, type Full } from "./full.ts";
 
 /**
@@ -33,14 +35,6 @@ function workedByRuns(runs: JawanRun[]): Set<string> {
     );
 }
 
-/** An open delegation to another machine: one not dropped and not handed back. */
-function delegatedAway(task: Task): boolean {
-    return (task.delegatedTo ?? []).some((id) => {
-        const state = task.delegates?.[id];
-        return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
-    });
-}
-
 /**
  * The queued tasks that wait for a jawan: no run of this machine (running or waiting for a slot) works on them and
  * no other machine has them (an open delegation). Only these count as queue and only these are offered to another lead.
@@ -52,22 +46,26 @@ export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun
 
 /**
  * The native harness subagents working on this machine's tasks, one per distinct agent id: active tasks whose jawan
- * was recorded with `task start --agent <id>` and is not a `bin/toli spawn` run (`j-...`, counted as a run while it
- * lives). Left out: a task a live run works on (counted as that run), one waiting on something (`task wait`), one
- * delegated to another machine (its agent is the delegation's fleet id), and one whose subagent died with the lead
- * session that recorded it (`agentSession`; oversight lists it for a re-dispatch, src/records/stale.ts).
+ * was recorded with `task start --agent <id>` (a native agent, src/records/agents.ts) and that is running now: it
+ * reports running, or was recorded less than the grace minutes ago and has not reported since. A live lead session
+ * is no evidence: one interactive session outlives the many subagents it started. Left out: a task a live run works
+ * on (counted as that run), one waiting on something (`task wait`), and one whose subagent ended, stopped reporting
+ * or died with its session (oversight lists it for a re-dispatch, src/records/stale.ts).
  */
-export function subagentJawans(tasks: Task[], runs: JawanRun[]): number {
+export function subagentJawans(
+    tasks: Task[],
+    runs: JawanRun[],
+    at: Date = now(),
+    graceMinutes: number = staleTaskMinutes(),
+): number {
     const working = workedByRuns(runs);
     const agents = new Set(
         tasks.flatMap((task) =>
             task.status === "active" &&
-            task.agent !== undefined &&
-            !task.agent.startsWith("j-") &&
+            nativeAgent(task) &&
             task.waitingOn === undefined &&
             !working.has(task.id) &&
-            !delegatedAway(task) &&
-            !agentSessionGone(task)
+            agentState(task, at, graceMinutes).state === "live"
                 ? [task.agent]
                 : [],
         ),

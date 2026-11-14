@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ENV, fleet, liveRun, ROOMY, remoteSnapshot, resourcesQueue } from "./fleet-fixture.ts";
+import { ENV, editBacklog, fleet, liveRun, ROOMY, remoteSnapshot, resourcesQueue } from "./fleet-fixture.ts";
 import { GIT_ENV, type Sandbox, TOLI_BIN, withProject } from "./helpers.ts";
 
 /**
@@ -32,6 +32,20 @@ type AgentTask = { id: string; agentSession?: { agent: string; pid: number } };
 function agentSession(box: Sandbox, id: string): AgentTask["agentSession"] {
     const tasks = JSON.parse(box.ok(["task", "list", "--json"])) as AgentTask[];
     return tasks.find((task) => task.id === id)?.agentSession;
+}
+
+/** What the omp extension writes for a running subagent (state/agents/<id>.json): its omp pid and last report. */
+function agentReport(box: Sandbox, id: string, report: { pid: number; at: string; endedAt?: string }): void {
+    const dir = join(box.root, "state", "agents");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${id}.json`), JSON.stringify(report));
+}
+
+function queueAt(box: Sandbox, now: string): Record<string, unknown> {
+    const resources: { queue: Record<string, unknown> } = JSON.parse(
+        box.ok(["resources", "--json"], { env: ENV, now }),
+    );
+    return resources.queue;
 }
 
 /** Coordinator m1 with two jawan slots, project x cloned, and `tasks` queued tasks on it; m2's queue is empty. */
@@ -86,13 +100,14 @@ describe("native subagent jawans share capacity.maxRuns with spawn runs", () => 
         const lead = await leadSession(box, ["task", "start", "T1", "--agent", "T11Sub"], "2026-03-04T08:00:00.000Z");
         try {
             expect(agentSession(box, "T1")).toEqual({ agent: "T11Sub", pid: lead.pid });
-            expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+            agentReport(box, "T11Sub", { pid: lead.pid, at: "2026-03-04T08:59:30.000Z" });
+            expect(queueAt(box, "2026-03-04T09:00:00.000Z")).toMatchObject({ jawansRunning: 1, subagents: 1 });
             expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).not.toContain("T1 (x) is active");
         } finally {
             lead.kill();
             await lead.exited;
         }
-        expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 0, subagents: 0 });
+        expect(queueAt(box, "2026-03-04T09:00:00.000Z")).toMatchObject({ jawansRunning: 0, subagents: 0 });
         expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).toContain(
             `T1 (x) is active but its agent T11Sub died with its session ${lead.pid} (dispatched 60m ago); no answer recorded since: re-dispatch it now`,
         );
@@ -110,5 +125,64 @@ describe("native subagent jawans share capacity.maxRuns with spawn runs", () => 
             await other.exited;
         }
         expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+    });
+});
+
+describe("a native subagent counts as a running jawan only while it reports running (T1419)", () => {
+    // T1419: one interactive lead session lives for days; every task one of its finished subagents was recorded on
+    // counted as running while that session was alive (68 native subagents while 1-3 ran).
+    const START = "2026-03-04T08:00:00.000Z";
+    const NOW = "2026-03-04T09:00:00.000Z";
+
+    test("in one live session, only the subagent reporting now counts; finished and silent ones need a re-dispatch", async () => {
+        const box = twoSlots(3);
+        const session = Bun.spawn(["sleep", "60"]);
+        try {
+            for (const n of [1, 2, 3]) box.ok(["task", "start", `T${n}`, "--agent", `T1${n}Sub`], { now: START });
+            editBacklog(box, (tasks) => {
+                for (const task of tasks) task.agentSession = { agent: task.agent, pid: session.pid };
+            });
+            agentReport(box, "T11Sub", { pid: session.pid, at: "2026-03-04T08:59:30.000Z" });
+            agentReport(box, "T13Sub", {
+                pid: session.pid,
+                at: "2026-03-04T08:20:00.000Z",
+                endedAt: "2026-03-04T08:20:00.000Z",
+            });
+            expect(queueAt(box, NOW)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+            const digest = box.ok(["digest"], { now: NOW });
+            expect(digest).not.toContain("T1 (x) is active");
+            expect(digest).toContain(
+                "T2 (x) is active but its agent T12Sub never reported running (dispatched 60m ago); no answer recorded since",
+            );
+            expect(digest).toContain(
+                "T3 (x) is active but its run T13Sub ended 40m ago (state/agents/T13Sub.json); no answer recorded since",
+            );
+            // A subagent that stops reporting stops counting at once and needs a re-dispatch after the grace minutes.
+            expect(queueAt(box, "2026-03-04T09:10:00.000Z")).toMatchObject({ subagents: 0 });
+            expect(box.ok(["digest"], { now: "2026-03-04T09:19:30.000Z" })).toContain(
+                "T1 (x) is active but its agent T11Sub has not reported running since 20m ago",
+            );
+        } finally {
+            session.kill();
+            await session.exited;
+        }
+    });
+
+    test("an agent no harness reports (a label, a Claude Code subagent) counts only for the grace minutes after dispatch", () => {
+        const box = twoSlots(1);
+        box.ok(["task", "start", "T1", "--agent", "m2 lead (talk 08:00)"], { now: START });
+        expect(queueAt(box, "2026-03-04T08:05:00.000Z")).toMatchObject({ subagents: 1 });
+        expect(box.ok(["digest"], { now: "2026-03-04T08:05:00.000Z" })).not.toContain("T1 (x) is active");
+        expect(queueAt(box, NOW)).toMatchObject({ jawansRunning: 0, subagents: 0 });
+        expect(box.ok(["digest"], { now: NOW })).toContain(
+            "T1 (x) is active but its agent m2 lead (talk 08:00) never reported running (dispatched 60m ago)",
+        );
+    });
+
+    test("a bin/toli remote run is the target's jawan, never a native subagent here, and only its record ends it", () => {
+        const box = twoSlots(1);
+        box.ok(["task", "start", "T1", "--agent", "remote:m2:bg_7"], { now: START });
+        expect(queueAt(box, "2026-03-04T08:05:00.000Z")).toMatchObject({ jawansRunning: 0, subagents: 0 });
+        expect(box.ok(["digest"], { now: NOW })).not.toContain("T1 (x) is active");
     });
 });

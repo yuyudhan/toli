@@ -28,15 +28,19 @@
 // Headless runs (omp -p: the ticker, the lead service's turns, spawned jawans) and subagent
 // sessions load this file too; they must not claim jobs, take results, get the
 // lead guidance or the guard, so everything is gated on the main TUI session.
-// One thing is not: when the extension loads in any omp that is not a `bin/toli spawn`
+// Two things are not. When the extension loads in any omp that is not a `bin/toli spawn`
 // jawan, it puts the lead's build variables (`bin/toli hook lead-build-env`: the cargo shim
 // first on PATH, CARGO_BUILD_JOBS, toli's rustc wrapper) into this process's environment, before any shell starts,
-// so the bash tool and every native subagent (omp `task`) build through the heavy-build slots.
+// so the bash tool and every native subagent (omp `task`) build through the heavy-build slots. And every subagent
+// session reports itself running in state/agents/<id>.json from its agent loop's start, every minute, until its
+// loop ends (src/records/agents.ts AgentReporter): a native jawan counts as running only on that evidence, never
+// because the lead session that started it is still open.
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CliHealth } from "../../src/harness/cli-health.ts";
 import { guardDecision, isBrief, jawanEnv, ompAction } from "../../src/harness/lead-guard.ts";
+import { AGENT_REPORT_EVERY_MS, AgentReporter } from "../../src/records/agents.ts";
 
 // omp ships no installable type package; declare the surface this file uses.
 type Timer = unknown;
@@ -44,7 +48,7 @@ type Context = {
     hasUI: boolean;
     cwd: string;
     /** The agent this session runs; subagents (task, advisor) report kind "sub". */
-    agent?: { kind: string };
+    agent?: { kind: string; id: string };
     isIdle(): boolean;
     setInterval(fn: () => unknown, ms: number): Timer;
     ui: { notify(message: string, level: "info" | "warning" | "error"): void };
@@ -225,7 +229,19 @@ export default function toliExtension(pi: ExtensionAPI): void {
         return decision.allow ? undefined : { block: true, reason: decision.reason };
     });
 
+    // A subagent session reports itself running (see the header); the main session's reporter does nothing.
+    const reporter = new AgentReporter(REPO_ROOT, process.pid);
+    let beating = false;
+    pi.on("agent_start", (_event, ctx) => {
+        reporter.started(ctx.agent, new Date());
+        if (beating || ctx.agent?.kind !== "sub") return;
+        beating = true;
+        ctx.setInterval(() => reporter.beat(new Date()), AGENT_REPORT_EVERY_MS);
+    });
+    pi.on("agent_end", () => reporter.ended(new Date()));
+
     pi.on("session_shutdown", async () => {
+        reporter.ended(new Date());
         if (!registered) return;
         registered = false;
         await runToli(["session", "end", "--pid", String(process.pid)]);

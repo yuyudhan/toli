@@ -72,12 +72,19 @@ bring it into the lead's chat as a `[toli wake]` message. On a worker machine th
 coordinator's inbox. Run records live in `state/jawans/<id>.json`.
 
 **Jawan slots.** A machine runs at most `capacity.maxRuns` jawans at once (config/machine.json, default a quarter of
-the cores): running spawn runs plus the lead's native subagents, counted as the active tasks recorded with `task
-start --agent <id>` that no spawn run works on (one per distinct agent id). `task start --agent` also records the lead
-session that runs it: the extension-registered session, the `lead attach` omp or a headless turn's omp, whichever is
-an ancestor of the command (a lead no record names, such as a Claude Code lead, records none and counts as before). A
-native subagent dies with that session, so once its pid is gone the task no longer takes a slot, and the digest's
-Next block lists it for a re-dispatch (`its agent <id> died with its session <pid>`). `spawn` with every slot busy
+the cores): running spawn runs plus the lead's native subagents that are running now, one per distinct agent id
+recorded with `task start --agent <id>` on an active task no spawn run works on. A live lead session is no evidence
+that any one of its subagents runs: one interactive session outlives the many subagents it started. The omp extension
+has every subagent session report itself running in `state/agents/<id>.json` (its omp pid and last report, every
+minute, and its end when its loop ends); a subagent counts while that report is fresh (3 minutes) from a running omp.
+An agent no harness reports (a Claude Code subagent, a label naming who works on it) counts only for
+`oversight.staleTaskMinutes` after it was recorded; a `bin/toli remote` run (`remote:<machine>:...`) is the target's
+jawan, never one here. `task start --agent` also records the lead session that runs it (the extension-registered
+session, the `lead attach` omp or a headless turn's omp, whichever is an ancestor of the command); once its pid is
+gone, its subagents died with it. The digest's Next block lists a task whose subagent died with its session (`its
+agent <id> died with its session <pid>`), reported its end (`its run <id> ended ... (state/agents/<id>.json)`),
+stopped reporting (`has not reported running since ...`) or never reported (`never reported running`) for a
+re-dispatch, after the grace minutes. `spawn` with every slot busy
 records the run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free,
 from the supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run
 regardless, for the lead's explicit use. `run kill` on a queued run cancels it; a task naming that run as its jawan

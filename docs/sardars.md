@@ -195,8 +195,9 @@ Rules that keep the list consistent without locks across machines:
 Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, running
 jawans, queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a jawan plus
 running jawans plus queued jawan runs. Running jawans are `bin/toli spawn` runs holding a slot and native harness
-subagents (omp `task`, Claude Code `Agent`) recorded with `bin/toli task start T<n> --agent <id>`: one per distinct
-agent id on an active task, unless a live spawn run works on that task (then only the run counts). A queued task a
+subagents (omp `task`, Claude Code `Agent`) recorded with `bin/toli task start T<n> --agent <id>` that are running now
+(they report running, docs/harnesses.md "Jawan slots"): one per distinct agent id on an active task, unless a live
+spawn run works on that task (then only the run counts). A queued task a
 run already works on, or one delegated to another machine and still open there, is not counted again; active tasks
 with no jawan here (a lead's bookkeeping, work delegated elsewhere, a task waiting on something with `task wait`)
 and held tasks are not queue. `pick` and
