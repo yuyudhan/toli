@@ -297,7 +297,8 @@ export async function runGateProcess(file: string): Promise<void> {
     if (record === null) throw new ToliError(`gate record ${file} is gone`);
     // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
     process.on("SIGHUP", () => {});
-    await withBuildSlot(record.dir, async ({ env: slotEnv, scope }) => {
+    // The recipe may run the project's browser tests against its local stack: keep that stack running (T1492).
+    await withBuildSlot(record.dir, record.project, async ({ env: slotEnv, scope }) => {
         const recipe: Argv = ["sh", "-c", record.recipe];
         const env = { ...process.env, ...slotEnv };
         const launch = launchInScope(scope, recipe);

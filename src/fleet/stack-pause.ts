@@ -14,10 +14,16 @@
 // freed, or the minute tick). Containers are only ever paused, unpaused, stopped and started: never removed or
 // inspected beyond their status. A live-stack project's declaration is handled per build instead
 // (src/fleet/live-stack-pause.ts).
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+//
+// A command in a slot that uses a project's stack (its browser tests signing in against the local backend, run in that
+// project's checkout, src/fleet/build-slots.ts `stackUserOf`) keeps that stack running: a paused container accepts a
+// connection and never answers it, so the tests hang (T1492). While it runs, state/build-slots/stack-user-<pid> names
+// the project; it resumes what other builds paused of that stack, and no build pauses it until the file's process is
+// gone.
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../core/paths.ts";
-import { run, warn, writeTextAtomic } from "../core/util.ts";
+import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { flock, LOCK_EX } from "./cargo-lock.ts";
 
@@ -32,6 +38,8 @@ const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const pausedFile = (): string => join(paths.buildSlotsDir(), "stacks.paused");
 const stoppedFile = (): string => join(paths.buildSlotsDir(), "stacks.stopped");
 const lockFile = (): string => join(paths.buildSlotsDir(), "stacks.lock");
+const userFile = (pid: number): string => join(paths.buildSlotsDir(), `stack-user-${pid}`);
+const USER_FILE = /^stack-user-(\d+)$/;
 
 /** A `## Local stack` section's containers to pause and to stop during builds, and names it could not use. */
 export type StackDeclaration = { containers: string[]; stop: string[]; invalid: string[] };
@@ -63,15 +71,61 @@ export function parseStackDeclaration(notes: string): StackDeclaration {
     return { containers: pause.filter((name) => !stop.includes(name)), stop, invalid };
 }
 
-/** Every project's declared containers, live-stack projects excluded; unusable names are reported once per call. */
-function declaredContainers(): { pause: string[]; stop: string[] } {
+/** `project`'s `## Local stack` declaration, from its notes (nothing declared without them). */
+export function stackDeclarationOf(project: string): StackDeclaration {
+    const file = paths.projectNotes(project);
+    return parseStackDeclaration(existsSync(file) ? readFileSync(file, "utf8") : "");
+}
+
+/**
+ * The projects whose stack a live command uses (`claimStack`); the files of commands that are gone are removed. Read it
+ * under the stacks lock.
+ */
+export function stacksInUse(): Set<string> {
+    const projects = new Set<string>();
+    if (!existsSync(paths.buildSlotsDir())) return projects;
+    for (const name of readdirSync(paths.buildSlotsDir())) {
+        const pid = USER_FILE.exec(name)?.[1];
+        if (pid === undefined) continue;
+        const file = join(paths.buildSlotsDir(), name);
+        if (!pidAlive(Number(pid))) rmSync(file, { force: true });
+        else projects.add(readFileSync(file, "utf8").trim());
+    }
+    return projects;
+}
+
+/**
+ * Record that this process runs a command using `project`'s stack, and unpause or start again the containers of it
+ * that builds paused or stopped (`pauseDevStacks`). Call under the stacks lock; `releaseStack` ends it.
+ */
+export function claimStack(project: string): void {
+    mkdirSync(paths.buildSlotsDir(), { recursive: true });
+    writeTextAtomic(userFile(process.pid), `${project}\n`);
+    const declared = stackDeclarationOf(project);
+    const own = new Set([...declared.containers, ...declared.stop]);
+    const paused = readNames(pausedFile());
+    const stopped = readNames(stoppedFile());
+    const stillPaused = unpauseContainers(paused.filter((name) => own.has(name)));
+    const stillStopped = startContainers(stopped.filter((name) => own.has(name)));
+    writeNames(pausedFile(), [...paused.filter((name) => !own.has(name)), ...stillPaused]);
+    writeNames(stoppedFile(), [...stopped.filter((name) => !own.has(name)), ...stillStopped]);
+}
+
+/** End this process's `claimStack`: builds may pause that stack again. */
+export function releaseStack(): void {
+    rmSync(userFile(process.pid), { force: true });
+}
+
+/**
+ * Every project's declared containers, live-stack projects and those whose stack a command uses (`inUse`) excluded;
+ * unusable names are reported once per call.
+ */
+function declaredContainers(inUse: Set<string>): { pause: string[]; stop: string[] } {
     const pause = new Set<string>();
     const stop = new Set<string>();
     for (const project of loadProjects()) {
-        if (project.liveStack === true) continue;
-        const file = paths.projectNotes(project.name);
-        if (!existsSync(file)) continue;
-        const declared = parseStackDeclaration(readFileSync(file, "utf8"));
+        if (project.liveStack === true || inUse.has(project.name)) continue;
+        const declared = stackDeclarationOf(project.name);
         for (const bad of declared.invalid)
             warn(`toli: ${project.name}: "${bad}" is not a container name, not paused during builds`);
         for (const name of declared.containers) pause.add(name);
@@ -148,14 +202,14 @@ export function stopContainers(names: string[]): string[] {
 }
 
 /**
- * Pause or stop every declared container that runs, once a build holds a slot. Never fails the build: a container
- * that cannot be paused or stopped is warned about and left running.
+ * Pause or stop every declared container that runs, once a build holds a slot, except those of a stack a command uses
+ * (`claimStack`). Never fails the build: a container that cannot be paused or stopped is warned about and left running.
  */
 export function pauseDevStacks(): void {
     try {
-        const declared = declaredContainers();
-        if (declared.pause.length === 0 && declared.stop.length === 0) return;
         withStackLock(() => {
+            const declared = declaredContainers(stacksInUse());
+            if (declared.pause.length === 0 && declared.stop.length === 0) return;
             writeNames(pausedFile(), [...new Set([...readNames(pausedFile()), ...pauseContainers(declared.pause)])]);
             writeNames(stoppedFile(), [...new Set([...readNames(stoppedFile()), ...stopContainers(declared.stop)])]);
         });

@@ -153,6 +153,10 @@ so a resume never needs the notes. A build killed outright (SIGKILL, a crash) ca
 any freed slot or the minute tick sees its pid gone and resumes the stack. A failed pause is warned about and the
 build runs anyway; a failed resume prints the command that fixes it and is retried at those same moments.
 
+A command in this checkout that is not cargo (browser tests through `bin/toli build-slot`, a gate or push check) uses
+the stack, so toli keeps it running for that command: it resumes the stack if another build paused it, and no build
+pauses it until the command ends ([fleet.md](fleet.md#dev-stacks-and-heavy-builds)).
+
 ## Dev stacks that rebuild on save
 
 A project that is not in live-stack mode can still have a dev container that recompiles on every save. Left alone it
@@ -167,8 +171,9 @@ notes' `## Local stack` section and toli pauses or stops it for as long as a bui
 List only the watch or dev containers (never a database): they are paused with `docker pause` or stopped with
 `docker stop`, and unpaused or started again afterwards, data kept, never removed. A paused container keeps its
 memory; a stopped one frees it. The details, and what happens when a resume fails, are in
-[fleet.md](fleet.md#dev-stacks-and-heavy-builds). A live-stack project's declaration is used for every heavy build on
-the machine instead ([above](#pausing-the-stack-during-a-build)).
+[fleet.md](fleet.md#dev-stacks-and-heavy-builds), as is why a project's own browser tests, gate or push check keep its
+stack running. A live-stack project's declaration is used for every heavy build on the machine instead
+([above](#pausing-the-stack-during-a-build)).
 
 A container's cargo never sees toli's cargo shim, rustc wrapper or `CARGO_BUILD_JOBS`: it compiles with the
 container's own environment, at one job per core of the machine. While a build holds a slot it is paused or stopped

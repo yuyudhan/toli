@@ -17,15 +17,19 @@
 // state/build-slots/live-<project>.json: the first in pauses, the last out resumes, and a holder killed outright is
 // dropped by the next build's end or the minute tick, which then resumes the stack. The record keeps what was paused
 // and how to resume it, so a resume needs no notes. With nothing declared the build runs beside the stack, said once
-// (state/build-slots/live-<project>.undeclared).
+// (state/build-slots/live-<project>.undeclared). A stack a command in a slot uses (`whileStackInUse`,
+// src/fleet/stack-pause.ts `claimStack`) is resumed for it and left running by every build meanwhile.
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../core/paths.ts";
 import { pidAlive, readJson, run, warn, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import {
+    claimStack,
     parseStackDeclaration,
     pauseContainers,
+    releaseStack,
+    stacksInUse,
     startContainers,
     stopContainers,
     unpauseContainers,
@@ -145,9 +149,13 @@ function resumeStack(project: string, paused: Paused): Paused | null {
     return { ...paused, resume, containers, stopped };
 }
 
-/** Count this process in as a heavy build on `project`'s record, pausing its stack when it is the first. */
+/**
+ * Count this process in as a heavy build on `project`'s record, pausing its stack when it is the first; a stack a
+ * command uses (`whileStackInUse`) is neither counted nor paused.
+ */
 function countIn(project: string): void {
     withStackLock(() => {
+        if (stacksInUse().has(project)) return;
         const record = readRecord(project);
         const holders = record.holders.filter(pidAlive);
         let paused = record.paused;
@@ -230,6 +238,28 @@ export async function whileLiveStacksPaused<T>(body: () => Promise<T>): Promise<
         return await body();
     } finally {
         resumeLiveStacks();
+    }
+}
+
+/**
+ * Run `body`, a command in a slot that uses `project`'s stack (null: none), with that stack running: what builds
+ * paused or stopped of it is resumed first (its dev-stack containers, or a live stack's record), and no build pauses it
+ * until `body` ends. The builds that paused a live stack stay counted, so the last one out resumes nothing further.
+ */
+export async function whileStackInUse<T>(project: string | null, body: () => Promise<T>): Promise<T> {
+    if (project === null) return await body();
+    safely(project, "not kept running", () =>
+        withStackLock(() => {
+            claimStack(project);
+            const record = readRecord(project);
+            if (record.paused === null) return;
+            writeRecord(project, { ...record, paused: resumeStack(project, record.paused) });
+        }),
+    );
+    try {
+        return await body();
+    } finally {
+        releaseStack();
     }
 }
 

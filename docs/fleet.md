@@ -327,6 +327,14 @@ start`), once no command holds a slot and none waits for one, so a queue of buil
 removed, and only those named are touched: a database is never paused or stopped. Nothing is paused or stopped that
 is not running, and a container Docker cannot pause or stop is warned about and left running; the build still runs.
 
+A command in a slot that tests against its project's stack is the exception: it needs the stack to answer, and a
+paused container accepts a connection and never answers it (browser tests signing in hang on the session request).
+So a command that is not cargo, run in a registered project's clone or task worktree (`bin/toli build-slot --
+<command>`, a recipe that wraps it), and a gate or push check of a project keep that project's stack running: what
+other builds paused or stopped of it is resumed when the command starts, and no build pauses it while the command runs
+(`state/build-slots/stack-user-<pid>` names the project until that process is gone). Afterwards it stays running until
+the next build pauses it. A cargo command in the checkout is a compile, and pauses the stack as before.
+
 The names are kept in `state/build-slots/stacks.paused` and `stacks.stopped`. A failed resume prints
 `toli: could not unpause <name>: <docker's error>; run \`docker unpause <name>\``(or`start`), keeps the name there,
 and is retried when the next slot is freed and by the minute tick, which also resumes a stack a killed holder left

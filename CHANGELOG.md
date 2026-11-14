@@ -4,6 +4,16 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.21 - unreleased
+
+### Fixed
+
+- Browser tests run under `bin/toli build-slot` (or a recipe that wraps it) no longer hang against the project's own
+  local stack. The slot paused the stack's declared `Pause during builds` containers, so a signed-in page's session
+  request was accepted by the paused backend and never answered. A command that is not cargo, run in a project's
+  clone or task worktree, and a project's gate or push check now keep that project's stack running: it is resumed if
+  another build paused it, and no build pauses it until the command ends. Cargo commands still pause it (T1492).
+
 ## v0.5.20 - 2026-11-14
 
 ### Fixed

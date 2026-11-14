@@ -13,10 +13,11 @@
 // systemd scope capped at `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the
 // session that started it, and a Node tool in it gets a heap cap that fits there (`nodeHeapEnv`). A project's dev
 // containers that rebuild on save are paused or stopped while any slot is held (src/fleet/stack-pause.ts); every
-// live-stack project's stack, while any heavy build runs (src/fleet/live-stack-pause.ts).
+// live-stack project's stack, while any heavy build runs (src/fleet/live-stack-pause.ts); never the stack of the
+// project a command in a slot tests against (`stackUserOf`): a paused backend accepts a request and never answers it.
 import { closeSync, existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
-import { join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
@@ -28,7 +29,7 @@ import { checkBuildPlace } from "./build-place.ts";
 import { busyBuildSlots, slotHolder, slotWaiters, takeInTurn } from "./build-queue.ts";
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
-import { resumeAbandonedLiveStacks, whileLiveStacksPaused } from "./live-stack-pause.ts";
+import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks, resumeDevStacks } from "./stack-pause.ts";
 
@@ -193,6 +194,12 @@ function realOrNull(path: string): string | null {
     }
 }
 
+/** Whether `path` (resolved) is the folder `dir` or lies inside it. */
+function within(path: string, dir: string): boolean {
+    const real = realOrNull(dir);
+    return real !== null && (path === real || path.startsWith(`${real}${sep}`));
+}
+
 /**
  * The live-stack project (docs/projects.md "Live-stack mode") whose checkout `cwd` lies in, or null: the machine's
  * one build there is its running stack's, so a build started in it (a lead's native subagent's, through the shim)
@@ -201,11 +208,25 @@ function realOrNull(path: string): string | null {
 export function liveStackProjectAt(cwd: string): string | null {
     const here = realOrNull(cwd);
     if (here === null) return null;
-    const project = loadProjects().find((candidate) => {
-        if (candidate.liveStack !== true) return false;
-        const checkout = realOrNull(paths.projectDir(candidate.name));
-        return checkout !== null && (here === checkout || here.startsWith(`${checkout}${sep}`));
-    });
+    const project = loadProjects().find(
+        (candidate) => candidate.liveStack === true && within(here, paths.projectDir(candidate.name)),
+    );
+    return project?.name ?? null;
+}
+
+/**
+ * The project whose stack `command`, started in `cwd`, uses (`whileStackInUse`): the project whose clone or task
+ * worktree `cwd` lies in, unless the command is cargo (a compile, the reason stacks pause). Its other commands (browser
+ * tests, a recipe running them) talk to its local stack, which must answer them (T1492).
+ */
+export function stackUserOf(cwd: string, command: string[]): string | null {
+    if (/^cargo(-[\w-]+)?$/.test(basename(command[0] ?? ""))) return null;
+    const here = realOrNull(cwd);
+    if (here === null) return null;
+    const project = loadProjects().find(
+        (candidate) =>
+            within(here, paths.projectDir(candidate.name)) || within(here, paths.worktreesDir(candidate.name)),
+    );
     return project?.name ?? null;
 }
 
@@ -214,29 +235,39 @@ export function liveStackProjectAt(cwd: string): string | null {
  * `slotShareEnv`, `nodeHeapEnv` and `TOLI_BUILD_SLOT` set to the slot's number, and the slot's scope. Inside a slot
  * already (`TOLI_BUILD_SLOT` set) it runs at once with nothing added, so a nested build never waits on its own slot;
  * with `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still at one slot's share.
- * Every live-stack project's stack auto-rebuild is paused while it runs (`whileLiveStacksPaused`).
+ * Every live-stack project's stack auto-rebuild and every declared dev stack is paused while it runs
+ * (`whileLiveStacksPaused`, `pauseDevStacks`), except the stack of `stackUser` (null: none), the project whose local
+ * stack `body`'s command uses, which is kept running (`whileStackInUse`).
  */
-export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Promise<T>): Promise<T> {
+export async function withBuildSlot<T>(
+    cwd: string,
+    stackUser: string | null,
+    body: (held: HeldSlot) => Promise<T>,
+): Promise<T> {
     if ((process.env.TOLI_BUILD_SLOT ?? "") !== "") return await body({ env: {}, scope: null });
     // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());
     const memoryMaxMB = buildMemoryMaxMB(machine, Math.floor(totalmem() / MB));
     const share: Record<string, string> = { ...slotShareEnv(process.env, capacity.cargoJobs) };
-    if (liveStackProjectAt(cwd) !== null) return await whileLiveStacksPaused(() => body({ env: share, scope: null }));
+    const unslotted = (held: HeldSlot): Promise<T> =>
+        whileStackInUse(stackUser, () => whileLiveStacksPaused(() => body(held)));
+    if (liveStackProjectAt(cwd) !== null) return await unslotted({ env: share, scope: null });
     const capped = { ...share, ...nodeHeapEnv(process.env, memoryMaxMB) };
     const lock = flock();
     if (lock === null) {
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
-        return await whileLiveStacksPaused(() => body({ env: capped, scope: { slot: 0, memoryMaxMB } }));
+        return await unslotted({ env: capped, scope: { slot: 0, memoryMaxMB } });
     }
     const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd), process.pid);
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;
-        pauseDevStacks();
         const env = { ...capped, TOLI_BUILD_SLOT: String(slot) };
-        return await whileLiveStacksPaused(() => body({ env, scope: { slot, memoryMaxMB } }));
+        return await whileStackInUse(stackUser, () => {
+            pauseDevStacks();
+            return whileLiveStacksPaused(() => body({ env, scope: { slot, memoryMaxMB } }));
+        });
     } finally {
         lock(held.fd, LOCK_UN);
         closeSync(held.fd);
@@ -267,5 +298,6 @@ export async function buildSlotCommand(argv: string[]): Promise<number> {
     const command = args.rest;
     if (command.length === 0) throw new ToliError("usage: bin/toli build-slot -- <command...>");
     checkBuildPlace(process.cwd(), command);
-    return await withBuildSlot(process.cwd(), ({ env, scope }) => runInSlot(command, env, scope));
+    const stackUser = stackUserOf(process.cwd(), command);
+    return await withBuildSlot(process.cwd(), stackUser, ({ env, scope }) => runInSlot(command, env, scope));
 }

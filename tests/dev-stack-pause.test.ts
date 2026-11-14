@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseStackDeclaration } from "../src/fleet/stack-pause.ts";
-import { holdSlot, slotBox, start, toliArgs } from "./build-slot-fixture.ts";
+import { holdSlot, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
 
 const NOTES = [
@@ -44,10 +44,12 @@ function dockerBox(slots: number, names: string[]): { box: Sandbox; log: string;
 }
 
 // Not named `declare`: Bun 1.3 parses a statement `declare(...)` as a TypeScript `declare` and drops the call.
-function declareStack(box: Sandbox, project: string): void {
-    withProject(box, project);
+/** Register `project` with the stack NOTES declare; returns its clone. */
+function declareStack(box: Sandbox, project: string): string {
+    const clone = withProject(box, project);
     mkdirSync(join(box.root, "data", "projects", project), { recursive: true });
     writeFileSync(join(box.root, "data", "projects", project, "notes.md"), NOTES);
+    return clone;
 }
 
 const status = (state: string, name: string): string => readFileSync(join(state, name), "utf8").trim();
@@ -144,6 +146,78 @@ describe("a project's declared dev-stack containers", () => {
         expect(readFileSync(seen, "utf8")).toBe("paused\n");
         expect(status(state, "app-watch")).toBe("running");
         expect(existsSync(join(box.root, "state", "build-slots", "stacks.paused"))).toBe(false);
+        expect(existsSync(join(box.root, "state", "build-slots", "live-app.json"))).toBe(false);
+    }, 30_000);
+
+    // T1492: a project's browser tests run under `bin/toli build-slot` signed in against its own local stack; the
+    // slot paused that stack's backend, so the page's session request was accepted and never answered.
+    test("stay running for a command that is not cargo, run in that project's checkout", async () => {
+        const { box, log, state } = dockerBox(1, ["app-watch", "app-web"]);
+        const clone = declareStack(box, "app");
+        const seen = join(box.root, ".seen");
+        const tested = await start(
+            box,
+            toliArgs(
+                "build-slot",
+                "--",
+                "sh",
+                "-c",
+                `echo $(cat "${state}/app-watch") $(cat "${state}/app-web") > "${seen}"`,
+            ),
+            {},
+            clone,
+        ).done;
+        expect(tested.code).toBe(0);
+        expect(readFileSync(seen, "utf8")).toBe("running running\n");
+        expect(dockerCalls(log).filter((call) => /^(pause|stop)\b/.test(call))).toEqual([]);
+        const built = await start(box, toliArgs("build-slot", "--", "cargo", "build"), {}, clone).done;
+        expect(built.code).toBe(0);
+        expect(dockerCalls(log).filter((call) => /^(pause|unpause)\b/.test(call))).toEqual([
+            "pause app-watch",
+            "pause app-web",
+            "unpause app-watch",
+            "unpause app-web",
+        ]);
+    }, 30_000);
+
+    test("are resumed for such a command while another build holds a slot, and no build meanwhile pauses them", async () => {
+        const { box, cargoLog, state } = dockerBox(3, ["app-watch"]);
+        const clone = declareStack(box, "app");
+        const holder = await holdSlot(box, cargoLog);
+        expect(status(state, "app-watch")).toBe("paused");
+        const seen = join(box.root, ".seen");
+        const go = join(box.root, ".go");
+        const script = [
+            `cat "${state}/app-watch" > "${seen}"`,
+            `while [ ! -e "${go}" ]; do sleep 0.1; done`,
+            `cat "${state}/app-watch" >> "${seen}"`,
+        ].join("; ");
+        const tested = start(box, toliArgs("build-slot", "--", "sh", "-c", script), {}, clone);
+        await until("the tests to start", () => existsSync(seen));
+        const meanwhile = await start(box, toliArgs("build-slot", "--", "true")).done;
+        expect(meanwhile.code).toBe(0);
+        writeFileSync(go, "");
+        expect((await tested.done).code).toBe(0);
+        expect(readFileSync(seen, "utf8")).toBe("running\nrunning\n");
+        writeFileSync(`${cargoLog}.done-a`, "");
+        expect((await holder.done).code).toBe(0);
+        expect(status(state, "app-watch")).toBe("running");
+        expect(existsSync(join(box.root, "state", "build-slots", "stacks.paused"))).toBe(false);
+    }, 30_000);
+
+    test("of a live-stack project stay running for such a command in its checkout", async () => {
+        const { box, state } = dockerBox(1, ["app-watch"]);
+        const clone = declareStack(box, "app");
+        box.ok(["project", "set", "app", "--live-stack", "yes"]);
+        const seen = join(box.root, ".seen");
+        const tested = await start(
+            box,
+            toliArgs("build-slot", "--", "sh", "-c", `echo $(cat "${state}/app-watch") > "${seen}"`),
+            {},
+            clone,
+        ).done;
+        expect(tested.code).toBe(0);
+        expect(readFileSync(seen, "utf8")).toBe("running\n");
         expect(existsSync(join(box.root, "state", "build-slots", "live-app.json"))).toBe(false);
     }, 30_000);
 });

@@ -32,7 +32,8 @@ function liveProject(box: Sandbox, name: string, notes: string): string {
 
 /**
  * A live-stack project `app` whose notes declare `notes`, beside a `docker` stub that keeps container states, on a
- * machine of two build slots.
+ * machine of two build slots. Its `cargo` stub runs its argument as a shell script (`build`): the stacks pause for a
+ * compile, and a command in the checkout that is not cargo keeps its project's stack running (T1492).
  */
 function liveBox(notes: (stackLog: string) => string): {
     box: Sandbox;
@@ -47,6 +48,7 @@ function liveBox(notes: (stackLog: string) => string): {
     for (const name of ["app-watch", "app-db", "web-watch"]) writeFileSync(join(state, name), "running");
     const dockerLog = join(box.root, ".docker-log");
     dockerStub(box, state, dockerLog);
+    box.stub("cargo", 'exec sh -c "$1"');
     const stackLog = join(box.root, ".stack-log");
     const checkout = liveProject(box, "app", notes(stackLog));
     return { box, checkout, stackLog, dockerLog, state };
@@ -77,32 +79,24 @@ const STOP_NOTES = [
 ].join("\n");
 
 const lines = (file: string): string[] => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n") : []);
+/** `bin/toli build-slot` running `script` as a compile (the `cargo` stub of `liveBox`). */
+const build = (script: string): string[] => toliArgs("build-slot", "--", "cargo", script);
 const status = (state: string, name: string): string => readFileSync(join(state, name), "utf8").trim();
 
 /** Start a build in the checkout that runs until `<box>/.release-<label>` exists, and wait until its command runs. */
 async function holdBuild(box: Sandbox, checkout: string, label: string): Promise<Started> {
     const started = join(box.root, `.started-${label}`);
     const release = join(box.root, `.release-${label}`);
-    const build = start(
-        box,
-        toliArgs("build-slot", "--", "sh", "-c", `touch "${started}"; while [ ! -e "${release}" ]; do sleep 0.1; done`),
-        {},
-        checkout,
-    );
+    const held = start(box, build(`touch "${started}"; while [ ! -e "${release}" ]; do sleep 0.1; done`), {}, checkout);
     await until(`build ${label} running`, () => existsSync(started));
-    return build;
+    return held;
 }
 
 describe("a live-stack project's stack while a build runs in its checkout", () => {
     test("is paused when the build starts and resumed when it ends, databases untouched", async () => {
         const { box, checkout, stackLog, dockerLog, state } = liveBox(DECLARED);
         const seen = join(box.root, ".seen");
-        const built = await start(
-            box,
-            toliArgs("build-slot", "--", "sh", "-c", `cat "${stackLog}" "${state}/app-watch" > "${seen}"`),
-            {},
-            checkout,
-        ).done;
+        const built = await start(box, build(`cat "${stackLog}" "${state}/app-watch" > "${seen}"`), {}, checkout).done;
         expect(built.code).toBe(0);
         expect(readFileSync(seen, "utf8")).toBe("pause\npaused\n");
         expect(lines(stackLog)).toEqual(["pause", "resume"]);
@@ -112,7 +106,7 @@ describe("a live-stack project's stack while a build runs in its checkout", () =
 
     test("is resumed when the build fails", async () => {
         const { box, checkout, stackLog, state } = liveBox(DECLARED);
-        const failed = await start(box, toliArgs("build-slot", "--", "sh", "-c", "exit 3"), {}, checkout).done;
+        const failed = await start(box, build("exit 3"), {}, checkout).done;
         expect(failed.code).toBe(3);
         expect(lines(stackLog)).toEqual(["pause", "resume"]);
         expect(status(state, "app-watch")).toBe("running");
@@ -132,7 +126,7 @@ describe("a live-stack project's stack while a build runs in its checkout", () =
     test("stays paused until the last of several builds ends, paused and resumed once", async () => {
         const { box, checkout, stackLog, state } = liveBox(DECLARED);
         const first = await holdBuild(box, checkout, "a");
-        const quick = await start(box, toliArgs("build-slot", "--", "true"), {}, checkout).done;
+        const quick = await start(box, build("true"), {}, checkout).done;
         expect(quick.code).toBe(0);
         expect(lines(stackLog)).toEqual(["pause"]);
         expect(status(state, "app-watch")).toBe("paused");
@@ -144,8 +138,8 @@ describe("a live-stack project's stack while a build runs in its checkout", () =
 
     test("with nothing declared is left alone, said once", async () => {
         const { box, checkout, dockerLog } = liveBox(() => "# app\n\n## Live stack mode\n- Start: `make up`\n");
-        const first = await start(box, toliArgs("build-slot", "--", "true"), {}, checkout).done;
-        const second = await start(box, toliArgs("build-slot", "--", "true"), {}, checkout).done;
+        const first = await start(box, build("true"), {}, checkout).done;
+        const second = await start(box, build("true"), {}, checkout).done;
         expect([first.code, second.code]).toEqual([0, 0]);
         expect(first.stderr).toContain("app: live-stack mode, but its notes declare no way to pause its stack");
         expect(second.stderr).not.toContain("declare no way to pause");
@@ -170,12 +164,7 @@ describe("every live-stack project's stack while any heavy build runs on the mac
     test("declared `Stop during builds` is stopped, not paused, and started again; databases untouched", async () => {
         const { box, checkout, dockerLog, state } = liveBox(() => STOP_NOTES);
         const seen = join(box.root, ".seen");
-        const built = await start(
-            box,
-            toliArgs("build-slot", "--", "sh", "-c", `cat "${state}/app-watch" > "${seen}"`),
-            {},
-            checkout,
-        ).done;
+        const built = await start(box, build(`cat "${state}/app-watch" > "${seen}"`), {}, checkout).done;
         expect(built.code).toBe(0);
         expect(readFileSync(seen, "utf8")).toBe("exited\n");
         expect([status(state, "app-watch"), status(state, "app-db")]).toEqual(["running", "running"]);
@@ -190,7 +179,7 @@ describe("every live-stack project's stack while any heavy build runs on the mac
         const first = await holdBuild(box, other, "a");
         expect(lines(stackLog)).toEqual(["pause"]);
         expect(status(state, "app-watch")).toBe("paused");
-        const quick = await start(box, toliArgs("build-slot", "--", "true"), {}, other).done;
+        const quick = await start(box, build("true"), {}, other).done;
         expect(quick.code).toBe(0);
         expect(lines(stackLog)).toEqual(["pause"]);
         expect(status(state, "app-watch")).toBe("paused");
@@ -205,12 +194,8 @@ describe("every live-stack project's stack while any heavy build runs on the mac
         const { box, checkout, stackLog, state } = liveBox(DECLARED);
         liveProject(box, "web", "# web\n\n## Local stack\n- Pause during builds: web-watch\n");
         const seen = join(box.root, ".seen");
-        const built = await start(
-            box,
-            toliArgs("build-slot", "--", "sh", "-c", `cat "${state}/app-watch" "${state}/web-watch" > "${seen}"`),
-            {},
-            checkout,
-        ).done;
+        const built = await start(box, build(`cat "${state}/app-watch" "${state}/web-watch" > "${seen}"`), {}, checkout)
+            .done;
         expect(built.code).toBe(0);
         expect(readFileSync(seen, "utf8")).toBe("paused\npaused\n");
         expect(lines(stackLog)).toEqual(["pause", "resume"]);

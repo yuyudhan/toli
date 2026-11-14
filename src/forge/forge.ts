@@ -268,7 +268,7 @@ export async function pushCommand(argv: string[]): Promise<void> {
             : ["git", "-C", dir, "push", "--no-verify", "origin", `${skipHookAt}:${ref}`];
     const code =
         skipHookAt === null && activeHookPath(dir, "pre-push") !== null
-            ? await withBuildSlot(dir, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
+            ? await withBuildSlot(dir, project, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
             : await runInherit(push, { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push origin ${branch} failed (exit ${code})`);
     if (skipHookAt !== null) {
