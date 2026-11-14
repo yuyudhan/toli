@@ -4,6 +4,20 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.14 - unreleased
+
+### Fixed
+
+- Two builds on one checkout no longer wait on each other forever. toli's rustc wrapper waited for a heavy-build slot
+  on any rustc call of a cargo without one (a build in a live-stack checkout compiling a registry crate, say), after
+  cargo had taken its build folder's lock, while the build holding the slot waited for that lock. The wrapper now
+  waits only on cargo's `rustc -vV` probe, which cargo runs before it takes the lock; later calls go straight on
+  (T1426).
+- `bin/toli commit` no longer refuses commits that touch a nested package when the project's pre-commit hook runs a
+  tool from that package's ignored `node_modules` (or a nested virtualenv or `target`). The hook's tree linked only
+  the checkout's top-level ignored entries; it now links them at any depth, still checking only the staged content
+  of the named paths (T1428).
+
 ## v0.5.13 - 2026-11-14
 
 ### Fixed

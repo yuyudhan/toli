@@ -238,13 +238,16 @@ it for every rustc it runs, whichever cargo PATH found, starting with its `rustc
 in the build folder (`target/.rustc_info.json`), so a cargo with nothing left to compile (a `cargo test` that only
 runs its tests and doctests) would never call the wrapper at all; `CARGO_CACHE_RUSTC_INFO=0` turns the cache off, so
 the probe is every cargo's first act and the slot is taken before anything runs. Inside a slot it goes
-straight on. Otherwise, on the first call of a cargo running a heavy command, `bin/toli build-slot --cargo <pid>`
-starts a detached holder (`build-slot --hold <pid>`) that waits in line, takes a slot for that cargo and writes
-`state/build-slots/cargo-<pid>.held`; the call waits (printing the same waiting line) until it holds. Later calls of
-that cargo, of any cargo it starts (cargo-clippy's `cargo check`) and of its build scripts find the holder through
-their process ancestry and go straight on, so a nested cargo reuses the slot and never deadlocks on it. The holder
-frees the slot when the cargo exits or is killed (it polls the pid), and a killed holder frees it with its lock; the
-cargo's next rustc call then takes one again. The wrapper then runs the wrapper it replaced (an inherited
+straight on. Otherwise, on the `rustc -vV` probe of a cargo running a heavy command, `bin/toli build-slot --cargo
+<pid>` starts a detached holder (`build-slot --hold <pid>`) that waits in line, takes a slot for that cargo and writes
+`state/build-slots/cargo-<pid>.held`; the call waits (printing the same waiting line) until it holds. Only the probe
+ever waits: cargo runs it before it takes its build folder's lock, and every later rustc call runs under that lock, so
+a call that waited there for a slot whose build waits for the lock would deadlock both. Later calls of that cargo, of
+any cargo it starts (cargo-clippy's `cargo check`) and of its build scripts find the holder through their process
+ancestry and go straight on, so a nested cargo reuses the slot and never deadlocks on it; a later call without a
+holder (a cargo in a live-stack checkout compiling a registry crate from that crate's folder, or one whose holder was
+killed) runs at once too. The holder frees the slot when the cargo exits or is killed (it polls the pid), and a
+killed holder frees it with its lock. The wrapper then runs the wrapper it replaced (an inherited
 `RUSTC_WRAPPER`, else `[build] rustc-wrapper` in `~/.cargo/config.toml`, such as sccache), or rustc itself. Such a
 cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
 

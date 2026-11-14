@@ -3,11 +3,13 @@
 # holds a heavy-build slot (src/fleet/build-slots.ts) however it was reached, even when something put another cargo
 # ahead of toli's cargo shim on PATH (a shell profile, git's exec path in a hook). Cargo runs it as
 # `toli-rustc-wrapper <rustc> <args...>` for every rustc call, starting with its `rustc -vV` probe (always run: those
-# environments set CARGO_CACHE_RUSTC_INFO=0, or a cargo with nothing left to compile would never call it), so the first
-# call of a cargo outside any slot waits here (`bin/toli build-slot --cargo <cargo pid>`) until a holder process holds
-# a slot for that cargo's whole run; later calls of that cargo, of any cargo it starts (cargo-clippy's cargo check) and
-# of its build scripts find the holder through the process ancestry and go straight on. Inside a slot already
-# (TOLI_BUILD_SLOT set) it goes straight on too. It then runs the wrapper it replaced (TOLI_RUSTC_WRAPPER_NEXT, such as
+# environments set CARGO_CACHE_RUSTC_INFO=0, or a cargo with nothing left to compile would never call it), so the probe
+# of a cargo outside any slot waits here (`bin/toli build-slot --cargo <cargo pid>`) until a holder process holds a
+# slot for that cargo's whole run. Only the probe waits: cargo runs it before it takes its build folder's lock, and every
+# later rustc call runs under that lock, so one that waited for a slot whose build waits for that lock would deadlock
+# both; every later call goes straight on. The probe of a cargo inside one that holds a slot (cargo-clippy's cargo
+# check, a build script's cargo) finds that holder through the process ancestry and goes straight on too, as it does
+# inside a slot already (TOLI_BUILD_SLOT set). It then runs the wrapper it replaced (TOLI_RUSTC_WRAPPER_NEXT, such as
 # sccache) or rustc itself.
 shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127
 next=${TOLI_RUSTC_WRAPPER_NEXT:-}
@@ -18,6 +20,7 @@ run() {
 }
 
 [ -n "${TOLI_BUILD_SLOT:-}" ] && run "$@"
+[ "$#" -eq 2 ] && [ "$2" = "-vV" ] || run "$@"
 
 slots="${TOLI_ROOT:-$shims/../..}/state/build-slots"
 pid=$PPID

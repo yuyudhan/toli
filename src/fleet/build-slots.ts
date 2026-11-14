@@ -6,7 +6,7 @@
 // state/build-slots/queue/ (also a flock, so a waiter that dies leaves the line with it), and only the oldest live
 // ticket may take a free slot. Jawans reach it through the cargo shim in bin/shims, first on their PATH
 // (src/jawans/env.ts), and through toli's rustc wrapper (bin/shims/toli-rustc-wrapper, their `RUSTC_WRAPPER`), which
-// catches a cargo that bypassed the shim: its first rustc call waits until a detached holder holds a slot for that
+// catches a cargo that bypassed the shim: its `rustc -vV` probe waits until a detached holder holds a slot for that
 // cargo until it exits (src/fleet/cargo-slot.ts). A gate's runner (src/forge/gate.ts) and `bin/toli push` with a
 // pre-push hook (src/forge/forge.ts) hold one for their whole run, so a project's push check gets one slot's share even
 // when it calls cargo directly. On Linux with a user manager each build (and each such push check) runs in its own

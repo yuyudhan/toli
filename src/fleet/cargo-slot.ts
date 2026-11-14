@@ -1,11 +1,13 @@
 // A heavy-build slot for a cargo that bypassed toli's cargo shim (src/fleet/build-slots.ts): something put another
 // cargo ahead of the shim on PATH (a login profile, a harness's shell snapshot, git's exec path in a hook). toli's
 // rustc wrapper (bin/shims/toli-rustc-wrapper, a jawan's `RUSTC_WRAPPER`, src/jawans/env.ts) runs on such a cargo's
-// first rustc call, outside any slot, as `bin/toli build-slot --cargo <cargo pid>`: it starts a detached holder
+// `rustc -vV` probe, outside any slot, as `bin/toli build-slot --cargo <cargo pid>`: it starts a detached holder
 // (`build-slot --hold <cargo pid>`) that waits in line, takes a slot for that cargo and writes
-// state/build-slots/cargo-<pid>.held, and returns once it holds. The wrapper finds the holder of later rustc calls (of
-// that cargo, of a cargo it starts, of its build scripts) through the process ancestry. The holder frees the slot once
-// the cargo exits or is killed, and a killed holder frees it with its flock.
+// state/build-slots/cargo-<pid>.held, and returns once it holds. Only the probe waits: cargo runs it before it takes
+// its build folder's lock, and a later rustc call that waited for a slot under that lock would deadlock with a build
+// in the slot waiting for the lock. The wrapper finds the holder of later rustc calls (of that cargo, of a cargo it
+// starts, of its build scripts) through the process ancestry. The holder frees the slot once the cargo exits or is
+// killed, and a killed holder frees it with its flock.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
@@ -21,7 +23,7 @@ import { pauseDevStacks } from "./stack-pause.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
-/** How often a cargo's first rustc call looks again for the holder of its slot. */
+/** How often a cargo's `rustc -vV` probe looks again for the holder of its slot. */
 const HOLDER_POLL_MS = 100;
 /** Where a cargo's slot holder says it holds the slot: `<holder pid> <slot>` (read by bin/shims/toli-rustc-wrapper). */
 const heldFile = (cargoPid: number): string => join(paths.buildSlotsDir(), `cargo-${cargoPid}.held`);
@@ -159,7 +161,7 @@ export async function holdForCargo(cargoPid: number): Promise<number> {
 }
 
 /**
- * `bin/toli build-slot --cargo <cargo pid>` (bin/shims/toli-rustc-wrapper, on a cargo's first rustc call outside any
+ * `bin/toli build-slot --cargo <cargo pid>` (bin/shims/toli-rustc-wrapper, on a cargo's `rustc -vV` probe outside any
  * slot): when that cargo runs a heavy command outside a live-stack project's checkout, return only once a holder
  * (`holdForCargo`) holds a slot for it, starting one when none is waiting, and saying once that it waits. Any other
  * cargo returns at once. Never fails: a build runs even when toli cannot take a slot for it.
