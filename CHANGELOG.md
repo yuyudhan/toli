@@ -4,6 +4,12 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.24 - 2026-11-14
+
+### Fixed
+
+- disk keeper ignores uninspectable processes unrelated to a target (f8a7c6b)
+
 ## v0.5.23 - 2026-11-14
 
 ### Fixed
