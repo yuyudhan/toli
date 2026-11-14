@@ -88,7 +88,7 @@ const USAGE = `usage: bin/toli <command> [args]
   pr merge <project> <id> [--method merge|squash|rebase]
   job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--tier light|standard|deep]
   job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
-  job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
+  job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] [--quiet] (result on stdin)
   job results [--unseen] [--json] | ack [--through <stamp>]
   schedule install|uninstall|status
   helper list [--json] | install <name>|--all | uninstall <name>|--all | run <name> | status [<name>] [--json]

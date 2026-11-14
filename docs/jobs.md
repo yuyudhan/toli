@@ -51,6 +51,12 @@ your decision goes into the result. The run finishes with `bin/toli job finish <
 result to `data/jobs/<name>/<stamp>.md`. On a worker machine the result is also sent to the coordinator's inbox
 ([fleet.md](fleet.md)).
 
+A run that found nothing to do and changed nothing (an idle tick of a frequent job) finishes with
+`bin/toli job finish <name> <runId> --quiet`. The result is written and the run counts as usual (last run, last
+status, run history, `job results`), but it is never unseen: it does not wake the lead, does not show in the digest
+and is not sent to the coordinator. `--quiet` applies only to an `ok` run: with `--status failed` the result posts as
+usual.
+
 ## Results reach you
 
 On the same minute, `bin/toli wake` picks up new job results and inbox items, and the harness brings them into the

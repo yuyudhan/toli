@@ -65,7 +65,7 @@ export function takeWake(reader: WakeReader = "session"): WakeItem[] {
         const inboxFloor = floor("inbox", reader);
         const inbox = listInbox().filter((item) => item.stamp > inboxFloor);
         const jobsFloor = floor("jobs", reader);
-        const jobs = listResults().filter((result) => result.stamp > jobsFloor);
+        const jobs = listResults().filter((result) => !result.quiet && result.stamp > jobsFloor);
         const lastInbox = inbox.at(-1);
         if (lastInbox) ackThrough(DELIVERED[reader].inbox, lastInbox.stamp);
         const lastJob = jobs.at(-1);

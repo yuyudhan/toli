@@ -4,6 +4,16 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.19 - unreleased
+
+### Added
+
+- `bin/toli job finish <name> <runId> --quiet` marks a scheduled run that found nothing to do. The run is recorded as
+  usual (result file, run history, last run and status, failure detection), but it is never an unseen result: it does
+  not wake the lead, does not show in the digest and is not sent to the coordinator. A failed run always posts, quiet
+  or not. The job prompt and the scheduling skill tell idle ticks to use it, so a job that runs every 30 minutes no
+  longer pages the lead 48 times a day (T1472).
+
 ## v0.5.18 - 2026-11-14
 
 ### Fixed

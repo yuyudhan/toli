@@ -53,7 +53,16 @@ type JobStateFile = { jobs: Record<string, JobState> };
 
 export type BegunRun = { runId: string; prompt: string };
 
-export type JobResult = { job: string; file: string; path: string; stamp: string; status: string; unseen: boolean };
+/** A quiet result is an idle run's record (`job finish --quiet`): kept in the history, never unseen, never a wake. */
+export type JobResult = {
+    job: string;
+    file: string;
+    path: string;
+    stamp: string;
+    status: string;
+    quiet: boolean;
+    unseen: boolean;
+};
 
 /** A run still marked running after this long is treated as dead and recorded as failed. */
 export const STALE_RUN_MS = 3 * 60 * 60 * 1000;
@@ -139,6 +148,7 @@ export function buildPrompt(job: JobConfig, runId: string, via: Via, machine: Ma
         `bin/toli job finish ${job.name} ${runId} <<'EOF'`,
         "<result>",
         "EOF",
+        "If this run found nothing to do and changed nothing, add --quiet after the run id (never for a failure).",
     );
     return lines.join("\n");
 }
@@ -164,8 +174,9 @@ export function beginJob(name: string, via: Via): BegunRun {
     return { runId, prompt: buildPrompt(job, runId, via, machine) };
 }
 
-/** Record a run's result in data/jobs/<name>/<stamp>.md, clear running, and forward it to the coordinator on a worker. */
-export function finishJob(name: string, runId: string, body: string, status: RunStatus): string {
+/** Record a run's result, clear running, and forward it to the coordinator on a worker unless it is a quiet ok run. */
+export function finishJob(name: string, runId: string, body: string, status: RunStatus, quiet = false): string {
+    const silent = quiet && status === "ok";
     const machine = loadMachine();
     const at = now();
     const { path, run: finished } = updateJobState((state) => {
@@ -190,6 +201,7 @@ export function finishJob(name: string, runId: string, body: string, status: Run
             `- started: ${running.startedAt}`,
             `- finished: ${at.toISOString()}`,
             `- status: ${status}`,
+            ...(silent ? ["- quiet: yes"] : []),
         ].join("\n");
         writeTextAtomic(resultPath, `${header}\n\n${body.trimEnd()}\n`);
         delete jobState.running;
@@ -198,7 +210,7 @@ export function finishJob(name: string, runId: string, body: string, status: Run
         jobState.lastResult = resultPath;
         return { path: resultPath, run: running };
     });
-    if (machine.role === "worker" && machine.coordinator) {
+    if (!silent && machine.role === "worker" && machine.coordinator) {
         queueOutbox(machine, `job ${name}`, readFileSync(path, "utf8"), `${stamp(at)}-${name}-${finished.runId}`);
         deliverOutbox(machine);
     }
@@ -216,8 +228,10 @@ export function listResults(): JobResult[] {
         for (const file of readdirSync(dir).filter((entry) => entry.endsWith(".md"))) {
             const path = join(dir, file);
             const resultStamp = file.slice(0, STAMP_LENGTH);
-            const status = /^- status: (\S+)$/m.exec(readFileSync(path, "utf8"))?.[1] ?? "unknown";
-            results.push({ job, file, path, stamp: resultStamp, status, unseen: resultStamp > acked });
+            const text = readFileSync(path, "utf8");
+            const status = /^- status: (\S+)$/m.exec(text)?.[1] ?? "unknown";
+            const quiet = /^- quiet: yes$/m.test(text);
+            results.push({ job, file, path, stamp: resultStamp, status, quiet, unseen: !quiet && resultStamp > acked });
         }
     }
     return results.sort((a, b) => a.stamp.localeCompare(b.stamp) || a.job.localeCompare(b.job));
@@ -340,13 +354,13 @@ function begin(argv: string[]): void {
 }
 
 function finish(argv: string[]): void {
-    const args = new Args(argv, { values: ["status"] });
+    const args = new Args(argv, { booleans: ["quiet"], values: ["status"] });
     args.maxPositional(2);
     const status = args.str("status") ?? "ok";
     if (status !== "ok" && status !== "failed") throw new ToliError("--status must be ok or failed");
     const body = readStdin();
     if (body.trim() === "") throw new ToliError("job finish needs the result on stdin");
-    out(finishJob(args.pos(0, "name"), args.pos(1, "runId"), body, status));
+    out(finishJob(args.pos(0, "name"), args.pos(1, "runId"), body, status, args.bool("quiet")));
 }
 
 function results(argv: string[]): void {
@@ -378,7 +392,7 @@ function ack(argv: string[]): void {
     acknowledge(
         "jobs",
         argv,
-        listResults().map((item) => item.stamp),
+        listResults().flatMap((item) => (item.quiet ? [] : [item.stamp])),
         "job result",
     );
 }

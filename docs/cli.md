@@ -194,7 +194,7 @@ Details: [harnesses.md](harnesses.md).
 
     job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--tier light|standard|deep]
     job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
-    job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] (result on stdin)
+    job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] [--quiet] (result on stdin)
     job results [--unseen] [--json] | ack [--through <stamp>]
     schedule install|uninstall|status
     inbox add --from <machine> --title "<t>" [--via "<how it arrived>"] (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
@@ -203,7 +203,8 @@ Details: [harnesses.md](harnesses.md).
     wake [--json]
 
 - `job due` lists due jobs; `run-due` runs them (the live session); `tick` is the per-minute OS ticker; `begin` and
-  `finish` claim a run and record its result.
+  `finish` claim a run and record its result. `finish --quiet` marks an idle run (nothing done, nothing found): it is
+  recorded but never unseen, never wakes the lead and is not sent to the coordinator; a failed run is never quiet.
 - `schedule` installs the ticker (launchd on macOS; a systemd user timer on Linux when `systemctl --user` works,
   else crontab).
 - `inbox` holds messages from jawans and other machines; `wake` takes everything new once, for the chat.

@@ -217,6 +217,46 @@ describe("worker outbox", () => {
     });
 });
 
+describe("job finish --quiet", () => {
+    type Result = { status: string; unseen: boolean; quiet: boolean; path: string };
+    const run = (box: Sandbox, flags: string[], body: string, now: string): void => {
+        const begun = JSON.parse(box.ok(["job", "begin", "hourly", "--via", "headless", "--json"], { now })) as Begun;
+        box.ok(["job", "finish", "hourly", begun.runId, ...flags], { stdin: body, now });
+    };
+
+    test("records an idle run without an unseen result or a wake; a failed quiet run still posts", () => {
+        const box = hourlyJob();
+        run(box, ["--quiet"], "nothing waiting", "2026-03-04T11:01:00Z");
+        const recorded = JSON.parse(box.ok(["job", "results", "--json"])) as Result[];
+        expect(recorded).toMatchObject([{ status: "ok", unseen: false, quiet: true }]);
+        expect(readFileSync(recorded[0]?.path ?? "", "utf8")).toContain("nothing waiting");
+        const listed = JSON.parse(box.ok(["job", "list", "--json"])) as { state: object }[];
+        expect(listed[0]?.state).toMatchObject({ lastStatus: "ok", lastFinished: "2026-03-04T11:01:00.000Z" });
+        expect(JSON.parse(box.ok(["job", "results", "--unseen", "--json"]))).toEqual([]);
+        expect(box.ok(["digest"])).toContain("unseen job results (0):");
+        expect((JSON.parse(box.ok(["wake", "--json"])) as { items: unknown[] }).items).toEqual([]);
+
+        run(box, ["--quiet", "--status", "failed"], "broke", "2026-03-04T12:01:00Z");
+        const unseen = JSON.parse(box.ok(["job", "results", "--unseen", "--json"])) as Result[];
+        expect(unseen).toMatchObject([{ status: "failed", unseen: true, quiet: false }]);
+        const woken = JSON.parse(box.ok(["wake", "--json"])) as { items: { title: string }[] };
+        expect(woken.items.map((item) => item.title)).toEqual(["job hourly (failed)"]);
+    });
+
+    test("on a worker, a quiet run sends no fleet copy; a failed quiet run does", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "w1", "--role", "worker", "--coordinator-ssh", "coord", "--coordinator-root", "/x"]);
+        box.stub("ssh", "echo unreachable >&2; exit 255");
+        box.ok(["job", "add", "hourly", "--cron", "0 * * * *", "--prompt", "x"], { now: "2026-03-04T10:00:30Z" });
+        const outbox = join(box.root, "state", "outbox");
+        run(box, ["--quiet"], "nothing waiting", "2026-03-04T11:01:00Z");
+        expect(existsSync(outbox) ? readdirSync(outbox) : []).toEqual([]);
+        expect((JSON.parse(box.ok(["job", "results", "--json"])) as unknown[]).length).toBe(1);
+        run(box, ["--quiet", "--status", "failed"], "broke", "2026-03-04T12:01:00Z");
+        expect(readdirSync(outbox).length).toBe(1);
+    });
+});
+
 describe("a job's schedule and prompt (in process)", () => {
     test("due only on its machine and outside a run; the prompt carries the run id, shape rules and finish line", () => {
         const box = sandbox();

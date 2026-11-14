@@ -82,3 +82,8 @@ to the CLI:
     EOF
 
 Always call `job finish`, even on failure (say what failed). The live session relays the result to the user.
+
+Idle ticks only: when the run found nothing to do, changed nothing, held nothing and needs nobody (e.g. "nothing
+verified waiting"), add `--quiet` after the run id. The run is still recorded (history, last run, failure detection)
+but posts nothing and wakes nobody, so a job that runs every 30 minutes does not page the lead 48 times a day. Never
+use `--quiet` for a failure (a failed status always posts) or for a run that did, found or needs anything.
