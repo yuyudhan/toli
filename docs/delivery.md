@@ -117,10 +117,11 @@ parents, message or author):
   refused: the result would not belong to any commit. A pass also counts only if the checkout is still exactly that
   commit when the gate ends; if HEAD moved or files changed while it ran, it is recorded `failed` with the reason.
 - The runner runs the recipe in one of the machine's heavy-build slots, waiting for one while all are busy, with
-  `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` at one slot's share of the cores
-  ([fleet.md](fleet.md#heavy-build-slots)), so a recipe that calls cargo directly (through `just`, without toli's
-  cargo shim) cannot take every core. A live-stack project's gate skips the slot, still at one slot's share, and
-  pauses the project's stack auto-rebuild while it runs ([projects.md](projects.md#pausing-the-stack-during-a-build)).
+  `CARGO_BUILD_JOBS` and the test harnesses' worker variables (`RUST_TEST_THREADS`, `NEXTEST_TEST_THREADS`,
+  Vitest's) at one slot's share of the cores ([fleet.md](fleet.md#heavy-build-slots)), so a recipe that calls cargo
+  or Vitest directly (through `just`, without toli's cargo shim) cannot take every core. A live-stack project's gate
+  skips the slot, still at one slot's share, and pauses the project's stack auto-rebuild while it runs
+  ([projects.md](projects.md#pausing-the-stack-during-a-build)).
 - `push --gate "<recipe>"` runs the gate this way first and pushes only if it passed on HEAD's tree. In a shared
   same-branch clone the checkout differs from HEAD whenever another jawan has an edit it has not committed yet, and a
   gate run on that tree proves nothing about the commit: a pushed file may lean on an edit that is not in it (a new

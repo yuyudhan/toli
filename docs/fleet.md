@@ -180,8 +180,12 @@ all slots busy use about every core once. Setting either key in `config/machine.
 
 `bin/toli build-slot -- <command>` takes a free slot, runs the command with `CARGO_BUILD_JOBS` at one slot's share and
 `TOLI_BUILD_SLOT` set to the slot's number, and frees the slot when the command ends. The test harnesses get the same
-share: `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` are set to it unless the caller already set them, so a
-`cargo test` or `cargo nextest` in a slot never runs a test thread per core. When every slot is busy it prints
+share: `RUST_TEST_THREADS`, `NEXTEST_TEST_THREADS`, `VITEST_MAX_WORKERS` (Vitest 4) and `VITEST_MAX_THREADS` /
+`VITEST_MAX_FORKS` (earlier Vitest) are set to it unless the caller already set them, so a `cargo test`,
+`cargo nextest` or `vitest` in a slot (a pre-push hook's included) never runs a test worker per core. A count the
+caller or the project set (the variable, a Vitest config's `maxWorkers`, a `--test-threads` flag) still wins. Jest
+has no environment variable for its workers, so a Jest suite keeps its own `--maxWorkers`; `NODE_OPTIONS` gets only
+the heap cap below. When every slot is busy it prints
 `waiting for a heavy-build slot (N busy)` once and waits for one; it never fails for lack of a slot. Waiters are served
 in arrival order: each holds a numbered ticket in `state/build-slots/queue/` and only the oldest live one takes a slot
 that frees, so a later build never passes an earlier one. A slot is a lock on `state/build-slots/<n>.lock` held by the
@@ -227,7 +231,7 @@ without a scope after one warning line. A build that ran and failed reports its 
 `systemctl --user show` on a scope already gone (`--collect`) reports the defaults (`MemoryMax=infinity`), not its cap.
 
 `bin/toli spawn` puts toli's cargo shim (`bin/shims/cargo`) first on every jawan's PATH, gives it one slot's share of
-the cores (`CARGO_BUILD_JOBS` at `capacity.cargoJobs`, and `RUST_TEST_THREADS` and `NEXTEST_TEST_THREADS` at the same
+the cores (`CARGO_BUILD_JOBS` at `capacity.cargoJobs`, and the test harnesses' worker variables above at the same
 number unless already set) and makes toli's rustc wrapper (`bin/shims/toli-rustc-wrapper`) its `RUSTC_WRAPPER`, with
 `CARGO_CACHE_RUSTC_INFO=0` (below). So every cargo it starts, the pre-push hook of a plain `git push` included, gets
 the share however it reached cargo, and `cargo test` never compiles its doctests one rustc per core (rustdoc runs

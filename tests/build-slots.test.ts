@@ -55,9 +55,11 @@ describe("build slot capacity", () => {
         expect(env.TOLI_BUILD_SLOT).toBeUndefined();
         expect(jawanEnv({ PATH: `/bin:${shims}` }, "r2", 6).PATH).toBe(`${shims}:/bin`);
         // A test-thread count already set stands, as in a slot.
-        expect(jawanEnv({ RUST_TEST_THREADS: "1" }, "r3", 6)).toMatchObject({
+        expect(jawanEnv({ RUST_TEST_THREADS: "1", VITEST_MAX_WORKERS: "50%" }, "r3", 6)).toMatchObject({
             RUST_TEST_THREADS: "1",
             NEXTEST_TEST_THREADS: "6",
+            VITEST_MAX_WORKERS: "50%",
+            VITEST_MAX_FORKS: "6",
         });
         expect(existsSync(join(shims, "cargo"))).toBe(true);
     });
@@ -92,6 +94,9 @@ describe("jawan environment", () => {
             CARGO_BUILD_JOBS: "12",
             RUST_TEST_THREADS: "12",
             NEXTEST_TEST_THREADS: "12",
+            VITEST_MAX_WORKERS: "12",
+            VITEST_MAX_THREADS: "12",
+            VITEST_MAX_FORKS: "12",
             CARGO_CACHE_RUSTC_INFO: "0",
             RUSTC_WRAPPER: join(paths.buildShimsDir(), "toli-rustc-wrapper"),
             TOLI_RUSTC_WRAPPER_NEXT: "",
@@ -252,6 +257,26 @@ describe("each heavy build in its own systemd scope", () => {
         const bare = toliArgs("build-slot", "--", "sh", "-c", `printf '%s\\n' "$NODE_OPTIONS" > "${uncapped}"`);
         expect((await start(box, bare, { NODE_OPTIONS: "" }).done).code).toBe(0);
         expect(readFileSync(uncapped, "utf8")).toBe("\n");
+    }, 30_000);
+
+    test("a build in a slot caps the test harnesses' workers at the slot's share, unless the caller set them", async () => {
+        const { box } = slotBox(1, 3);
+        const seen = join(box.root, ".test-caps");
+        const caps = [
+            "RUST_TEST_THREADS",
+            "NEXTEST_TEST_THREADS",
+            "VITEST_MAX_WORKERS",
+            "VITEST_MAX_THREADS",
+            "VITEST_MAX_FORKS",
+        ];
+        const printed = caps.map((name) => `\${${name}:-unset}`).join(" ");
+        const record = toliArgs("build-slot", "--", "sh", "-c", `echo "${printed}" >> "${seen}"`);
+        const unset = Object.fromEntries(caps.map((name) => [name, ""]));
+        expect((await start(box, record, unset).done).code).toBe(0);
+        // A value the caller (or the project's own hook) set stands; the others still get the share.
+        const explicit = { ...unset, VITEST_MAX_WORKERS: "1", RUST_TEST_THREADS: "2" };
+        expect((await start(box, record, explicit).done).code).toBe(0);
+        expect(readFileSync(seen, "utf8").split("\n")).toEqual(["3 3 3 3 3", "2 3 1 3 3", ""]);
     }, 30_000);
 
     test("a process already inside a toli build scope is recognised from its cgroup", () => {

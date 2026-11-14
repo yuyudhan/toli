@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.18 - unreleased
+
+### Fixed
+
+- A heavy-build slot, a jawan's environment and a lead session's build variables now cap Vitest's workers at the
+  slot's share too (`VITEST_MAX_WORKERS`, and `VITEST_MAX_THREADS` / `VITEST_MAX_FORKS` for Vitest before 4), as they
+  already did for `cargo test` and nextest threads. A pre-push hook running cargo tests and a Vitest suite inside one
+  slot started a Vitest worker per core beside them. A value the user or project set still wins (T1453).
+
 ## v0.5.17 - 2026-11-14
 
 ### Fixed

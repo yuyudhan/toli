@@ -56,18 +56,29 @@ export function rustcWrapperEnv(base: Record<string, string | undefined>): {
     return { RUSTC_WRAPPER: ours, TOLI_RUSTC_WRAPPER_NEXT: next };
 }
 
-/** The test harnesses' thread variables: capped at one slot's share like the compile jobs, unless already set. */
-const TEST_THREAD_VARS = ["RUST_TEST_THREADS", "NEXTEST_TEST_THREADS"] as const;
+/**
+ * The test harnesses' worker variables, capped at one slot's share like the compile jobs unless already set:
+ * `cargo test`'s threads, nextest's, and Vitest's workers (`VITEST_MAX_WORKERS` from Vitest 4, `VITEST_MAX_THREADS` /
+ * `VITEST_MAX_FORKS` before it). A project's own config file or command-line count still wins over these. Jest has
+ * no environment variable for its workers, so its `--maxWorkers` stays the project's.
+ */
+const TEST_THREAD_VARS = [
+    "RUST_TEST_THREADS",
+    "NEXTEST_TEST_THREADS",
+    "VITEST_MAX_WORKERS",
+    "VITEST_MAX_THREADS",
+    "VITEST_MAX_FORKS",
+] as const;
 
 /** One heavy-build slot's share of the cores, as build variables (`slotShareEnv`). */
-export type SlotShare = { CARGO_BUILD_JOBS: string; RUST_TEST_THREADS?: string; NEXTEST_TEST_THREADS?: string };
+export type SlotShare = { CARGO_BUILD_JOBS: string } & Partial<Record<(typeof TEST_THREAD_VARS)[number], string>>;
 
 /**
  * One heavy-build slot's share of the cores over the environment `base`: `CARGO_BUILD_JOBS` at `cargoJobs` (always:
- * one setting per machine), and `RUST_TEST_THREADS` / `NEXTEST_TEST_THREADS` at the same number where `base` has not
- * set them, so `cargo test` (its test binaries, and rustdoc, which compiles one doctest per test thread with a rustc
- * of its own) and nextest never run one per core. Cargo and the harnesses read them from the environment however
- * cargo was reached: the shim, a `just` recipe or a pre-push hook calling the real cargo directly.
+ * one setting per machine), and the test harnesses' worker variables (`TEST_THREAD_VARS`) at the same number where
+ * `base` has not set them, so `cargo test` (its test binaries, and rustdoc, which compiles one doctest per test thread
+ * with a rustc of its own), nextest and Vitest never run one per core. Cargo and the harnesses read them from the
+ * environment however they were reached: the shim, a `just` recipe or a pre-push hook calling them directly.
  */
 export function slotShareEnv(base: Record<string, string | undefined>, cargoJobs: number): SlotShare {
     const share: SlotShare = { CARGO_BUILD_JOBS: String(cargoJobs) };
