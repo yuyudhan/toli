@@ -4,6 +4,13 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.25 - 2026-11-14
+
+### Fixed
+
+- disk keeper finds where an uninspected container process runs (26f3c9c)
+- failed scheduled job runs keep their omp session for resume (f9461b2)
+
 ## v0.5.24 - 2026-11-14
 
 ### Fixed
