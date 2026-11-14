@@ -1,6 +1,6 @@
 // The private index and the refusals of `bin/toli commit` (src/projects/commit.ts): leaks, lock files and reverts.
 // The project's own hooks are in commit-hooks.ts.
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { git, gitOk } from "../core/git.ts";
@@ -104,6 +104,24 @@ export class Attempt {
         const tree = join(this.scratch, "tree");
         if (!existsSync(tree)) this.gitOk(["checkout-index", "--all", `--prefix=${tree}/`]);
         return tree;
+    }
+
+    /**
+     * Make the staged tree a repository of its own, as a linked worktree is: the scratch folder becomes its git
+     * directory (HEAD as the checkout's, `commondir` at the checkout's objects and refs, `index` the private index) and
+     * the tree gets a `.git` file pointing at it. Git run in the tree with no GIT_* variables (a hook that unsets them)
+     * then still finds a repository whose index is the private one. Returns that git directory.
+     */
+    linkStaged(): string {
+        const tree = this.staged();
+        const head = this.gitOk(["rev-parse", "--path-format=absolute", "--git-path", "HEAD"]);
+        writeFileSync(join(this.scratch, "HEAD"), readFileSync(head));
+        writeFileSync(
+            join(this.scratch, "commondir"),
+            `${this.gitOk(["rev-parse", "--path-format=absolute", "--git-common-dir"])}\n`,
+        );
+        writeFileSync(join(tree, ".git"), `gitdir: ${this.scratch}\n`);
+        return this.scratch;
     }
 
     /** A path for a scratch file of this attempt, removed with it. */

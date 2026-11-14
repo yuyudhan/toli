@@ -44,9 +44,11 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    staged changes) and strips AI co-author trailers from the message. Before writing the commit it runs the
    project's `pre-commit` hook, then its `commit-msg` hook (`core.hooksPath` honoured, else `.git/hooks/`); a
    non-zero exit refuses the commit with the hook's output. There is no bypass flag. `pre-commit` runs on exactly the
-   commit: its working tree is the private index's files written out to a temporary directory (`GIT_DIR` at the
-   checkout's, `GIT_INDEX_FILE` at the private index), so `git diff --cached` lists only the named paths and every
-   file it reads is the committed version; other jawans' staged or half-edited files neither fail nor pass it. A
+   commit: its working tree is the private index's files written out to a temporary directory, made a linked
+   repository of its own (a `.git` file pointing at a private git directory whose HEAD, objects and refs are the
+   checkout's and whose index is the private one), so `git diff --cached` lists only the named paths and every file it
+   reads is the committed version, even for a hook that `cd`s to the top level and unsets `GIT_DIR`, `GIT_WORK_TREE`
+   and `GIT_INDEX_FILE`; other jawans' staged or half-edited files neither fail nor pass it. A
    tracked hook file runs as committed, and the checkout's top-level ignored entries (`node_modules`, a virtualenv)
    are linked in so its tools resolve. A hook that reformats or re-stages a file is refused, naming the files: run
    the formatter on them and commit again. `commit-msg` runs on a temporary message file, from the checkout root

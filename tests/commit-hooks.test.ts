@@ -112,6 +112,32 @@ describe("bin/toli commit runs the project's pre-commit hook", () => {
         expect(readFileSync(join(dir, "c.txt"), "utf8")).toBe("c half-edited by someone else \n");
     });
 
+    test("a hook that unsets GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE still sees a repository and only the commit", () => {
+        const dir = repo({ "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" });
+        installHook(
+            dir,
+            ".git/hooks",
+            "pre-commit",
+            [
+                'cd "$(git rev-parse --show-toplevel)"',
+                "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE",
+                'git diff --cached --name-only > "$(git rev-parse --git-common-dir)/pre-commit-saw"',
+                'git status --porcelain >> "$(git rev-parse --git-common-dir)/pre-commit-saw"',
+                'git rev-parse --abbrev-ref HEAD >> "$(git rev-parse --git-common-dir)/pre-commit-saw"',
+            ].join("\n"),
+        );
+        writeFileSync(join(dir, "a.txt"), "a staged by someone else\n");
+        git(dir, ["add", "a.txt"]);
+        writeFileSync(join(dir, "c.txt"), "c half-edited by someone else\n");
+        writeFileSync(join(dir, "b.txt"), "b changed\n");
+        const branch = git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        const committed = safeCommit({ dir, paths: ["b.txt"], message: "Change b" });
+        expect(head(dir)).toBe(committed.sha);
+        expect(readFileSync(join(dir, ".git", "pre-commit-saw"), "utf8")).toBe(`b.txt\nM  b.txt\n${branch}\n`);
+        expect(git(dir, ["diff", "--cached", "--name-only"])).toBe("a.txt");
+        expect(readFileSync(join(dir, "c.txt"), "utf8")).toBe("c half-edited by someone else\n");
+    });
+
     test("refuses a hook that changes the files being committed, leaving the working tree as it was", () => {
         const dir = repo();
         installHook(dir, ".git/hooks", "pre-commit", "printf '# formatted\\n' > README.md\ngit add README.md");

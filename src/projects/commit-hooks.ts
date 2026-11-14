@@ -25,13 +25,14 @@ function hookPath(attempt: Attempt, name: string): string {
 
 /**
  * Run the repo's pre-commit hook on exactly the commit being made, and refuse when it exits non-zero or changes what
- * is committed. Its working tree is the private index's files written out (Attempt.staged), with GIT_DIR at the
- * checkout's and GIT_INDEX_FILE at the private index, so `git diff --cached` lists only the named paths and every
- * file it reads is the committed version: other jawans' staged or half-edited files in the shared checkout can
- * neither fail nor pass it. A hook file that is tracked runs as committed; the checkout's top-level ignored entries
- * (node_modules, a virtualenv) are linked in so its tools resolve. A hook that reformats or re-stages a file is
- * refused rather than followed: the commit would then differ from the working tree. A missing or non-executable hook
- * is skipped, as git skips it.
+ * is committed. Its working tree is the private index's files written out (Attempt.staged), made a linked repository
+ * of its own (Attempt.linkStaged: HEAD and objects the checkout's, index the private one), so `git diff --cached`
+ * lists only the named paths and every file it reads is the committed version, even for a hook that unsets GIT_DIR,
+ * GIT_WORK_TREE and GIT_INDEX_FILE: other jawans' staged or half-edited files in the shared checkout can neither fail
+ * nor pass it. A hook file that is tracked runs as committed; the checkout's top-level ignored entries (node_modules, a
+ * virtualenv) are linked in so its tools resolve. A hook that reformats or re-stages a file is refused rather than
+ * followed: the commit would then differ from the working tree. A missing or non-executable hook is skipped, as git
+ * skips it.
  */
 export function preCommitHook(attempt: Attempt): void {
     const hook = hookPath(attempt, "pre-commit");
@@ -49,11 +50,7 @@ export function preCommitHook(attempt: Attempt): void {
         symlinkSync(join(root, name), join(tree, name));
     }
     const before = attempt.gitOk(["write-tree"]);
-    const env = {
-        GIT_DIR: gitOk(attempt.dir, ["rev-parse", "--absolute-git-dir"]),
-        GIT_WORK_TREE: tree,
-        GIT_INDEX_FILE: attempt.index,
-    };
+    const env = { GIT_DIR: attempt.linkStaged(), GIT_WORK_TREE: tree, GIT_INDEX_FILE: attempt.index };
     const result = run([program], { cwd: tree, env, timeoutMs: HOOK_TIMEOUT_MS });
     const output = tail(`${result.stdout}${result.stderr}`);
     if (result.code !== 0)

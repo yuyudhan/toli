@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.13 - unreleased
+
+### Fixed
+
+- `bin/toli commit` no longer refuses every commit when the project's pre-commit hook `cd`s to the top level and
+  unsets `GIT_DIR` / `GIT_WORK_TREE` (or `GIT_INDEX_FILE`) before calling git. The hook's temporary tree is now a
+  linked repository of its own whose index is the private one, so such a hook still finds a repository and sees
+  only the commit being made (T1425).
+
 ## v0.5.12 - 2026-11-14
 
 ### Changed
