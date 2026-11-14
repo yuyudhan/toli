@@ -11,9 +11,9 @@
 // pre-push hook (src/forge/forge.ts) hold one for their whole run, so a project's push check gets one slot's share even
 // when it calls cargo directly. On Linux with a user manager each build (and each such push check) runs in its own
 // systemd scope capped at `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the
-// session that started it. A project's dev containers that rebuild on save are paused while any slot is held
-// (src/fleet/stack-pause.ts); a live-stack project's stack, while a build runs in its checkout
-// (src/fleet/live-stack-pause.ts).
+// session that started it, and a Node tool in it gets a heap cap that fits there (`nodeHeapEnv`). A project's dev
+// containers that rebuild on save are paused or stopped while any slot is held (src/fleet/stack-pause.ts); every
+// live-stack project's stack, while any heavy build runs (src/fleet/live-stack-pause.ts).
 import { closeSync, existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
 import { join, sep } from "node:path";
@@ -28,13 +28,18 @@ import { checkBuildPlace } from "./build-place.ts";
 import { busyBuildSlots, slotWaiters, takeInTurn } from "./build-queue.ts";
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
-import { resumeAbandonedLiveStacks, whileLiveStackPaused } from "./live-stack-pause.ts";
+import { resumeAbandonedLiveStacks, whileLiveStacksPaused } from "./live-stack-pause.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks, resumeDevStacks } from "./stack-pause.ts";
 
 export const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
-/** The share of the RAM every build slot's default memory cap adds up to; the rest stays for the lead's session. */
-const BUILD_MEMORY_SHARE = 0.75;
+/** The share of the RAM each heavy build's default memory cap is: 58%, 18 GB of 31 GB, enough for a 10 GB link. */
+const BUILD_MEMORY_SHARE = 0.58;
+/** The MB a default cap leaves for the system and one project's test stack, where that still leaves half the RAM. */
+const BUILD_MEMORY_RESERVE_MB = 6144;
+/** The share of a build's memory cap one Node process's heap may take (`--max-old-space-size`). */
+const NODE_HEAP_SHARE = 0.5;
+const NODE_HEAP_FLAG = /--max[-_]old[-_]space[-_]size\b/;
 const MB = 1024 * 1024;
 
 /**
@@ -51,15 +56,32 @@ export function resumeDevStacksWhenIdle(slots: number): void {
 
 /**
  * `capacity.buildMemoryMax`: the MB each heavy build's scope may use (0: no cap). Default: `BUILD_MEMORY_SHARE` of
- * `totalMB` split evenly over the `buildSlots`, so every slot busy at its cap still leaves the lead room.
+ * `totalMB`, but at most `totalMB - BUILD_MEMORY_RESERVE_MB` (never below half of `totalMB`), so the system and one
+ * test stack stay alive beside a build at its cap. It is not split over the slots: builds rarely peak together, and a
+ * link step needs most of the cap at once.
  */
-export function buildMemoryMaxMB(machine: Machine, buildSlots: number, totalMB: number): number {
+export function buildMemoryMaxMB(machine: Machine, totalMB: number): number {
     const raw = machine.capacity?.buildMemoryMax;
-    if (raw === undefined) return Math.floor((totalMB * BUILD_MEMORY_SHARE) / buildSlots);
+    if (raw === undefined) {
+        const ceiling = Math.max(totalMB - BUILD_MEMORY_RESERVE_MB, Math.floor(totalMB / 2));
+        return Math.min(Math.floor(totalMB * BUILD_MEMORY_SHARE), ceiling);
+    }
     if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
         throw new ToliError("config/machine.json capacity.buildMemoryMax must be a non-negative integer (MB)");
     }
     return raw;
+}
+
+/**
+ * `NODE_OPTIONS` capping each Node process's heap at `NODE_HEAP_SHARE` of a build's memory cap `memoryMaxMB`, added to
+ * the caller's `base` options; none when there is no cap or the caller set a heap size of its own. Node sizes its heap
+ * from the machine's RAM, not the build's cap, so uncapped it grows until the cap's OOM kill takes it.
+ */
+export function nodeHeapEnv(base: Record<string, string | undefined>, memoryMaxMB: number): Record<string, string> {
+    const options = (base.NODE_OPTIONS ?? "").trim();
+    if (memoryMaxMB === 0 || NODE_HEAP_FLAG.test(options)) return {};
+    const cap = `--max-old-space-size=${Math.max(1, Math.floor(memoryMaxMB * NODE_HEAP_SHARE))}`;
+    return { NODE_OPTIONS: options === "" ? cap : `${options} ${cap}` };
 }
 
 /** Where a build runs: its slot's number (0 without a slot) and its scope's memory cap in MB (0: none). */
@@ -189,31 +211,32 @@ export function liveStackProjectAt(cwd: string): string | null {
 
 /**
  * Run `body` in a heavy-build slot, waiting (never failing) in arrival order while every slot is busy; `body` gets
- * `slotShareEnv` plus `TOLI_BUILD_SLOT` set to the slot's number, and the slot's scope. Inside a slot already
- * (`TOLI_BUILD_SLOT` set) it runs at once with nothing added, so a nested build never waits on its own slot; with
- * `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still at one slot's share, with
- * that project's stack auto-rebuild paused (`whileLiveStackPaused`).
+ * `slotShareEnv`, `nodeHeapEnv` and `TOLI_BUILD_SLOT` set to the slot's number, and the slot's scope. Inside a slot
+ * already (`TOLI_BUILD_SLOT` set) it runs at once with nothing added, so a nested build never waits on its own slot;
+ * with `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still at one slot's share.
+ * Every live-stack project's stack auto-rebuild is paused while it runs (`whileLiveStacksPaused`).
  */
 export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Promise<T>): Promise<T> {
     if ((process.env.TOLI_BUILD_SLOT ?? "") !== "") return await body({ env: {}, scope: null });
     // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());
-    const memoryMaxMB = buildMemoryMaxMB(machine, capacity.buildSlots, Math.floor(totalmem() / MB));
+    const memoryMaxMB = buildMemoryMaxMB(machine, Math.floor(totalmem() / MB));
     const share: Record<string, string> = { ...slotShareEnv(process.env, capacity.cargoJobs) };
-    const live = liveStackProjectAt(cwd);
-    if (live !== null) return await whileLiveStackPaused(live, () => body({ env: share, scope: null }));
+    if (liveStackProjectAt(cwd) !== null) return await whileLiveStacksPaused(() => body({ env: share, scope: null }));
+    const capped = { ...share, ...nodeHeapEnv(process.env, memoryMaxMB) };
     const lock = flock();
     if (lock === null) {
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
-        return await body({ env: share, scope: { slot: 0, memoryMaxMB } });
+        return await whileLiveStacksPaused(() => body({ env: capped, scope: { slot: 0, memoryMaxMB } }));
     }
     const held = await takeInTurn(capacity.buildSlots, lock);
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;
         pauseDevStacks();
-        return await body({ env: { ...share, TOLI_BUILD_SLOT: String(slot) }, scope: { slot, memoryMaxMB } });
+        const env = { ...capped, TOLI_BUILD_SLOT: String(slot) };
+        return await whileLiveStacksPaused(() => body({ env, scope: { slot, memoryMaxMB } }));
     } finally {
         lock(held.fd, LOCK_UN);
         closeSync(held.fd);

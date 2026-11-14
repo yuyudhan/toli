@@ -42,7 +42,7 @@ export type CapacityConfig = {
     buildSlots?: number;
     /**
      * Memory cap, in MB, of each heavy build's own systemd user scope on Linux (`MemoryMax`, src/fleet/build-slots.ts;
-     * default three quarters of the RAM split evenly over the build slots; 0: no cap, still its own scope).
+     * default each build's min(58% of RAM, max(RAM - 6144, RAM / 2)); 0: no cap, still its own scope).
      */
     buildMemoryMax?: number;
     /**

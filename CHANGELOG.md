@@ -4,6 +4,28 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.16 - unreleased
+
+### Changed
+
+- A heavy build's default memory cap (`capacity.buildMemoryMax`) is now 58% of the RAM, not three quarters of it
+  split over the build slots, leaving at least 6 GB (or half the RAM, on small machines) for the system and one test
+  stack: 18 GB on a 31 GB machine, where a 10 GB link step capped at 11 GB was throttled until systemd-oomd killed it.
+  An explicit setting still wins (T1421).
+- While any heavy build runs on the machine (one holding a slot, or one in a live-stack checkout), every live-stack
+  project's stack is paused the way its notes declare, not only the stack of the project being built, and resumed
+  when the last build ends: a build of one project left another's dev stack recompiling beside it (T1431).
+
+### Added
+
+- `- Stop during builds: <container>, ...` in a project's `## Local stack` notes stops those containers with
+  `docker stop` while heavy builds run and starts them again after, for live-stack and other projects alike. A paused
+  container keeps its memory; a stopped one frees it. Containers not named, databases included, are never touched
+  (T1421).
+- A Node tool run inside a heavy-build slot gets `NODE_OPTIONS=--max-old-space-size=<half the slot's memory cap>`,
+  added to the caller's options unless they set a heap size already, so its heap stops growing before the slot's
+  out-of-memory kill takes it (T1421).
+
 ## v0.5.15 - 2026-11-14
 
 ### Fixed

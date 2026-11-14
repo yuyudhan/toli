@@ -1,26 +1,36 @@
-// A live-stack project's dev stack (docs/projects.md "Live-stack mode") recompiles on every save. A build started in
-// its checkout (a gate, a push check, `bin/toli build-slot`, a cargo through the shim) skips the heavy-build slots
-// (src/fleet/build-slots.ts), so beside the stack's own recompile it doubles the load. While such a build runs, toli
-// pauses the stack's auto-rebuild the way the project's notes declare, and resumes it once the last build in that
-// checkout ends, however it ends:
+// A live-stack project's dev stack (docs/projects.md "Live-stack mode") recompiles on every save. Beside a heavy build
+// anywhere on the machine (a build in its own checkout, which skips the heavy-build slots, or any build holding a
+// slot, src/fleet/build-slots.ts) that recompile doubles the load. So while any heavy build runs, toli pauses or stops
+// every live-stack project's auto-rebuild the way each project's notes declare, and resumes each once the last build
+// ends, however it ends:
 //
 //     ## Live stack mode
 //     - Pause: `docker compose pause backend`
 //     - Resume: `docker compose unpause backend`
 //
 //     ## Local stack
-//     - Pause during builds: app-backend
+//     - Pause during builds: app-frontend
+//     - Stop during builds: app-backend
 //
-// Both commands run with `sh -c` in the checkout; the named containers are paused with `docker pause`, never stopped
-// (src/fleet/stack-pause.ts). The builds are counted by pid in state/build-slots/live-<project>.json: the first in
-// pauses, the last out resumes, and a holder killed outright is dropped by the next build's end or the minute tick,
-// which then resumes the stack. The record keeps what was paused and how to resume it, so a resume needs no notes.
-// With nothing declared the build runs beside the stack, said once (state/build-slots/live-<project>.undeclared).
+// Both commands run with `sh -c` in the checkout; the named containers are paused with `docker pause` or stopped with
+// `docker stop` (src/fleet/stack-pause.ts), never removed. The builds are counted by pid in
+// state/build-slots/live-<project>.json: the first in pauses, the last out resumes, and a holder killed outright is
+// dropped by the next build's end or the minute tick, which then resumes the stack. The record keeps what was paused
+// and how to resume it, so a resume needs no notes. With nothing declared the build runs beside the stack, said once
+// (state/build-slots/live-<project>.undeclared).
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../core/paths.ts";
 import { pidAlive, readJson, run, warn, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
-import { parseStackDeclaration, pauseContainers, unpauseContainers, withStackLock } from "./stack-pause.ts";
+import { loadProjects } from "../projects/projects.ts";
+import {
+    parseStackDeclaration,
+    pauseContainers,
+    startContainers,
+    stopContainers,
+    unpauseContainers,
+    withStackLock,
+} from "./stack-pause.ts";
 
 const COMMAND_TIMEOUT_MS = 120_000;
 const SECTION = /^## Live stack mode\s*$/i;
@@ -29,12 +39,20 @@ const COMMAND = /^\s*[-*]\s*(pause|resume)\s*:\s*`([^`]+)`\s*$/i;
 const RECORD_FILE = /^live-(.+)\.json$/;
 
 /** How a live-stack project's notes say to pause and resume its stack's auto-rebuild. */
-export type LiveStackDeclaration = { pause: string | null; resume: string | null; containers: string[] };
+export type LiveStackDeclaration = {
+    pause: string | null;
+    resume: string | null;
+    containers: string[];
+    stop: string[];
+};
 
-/** What a pause did, enough to undo it without the notes: the resume command still owed, the containers paused. */
-type Paused = { dir: string; resume: string | null; containers: string[] };
+/**
+ * What a pause did, enough to undo it without the notes: the resume command still owed, the containers paused and
+ * those stopped.
+ */
+type Paused = { dir: string; resume: string | null; containers: string[]; stopped: string[] };
 
-/** The builds running in a live-stack checkout (their pids, one entry per build) and what their pause did. */
+/** The builds running on the machine (their pids, one entry per build) and what their pause of the stack did. */
 type LiveRecord = { holders: number[]; paused: Paused | null };
 
 const recordFile = (project: string): string => join(paths.buildSlotsDir(), `live-${project}.json`);
@@ -42,7 +60,7 @@ const undeclaredFile = (project: string): string => join(paths.buildSlotsDir(), 
 
 /** A notes file's `## Live stack mode` `- Pause:` / `- Resume:` commands and its `## Local stack` containers. */
 export function parseLiveStackDeclaration(notes: string): LiveStackDeclaration {
-    const declared: LiveStackDeclaration = { pause: null, resume: null, containers: [] };
+    const declared: LiveStackDeclaration = { pause: null, resume: null, containers: [], stop: [] };
     let inSection = false;
     for (const line of notes.split("\n")) {
         if (HEADING.test(line)) {
@@ -54,7 +72,9 @@ export function parseLiveStackDeclaration(notes: string): LiveStackDeclaration {
         if (match[1].toLowerCase() === "pause") declared.pause = match[2].trim();
         else declared.resume = match[2].trim();
     }
-    declared.containers = parseStackDeclaration(notes).containers;
+    const stack = parseStackDeclaration(notes);
+    declared.containers = stack.containers;
+    declared.stop = stack.stop;
     return declared;
 }
 
@@ -65,7 +85,12 @@ function declarationOf(project: string): LiveStackDeclaration {
 
 function readRecord(project: string): LiveRecord {
     const record = readJson<Partial<LiveRecord>>(recordFile(project), {});
-    return { holders: Array.isArray(record.holders) ? record.holders : [], paused: record.paused ?? null };
+    const paused = record.paused ?? null;
+    return {
+        holders: Array.isArray(record.holders) ? record.holders : [],
+        // A record written before stopping existed has no `stopped`.
+        paused: paused === null ? null : { ...paused, stopped: Array.isArray(paused.stopped) ? paused.stopped : [] },
+    };
 }
 
 function writeRecord(project: string, record: LiveRecord): void {
@@ -73,7 +98,7 @@ function writeRecord(project: string, record: LiveRecord): void {
     else writeJsonAtomic(recordFile(project), record);
 }
 
-/** Say once (until the project declares a way again) that its stack keeps rebuilding beside its builds. */
+/** Say once (until the project declares a way again) that its stack keeps rebuilding beside heavy builds. */
 function sayUndeclaredOnce(project: string, declared: LiveStackDeclaration): void {
     if (existsSync(undeclaredFile(project))) return;
     let why = "its notes declare no way to pause its stack";
@@ -81,7 +106,7 @@ function sayUndeclaredOnce(project: string, declared: LiveStackDeclaration): voi
     if (declared.resume !== null) why = "its notes declare its stack's `- Resume:` command without `- Pause:`";
     warn(
         `toli: ${project}: live-stack mode, but ${why} (docs/projects.md "Live-stack mode"); ` +
-            "this build runs beside its rebuilds",
+            "heavy builds run beside its rebuilds",
     );
     writeTextAtomic(undeclaredFile(project), `${new Date().toISOString()}\n`);
 }
@@ -98,7 +123,9 @@ function pauseStack(project: string, dir: string, declared: LiveStackDeclaration
             );
     }
     const containers = pauseContainers(declared.containers);
-    return resume === null && containers.length === 0 ? null : { dir, resume, containers };
+    const stopped = stopContainers(declared.stop);
+    if (resume === null && containers.length === 0 && stopped.length === 0) return null;
+    return { dir, resume, containers, stopped };
 }
 
 /** Undo `paused`; returns what is still paused (warned about with the command that fixes it), or null. */
@@ -113,10 +140,12 @@ function resumeStack(project: string, paused: Paused): Paused | null {
             );
     }
     const containers = unpauseContainers(paused.containers);
-    return resume === null && containers.length === 0 ? null : { ...paused, resume, containers };
+    const stopped = startContainers(paused.stopped);
+    if (resume === null && containers.length === 0 && stopped.length === 0) return null;
+    return { ...paused, resume, containers, stopped };
 }
 
-/** Count this process in as a build in `project`'s checkout, pausing its stack when it is the first. */
+/** Count this process in as a heavy build on `project`'s record, pausing its stack when it is the first. */
 function countIn(project: string): void {
     withStackLock(() => {
         const record = readRecord(project);
@@ -125,7 +154,7 @@ function countIn(project: string): void {
         if (holders.length === 0 && paused === null) {
             const declared = declarationOf(project);
             const commands = declared.pause !== null && declared.resume !== null;
-            if (!commands && declared.containers.length === 0) {
+            if (!commands && declared.containers.length === 0 && declared.stop.length === 0) {
                 sayUndeclaredOnce(project, declared);
                 return;
             }
@@ -160,24 +189,51 @@ function safely(project: string, undone: string, step: () => void): void {
     }
 }
 
+/** Settle every live-stack record there is (`settle`), dropping `leaving`'s entry from each. */
+function settleAll(leaving: number | null): void {
+    if (!existsSync(paths.buildSlotsDir())) return;
+    for (const name of readdirSync(paths.buildSlotsDir())) {
+        const project = RECORD_FILE.exec(name)?.[1];
+        if (project !== undefined) safely(project, "not resumed", () => settle(project, leaving));
+    }
+}
+
 /**
- * Run `body`, a build in live-stack `project`'s checkout, with the project's stack auto-rebuild paused for as long as
- * any such build runs; it is resumed when the last one ends, whether it passed, failed or was stopped.
+ * Count this process in as a heavy build on every live-stack project, pausing each project's stack it is the first
+ * build for. Pair it with `resumeLiveStacks` once the build ends; a holder killed outright is settled by the tick.
  */
-export async function whileLiveStackPaused<T>(project: string, body: () => Promise<T>): Promise<T> {
-    safely(project, "not paused", () => countIn(project));
+export function pauseLiveStacks(): void {
+    let projects: string[];
+    try {
+        projects = loadProjects()
+            .filter((project) => project.liveStack === true)
+            .map((project) => project.name);
+    } catch (error) {
+        warn(`toli: live stacks not paused: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+    }
+    for (const project of projects) safely(project, "not paused", () => countIn(project));
+}
+
+/** Count this process out of every live-stack project, resuming each stack it was the last build for. */
+export function resumeLiveStacks(): void {
+    settleAll(process.pid);
+}
+
+/**
+ * Run `body`, a heavy build, with every live-stack project's stack auto-rebuild paused for as long as any heavy build
+ * runs on the machine; each is resumed when the last one ends, whether it passed, failed or was stopped.
+ */
+export async function whileLiveStacksPaused<T>(body: () => Promise<T>): Promise<T> {
+    pauseLiveStacks();
     try {
         return await body();
     } finally {
-        safely(project, "not resumed", () => settle(project, process.pid));
+        resumeLiveStacks();
     }
 }
 
 /** Resume each live stack whose builds all died without resuming it (a holder killed outright): the minute tick's. */
 export function resumeAbandonedLiveStacks(): void {
-    if (!existsSync(paths.buildSlotsDir())) return;
-    for (const name of readdirSync(paths.buildSlotsDir())) {
-        const project = RECORD_FILE.exec(name)?.[1];
-        if (project !== undefined) safely(project, "not resumed", () => settle(project, null));
-    }
+    settleAll(null);
 }

@@ -35,6 +35,8 @@ function dockerBox(slots: number, names: string[]): { box: Sandbox; log: string;
             `    pause) echo paused > "${state}/$2" ;;`,
             `    unpause) [ -e "${state}/.unpause-fails" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }`,
             `        echo running > "${state}/$2" ;;`,
+            `    stop) echo exited > "${state}/$2" ;;`,
+            `    start) echo running > "${state}/$2" ;;`,
             "esac",
         ].join("\n"),
     );
@@ -53,11 +55,15 @@ const dockerCalls = (log: string): string[] => (existsSync(log) ? readFileSync(l
 
 describe("a project's declared dev-stack containers", () => {
     test("are read from the Local stack section only, names cleaned of backticks and commas", () => {
-        expect(parseStackDeclaration(NOTES)).toEqual({ containers: ["app-watch", "app-web"], invalid: [] });
+        expect(parseStackDeclaration(NOTES)).toEqual({ containers: ["app-watch", "app-web"], stop: [], invalid: [] });
         expect(parseStackDeclaration("## Local stack\n- Pause during builds: a b;c, a\n")).toEqual({
             containers: ["a"],
+            stop: [],
             invalid: ["b;c"],
         });
+        expect(
+            parseStackDeclaration("## Local stack\n- Stop during builds: `a`, b\n- Pause during builds: b, c\n"),
+        ).toEqual({ containers: ["c"], stop: ["a", "b"], invalid: [] });
     });
 
     test("are paused while a build holds a slot and unpaused after, databases and others untouched", async () => {
@@ -106,13 +112,38 @@ describe("a project's declared dev-stack containers", () => {
         expect(status(state, "app-watch")).toBe("running");
     }, 30_000);
 
-    test("of a live-stack project are never paused: its stack is the machine's one build", async () => {
-        const { box, log, state } = dockerBox(1, ["app-watch"]);
+    test("declared `Stop during builds` are stopped while a build holds a slot and started after", async () => {
+        const { box, log, state } = dockerBox(1, ["app-watch", "app-db"]);
+        withProject(box, "app");
+        mkdirSync(join(box.root, "data", "projects", "app"), { recursive: true });
+        writeFileSync(
+            join(box.root, "data", "projects", "app", "notes.md"),
+            "# app\n\n## Local stack\n- Stop during builds: app-watch\n",
+        );
+        const seen = join(box.root, ".seen");
+        const built = await start(box, toliArgs("build-slot", "--", "sh", "-c", `cat "${state}/app-watch" > "${seen}"`))
+            .done;
+        expect(built.code).toBe(0);
+        expect(readFileSync(seen, "utf8")).toBe("exited\n");
+        expect([status(state, "app-watch"), status(state, "app-db")]).toEqual(["running", "running"]);
+        expect(dockerCalls(log).filter((call) => !call.startsWith("inspect"))).toEqual([
+            "stop app-watch",
+            "start app-watch",
+        ]);
+        expect(dockerCalls(log).filter((call) => call.includes("app-db"))).toEqual([]);
+    }, 30_000);
+
+    test("of a live-stack project are paused by any build too, through its live-stack record", async () => {
+        const { box, state } = dockerBox(1, ["app-watch"]);
         declareStack(box, "app");
         box.ok(["project", "set", "app", "--live-stack", "yes"]);
-        const built = await start(box, toliArgs("build-slot", "--", "true")).done;
+        const seen = join(box.root, ".seen");
+        const built = await start(box, toliArgs("build-slot", "--", "sh", "-c", `cat "${state}/app-watch" > "${seen}"`))
+            .done;
         expect(built.code).toBe(0);
+        expect(readFileSync(seen, "utf8")).toBe("paused\n");
         expect(status(state, "app-watch")).toBe("running");
-        expect(dockerCalls(log)).toEqual([]);
+        expect(existsSync(join(box.root, "state", "build-slots", "stacks.paused"))).toBe(false);
+        expect(existsSync(join(box.root, "state", "build-slots", "live-app.json"))).toBe(false);
     }, 30_000);
 });

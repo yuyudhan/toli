@@ -22,10 +22,11 @@ The user's notes file declares the stack; Sardar only reads it. Typical shape:
     - Migrate: `<command>`
     - Logs: `<command>` or <log file path>
     - Health: <local URL> (expect <status or text>)
-    - Pause during builds: <watch/dev container names>   (toli pauses them while a heavy build holds a slot; docs/fleet.md)
+    - Pause during builds: <watch/dev container names>   (toli pauses them while heavy builds run; docs/fleet.md)
+    - Stop during builds: <watch/dev container names>    (toli stops them instead, freeing their memory; docs/fleet.md)
 
-A live-stack project's `## Live stack mode` section may also carry `- Pause: \`<command>\``and`- Resume: \`<command>\``: toli runs them itself around builds in its checkout (docs/projects.md "Pausing the stack
-during a build"); Sardar never runs them.
+A live-stack project's `## Live stack mode` section may also carry `- Pause: \`<command>\``and`- Resume: \`<command>\``: toli runs them itself around every heavy build on the machine (docs/projects.md "Pausing the stack
+during a build"); Sardar never runs them, nor the containers' pause or stop.
 
 Any key may be missing. A missing key means nobody has permission for that action.
 

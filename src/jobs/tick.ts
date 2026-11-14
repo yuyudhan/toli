@@ -283,7 +283,7 @@ export async function tick(): Promise<void> {
     try {
         resumeDevStacksWhenIdle(capacityFor(machine, availableParallelism()).buildSlots);
     } catch (error) {
-        log(`dev stacks not unpaused: ${error instanceof Error ? error.message : String(error)}`);
+        log(`dev stacks not resumed: ${error instanceof Error ? error.message : String(error)}`);
     }
     // Queued jawan runs start as slots free; the finishing run's supervisor does this too, this catches the rest.
     try {

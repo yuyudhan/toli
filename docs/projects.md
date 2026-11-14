@@ -115,17 +115,19 @@ jawan building and testing on its own:
 - Its spawned jawans run without the heavy-build slot shim (src/jawans/env.ts): the machine's one build is the
   stack's; their scoped test builds share the checkout's build folder, where cargo's own lock already runs them one
   at a time, still capped at `capacity.cargoJobs`. Its gates and pushes skip the slot too, at the same cap
-  ([fleet.md](fleet.md#heavy-build-slots)), and pause the stack's auto-rebuild while they run (below).
+  ([fleet.md](fleet.md#heavy-build-slots)), and every heavy build on the machine pauses the stack's auto-rebuild
+  while it runs (below).
 - The machine's jawan cap must fit the team: set `capacity.maxRuns` in `config/machine.json` to the number of
   jawans the machine runs at once (16 for 8-16 jawans; the default is a quarter of the cores, [fleet.md](fleet.md)).
   Spawns beyond it queue.
 
 ### Pausing the stack during a build
 
-A build started in the checkout (a gate, a push check, `bin/toli build-slot -- <command>`, a cargo through the shim)
-compiles beside the stack's own recompile, and together they can take the machine far past its cores. So while such
-a build runs, toli pauses the stack's auto-rebuild the way the notes declare, and resumes it when the last build in
-the checkout ends, whether it passed, failed, was stopped or timed out:
+A heavy build anywhere on the machine (a gate, a push check, `bin/toli build-slot -- <command>`, a cargo through the
+shim or the rustc wrapper, in this checkout or in any other project's) compiles beside the stack's own recompile, and
+together they can take the machine far past its cores and memory. So while any such build runs, toli pauses the
+auto-rebuild of every live-stack project's stack the way its notes declare, and resumes each when the last build on
+the machine ends, whether it passed, failed, was stopped or timed out:
 
     ## Live stack mode
     - Start: `docker compose up -d`
@@ -133,36 +135,40 @@ the checkout ends, whether it passed, failed, was stopped or timed out:
     - Resume: `docker compose unpause backend`
 
     ## Local stack
-    - Pause during builds: app-backend
+    - Pause during builds: app-frontend
+    - Stop during builds: app-backend
 
 `- Pause:` and `- Resume:` (in `## Live stack mode`, each command in backticks, both or neither) run with `sh -c` in
-the checkout; the `## Local stack` `- Pause during builds:` containers are paused with `docker pause`. Either or both
-may be declared. Name only the services that rebuild (the backend under its watcher, the dev server), never a
-database: a paused container keeps its memory and data, and toli never stops or removes one. With neither declared
-the build runs beside the rebuilds, and toli says so once (`toli: <project>: live-stack mode, but its notes declare
+the checkout; the `## Local stack` `- Pause during builds:` containers are paused with `docker pause`, and the
+`- Stop during builds:` ones stopped with `docker stop` and started again with `docker start`. Any of them may be
+declared. A paused container keeps its memory, which a build near its memory cap may need: stop the ones that hold
+much (a dev server, a backend under its watcher); a container named on both lines is stopped. Name only the services
+that rebuild, never a database: toli touches only the containers named, and never removes one. With nothing declared
+the builds run beside the rebuilds, and toli says so once (`toli: <project>: live-stack mode, but its notes declare
 no way to pause its stack ...`).
 
-Several builds in one checkout count as one pause: the first pauses, the last resumes, each counted by its pid in
-`state/build-slots/live-<project>.json`, which also keeps the resume command and the paused containers, so a resume
-never needs the notes. A build killed outright (SIGKILL, a crash) cannot resume: the next build's end there, any
-freed slot or the minute tick sees its pid gone and resumes the stack. A failed pause is warned about and the build
-runs anyway; a failed resume prints the command that fixes it and is retried at those same moments.
+Several builds count as one pause: the first pauses, the last resumes, each counted by its pid in
+`state/build-slots/live-<project>.json`, which also keeps the resume command and the paused and stopped containers,
+so a resume never needs the notes. A build killed outright (SIGKILL, a crash) cannot resume: the next build's end,
+any freed slot or the minute tick sees its pid gone and resumes the stack. A failed pause is warned about and the
+build runs anyway; a failed resume prints the command that fixes it and is retried at those same moments.
 
 ## Dev stacks that rebuild on save
 
 A project that is not in live-stack mode can still have a dev container that recompiles on every save. Left alone it
 competes with the heavy builds that hold a build slot (a gate, `just verify`, a jawan's cargo). Declare it in the
-notes' `## Local stack` section and toli pauses it for as long as a build holds a slot:
+notes' `## Local stack` section and toli pauses or stops it for as long as a build holds a slot:
 
     ## Local stack
     - Start: `docker compose up -d`
-    - Pause during builds: app-backend, app-frontend
+    - Pause during builds: app-frontend
+    - Stop during builds: app-backend
 
-List only the watch or dev containers (never a database): they are paused with `docker pause` and unpaused afterwards,
-data kept, never stopped or removed. The details, and what happens when an unpause fails, are in
-[fleet.md](fleet.md#dev-stacks-and-heavy-builds). A live-stack project's declaration is used only for builds in its
-own checkout ([above](#pausing-the-stack-during-a-build)): the other projects' slots never pause the stack its jawans
-code against.
+List only the watch or dev containers (never a database): they are paused with `docker pause` or stopped with
+`docker stop`, and unpaused or started again afterwards, data kept, never removed. A paused container keeps its
+memory; a stopped one frees it. The details, and what happens when a resume fails, are in
+[fleet.md](fleet.md#dev-stacks-and-heavy-builds). A live-stack project's declaration is used for every heavy build on
+the machine instead ([above](#pausing-the-stack-during-a-build)).
 
 ## Setting up an existing project
 

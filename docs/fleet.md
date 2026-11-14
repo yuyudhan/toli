@@ -205,9 +205,19 @@ On Linux with a systemd user manager, each build also runs in its own user scope
 cannot swap: without `MemorySwapMax=0` a build at its cap pushed the rest of its memory into swap, and once the
 machine's swap filled systemd-oomd killed the whole build anyway. An out-of-memory kill (the kernel at the cap, or
 systemd-oomd under memory pressure) then takes that one build, not the terminal, tmux server or lead session that
-started it. The cap is `capacity.buildMemoryMax` in MB (default three quarters of the RAM split evenly over the build
-slots: 16384 with 64 GB and 3 slots, so every slot at its cap still leaves a quarter for the rest; 0: no cap, still its
-own scope). The build's exit code, or the signal that killed it, is reported as without a scope. A nested build
+started it. The cap is `capacity.buildMemoryMax` in MB; 0: no cap, still its own scope. Its default is each build's,
+not split over the slots (builds rarely peak together, and a link step needs most of a cap at once):
+
+    min(58% of RAM, max(RAM - 6144, RAM / 2))
+
+that is 58% of the RAM, but leaving at least 6 GB for the system and one project's test stack where that still
+leaves the build half the RAM: 18411 on a 31 GB machine, 38010 on 64 GB, 6144 on 12 GB, 4096 on 8 GB. An explicit
+`capacity.buildMemoryMax` always wins. A Node tool the build runs (a bundler, a type checker, a test runner) gets
+`NODE_OPTIONS=--max-old-space-size=<half the cap>`, added to the caller's `NODE_OPTIONS` unless they already set a
+heap size (`--max-old-space-size` or `--max_old_space_size`); Node sizes its heap from the machine's RAM, not the
+cap, so without it a heap grows until the cap's out-of-memory kill takes it. No cap, no heap size. A live-stack
+checkout's builds, which run without a slot or scope, get none either. The build's exit code, or the signal that
+killed it, is reported as without a scope. A nested build
 (inside a slot, or in a process already in a `toli-build-*` scope) stays in its parent's scope; without
 `systemd-run` or a user manager (crontab-only boxes, containers, macOS) the build starts as before. Inside the scope
 `/bin/sh` creates `state/build-slots/scope-<pid>.started` and then execs the build; when systemd-run exits without it
@@ -252,8 +262,9 @@ killed holder frees it with its lock. The wrapper then runs the wrapper it repla
 cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
 
 A build started in a live-stack project's checkout ([projects.md](projects.md#live-stack-mode)) skips the slots, as
-that project's jawans run without the shim or the wrapper, at the same share of jobs and test threads, and pauses
-that project's stack auto-rebuild while it runs ([projects.md](projects.md#pausing-the-stack-during-a-build)).
+that project's jawans run without the shim or the wrapper, at the same share of jobs and test threads. Every heavy
+build, that one or one holding a slot, pauses every live-stack project's stack auto-rebuild while it runs
+([projects.md](projects.md#pausing-the-stack-during-a-build)).
 `[build] jobs` in `~/.cargo/config.toml` holds the same per-slot number so hand-run cargo gets it too
 (`bin/toli doctor` warns when the two differ). `bin/toli resources` shows the slots as `builds <busy>/<total>`
 (`buildSlots` and `buildSlotsBusy` in `--json`).
@@ -262,25 +273,28 @@ that project's stack auto-rebuild while it runs ([projects.md](projects.md#pausi
 
 A dev container that rebuilds its project on every save (a backend under a file watcher, compiling inside Docker) is a
 build outside every slot: beside a gate it doubles the load and fills the disk with its own target copy. A project
-declares such containers in its notes' `## Local stack` section, on one line (see
+declares such containers in its notes' `## Local stack` section, one line per way (see
 [projects.md](projects.md#dev-stacks-that-rebuild-on-save)):
 
-    - Pause during builds: app-backend, app-frontend
+    - Pause during builds: app-frontend
+    - Stop during builds: app-backend
 
 While any command holds a slot (`bin/toli build-slot`, a gate or push check, a cargo the rustc wrapper holds a slot
-for), each declared container that runs is paused with `docker pause`: its processes freeze and its memory and data
-stay. The first holder in pauses them, and the last holder out unpauses them, once no command holds a slot and none
-waits for one, so a queue of builds pauses the stack once. Containers are only paused and unpaused, never stopped or
-removed, and only those named: a database is never touched. Nothing is paused that is not running, and a container
-Docker cannot pause is warned about and left running; the build still runs.
+for), each declared container that runs is paused with `docker pause` (its processes freeze, its memory and data
+stay) or stopped with `docker stop` (its processes end and free their memory, its data stays). A paused container
+still holds its memory, so beside a build near its memory cap stop it instead; one named on both lines is stopped.
+The first holder in pauses or stops them, and the last holder out unpauses them or starts them again (`docker
+start`), once no command holds a slot and none waits for one, so a queue of builds does it once. Containers are never
+removed, and only those named are touched: a database is never paused or stopped. Nothing is paused or stopped that
+is not running, and a container Docker cannot pause or stop is warned about and left running; the build still runs.
 
-The paused names are kept in `state/build-slots/stacks.paused`. A failed unpause prints
-`toli: could not unpause <name>: <docker's error>; run \`docker unpause <name>\``, keeps the name there, and is retried
-when the next slot is freed and by the minute tick, which also resumes a stack a killed holder left paused (a holder
-that is killed frees its slot with its lock, but cannot unpause). A live-stack project's declaration is ignored here,
-like its builds skip the slots: its stack is paused only while a build runs in its own checkout
-([projects.md](projects.md#pausing-the-stack-during-a-build)), which the same freed slot and minute tick also
-resume after a killed build.
+The names are kept in `state/build-slots/stacks.paused` and `stacks.stopped`. A failed resume prints
+`toli: could not unpause <name>: <docker's error>; run \`docker unpause <name>\``(or`start`), keeps the name there,
+and is retried when the next slot is freed and by the minute tick, which also resumes a stack a killed holder left
+(a holder that is killed frees its slot with its lock, but cannot resume). A live-stack project's declaration is
+handled per build instead: every heavy build on the machine, in a slot or in a live-stack checkout, counts in on it
+([projects.md](projects.md#pausing-the-stack-during-a-build)), and the same freed slot and minute tick also resume
+it after a killed build.
 
 ## Work on another machine
 

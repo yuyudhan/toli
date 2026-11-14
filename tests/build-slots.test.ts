@@ -212,19 +212,47 @@ describe("each heavy build in its own systemd scope", () => {
         ]);
     });
 
-    test("the memory cap defaults to three quarters of the RAM split over the slots; 0 means no cap", () => {
-        expect(buildMemoryMaxMB(machine, 3, 65_536)).toBe(16_384);
-        expect(buildMemoryMaxMB(machine, 1, 16_000)).toBe(12_000);
-        expect(buildMemoryMaxMB({ ...machine, capacity: { buildMemoryMax: 8192 } }, 3, 65_536)).toBe(8192);
-        expect(buildMemoryMaxMB({ ...machine, capacity: { buildMemoryMax: 0 } }, 3, 65_536)).toBe(0);
+    test("the memory cap defaults to 58% of the RAM, leaving 6 GB (or half the RAM) for the rest; 0 means no cap", () => {
+        // 31 GB: 18 GB, the cap a 10 GB link step needs beside the system and a test stack.
+        expect(buildMemoryMaxMB(machine, 31_744)).toBe(18_411);
+        expect(buildMemoryMaxMB(machine, 65_536)).toBe(38_010);
+        // Smaller machines keep 6 GB for the system and one test stack, but never less than half the RAM is a cap.
+        expect(buildMemoryMaxMB(machine, 12_288)).toBe(6144);
+        expect(buildMemoryMaxMB(machine, 8192)).toBe(4096);
+        expect(buildMemoryMaxMB(machine, 4096)).toBe(2048);
+        expect(buildMemoryMaxMB({ ...machine, capacity: { buildMemoryMax: 8192 } }, 65_536)).toBe(8192);
+        expect(buildMemoryMaxMB({ ...machine, capacity: { buildMemoryMax: 0 } }, 65_536)).toBe(0);
         // config/machine.json as read from disk: any JSON value may sit where a number belongs.
         for (const bad of ["-1", "1.5", '"8G"']) {
             const read = JSON.parse(
                 `{ "name": "m1", "role": "coordinator", "capacity": { "buildMemoryMax": ${bad} } }`,
             );
-            expect(() => buildMemoryMaxMB(read as Machine, 3, 65_536)).toThrow("non-negative integer");
+            expect(() => buildMemoryMaxMB(read as Machine, 65_536)).toThrow("non-negative integer");
         }
     });
+
+    test("a build in a slot caps Node's heap at half the slot's memory, unless the caller set a cap", async () => {
+        const { box } = scopeBox(TERMINAL_CGROUP);
+        const seen = join(box.root, ".node-options");
+        const record = toliArgs("build-slot", "--", "sh", "-c", `printf '%s\\n' "$NODE_OPTIONS" >> "${seen}"`);
+        for (const options of ["", "--enable-source-maps", "--max-old-space-size=100", "--max_old_space_size=100"])
+            expect((await start(box, record, { NODE_OPTIONS: options }).done).code).toBe(0);
+        expect(readFileSync(seen, "utf8").split("\n")).toEqual([
+            "--max-old-space-size=256",
+            "--enable-source-maps --max-old-space-size=256",
+            "--max-old-space-size=100",
+            "--max_old_space_size=100",
+            "",
+        ]);
+        // No memory cap: no heap cap either.
+        const config = join(box.root, "config", "machine.json");
+        const parsed = JSON.parse(readFileSync(config, "utf8")) as { capacity: Record<string, number> };
+        writeFileSync(config, JSON.stringify({ ...parsed, capacity: { ...parsed.capacity, buildMemoryMax: 0 } }));
+        const uncapped = join(box.root, ".uncapped");
+        const bare = toliArgs("build-slot", "--", "sh", "-c", `printf '%s\\n' "$NODE_OPTIONS" > "${uncapped}"`);
+        expect((await start(box, bare, { NODE_OPTIONS: "" }).done).code).toBe(0);
+        expect(readFileSync(uncapped, "utf8")).toBe("\n");
+    }, 30_000);
 
     test("a process already inside a toli build scope is recognised from its cgroup", () => {
         const slice = "0::/user.slice/user-1000.slice/user@1000.service/app.slice";

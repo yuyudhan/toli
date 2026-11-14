@@ -18,6 +18,7 @@ import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
 import { busyBuildSlots, POLL_MS, takeInTurn } from "./build-queue.ts";
 import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
+import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
 
@@ -139,6 +140,7 @@ export async function holdForCargo(cargoPid: number): Promise<number> {
         if (held !== null) {
             lock(held.fd, LOCK_UN);
             closeSync(held.fd);
+            resumeLiveStacks();
             resumeDevStacksWhenIdle(capacity.buildSlots);
         }
         rmSync(claimFile(cargoPid), { force: true });
@@ -154,6 +156,7 @@ export async function holdForCargo(cargoPid: number): Promise<number> {
             process.exit(0);
         });
     pauseDevStacks();
+    pauseLiveStacks();
     writeTextAtomic(heldFile(cargoPid), `${process.pid} ${held.index + 1}\n`);
     while (pidAlive(cargoPid)) await Bun.sleep(POLL_MS);
     release();

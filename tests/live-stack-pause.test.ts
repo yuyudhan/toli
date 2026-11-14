@@ -4,7 +4,36 @@ import { join } from "node:path";
 import { type Started, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
 
-/** A live-stack project `app` whose notes declare `notes`, beside a `docker` stub that keeps container states. */
+/** A `docker` stub that keeps container states in `state` (one file per container) and logs every call to `log`. */
+function dockerStub(box: Sandbox, state: string, log: string): void {
+    box.stub(
+        "docker",
+        [
+            `echo "$*" >> "${log}"`,
+            'case "$1" in',
+            `    inspect) [ -f "${state}/$4" ] || { echo "Error: No such object: $4" >&2; exit 1; }; cat "${state}/$4" ;;`,
+            `    pause) echo paused > "${state}/$2" ;;`,
+            `    unpause) echo running > "${state}/$2" ;;`,
+            `    stop) echo exited > "${state}/$2" ;;`,
+            `    start) echo running > "${state}/$2" ;;`,
+            "esac",
+        ].join("\n"),
+    );
+}
+
+/** Register live-stack project `name` with `notes`; returns its checkout. */
+function liveProject(box: Sandbox, name: string, notes: string): string {
+    const checkout = withProject(box, name);
+    box.ok(["project", "set", name, "--live-stack", "yes"]);
+    mkdirSync(join(box.root, "data", "projects", name), { recursive: true });
+    writeFileSync(join(box.root, "data", "projects", name, "notes.md"), notes);
+    return checkout;
+}
+
+/**
+ * A live-stack project `app` whose notes declare `notes`, beside a `docker` stub that keeps container states, on a
+ * machine of two build slots.
+ */
 function liveBox(notes: (stackLog: string) => string): {
     box: Sandbox;
     checkout: string;
@@ -12,27 +41,14 @@ function liveBox(notes: (stackLog: string) => string): {
     dockerLog: string;
     state: string;
 } {
-    const { box } = slotBox(1, 3);
+    const { box } = slotBox(2, 3);
     const state = join(box.root, ".docker-state");
     mkdirSync(state);
-    for (const name of ["app-watch", "app-db"]) writeFileSync(join(state, name), "running");
+    for (const name of ["app-watch", "app-db", "web-watch"]) writeFileSync(join(state, name), "running");
     const dockerLog = join(box.root, ".docker-log");
-    box.stub(
-        "docker",
-        [
-            `echo "$*" >> "${dockerLog}"`,
-            'case "$1" in',
-            `    inspect) [ -f "${state}/$4" ] || { echo "Error: No such object: $4" >&2; exit 1; }; cat "${state}/$4" ;;`,
-            `    pause) echo paused > "${state}/$2" ;;`,
-            `    unpause) echo running > "${state}/$2" ;;`,
-            "esac",
-        ].join("\n"),
-    );
-    const checkout = withProject(box, "app");
-    box.ok(["project", "set", "app", "--live-stack", "yes"]);
+    dockerStub(box, state, dockerLog);
     const stackLog = join(box.root, ".stack-log");
-    mkdirSync(join(box.root, "data", "projects", "app"), { recursive: true });
-    writeFileSync(join(box.root, "data", "projects", "app", "notes.md"), notes(stackLog));
+    const checkout = liveProject(box, "app", notes(stackLog));
     return { box, checkout, stackLog, dockerLog, state };
 }
 
@@ -49,6 +65,16 @@ const DECLARED = (stackLog: string): string =>
         "- Pause during builds: app-watch",
         "",
     ].join("\n");
+
+// A container named on both lines is stopped: stopping frees its memory, pausing keeps it.
+const STOP_NOTES = [
+    "# app",
+    "",
+    "## Local stack",
+    "- Stop during builds: app-watch",
+    "- Pause during builds: app-watch",
+    "",
+].join("\n");
 
 const lines = (file: string): string[] => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n") : []);
 const status = (state: string, name: string): string => readFileSync(join(state, name), "utf8").trim();
@@ -137,5 +163,57 @@ describe("a live-stack project's stack while a build runs in its checkout", () =
         box.ok(["job", "tick"]);
         expect(lines(stackLog)).toEqual(["pause", "resume"]);
         expect(status(state, "app-watch")).toBe("running");
+    }, 30_000);
+});
+
+describe("every live-stack project's stack while any heavy build runs on the machine", () => {
+    test("declared `Stop during builds` is stopped, not paused, and started again; databases untouched", async () => {
+        const { box, checkout, dockerLog, state } = liveBox(() => STOP_NOTES);
+        const seen = join(box.root, ".seen");
+        const built = await start(
+            box,
+            toliArgs("build-slot", "--", "sh", "-c", `cat "${state}/app-watch" > "${seen}"`),
+            {},
+            checkout,
+        ).done;
+        expect(built.code).toBe(0);
+        expect(readFileSync(seen, "utf8")).toBe("exited\n");
+        expect([status(state, "app-watch"), status(state, "app-db")]).toEqual(["running", "running"]);
+        const calls = lines(dockerLog).filter((call) => !call.startsWith("inspect"));
+        expect(calls).toEqual(["stop app-watch", "start app-watch"]);
+        expect(lines(dockerLog).filter((call) => call.includes("app-db"))).toEqual([]);
+    }, 30_000);
+
+    test("is paused while another project's builds hold slots, and resumed once when the last ends", async () => {
+        const { box, stackLog, dockerLog, state } = liveBox(DECLARED);
+        const other = withProject(box, "other");
+        const first = await holdBuild(box, other, "a");
+        expect(lines(stackLog)).toEqual(["pause"]);
+        expect(status(state, "app-watch")).toBe("paused");
+        const quick = await start(box, toliArgs("build-slot", "--", "true"), {}, other).done;
+        expect(quick.code).toBe(0);
+        expect(lines(stackLog)).toEqual(["pause"]);
+        expect(status(state, "app-watch")).toBe("paused");
+        writeFileSync(join(box.root, ".release-a"), "");
+        expect((await first.done).code).toBe(0);
+        expect(lines(stackLog)).toEqual(["pause", "resume"]);
+        expect([status(state, "app-watch"), status(state, "app-db")]).toEqual(["running", "running"]);
+        expect(lines(dockerLog).filter((call) => call.includes("app-db"))).toEqual([]);
+    }, 30_000);
+
+    test("a build in one live-stack checkout pauses every other live-stack project's stack too", async () => {
+        const { box, checkout, stackLog, state } = liveBox(DECLARED);
+        liveProject(box, "web", "# web\n\n## Local stack\n- Pause during builds: web-watch\n");
+        const seen = join(box.root, ".seen");
+        const built = await start(
+            box,
+            toliArgs("build-slot", "--", "sh", "-c", `cat "${state}/app-watch" "${state}/web-watch" > "${seen}"`),
+            {},
+            checkout,
+        ).done;
+        expect(built.code).toBe(0);
+        expect(readFileSync(seen, "utf8")).toBe("paused\npaused\n");
+        expect(lines(stackLog)).toEqual(["pause", "resume"]);
+        expect([status(state, "app-watch"), status(state, "web-watch")]).toEqual(["running", "running"]);
     }, 30_000);
 });
