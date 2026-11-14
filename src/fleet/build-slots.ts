@@ -259,7 +259,7 @@ export async function withBuildSlot<T>(
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
         return await unslotted({ env: capped, scope: { slot: 0, memoryMaxMB } });
     }
-    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd), process.pid);
+    const held = await takeInTurn(capacity, lock, slotHolder(cwd), process.pid);
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;

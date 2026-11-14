@@ -271,6 +271,18 @@ killed holder frees it with its lock. The wrapper then runs the wrapper it repla
 `RUSTC_WRAPPER`, else `[build] rustc-wrapper` in `~/.cargo/config.toml`, such as sccache), or rustc itself. Such a
 cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
 
+A slot caps its cargos together, not each one: every cargo started inside it (cargo-clippy's `cargo check`, a build
+script's cargo, and the cargo a test kit starts from each test binary through `$CARGO`, cargo's absolute path, which
+never meets the shim) joins the slot and gets the same `CARGO_BUILD_JOBS`, so many of them at once would compile far
+past the slot's share. Whoever takes a slot therefore sizes its job pool (`state/build-slots/jobs-<slot>/size`) at
+`capacity.cargoJobs`, and the rustc wrapper makes every crate compilation in the slot take one job before it compiles
+and free it after: the slot is `TOLI_BUILD_SLOT` (inherited, so a builder detached from the slot's process tree still
+counts) or the slot of the cargo holder among the compilation's ancestors. A job is a file `<k>` holding the wrapper's
+pid, made with the shell's noclobber; a job whose wrapper died is taken over. Probes (`rustc -vV`, the `___`
+target-info crate) take none. A compilation waits only for a job, and every compilation holding one ends, so the
+pool cannot deadlock; a cargo run from inside a compilation that holds a job (a proc macro that runs cargo,
+`TOLI_BUILD_JOB` set) uses that job. A cargo with no slot (a live-stack checkout's) compiles without the pool.
+
 Whoever takes a slot writes its pid, the directory its build runs in and its `CARGO_TARGET_DIR` into the slot's lock
 file (`state/build-slots/<n>.lock`), so the disk keeper never deletes the target a slot's build compiles into, even
 between two cargo runs ([disk.md](disk.md#live-builds)).

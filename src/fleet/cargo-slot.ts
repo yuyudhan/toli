@@ -149,7 +149,7 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
     sweepHolderFiles(lock);
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());
-    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd), cargoPid, () => pidAlive(cargoPid));
+    const held = await takeInTurn(capacity, lock, slotHolder(cwd), cargoPid, () => pidAlive(cargoPid));
     const release = (): void => {
         rmSync(heldFile(cargoPid), { force: true });
         if (held !== null) {

@@ -120,10 +120,11 @@ export function leadBuildEnv(
  * another cargo ahead of the shim on PATH, and every cargo run, a pre-push hook's of a plain `git push` included, gets
  * one slot's share of the cores (`slotShareEnv`): `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs`, the one
  * setting for this machine (an inherited value never overrides it), and the test-thread caps. An inherited
- * `TOLI_BUILD_SLOT` is dropped: a jawan's builds never ride on a slot it did not take. A live-stack project's jawan
- * (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim or the wrapper, at the same share: the
- * machine's one build is the running stack's, its own scoped test builds share the checkout's build folder, where
- * cargo's lock already runs them one at a time, so they never also wait for a heavy-build slot.
+ * `TOLI_BUILD_SLOT` (and a compile job, `TOLI_BUILD_JOB`) is dropped: a jawan's builds never ride on a slot it did not
+ * take. A live-stack project's jawan (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim or the
+ * wrapper, at the same share: the machine's one build is the running stack's, its own scoped test builds share the
+ * checkout's build folder, where cargo's lock already runs them one at a time, so they never also wait for a
+ * heavy-build slot.
  */
 export function jawanEnv(
     base: Record<string, string | undefined>,
@@ -137,6 +138,7 @@ export function jawanEnv(
     delete env.CLAUDE_CODE_ENTRYPOINT;
     delete env.CARGO_TARGET_DIR;
     delete env.TOLI_BUILD_SLOT;
+    delete env.TOLI_BUILD_JOB;
     // A jawan the headless lead started is not that lead turn: it must never inherit its refusals.
     delete env[LEAD_TURN_ENV];
     Object.assign(env, slotShareEnv(base, cargoJobs));

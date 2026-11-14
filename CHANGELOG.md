@@ -4,6 +4,19 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.22 - unreleased
+
+### Fixed
+
+- The cargos in one heavy-build slot can no longer compile more than one slot's share of crates together. A test kit
+  that starts its own cargo build from each test binary through `$CARGO` (cargo's absolute path, which never meets
+  toli's cargo shim) ran every such build inside the slot at the slot's full `CARGO_BUILD_JOBS`, so a
+  `cargo nextest run` with many test binaries ran many compilers at once. toli's rustc wrapper now gives each slot a
+  job pool sized at its share of compile jobs (`state/build-slots/jobs-<slot>`): every crate compilation in the slot,
+  whichever cargo started it and however that cargo was reached (the shim, `$CARGO`, an absolute path, a builder
+  detached from the slot's process tree), takes a job before it compiles and frees it after. A cargo run from inside
+  a compilation that holds a job (a proc macro that runs cargo) uses that job, so the pool never deadlocks (T1500).
+
 ## v0.5.21 - 2026-11-14
 
 ### Fixed

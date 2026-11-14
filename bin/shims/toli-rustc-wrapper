@@ -1,37 +1,116 @@
 #!/bin/sh
 # toli's rustc wrapper: cargo's RUSTC_WRAPPER for jawans and lead sessions (src/jawans/env.ts), so a heavy cargo run
 # holds a heavy-build slot (src/fleet/build-slots.ts) however it was reached, even when something put another cargo
-# ahead of toli's cargo shim on PATH (a shell profile, git's exec path in a hook). Cargo runs it as
+# ahead of toli's cargo shim on PATH (a shell profile, git's exec path in a hook) or called one by its path (`$CARGO`,
+# which cargo gives the test binaries and build scripts it runs, or `~/.cargo/bin/cargo`). Cargo runs it as
 # `toli-rustc-wrapper <rustc> <args...>` for every rustc call, starting with its `rustc -vV` probe (always run: those
 # environments set CARGO_CACHE_RUSTC_INFO=0, or a cargo with nothing left to compile would never call it), so the probe
 # of a cargo outside any slot waits here (`bin/toli build-slot --cargo <cargo pid>`) until a holder process holds a
-# slot for that cargo's whole run. Only the probe waits: cargo runs it before it takes its build folder's lock, and every
-# later rustc call runs under that lock, so one that waited for a slot whose build waits for that lock would deadlock
-# both; every later call goes straight on. The probe of a cargo inside one that holds a slot (cargo-clippy's cargo
-# check, a build script's cargo) finds that holder through the process ancestry and goes straight on too, as it does
-# inside a slot already (TOLI_BUILD_SLOT set). It then runs the wrapper it replaced (TOLI_RUSTC_WRAPPER_NEXT, such as
-# sccache) or rustc itself.
+# slot for that cargo's whole run. Only the probe waits for a slot: cargo runs it before it takes its build folder's
+# lock, and every later rustc call runs under that lock, so one that waited for a slot whose build waits for that lock
+# would deadlock both. The probe of a cargo inside one that holds a slot (cargo-clippy's cargo check, a build script's
+# cargo, a test binary's) finds that holder through the process ancestry and goes straight on, as it does inside a slot
+# already (TOLI_BUILD_SLOT set).
+#
+# Every crate compilation in a slot then takes one job of the slot's job pool (state/build-slots/jobs-<slot>, sized at
+# the slot's share of compile jobs, src/fleet/build-queue.ts `jobPoolDir`) and frees it when it ends, so the cargos in
+# one slot together (the slot's own, and the nested ones test binaries start, however many run at once) compile at most
+# one slot's share of crates. A job is a file `<k>` holding this wrapper's pid, made with the shell's noclobber
+# (O_EXCL); a job whose wrapper died is taken over. A compilation never waits on anything but jobs, and each one that
+# holds a job ends, so the pool never deadlocks; one started from inside a compilation that holds a job (a proc macro
+# that runs cargo; TOLI_BUILD_JOB set) uses that job. The wrapper then runs the wrapper it replaced
+# (TOLI_RUSTC_WRAPPER_NEXT, such as sccache) or rustc itself.
 shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127
 next=${TOLI_RUSTC_WRAPPER_NEXT:-}
+slots="${TOLI_ROOT:-$shims/../..}/state/build-slots"
 
 run() {
     [ -n "$next" ] && exec "$next" "$@"
     exec "$@"
 }
 
-[ -n "${TOLI_BUILD_SLOT:-}" ] && run "$@"
-[ "$#" -eq 2 ] && [ "$2" = "-vV" ] || run "$@"
+# The slot of the cargo holder among this process's ancestors (`cargo-<pid>.held`: `<holder pid> <slot>`), printed;
+# nothing when none holds one.
+holder_slot() {
+    pid=$PPID
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
+        if [ -f "$slots/cargo-$pid.held" ]; then
+            holder="" slot=""
+            read -r holder slot _ <"$slots/cargo-$pid.held" || :
+            if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+                echo "$slot"
+                return
+            fi
+        fi
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    done
+}
 
-slots="${TOLI_ROOT:-$shims/../..}/state/build-slots"
-pid=$PPID
-while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
-    if [ -f "$slots/cargo-$pid.held" ]; then
-        read -r holder _ <"$slots/cargo-$pid.held" || holder=""
-        [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null && run "$@"
-    fi
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+[ -n "${TOLI_BUILD_JOB:-}" ] && run "$@"
+
+if [ "$#" -eq 2 ] && [ "$2" = "-vV" ]; then
+    [ -n "${TOLI_BUILD_SLOT:-}" ] && run "$@"
+    [ -n "$(holder_slot)" ] && run "$@"
+    # Never fail a build over toli: on any error the build runs (build-slot says why on stderr).
+    "$shims/../toli" build-slot --cargo "$PPID" || :
+    run "$@"
+fi
+
+# A crate compilation names its crate; cargo's target-info probe compiles the crate `___`, which builds nothing.
+crate=""
+prev=""
+for arg in "$@"; do
+    case $prev/$arg in
+    --crate-name/*) crate=$arg ;;
+    */--crate-name=*) crate=${arg#--crate-name=} ;;
+    esac
+    [ -n "$crate" ] && break
+    prev=$arg
 done
+[ -n "$crate" ] && [ "$crate" != "___" ] || run "$@"
 
-# Never fail a build over toli: on any error the build runs (build-slot says why on stderr).
-"$shims/../toli" build-slot --cargo "$PPID" || :
-run "$@"
+slot=${TOLI_BUILD_SLOT:-}
+[ -n "$slot" ] || slot=$(holder_slot)
+case $slot in
+'' | *[!0-9]*) run "$@" ;;
+esac
+pool="$slots/jobs-$slot"
+size=""
+{ read -r size <"$pool/size"; } 2>/dev/null || :
+case $size in
+'' | *[!0-9]* | 0) run "$@" ;;
+esac
+
+job=""
+set -C
+while [ -z "$job" ]; do
+    k=1
+    while [ "$k" -le "$size" ]; do
+        if { echo "$$" >"$pool/$k"; } 2>/dev/null; then
+            job="$pool/$k"
+            break
+        fi
+        owner=""
+        { read -r owner <"$pool/$k"; } 2>/dev/null || :
+        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+            rm -f "$pool/$k" # Its wrapper died holding it: try the same job again.
+            continue
+        fi
+        k=$((k + 1))
+    done
+    [ -n "$job" ] || sleep 0.2
+done
+set +C
+
+trap 'rm -f "$job"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+TOLI_BUILD_JOB=$job
+export TOLI_BUILD_JOB
+if [ -n "$next" ]; then
+    "$next" "$@"
+else
+    "$@"
+fi
+exit $?

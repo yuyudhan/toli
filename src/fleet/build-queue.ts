@@ -2,7 +2,9 @@
 // state/build-slots/<n>.lock, and a waiter holds a numbered ticket in state/build-slots/queue/ (also a flock, so a waiter
 // that dies leaves the line with it); only the oldest live ticket may take a free slot. src/fleet/build-slots.ts runs
 // commands in a slot, src/fleet/cargo-slot.ts holds one for a cargo that bypassed the shim. A holder writes where its
-// build runs into the slot's lock file, so the disk keeper never deletes the target it builds into (live-builds.ts).
+// build runs into the slot's lock file, so the disk keeper never deletes the target it builds into (live-builds.ts),
+// and the slot's share of compile jobs into its job pool (`jobPoolDir`), which toli's rustc wrapper
+// (bin/shims/toli-rustc-wrapper) holds every crate compilation of every cargo in the slot to.
 // Every slot number ever used counts while held (a build keeps its slot when `capacity.buildSlots` drops), and so does
 // each heavy build running outside the slots (src/fleet/outside-builds.ts): a waiter takes a slot only while all of
 // them together number fewer than `capacity.buildSlots`.
@@ -19,9 +21,10 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { paths } from "../core/paths.ts";
-import { ToliError, warn } from "../core/util.ts";
+import { ToliError, warn, writeTextAtomic } from "../core/util.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { heldCargoPids, type OutsideBuild, outsideBuilds, outsideBuildText } from "./outside-builds.ts";
+import type { Capacity } from "./resources.ts";
 
 /** How often a waiter looks again for a free slot, and a cargo's slot holder whether its cargo still runs. */
 export const POLL_MS = 500;
@@ -32,6 +35,14 @@ const queueDir = (): string => join(paths.buildSlotsDir(), "queue");
 const queueLockFile = (): string => join(paths.buildSlotsDir(), "queue.lock");
 const TICKET = /^(\d+)\.wait$/;
 const ticketFile = (seq: number): string => join(queueDir(), `${seq}.wait`);
+
+/**
+ * Slot `slot`'s job pool (counting from 1): its `size` file holds the slot's share of compile jobs, and each job taken
+ * is a file `<k>` (1..size) holding the pid of the rustc wrapper that took it. The wrapper of every crate compilation in
+ * the slot (its own cargo's, a nested cargo's, one started through `$CARGO` or an absolute cargo path) takes a job
+ * before it compiles and frees it after, so all of them together compile at most `size` crates at once.
+ */
+export const jobPoolDir = (slot: number): string => join(paths.buildSlotsDir(), `jobs-${slot}`);
 
 /** A waiter's place in line: its number and the fd holding the flock on its ticket file. */
 type Ticket = { seq: number; fd: number };
@@ -124,10 +135,11 @@ function leaveLine(ticket: Ticket, lock: Flock): void {
 /**
  * Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait, and once
  * which builds outside the slots it waits for. `waiter` is the process the slot is for (its own ancestors are never
- * waited for). Gives up (null) once `wanted` says the slot is no longer needed.
+ * waited for). Gives up (null) once `wanted` says the slot is no longer needed. The slot taken gets one slot's share
+ * of compile jobs (`capacity.cargoJobs`) in its job pool (`jobPoolDir`).
  */
 export async function takeInTurn(
-    slots: number,
+    capacity: Pick<Capacity, "buildSlots" | "cargoJobs">,
     lock: Flock,
     holder: SlotHolder,
     waiter: number,
@@ -139,9 +151,12 @@ export async function takeInTurn(
         let toldOutside = false;
         for (;;) {
             if (!wanted()) return null;
-            const taken = firstInLine(ticket, lock) ? tryTake(slots, lock, holder, waiter) : null;
-            if (taken !== null && "fd" in taken) return taken;
-            if (!told) warn(`toli: waiting for a heavy-build slot (${slots} busy)`);
+            const taken = firstInLine(ticket, lock) ? tryTake(capacity.buildSlots, lock, holder, waiter) : null;
+            if (taken !== null && "fd" in taken) {
+                shareJobs(taken.index + 1, capacity.cargoJobs);
+                return taken;
+            }
+            if (!told) warn(`toli: waiting for a heavy-build slot (${capacity.buildSlots} busy)`);
             told = true;
             if (!toldOutside && taken !== null && taken.outside.length > 0) {
                 const builds = taken.outside.map(outsideBuildText).join("; ");
@@ -152,6 +167,15 @@ export async function takeInTurn(
         }
     } finally {
         leaveLine(ticket, lock);
+    }
+}
+
+/** Size slot `slot`'s job pool at `jobs`; best effort, since a full disk never stops a build. */
+function shareJobs(slot: number, jobs: number): void {
+    try {
+        writeTextAtomic(join(jobPoolDir(slot), "size"), `${jobs}\n`);
+    } catch {
+        // A full disk: the wrapper finds no pool size and compiles at once, each cargo at its CARGO_BUILD_JOBS.
     }
 }
 
