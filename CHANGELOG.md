@@ -4,6 +4,22 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.17 - unreleased
+
+### Fixed
+
+- The disk keeper no longer deletes a `target/` a running build compiles into while free disk is under the floor but
+  over the emergency level: a cargo or rustc whose working directory or `CARGO_TARGET_DIR` points at it, or a held
+  heavy-build slot building in that checkout, keeps it, and the keeper frees other rebuildable folders and reports
+  the busy ones. A build started elsewhere into a shared target dir had its output deleted under it on every keeper
+  run, so it could never finish while the disk stayed under the floor. Under the emergency level such a target still
+  goes, but only after every other target, and the log names the build it cuts off (T1432).
+
+### Changed
+
+- A heavy-build slot's holder writes where its build runs (working directory and `CARGO_TARGET_DIR`) into the slot's
+  lock file, for the disk keeper (T1432).
+
 ## v0.5.16 - 2026-11-14
 
 ### Changed

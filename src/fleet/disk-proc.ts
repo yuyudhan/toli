@@ -86,3 +86,29 @@ export function procCargoCwds(): { pid: string; cwd: string }[] {
         }
     });
 }
+
+/** A running cargo or rustc: its pid, `comm`, working directory and the CARGO_TARGET_DIR in its environment. */
+export type ProcBuild = { pid: string; name: string; cwd: string | null; targetDir: string | null };
+
+/**
+ * Every running cargo (`cargo`, `cargo-clippy`, ...) and rustc this account can inspect, with where it builds: its
+ * working directory and its environment's CARGO_TARGET_DIR (/proc/<pid>/environ, as it started).
+ */
+export function procBuilds(): ProcBuild[] {
+    const builds: ProcBuild[] = [];
+    for (const pid of pids()) {
+        let name: string;
+        let environ: string;
+        try {
+            name = readFileSync(procFile(`${pid}/comm`), "utf8").trim();
+            if (!name.startsWith("cargo") && name !== "rustc") continue;
+            environ = readFileSync(procFile(`${pid}/environ`), "utf8");
+        } catch {
+            continue; // Gone, or not ours to read.
+        }
+        const entry = environ.split("\0").find((pair) => pair.startsWith("CARGO_TARGET_DIR="));
+        const targetDir = entry === undefined ? "" : entry.slice("CARGO_TARGET_DIR=".length);
+        builds.push({ pid, name, cwd: procLink(pid, "cwd"), targetDir: targetDir === "" ? null : targetDir });
+    }
+    return builds;
+}

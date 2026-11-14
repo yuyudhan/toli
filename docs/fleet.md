@@ -249,8 +249,9 @@ in the build folder (`target/.rustc_info.json`), so a cargo with nothing left to
 runs its tests and doctests) would never call the wrapper at all; `CARGO_CACHE_RUSTC_INFO=0` turns the cache off, so
 the probe is every cargo's first act and the slot is taken before anything runs. Inside a slot it goes
 straight on. Otherwise, on the `rustc -vV` probe of a cargo running a heavy command, `bin/toli build-slot --cargo
-<pid>` starts a detached holder (`build-slot --hold <pid>`) that waits in line, takes a slot for that cargo and writes
-`state/build-slots/cargo-<pid>.held`; the call waits (printing the same waiting line) until it holds. Only the probe
+<pid>` starts a detached holder (`build-slot --hold <pid> --cwd <dir>`) that waits in line, takes a slot for that
+cargo and writes `state/build-slots/cargo-<pid>.held`; the call waits (printing the same waiting line) until it
+holds. Only the probe
 ever waits: cargo runs it before it takes its build folder's lock, and every later rustc call runs under that lock, so
 a call that waited there for a slot whose build waits for the lock would deadlock both. Later calls of that cargo, of
 any cargo it starts (cargo-clippy's `cargo check`) and of its build scripts find the holder through their process
@@ -260,6 +261,10 @@ killed) runs at once too. The holder frees the slot when the cargo exits or is k
 killed holder frees it with its lock. The wrapper then runs the wrapper it replaced (an inherited
 `RUSTC_WRAPPER`, else `[build] rustc-wrapper` in `~/.cargo/config.toml`, such as sccache), or rustc itself. Such a
 cargo holds a slot but no memory-capped scope: it was already running when it reached toli.
+
+Whoever takes a slot writes its pid, the directory its build runs in and its `CARGO_TARGET_DIR` into the slot's lock
+file (`state/build-slots/<n>.lock`), so the disk keeper never deletes the target a slot's build compiles into, even
+between two cargo runs ([disk.md](disk.md#live-builds)).
 
 A build started in a live-stack project's checkout ([projects.md](projects.md#live-stack-mode)) skips the slots, as
 that project's jawans run without the shim or the wrapper, at the same share of jobs and test threads. Every heavy

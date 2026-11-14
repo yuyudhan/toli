@@ -3,39 +3,32 @@
 // emptied), it deletes rebuildable output only, cheapest to rebuild first and oldest first within each step, until
 // free space is back at the floor:
 //   1. build output finished no-mistakes runs left in their worktrees (no-mistakes-runs.ts), then whole `target/`
-//      folders of project checkouts nothing uses (no running jawan, no process working there);
-//   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/`: builds run
-//      there between jobs (a project's build queue) and cannot reinstall dependencies themselves, while cargo
-//      rebuilds a wiped `target/` on its own (that wipe matches the cargo-sweep helper's: under cargo's locks, only
-//      while no jawan of the project runs);
-//   3. Docker build cache and unused images (`docker builder prune -af`, `docker image prune`), not while a pull or
-//      build runs and not every minute (docker-prune.ts);
+//      folders of project checkouts nothing uses (no running jawan, no process working there, no live build compiling
+//      into it: a cargo or rustc, or a held heavy-build slot, live-builds.ts);
+//   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/` (builds run
+//      there between jobs and cannot reinstall dependencies themselves; cargo rebuilds a wiped `target/` on its own);
+//   3. Docker build cache and unused images, not while a pull or build runs and not every minute (docker-prune.ts);
 //   4. sccache's local cache entries past its own cap;
 // Under the emergency level (max(5 GB, 3% of the disk), at most the floor) it goes on, re-checking free disk after
 // each item and stopping once it is over that level, so build output in use goes only when nothing idle is left:
-//   5. Docker volumes of idle build output (a compose stack's `target/` or `node_modules` cache) that no running
-//      container uses, never one whose name or mount point may hold data (docker-volumes.ts);
+//   5. Docker volumes of idle build output that no running container uses, never one that may hold data
+//      (docker-volumes.ts);
 //   6. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
-//      its workspace (cargo test runs its test binaries after dropping the locks) and no file in it open. A target
-//      that stays in use (builds back to back) is kept whole: never a partial delete under a live build, whose
-//      up-to-date artifacts can sit unwritten for hours and still be linked;
-//   7. last resort, under the emergency level after 1 to 6: the `target/` folders left, in use or not, then the
-//      `node_modules/` (but a main clone's) and `dist/` and Playwright's browser cache. All of it rebuilds itself; a
-//      build cut off fails once and compiles again. Over the emergency level build output in use is never touched, not
-//      even a sweep of its old artifacts, so a disk a little under its floor never costs a build its output.
+//      its workspace, no live build compiling into it and no file in it open. A target that stays in use is kept
+//      whole: never a partial delete under a live build, whose up-to-date artifacts can sit unwritten for hours;
+//   7. last resort: the `target/` folders left, in use or not (those no live build uses first, each build cut off
+//      named in the log), then `node_modules/` (but a main clone's), `dist/` and Playwright's browser cache. All of
+//      it rebuilds itself; a build cut off fails once and compiles again.
+// Over the emergency level build output in use is never touched, not even a sweep of its old artifacts.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. A folder a live Docker container mounts (a bind, a volume's mountpoint, a mount hung on it inside a bind)
 // is never deleted at any step, the last resort included (container-mounts.ts). Every action goes to logs/disk.log.
 // It runs inline before every jawan start; the minute tick starts it detached (disk-state.ts keepDiskDetached), so a
 // keeper slowed by a starved disk never holds the tick up.
-// Any long job that must keep its build output for now (a gate, a release build) writes its pid to
-// state/disk-keep.pause; the keeper deletes nothing while that pid is alive and the file was touched within 2 h (a
-// longer job touches it again). It ignores the file once the pid is dead, and drops it, logged once, once it is older.
-// On a full disk it still works: it writes nothing before it has freed something (log lines wait in memory; a keeper
-// lock it cannot write is done without), no failed write stops it, and when the keeper fails anyway the fallback
-// sweeps stale artifacts out of every target nothing uses, writing nothing first.
-// capacity.diskKeep false switches all of this off but `bin/toli disk keep` by hand: before a jawan start and in the
-// tick toli then deletes nothing and only alerts the inbox on low disk (src/fleet/disk-alert.ts).
+// A live pid in state/disk-keep.pause (touched within 2 h) holds it off. On a full disk it writes nothing before it
+// has freed something, and when it fails anyway the fallback sweeps stale artifacts out of every target nothing uses.
+// capacity.diskKeep false switches all of this off but `bin/toli disk keep` by hand: low disk then only alerts the
+// inbox (disk-alert.ts). Details: docs/disk.md.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadMachine } from "../core/config.ts";
@@ -72,6 +65,7 @@ import {
 } from "./disk-state.ts";
 import { pruneDocker } from "./docker-prune.ts";
 import { freeBuildVolumes } from "./docker-volumes.ts";
+import { liveBuilds, liveBuildUse } from "./live-builds.ts";
 import { freeRunWorktrees } from "./no-mistakes-runs.ts";
 import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep } from "./stale-sweep.ts";
@@ -315,25 +309,31 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 remove(dir.path, "step 6: in use, between build steps", () => wipeOutcome(dir.path));
             }
         }
-        // 7: the last resort, under the emergency level after 1 to 6: the targets left go now, in use or not, then
-        // node_modules (never a main clone's, see 2) and dist (Vite's cache lives in node_modules/.vite) and
-        // Playwright's browsers, each only while free disk is still under the emergency level. Docker's build cache
-        // already went in 3, its idle build volumes in 5. Only what buildDirs listed.
+        // 7: the last resort, under the emergency level after 1 to 6: the targets left go now, in use or not, those no
+        // live build compiles into first (the build a deletion cuts off is named), then node_modules (never a main
+        // clone's, see 2), dist and Playwright's browsers, each only while free disk is under the emergency level.
+        // Docker's build cache already went in 3, its idle build volumes in 5. Only what buildDirs listed.
         if (!over()) {
             report.lastResort = true;
             const level = `the emergency level ${gb(report.emergencyGB)}`;
             say(
                 `free ${gb(free())} is under ${level}: deleting every build folder left, in use or not, until free space is over that level`,
             );
-            const force = (path: string): void => {
+            const force = (path: string, build: string | null = null): void => {
                 if (mounted(path)) return;
-                const why = kept.get(path)?.reason;
-                if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway`);
+                const why = build ?? kept.get(path)?.reason;
+                const cut = build === null ? "" : "; that build fails and must run again";
+                if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway${cut}`);
                 remove(path, "step 7: last resort", () => forceDelete(path));
             };
             const left = (dir: BuildDir): boolean =>
                 !done.has(dir.path) && ![...done].some((gone) => within(dir.path, gone)) && existsSync(dir.path);
-            for (const dir of dirs) if (dir.kind === "target" && !over() && left(dir)) force(dir.path);
+            const live = liveBuilds();
+            const targets = dirs.flatMap((dir) =>
+                dir.kind === "target" && left(dir) ? [{ dir, build: liveBuildUse(dir.path, live) }] : [],
+            );
+            targets.sort((a, b) => Number(a.build !== null) - Number(b.build !== null));
+            for (const { dir, build } of targets) if (!over() && left(dir)) force(dir.path, build);
             const mainDeps = (dir: BuildDir): boolean => dir.kind === "node_modules" && dir.checkout.main;
             for (const dir of dirs)
                 if (dir.kind !== "target" && !mainDeps(dir) && !over() && left(dir)) force(dir.path);

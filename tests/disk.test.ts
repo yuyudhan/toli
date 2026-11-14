@@ -252,6 +252,7 @@ describe("wiping a target between build steps", () => {
             openFiles: () => machine.openFiles,
             cargos: () => machine.cargos,
             buildTools: () => machine.buildTools,
+            builds: () => [],
         };
     }
 

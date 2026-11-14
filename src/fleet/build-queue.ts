@@ -1,9 +1,20 @@
 // The heavy-build slots' locks and line (docs/fleet.md "Heavy-build slots"): a slot is a flock(2) on
 // state/build-slots/<n>.lock, and a waiter holds a numbered ticket in state/build-slots/queue/ (also a flock, so a waiter
 // that dies leaves the line with it); only the oldest live ticket may take a free slot. src/fleet/build-slots.ts runs
-// commands in a slot, src/fleet/cargo-slot.ts holds one for a cargo that bypassed the shim.
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+// commands in a slot, src/fleet/cargo-slot.ts holds one for a cargo that bypassed the shim. A holder writes where its
+// build runs into the slot's lock file, so the disk keeper never deletes the target it builds into (live-builds.ts).
+import {
+    closeSync,
+    ftruncateSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    unlinkSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 import { paths } from "../core/paths.ts";
 import { ToliError, warn } from "../core/util.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
@@ -12,6 +23,7 @@ import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 export const POLL_MS = 500;
 
 const slotFile = (index: number): string => join(paths.buildSlotsDir(), `${index + 1}.lock`);
+const SLOT = /^(\d+)\.lock$/;
 const queueDir = (): string => join(paths.buildSlotsDir(), "queue");
 const queueLockFile = (): string => join(paths.buildSlotsDir(), "queue.lock");
 const TICKET = /^(\d+)\.wait$/;
@@ -19,6 +31,18 @@ const ticketFile = (seq: number): string => join(queueDir(), `${seq}.wait`);
 
 /** A waiter's place in line: its number and the fd holding the flock on its ticket file. */
 type Ticket = { seq: number; fd: number };
+
+/** Where a slot's build runs: its working directory and the CARGO_TARGET_DIR it builds into (resolved), if set. */
+export type SlotHolder = { cwd: string; targetDir: string | null };
+
+/** The holder of a build started in `cwd` with `env`; a relative CARGO_TARGET_DIR is cargo's, relative to `cwd`. */
+export function slotHolder(cwd: string, env: Record<string, string | undefined> = process.env): SlotHolder {
+    const targetDir = env.CARGO_TARGET_DIR ?? "";
+    return { cwd, targetDir: targetDir === "" ? null : resolve(cwd, targetDir) };
+}
+
+/** A busy slot (its number from 1) and the holder written into its lock file. */
+export type BusySlot = SlotHolder & { slot: number; pid: number };
 
 /**
  * Run `body` holding the queue lock, which every ticket taken, checked or left goes through, so a ticket is never
@@ -100,6 +124,7 @@ function leaveLine(ticket: Ticket, lock: Flock): void {
 export async function takeInTurn(
     slots: number,
     lock: Flock,
+    holder: SlotHolder,
     wanted: () => boolean = () => true,
 ): Promise<{ index: number; fd: number } | null> {
     const ticket = takeTicket(lock);
@@ -107,7 +132,7 @@ export async function takeInTurn(
         let told = false;
         for (;;) {
             if (!wanted()) return null;
-            const held = firstInLine(ticket, lock) ? tryTake(slots, lock) : null;
+            const held = firstInLine(ticket, lock) ? tryTake(slots, lock, holder) : null;
             if (held !== null) return held;
             if (!told) warn(`toli: waiting for a heavy-build slot (${slots} busy)`);
             told = true;
@@ -118,15 +143,78 @@ export async function takeInTurn(
     }
 }
 
-/** Take a free slot without waiting: its index and the fd holding it, or null when every slot is busy. */
-function tryTake(slots: number, lock: Flock): { index: number; fd: number } | null {
+/** Take a free slot without waiting, recording `holder` in it: its index and fd, or null when every slot is busy. */
+function tryTake(slots: number, lock: Flock, holder: SlotHolder): { index: number; fd: number } | null {
     mkdirSync(paths.buildSlotsDir(), { recursive: true });
     for (let index = 0; index < slots; index++) {
         const fd = openSync(slotFile(index), "a");
-        if (lock(fd, LOCK_EX | LOCK_NB) === 0) return { index, fd };
+        if (lock(fd, LOCK_EX | LOCK_NB) === 0) {
+            recordHolder(fd, holder);
+            return { index, fd };
+        }
         closeSync(fd);
     }
     return null;
+}
+
+/** Write `holder` and this pid over the slot's lock file; best effort, since a full disk never stops a build. */
+function recordHolder(fd: number, holder: SlotHolder): void {
+    try {
+        ftruncateSync(fd, 0);
+        writeSync(fd, `${JSON.stringify({ pid: process.pid, cwd: holder.cwd, targetDir: holder.targetDir })}\n`);
+    } catch {
+        // A full disk: the keeper then sees a busy slot without knowing where it builds.
+    }
+}
+
+/** A slot lock file's holder record, or null when it holds none (never written, a failed write, an older toli's). */
+function parseHolder(text: string): Omit<BusySlot, "slot"> | null {
+    let value: unknown;
+    try {
+        value = JSON.parse(text);
+    } catch {
+        return null;
+    }
+    if (typeof value !== "object" || value === null) return null;
+    const { pid, cwd, targetDir } = value as Record<string, unknown>;
+    if (typeof pid !== "number" || typeof cwd !== "string") return null;
+    return { pid, cwd, targetDir: typeof targetDir === "string" ? targetDir : null };
+}
+
+/**
+ * Every slot a build holds right now with where that build runs, as its holder recorded it. A free slot's stale record
+ * is never read: a holder that dies frees its slot with its flock.
+ */
+export function busySlots(): BusySlot[] {
+    const lock = flock();
+    if (lock === null) return [];
+    let names: string[];
+    try {
+        names = readdirSync(paths.buildSlotsDir());
+    } catch {
+        return []; // No slot taken yet on this machine.
+    }
+    const held: BusySlot[] = [];
+    for (const name of names) {
+        const match = SLOT.exec(name);
+        if (match === null) continue;
+        let fd: number;
+        try {
+            fd = openSync(join(paths.buildSlotsDir(), name), "r");
+        } catch {
+            continue;
+        }
+        try {
+            if (lock(fd, LOCK_EX | LOCK_NB) === 0) lock(fd, LOCK_UN);
+            else {
+                const record = parseHolder(readFileSync(fd, "utf8"));
+                if (record !== null) held.push({ slot: Number(match[1]), ...record });
+            }
+        } finally {
+            closeSync(fd);
+        }
+    }
+    return held;
 }
 
 /** How many of the first `slots` build slots a command holds right now (0 where flock is unavailable). */

@@ -13,11 +13,13 @@ runs or skips).
 running build uses: cargo builds it again. If free space is still under the emergency level after the idle steps
 (max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper first removes Docker volumes
 of idle build output (step 5), then wipes busy targets between build steps (step 6), then deletes the `target/`
-folders in the clones and task worktrees, in use or not, then the rest of the build output (step 7), re-checking
-free space after each item and stopping once it is over the emergency level. It never deletes part of a target a
-build uses: a target goes whole or not at all. Over the emergency level a build folder in use is never touched, so a disk a little under its floor never costs
-a running build its output. A Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep` and
-never asks first.
+folders in the clones and task worktrees, in use or not (those no live build compiles into first, naming each build
+it cuts off), then the rest of the build output (step 7), re-checking free space after each item and stopping once it
+is over the emergency level. It never deletes part of a target a build uses: a target goes whole or not at all. Over
+the emergency level a build folder in use is never touched, and a target a live build compiles into (see "Live
+builds" below) is never deleted, so a disk a little under its floor never costs a running build its output: the
+keeper frees the other rebuildable folders instead and reports the busy ones. A Sardar or jawan on any machine that
+finds its disk full runs `bin/toli disk keep` and never asks first.
 
     bin/toli disk keep [--dry-run] [--floor <GB>] [--json]
 
@@ -83,8 +85,10 @@ X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0
 1. Build output finished no-mistakes runs left in their worktrees, then whole `target/` folders of project checkouts
    that nothing uses. A checkout is all registered projects' clones plus their git worktrees. Nothing uses it when no
    running jawan works in it (or, for a main clone, on its project) and no process has its working directory inside
-   it. The wipe still takes cargo's locks and checks that no process uses the target (see 6), so a build or test
-   started from elsewhere is never cut off.
+   it. The wipe still takes cargo's locks and checks that no process and no live build uses the target (see 6 and
+   "Live builds"), so a build or test started from elsewhere is never cut off: the target is kept
+   (`kept <target>: cargo (pid N) builds into it (CARGO_TARGET_DIR <dir>)`) and the keeper moves on to the next
+   folder.
 
     no-mistakes runs each gate push in a detached worktree, `$NM_HOME/worktrees/<repo>/<run>` (`NM_HOME` defaults to
     `~/.no-mistakes`), and removes it when the run ends, best effort: a run whose checks started a compose stack leaves
@@ -150,7 +154,8 @@ stopped container <c> mounts it and its image postgres:16 keeps data`, `... it a
    Over that level a target in use is left whole (`kept <target> in use: free X GB is over the emergency level Y GB`):
    its build may have run for an hour, and the disk is not yet full.
    The keeper takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; cargo holds
-   them while it compiles) and then checks that no process uses the target. Cargo releases its locks before it runs
+   them while it compiles) and then checks that no process and no live build (see "Live builds") uses the target.
+   Cargo releases its locks before it runs
    the test binaries, so the locks alone are not enough. The target is in use when, from the process table (`ps`,
    then each process's executable, mapped files and working directory: `lsof -d cwd,txt` on macOS, `/proc/<pid>/exe`
    and `/proc/<pid>/cwd` on Linux), any process runs an executable or maps a file under it, works inside its
@@ -177,7 +182,10 @@ stopped container <c> mounts it and its image postgres:16 keeps data`, `... it a
    level the keeper stops after step 4 (`done, still under the floor`) and build output in use stays. Under it,
    the `target/` folders still there, in use or not, held lock or not, are deleted outright, one at a time until
    free space is over that level (`free X GB is under the emergency level Y GB: deleting every build folder left, in
-use or not, until free space is over that level`). Then, while it is still under that level, the `node_modules/`
+use or not, until free space is over that level`). Targets no live build compiles into go first, so a target a
+   live build uses goes only when deleting every other one did not free enough; that deletion names the build it cuts
+   off (`<target> is in use (cargo (pid N) builds into it (...)): deleting it anyway; that build fails and must run
+again`). Then, while it is still under that level, the `node_modules/`
    (never a main clone's, see 2) and `dist/` left (Vite's cache is
    `node_modules/.vite`, so it goes with them) and Playwright's downloaded browsers (the `chromium-1140`-style folders
    in `PLAYWRIGHT_BROWSERS_PATH`, else `~/Library/Caches/ms-playwright` on macOS and `~/.cache/ms-playwright` on
@@ -187,6 +195,18 @@ resort)`), and an in-use folder first with why it was in use
    (`<path> is in use (...): deleting it anyway`); `--json` sets `lastResort`. A build that loses its target fails
    once and compiles again; the message before a jawan start says so. A folder a live container mounts is the one
    exception: it stays even here (see "What it never deletes").
+
+### Live builds
+
+A live build is a running `cargo` (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) or `rustc`, or a held heavy-build
+slot ([fleet.md](fleet.md), "Heavy-build slots"). It compiles into the `CARGO_TARGET_DIR` in its environment when one
+is set (relative to its working directory, as cargo reads it), else into the target of the workspace it works in or
+above (a `just` recipe or a gate runs cargo from a checkout's top). The keeper reads cargo and rustc processes from
+`/proc/<pid>/comm`, `cwd` and `environ` on Linux, and from `ps -E` and `lsof -d cwd` on macOS; a slot's holder writes
+its working directory and `CARGO_TARGET_DIR` into the slot's lock file (`state/build-slots/<n>.lock`) when it takes
+the slot, and the keeper reads that only while the slot is held. A build in a slot is therefore seen even between two
+cargo runs, and a build whose target lies outside the checkout it works in (a shared `CARGO_TARGET_DIR`) is seen
+too. Over the emergency level such a target is kept at every step; under it, it goes last among the targets (step 7).
 
 ## On a full disk
 

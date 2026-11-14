@@ -13,7 +13,13 @@ import { sandbox, tempDir, withProject } from "./helpers.ts";
  * clippy-driver whose cwd cannot be read would otherwise keep the target).
  */
 function machine(...processes: ProcessUse[]): UseProbes {
-    return { processes: () => processes, openFiles: () => [], cargos: () => [], buildTools: () => [] };
+    return {
+        processes: () => processes,
+        openFiles: () => [],
+        cargos: () => [],
+        buildTools: () => [],
+        builds: () => [],
+    };
 }
 
 // The keeper tests build a sandbox with git repos and several bin/toli runs: on a loaded machine that alone can take

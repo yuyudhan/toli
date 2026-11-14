@@ -25,7 +25,7 @@ import { slotShareEnv } from "../jawans/env.ts";
 import { type Argv, inBuildScope } from "../jawans/scope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { checkBuildPlace } from "./build-place.ts";
-import { busyBuildSlots, slotWaiters, takeInTurn } from "./build-queue.ts";
+import { busyBuildSlots, slotHolder, slotWaiters, takeInTurn } from "./build-queue.ts";
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused } from "./live-stack-pause.ts";
@@ -230,7 +230,7 @@ export async function withBuildSlot<T>(cwd: string, body: (held: HeldSlot) => Pr
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
         return await whileLiveStacksPaused(() => body({ env: capped, scope: { slot: 0, memoryMaxMB } }));
     }
-    const held = await takeInTurn(capacity.buildSlots, lock);
+    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd));
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;
@@ -258,12 +258,12 @@ function pidFlag(value: string, flag: string): number {
  * wrapper's (`slotForCargo`, `holdForCargo`).
  */
 export async function buildSlotCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv, { values: ["cargo", "hold"] });
+    const args = new Args(argv, { values: ["cargo", "hold", "cwd"] });
     args.maxPositional(0);
     const cargo = args.str("cargo");
     if (cargo !== undefined) return await slotForCargo(pidFlag(cargo, "--cargo"));
     const hold = args.str("hold");
-    if (hold !== undefined) return await holdForCargo(pidFlag(hold, "--hold"));
+    if (hold !== undefined) return await holdForCargo(pidFlag(hold, "--hold"), args.str("cwd") ?? process.cwd());
     const command = args.rest;
     if (command.length === 0) throw new ToliError("usage: bin/toli build-slot -- <command...>");
     checkBuildPlace(process.cwd(), command);

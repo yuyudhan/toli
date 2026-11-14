@@ -11,6 +11,7 @@ import { loadProjects } from "../projects/projects.ts";
 import { gitWorktrees } from "../projects/workspace.ts";
 import { buildTool, configuredBuildTools } from "./build-tools.ts";
 import { procCargoCwds, procCwds, procLink, procOpenFiles } from "./disk-proc.ts";
+import { type LiveBuild, liveBuilds } from "./live-builds.ts";
 import { procFile } from "./resources.ts";
 
 /** One working tree of a registered project: its main clone or one of the clone's git worktrees. */
@@ -350,6 +351,8 @@ export type UseProbes = {
     cargos: () => { pid: string; cwd: string }[];
     /** The machine's own build tools (capacity.diskBuildTools), beside the generic ones. */
     buildTools: () => string[];
+    /** The running builds: cargo and rustc processes and held heavy-build slots (live-builds.ts). */
+    builds: () => LiveBuild[];
 };
 
 export const LIVE_PROBES: UseProbes = {
@@ -357,6 +360,7 @@ export const LIVE_PROBES: UseProbes = {
     openFiles: allOpenFiles,
     cargos: cargoCwds,
     buildTools: configuredBuildTools,
+    builds: liveBuilds,
 };
 
 /** Size of a folder in GB from `du -sk` (0 when du fails). */

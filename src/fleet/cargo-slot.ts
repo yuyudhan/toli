@@ -2,7 +2,8 @@
 // cargo ahead of the shim on PATH (a login profile, a harness's shell snapshot, git's exec path in a hook). toli's
 // rustc wrapper (bin/shims/toli-rustc-wrapper, a jawan's `RUSTC_WRAPPER`, src/jawans/env.ts) runs on such a cargo's
 // `rustc -vV` probe, outside any slot, as `bin/toli build-slot --cargo <cargo pid>`: it starts a detached holder
-// (`build-slot --hold <cargo pid>`) that waits in line, takes a slot for that cargo and writes
+// (`build-slot --hold <cargo pid> --cwd <its directory>`) that waits in line, takes a slot for that cargo (recording
+// that directory and the cargo's CARGO_TARGET_DIR for the disk keeper) and writes
 // state/build-slots/cargo-<pid>.held, and returns once it holds. Only the probe waits: cargo runs it before it takes
 // its build folder's lock, and a later rustc call that waited for a slot under that lock would deadlock with a build
 // in the slot waiting for the lock. The wrapper finds the holder of later rustc calls (of that cargo, of a cargo it
@@ -15,7 +16,7 @@ import { basename, join, resolve } from "node:path";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
-import { busyBuildSlots, POLL_MS, takeInTurn } from "./build-queue.ts";
+import { busyBuildSlots, POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
 import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
@@ -118,11 +119,12 @@ function sweepHolderFiles(lock: Flock): void {
 }
 
 /**
- * `bin/toli build-slot --hold <cargo pid>` (detached, started by `slotForCargo`): the one holder of that cargo's
- * slot. It waits in line, holds the slot while the cargo lives and frees it once the cargo exits, or when it is itself
- * stopped, however (a flock dies with its process).
+ * `bin/toli build-slot --hold <cargo pid> --cwd <dir>` (detached, started by `slotForCargo`): the one holder of that
+ * cargo's slot, recorded as building in `cwd` into this environment's CARGO_TARGET_DIR (the cargo's, inherited). It
+ * waits in line, holds the slot while the cargo lives and frees it once the cargo exits, or when it is itself stopped,
+ * however (a flock dies with its process).
  */
-export async function holdForCargo(cargoPid: number): Promise<number> {
+export async function holdForCargo(cargoPid: number, cwd: string): Promise<number> {
     const lock = flock();
     if (lock === null) return 1;
     mkdirSync(paths.buildSlotsDir(), { recursive: true });
@@ -134,7 +136,7 @@ export async function holdForCargo(cargoPid: number): Promise<number> {
     sweepHolderFiles(lock);
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());
-    const held = await takeInTurn(capacity.buildSlots, lock, () => pidAlive(cargoPid));
+    const held = await takeInTurn(capacity.buildSlots, lock, slotHolder(cwd), () => pidAlive(cargoPid));
     const release = (): void => {
         rmSync(heldFile(cargoPid), { force: true });
         if (held !== null) {
@@ -183,11 +185,11 @@ export async function slotForCargo(cargoPid: number): Promise<number> {
     let told = false;
     while (pidAlive(cargoPid) && !holderHolds(cargoPid)) {
         if (!claimed(cargoPid, lock)) {
-            const holder = spawnChild(process.execPath, [TOLI_SCRIPT, "build-slot", "--hold", String(cargoPid)], {
-                cwd: paths.root(),
-                detached: true,
-                stdio: "ignore",
-            });
+            const holder = spawnChild(
+                process.execPath,
+                [TOLI_SCRIPT, "build-slot", "--hold", String(cargoPid), "--cwd", process.cwd()],
+                { cwd: paths.root(), detached: true, stdio: "ignore" },
+            );
             holder.unref();
         }
         await Bun.sleep(HOLDER_POLL_MS);
