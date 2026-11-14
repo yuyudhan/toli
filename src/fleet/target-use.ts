@@ -2,10 +2,10 @@
 // what each process runs and where, the build tools among them, and the cargo processes in a target's workspace.
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { pidAlive, platform, run } from "../core/util.ts";
 import { buildTool, configuredBuildTools } from "./build-tools.ts";
-import { procCargoCwds, procLink } from "./disk-proc.ts";
+import { containerMounts, type ProcMount, procCargoCwds, procLink } from "./disk-proc.ts";
 import { allOpenFiles, type HeldFile, real, within } from "./disk-scan.ts";
 import { type LiveBuild, liveBuilds } from "./live-builds.ts";
 import { procFile } from "./resources.ts";
@@ -14,8 +14,16 @@ import { procFile } from "./resources.ts";
  * One other process: its command line, the executable and mapped files it runs, and its working directory.
  * `uninspected`: one of this user's processes whose files could not be read (lsof left it out while it was exec'ing,
  * or the process is not dumpable); the keeper counts it as using a target only when its command line could run from it.
+ * `mounts`: for one in a container, the folders it sees mapped to this host's paths (disk-proc.ts containerMounts).
  */
-export type ProcessUse = { pid: string; args: string; files: string[]; cwd: string | null; uninspected?: true };
+export type ProcessUse = {
+    pid: string;
+    args: string;
+    files: string[];
+    cwd: string | null;
+    uninspected?: true;
+    mounts?: ProcMount[];
+};
 
 /**
  * Rechecks of one of this user's processes lsof left out, `RECHECK_MS` apart (about 2 s in all), before it counts as
@@ -71,7 +79,10 @@ function processTable(): ProcessUse[] | null {
         }
         for (const pid of mine) {
             const entry = table.get(pid);
-            if (entry !== undefined && entry.files.length === 0 && existsSync(procFile(pid))) entry.uninspected = true;
+            if (entry === undefined || entry.files.length > 0 || !existsSync(procFile(pid))) continue;
+            entry.uninspected = true;
+            const mounts = containerMounts(pid);
+            if (mounts !== null) entry.mounts = mounts;
         }
         return [...table.values()];
     }
@@ -100,16 +111,47 @@ function processTable(): ProcessUse[] | null {
     return [...table.values()];
 }
 
+/** `path` as this host names it, for a process that sees `mounts`; null when no mount shows it. */
+function onHost(path: string, mounts: ProcMount[]): string | null {
+    let best: ProcMount | undefined;
+    for (const mount of mounts) {
+        if (within(path, mount.at) && (best === undefined || mount.at.length > best.at.length)) best = mount;
+    }
+    return best === undefined ? null : join(best.host, relative(best.at, path));
+}
+
 /**
- * Whether a process that could not be inspected may run from a target: its program is a relative path (it runs from a
- * working directory nobody could see), or its command line names the target or its workspace. Any other process, such
- * as a service manager that is not dumpable, says nothing about the target; a build tool among them is already kept
- * by targetUse because its working directory cannot be seen.
+ * Whether a relative `program` started anywhere from `top` down to the target `dir` is a file in `dir`: its working
+ * directory cannot be seen, so the target is one it may run from only when the program is really there.
  */
-function mayRunFrom(entry: ProcessUse, places: string[]): boolean {
+function relativeFrom(program: string, dir: string, top: string): boolean {
+    for (let folder = dirname(dir); within(folder, top); folder = dirname(folder)) {
+        const path = resolve(folder, program);
+        if (within(path, dir) && path !== dir && existsSync(path)) return true;
+        if (folder === dirname(folder)) break;
+    }
+    return false;
+}
+
+/**
+ * Whether a process that could not be inspected may run from a target: its command line names the target or its
+ * workspace, or its program is a file in the target. A relative program (its working directory unseen) counts when
+ * it names a file in the target from one of the target's parent folders. For a process in a container, the program
+ * is looked up through its mounts, and a target no mount shows is not one it can run from. Any other process, such as
+ * a service manager that is not dumpable or another project's dev server, says nothing about the target; a build tool
+ * among them is already kept by targetUse because its working directory cannot be seen.
+ */
+function mayRunFrom(entry: ProcessUse, dir: string, places: string[]): boolean {
+    if (places.some((place) => entry.args.includes(place))) return true;
     const program = entry.args.trim().split(/\s+/)[0] ?? "";
-    if (program.includes(sep) && !program.startsWith(sep)) return true;
-    return places.some((place) => entry.args.includes(place));
+    if (!program.includes(sep)) return false;
+    const mounts = entry.mounts;
+    if (mounts === undefined) return !program.startsWith(sep) && relativeFrom(program, dir, sep);
+    if (program.startsWith(sep)) {
+        const path = onHost(program, mounts);
+        return path !== null && within(path, dir);
+    }
+    return mounts.some((mount) => within(dir, mount.host) && relativeFrom(program, dir, mount.host));
 }
 
 /**
@@ -144,7 +186,7 @@ export function targetUse(
     }
     // Only when nothing seen uses it: a process that could not be inspected might be running from it.
     const places = [...new Set([dir, target, ...workspaces])];
-    const unseen = table.find((entry) => entry.uninspected === true && mayRunFrom(entry, places));
+    const unseen = table.find((entry) => entry.uninspected === true && mayRunFrom(entry, dir, places));
     return unseen === undefined ? null : `process ${unseen.pid} could not be inspected and may run from it`;
 }
 

@@ -165,8 +165,11 @@ stopped container <c> mounts it and its image postgres:16 keeps data`, `... it a
    drops its locks before it runs the test binaries one after
    another); or when any process holds a file under it open. A process table it cannot read counts as in use. A
    process of the user's that cannot be inspected (lsof leaves out one caught mid-exec; Linux hides the files of one
-   that is not dumpable, such as `systemd --user`) counts as in use only when its command line could run from the
-   target: its program is a relative path, or the command line names the target or its workspace. On
+   that is not dumpable, such as `systemd --user`, or one in a container) counts as in use only when its command
+   line could run from the target: the command line names the target or its workspace, or its program is a file in
+   the target (a relative program counts when it names one from a parent folder of the target). For a process in a
+   container (its `/proc/<pid>/cgroup` names a container id) the program is looked up through the folders its
+   `/proc/<pid>/mountinfo` mounts from the host, so another project's target, which no mount shows, stays free. On
    Linux every one of these checks, and the working directories and open files of steps 1 and 2, reads `/proc`
    (`/proc/<pid>/cwd`, `exe`, `maps`, `fd/*`, `comm`), so they hold where `lsof` is not installed. Each skip is
    logged with its reason. Only then does it rename the folder aside under the locks, release them, and delete

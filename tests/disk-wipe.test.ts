@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { closeSync, existsSync, mkdirSync, openSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
+import { containerMounts } from "../src/fleet/disk-proc.ts";
 import type { HeldFile } from "../src/fleet/disk-scan.ts";
 import type { ProcessUse, UseProbes } from "../src/fleet/target-use.ts";
 import { libc } from "./disk-fixture.ts";
@@ -178,7 +179,8 @@ describe("wiping a target between build steps", () => {
         machine.processes.push({ pid: "4109", args: `${binary} --nocapture`, files: [], cwd: null, uninspected: true });
         const named = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
         expect(named).toEqual({ wiped: false, reason: "process 4109 could not be inspected and may run from it" });
-        // A relative program path runs from a working directory nobody could see.
+        // A relative program path runs from a working directory nobody could see: it counts where the file is.
+        writeFileSync(join(target, "debug", "store"), "");
         machine.processes.splice(0, 1, {
             pid: "4110",
             args: "./target/debug/store",
@@ -190,5 +192,108 @@ describe("wiping a target between build steps", () => {
         expect(relative).toEqual({ wiped: false, reason: "process 4110 could not be inspected and may run from it" });
         expect(existsSync(binary)).toBe(true);
         expect(existsSync(workspace)).toBe(true);
+    });
+
+    /** A project checkout whose `apps/backend/target/debug` holds the named binaries. */
+    function backend(binaries: string[]): { root: string; target: string } {
+        const root = realpathSync(tempDir("project"));
+        const target = join(root, "apps", "backend", "target");
+        mkdirSync(join(target, "debug", "deps"), { recursive: true });
+        writeFileSync(join(target, "debug", ".cargo-lock"), "");
+        for (const binary of binaries) writeFileSync(join(target, "debug", binary), "");
+        return { root, target };
+    }
+
+    /** A dev server in a container: lsof and /proc cannot see its working directory or executable. */
+    function devServer(args: string, mounts?: { at: string; host: string }[]): ProcessUse {
+        const entry: ProcessUse = { pid: "3184633", args, files: [], cwd: null, uninspected: true };
+        if (mounts !== undefined) entry.mounts = mounts;
+        return entry;
+    }
+
+    const KEPT = { wiped: false, reason: "process 3184633 could not be inspected and may run from it" };
+
+    test("a relative program an uninspected process runs keeps only the target that holds it", () => {
+        const own = backend(["shop-backend"]);
+        const other = backend(["ledger-backend"]);
+        const machine = quiet();
+        machine.processes.push(devServer("./target/debug/shop-backend"));
+        expect(wipeTargetBetweenBuilds(other.target, 0, undefined, probes(machine))).toEqual({ wiped: true });
+        expect(existsSync(other.target)).toBe(false);
+        expect(wipeTargetBetweenBuilds(own.target, 0, undefined, probes(machine))).toEqual(KEPT);
+        expect(existsSync(join(own.target, "debug", "shop-backend"))).toBe(true);
+    });
+
+    test("a program in a container keeps only the target its mounts show, by relative or container path", () => {
+        // Both checkouts hold the binary; only one is mounted into the container.
+        const own = backend(["shop-backend"]);
+        const other = backend(["shop-backend"]);
+        const mounts = [{ at: "/app", host: own.root }];
+        for (const args of ["./target/debug/shop-backend", "/app/apps/backend/target/debug/shop-backend serve"]) {
+            const machine = quiet();
+            machine.processes.push(devServer(args, mounts));
+            expect(wipeTargetBetweenBuilds(own.target, 0, undefined, probes(machine))).toEqual(KEPT);
+            expect(existsSync(own.target)).toBe(true);
+        }
+        const machine = quiet();
+        machine.processes.push(devServer("./target/debug/shop-backend", mounts));
+        expect(wipeTargetBetweenBuilds(other.target, 0, undefined, probes(machine))).toEqual({ wiped: true });
+        expect(existsSync(other.target)).toBe(false);
+    });
+});
+
+describe("the mounts of a process in a container", () => {
+    const ID = "3f".repeat(32);
+
+    /** A /proc with pid 3184633 in cgroup `cgroup`, seeing `inside`, and this host's own mounts `host`. */
+    function proc(cgroup: string, inside: string[], host: string[]): string {
+        const dir = tempDir("proc");
+        mkdirSync(join(dir, "3184633"));
+        mkdirSync(join(dir, "self"));
+        writeFileSync(join(dir, "3184633", "cgroup"), `${cgroup}\n`);
+        writeFileSync(join(dir, "3184633", "mountinfo"), `${inside.join("\n")}\n`);
+        writeFileSync(join(dir, "self", "mountinfo"), `${host.join("\n")}\n`);
+        return dir;
+    }
+
+    function withProc<T>(dir: string, body: () => T): T {
+        const saved = process.env.TOLI_PROC_DIR;
+        process.env.TOLI_PROC_DIR = dir;
+        try {
+            return body();
+        } finally {
+            if (saved === undefined) delete process.env.TOLI_PROC_DIR;
+            else process.env.TOLI_PROC_DIR = saved;
+        }
+    }
+
+    const HOST = [
+        "22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw",
+        "40 22 8:2 / /home rw,relatime shared:2 - ext4 /dev/sda2 rw",
+        "90 22 0:50 / /var/lib/docker/overlay2/abc/merged rw - overlay overlay rw",
+    ];
+
+    test("maps each bind mount to the host path of the same folder", () => {
+        const dir = proc(
+            `0::/system.slice/docker-${ID}.scope`,
+            [
+                "500 400 0:50 / / rw - overlay overlay rw",
+                "501 500 8:2 /user/code/shop /app rw - ext4 /dev/sda2 rw",
+                "502 500 8:1 /srv/my\\040data /data rw - ext4 /dev/sda1 rw",
+                "503 500 0:77 / /proc rw - proc proc rw",
+            ],
+            HOST,
+        );
+        expect(withProc(dir, () => containerMounts("3184633"))).toEqual([
+            { at: "/", host: "/var/lib/docker/overlay2/abc/merged" },
+            { at: "/app", host: "/home/user/code/shop" },
+            { at: "/data", host: "/srv/my data" },
+        ]);
+    });
+
+    test("is null for a process outside a container or whose mounts cannot be read", () => {
+        const host = proc("0::/user.slice/user-1000.slice/user@1000.service/init.scope", HOST, HOST);
+        expect(withProc(host, () => containerMounts("3184633"))).toBeNull();
+        expect(withProc(host, () => containerMounts("999"))).toBeNull();
     });
 });
