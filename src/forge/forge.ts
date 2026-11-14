@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { currentBranch, git, headSha, isGitRepo } from "../core/git.ts";
+import { currentBranch, git, gitOk, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError } from "../core/util.ts";
@@ -22,7 +22,8 @@ import {
     type PrStatus,
     type PrSummary,
 } from "./cli.ts";
-import { gateForPush, parseGateWait } from "./gate.ts";
+import { parseGateWait } from "./gate.ts";
+import { gatePush } from "./gate-hook.ts";
 
 /** `--task T<n>`: the project command acts on that task's workspace (its worktree or task branch). */
 const TASK_FLAG = "task";
@@ -228,15 +229,12 @@ function requirePushAuthority(project: string, word: string | null): void {
  * unless `--word` quotes the user's word for this push or the project has a standing push grant on this machine. Runs
  * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. A push that moved
  * origin's branch is recorded in this machine's push log (src/records/push-log.ts), attributed with `--by`/`--for`/
- * `--word` (or the issuing machine and task `bin/toli exec` put in the environment). With `--gate "<recipe>"` the
- * gate runs first (cached per tree, src/forge/gate.ts) and the push happens only once it passed on HEAD's tree; a
- * checkout with uncommitted edits (other jawans' in a shared clone) is waited on for `--gate-wait` minutes (gateForPush,
- * default 30) until they are committed, since a gate run on it would prove nothing about the commit; the
- * push's hooks get TOLI_GATE_PROJECT, TOLI_GATE_SHA, TOLI_GATE_TREE and TOLI_GATE_RECIPE, and decide whether to skip
- * their own run with `bin/toli gate check` (the variables alone prove nothing: anyone can set them). A project with a
- * pre-push hook pushes in one heavy-build slot and its memory-capped scope (src/fleet/build-slots.ts), since the hook
- * may run the long check itself: its cargo gets one slot's share of the cores even through `just` without toli's cargo
- * shim, and a `bin/toli gate run` it starts rides on that slot. A push is refused when the repo declares a pre-push hook
+ * `--word` (or the issuing machine and task `bin/toli exec` put in the environment). With `--gate "<recipe>"` the gate
+ * runs first and the push happens only once it passed on HEAD's tree (gatePush, src/forge/gate-hook.ts); a pre-push
+ * hook that only repeats it is skipped for exactly the gated commit. A project whose pre-push hook runs pushes in one
+ * heavy-build slot and its memory-capped scope (src/fleet/build-slots.ts), since the hook may run the long check
+ * itself: its cargo gets one slot's share of the cores even through `just` without toli's cargo shim, and a `bin/toli
+ * gate run` it starts rides on that slot. A push is refused when the repo declares a pre-push hook
  * (src/projects/hooks.ts) that git would not run, so the project's own check never silently skips; `--no-hooks-ok`
  * pushes anyway. Other declared hooks that are not installed only warn.
  */
@@ -254,26 +252,30 @@ export async function pushCommand(argv: string[]): Promise<void> {
     const branch = requireBranch(dir, "push");
     const ref = `refs/heads/${branch}`;
     const recipe = args.str("gate");
-    const gateEnv: Record<string, string> = {};
-    if (recipe !== undefined) {
-        const gate = await gateForPush({ project, dir, recipe, json: false }, parseGateWait(args.str("gate-wait")));
-        const tree = gate.tree;
-        gateEnv.TOLI_GATE_PROJECT = project;
-        gateEnv.TOLI_GATE_SHA = headSha(dir);
-        gateEnv.TOLI_GATE_TREE = tree;
-        gateEnv.TOLI_GATE_RECIPE = recipe;
-    }
+    const { env: gateEnv, skipHookAt } =
+        recipe === undefined
+            ? { env: {}, skipHookAt: null }
+            : await gatePush({ project, dir, recipe, json: false }, parseGateWait(args.str("gate-wait")));
     const before = git(dir, ["ls-remote", "origin", ref]);
     if (before.code !== 0)
         throw new ToliError(`git ls-remote origin failed: ${(before.stderr || before.stdout).trim()}`);
     const old = before.stdout.trim().split(/\s+/)[0] || null;
-    const push = ["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`];
+    // A skipped hook pushes the gated sha itself, never the branch (which could move before git reads it); git sets no
+    // upstream for a sha source, so it is set below as -u would.
+    const push =
+        skipHookAt === null
+            ? ["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`]
+            : ["git", "-C", dir, "push", "--no-verify", "origin", `${skipHookAt}:${ref}`];
     const code =
-        activeHookPath(dir, "pre-push") !== null
+        skipHookAt === null && activeHookPath(dir, "pre-push") !== null
             ? await withBuildSlot(dir, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
             : await runInherit(push, { env: gateEnv });
-    if (code !== 0) throw new ToliError(`git push -u origin ${branch} failed (exit ${code})`);
-    const pushed = headSha(dir, ref);
+    if (code !== 0) throw new ToliError(`git push origin ${branch} failed (exit ${code})`);
+    if (skipHookAt !== null) {
+        gitOk(dir, ["config", `branch.${branch}.remote`, "origin"]);
+        gitOk(dir, ["config", `branch.${branch}.merge`, ref]);
+    }
+    const pushed = skipHookAt ?? headSha(dir, ref);
     if (pushed === old) {
         out(`push log: nothing new on origin/${branch}`);
         return;

@@ -159,8 +159,9 @@ the interactive Sardar's subagents.
   `--sha`'s commit), for pre-push hooks; a record edited or copied by hand is refused. `gate status` lists a project's
   gates, newest first. `push --gate "<recipe>"` runs the gate first and pushes only once it passed; a checkout with
   uncommitted edits (other jawans' in a shared clone) is waited on for `--gate-wait` minutes (default 30, 0 refuses at
-  once) until they are committed; a push whose project has a pre-push hook runs in one heavy-build slot
-  ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
+  once) until they are committed; a pre-push hook that runs only that recipe is skipped (`--no-verify`) for the exact
+  gated commit from a clean checkout, and any other push whose project has a pre-push hook runs in one heavy-build
+  slot ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
 
 ### Jawans and harnesses
 

@@ -141,6 +141,17 @@ parents, message or author):
   (named by commit sha, no proof) are never reused; each gate runs once more. A key that is a symlink, owned by
   another user or readable by group or others is refused (`gate check` fails, a finished run is recorded `failed`):
   delete it and the next gate makes a fresh one.
+- `push --gate "<recipe>"` skips a pre-push hook that would only repeat the gate it just passed. When the active
+  hook is a plain shell script whose one command (comments, blank lines, `set` options and an `exec` prefix aside)
+  is exactly the recipe's text, toli skips it itself, but only after checking, right before the push, that HEAD is
+  still the gated commit, the checkout is exactly HEAD (no changed or untracked files) and a sealed pass of that
+  recipe exists for HEAD's tree. It then pushes that commit's sha (not the branch, which could move meanwhile) with
+  `git push --no-verify`, sets the branch's upstream as `-u` would, prints `push: skipping the pre-push hook <path>:
+it runs only <recipe>, which passed on <sha> (tree ..., proof ...)` and logs a `hook-skip` line in
+  `logs/gates.log`. Otherwise it prints
+  `push: running the pre-push hook: <why>` and the hook runs as usual: a hook that does more than the gate (a secret
+  scan, a second check), runs another command, is not a shell script, or comes through a hook manager, a moved HEAD,
+  a dirty checkout, or no sealed pass. A failed gate pushes nothing, so the hook never runs.
 
 A project whose own pre-push hook runs the same long check can skip it when toli already passed it on the tree it is
 about to push. Put this at the top of the hook, before the check (`project` is the project's toli name, `toli` the
