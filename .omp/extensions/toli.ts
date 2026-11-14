@@ -34,13 +34,15 @@
 // so the bash tool and every native subagent (omp `task`) build through the heavy-build slots. And every subagent
 // session reports itself running in state/agents/<id>.json from its agent loop's start, every minute, until its
 // loop ends (src/records/agents.ts AgentReporter): a native jawan counts as running only on that evidence, never
-// because the lead session that started it is still open.
+// because the lead session that started it is still open. Loading marks this omp as one whose subagents report
+// (state/agent-sessions/<pid>.json); a lead omp without the mark predates the reports, and its subagents count while
+// it runs, until it restarts.
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CliHealth } from "../../src/harness/cli-health.ts";
 import { guardDecision, isBrief, jawanEnv, ompAction } from "../../src/harness/lead-guard.ts";
-import { AGENT_REPORT_EVERY_MS, AgentReporter } from "../../src/records/agents.ts";
+import { AGENT_REPORT_EVERY_MS, AgentReporter, markReportingSession } from "../../src/records/agents.ts";
 
 // omp ships no installable type package; declare the surface this file uses.
 type Timer = unknown;
@@ -230,6 +232,7 @@ export default function toliExtension(pi: ExtensionAPI): void {
     });
 
     // A subagent session reports itself running (see the header); the main session's reporter does nothing.
+    markReportingSession(REPO_ROOT, process.pid, new Date());
     const reporter = new AgentReporter(REPO_ROOT, process.pid);
     let beating = false;
     pi.on("agent_start", (_event, ctx) => {

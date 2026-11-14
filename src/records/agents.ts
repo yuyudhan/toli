@@ -3,9 +3,13 @@
 // so the session being alive says nothing about any one of them (T1419). The evidence is the agent's own report,
 // state/agents/<id>.json, which the omp extension writes for every subagent session while it runs (AgentReporter):
 // its omp pid, the last time it reported, and when it ended. An agent no harness reports (a Claude Code subagent, a
-// label such as `<machine> lead (talk ...)`) counts as running only for the grace minutes after it was recorded.
-import { mkdirSync } from "node:fs";
+// label such as `fleet talk`) counts as running only for the grace minutes after it was recorded. A label naming
+// another fleet machine (`<machine> coordinates (talk ...)`) is no agent here: that machine holds the work (T1427).
+// A lead omp started before this evidence existed (its extension predates agent reports, so no
+// state/agent-sessions/<pid>.json) keeps the earlier rule until it restarts: its subagents run while it does (T1429).
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { hasMachine, loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isValidName, pidAlive, readJson, writeJsonAtomic } from "../core/util.ts";
 import type { Task } from "./backlog.ts";
@@ -22,6 +26,31 @@ export type AgentReport = { pid: number; at: string; endedAt?: string };
 export type SessionAgent = { kind: string; id: string } | undefined;
 
 const AGENTS_DIR = join("state", "agents");
+/** state/agent-sessions/<pid>.json: omp `pid` loaded an extension whose subagents report (markReportingSession). */
+const SESSIONS_DIR = join("state", "agent-sessions");
+
+/** A reporting omp's mark: its pid and when its extension loaded. */
+export type ReportingSession = { pid: number; startedAt: string };
+
+/**
+ * Mark omp `pid` as one whose subagents report (the extension calls this when it loads), and remove the marks of omp
+ * processes that are gone, so a reused pid never inherits one.
+ */
+export function markReportingSession(root: string, pid: number, at: Date): void {
+    const dir = join(root, SESSIONS_DIR);
+    mkdirSync(dir, { recursive: true });
+    for (const file of readdirSync(dir)) {
+        const marked = Number(file.replace(/\.json$/, ""));
+        if (marked !== pid && !(Number.isInteger(marked) && marked > 0 && pidAlive(marked)))
+            rmSync(join(dir, file), { force: true });
+    }
+    writeJsonAtomic(join(dir, `${pid}.json`), { pid, startedAt: at.toISOString() } satisfies ReportingSession);
+}
+
+/** Whether lead session `pid` runs an extension whose subagents report (false: it predates agent reports). */
+function sessionReports(pid: number): boolean {
+    return existsSync(join(paths.root(), SESSIONS_DIR, `${pid}.json`));
+}
 
 /** The agent's report, relative to the toli root; null for an id that cannot name a file. */
 export function agentReportFile(id: string): string | null {
@@ -78,16 +107,34 @@ export function delegatedAway(task: Task): boolean {
 }
 
 /**
+ * The other fleet machine (or paired peer) a label agent names, as in `<machine> coordinates (talk 19:20)`: that
+ * machine holds the work, so the task waits on it. Null for a harness agent id (one name, no spaces), a `bin/toli
+ * remote` run (`remote:<machine>:...`, judged by its record) and a label naming no other machine.
+ */
+export function labelHolder(agent: string): string | null {
+    if (isValidName(agent) || agent.startsWith("remote:")) return null;
+    const words = new Set(agent.split(/[^A-Za-z0-9._-]+/));
+    const self = hasMachine() ? loadMachine().name : "";
+    const peers = readJson<{ peers?: Array<{ name: string; status: string }> }>(paths.peers(), {}).peers ?? [];
+    const names = [
+        ...loadFleet().machines.map((machine) => machine.name),
+        ...peers.filter((peer) => peer.status === "active").map((peer) => peer.name),
+    ];
+    return names.find((name) => name !== self && words.has(name)) ?? null;
+}
+
+/**
  * Whether the task's agent is a native harness subagent of this machine: neither a `bin/toli spawn` run (`j-...`,
  * judged by its run record) nor a `bin/toli remote` run (`remote:<machine>:...`: the target counts it as its own
- * run, and only its record here ends it), and not delegated to another machine.
+ * run, and only its record here ends it), not delegated to another machine, and not a label naming one.
  */
 export function nativeAgent(task: Task): task is Task & { agent: string } {
     return (
         task.agent !== undefined &&
         !task.agent.startsWith("j-") &&
         !task.agent.startsWith("remote:") &&
-        !delegatedAway(task)
+        !delegatedAway(task) &&
+        labelHolder(task.agent) === null
     );
 }
 
@@ -102,9 +149,10 @@ export function agentSessionGone(task: Pick<Task, "agent" | "agentSession">): bo
 
 /**
  * A native subagent's state. `live`: it reported running within AGENT_REPORT_TIMEOUT_MS from a running omp, or, with
- * no report since it was recorded, it was recorded less than `graceMinutes` ago. `session`: the lead session that
- * recorded it is gone. `ended`: it reported its end after it was recorded. `silent`: it stopped reporting at `since`
- * (`evidence`: its report), or never reported and was recorded at `since`, the grace minutes ago or more.
+ * no report since it was recorded, it was recorded less than `graceMinutes` ago, or the lead session that recorded it
+ * is alive and predates agent reports (T1429). `session`: the lead session that recorded it is gone. `ended`: it
+ * reported its end after it was recorded. `silent`: it stopped reporting at `since` (`evidence`: its report), or never
+ * reported and was recorded at `since`, the grace minutes ago or more.
  */
 export type AgentState =
     | { state: "live" }
@@ -115,6 +163,8 @@ export type AgentState =
 export function agentState(task: Task & { agent: string }, at: Date, graceMinutes: number): AgentState {
     const session = task.agentSession;
     if (session !== undefined && agentSessionGone(task)) return { state: "session", pid: session.pid };
+    // A lead omp whose extension predates agent reports writes none for its subagents: they run while it does.
+    if (session !== undefined && session.agent === task.agent && !sessionReports(session.pid)) return { state: "live" };
     const recorded = task.dispatchedAt ?? task.startedAt ?? task.createdAt;
     const file = agentReportFile(task.agent);
     const report = file === null ? null : readJson<AgentReport | null>(join(paths.root(), file), null);

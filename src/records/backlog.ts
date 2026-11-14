@@ -75,8 +75,8 @@ export type Task = {
     agentSession?: { agent: string; pid: number };
     /**
      * `task wait --on "<what>"`: the task is active but deliberately waits on something outside a jawan (a deferred
-     * spawn, a push, another task); oversight reports it as waiting, never as needing a re-dispatch. Recording a new
-     * jawan, holding, finishing or dropping the task clears it.
+     * spawn, a push, another task, a slice `delegate --for` handed to another machine); oversight reports it as
+     * waiting, never as needing a re-dispatch. Recording a new jawan, holding, finishing or dropping the task clears it.
      */
     waitingOn?: string;
     /** `task pin`: stays on this machine, never offered to another by the queue balancer; the reason ("" if none). */

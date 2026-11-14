@@ -322,6 +322,13 @@ answer` posts no wake of its own; only an answer forwarded from another machine'
   re-dispatch; the tick and `fleet check` leave it out, and `task list` (`--fleet` too) shows `(waiting on: <what>)`
   on its line. Recording a new jawan or holding the task ends the wait. A machine's own helpers that defer or trigger
   work call it for the tasks they hold back.
+- **Work held on another machine.** `bin/toli delegate <machine> ... --for T<n>` on a task that keeps its own jawan
+  (a slice) sets the wait itself: the task waits on `<machine>/T<m> (delegated)`, since the delegated task reports
+  back here. Once that delegation is done, dropped or handed back, the task waits on the newest slice still out, or
+  on nothing, and its own jawan is judged again (a dead one is listed for a re-dispatch). A task whose jawan is a
+  label naming another fleet machine or paired peer (`<machine> coordinates (talk 19:20)`) waits on that machine
+  (`waiting on <machine> (agent: <label>)`): the label is no jawan here. `task wait T<n> --on "<machine>"` records
+  any other work another machine holds.
 - **Idle machines.** `fleet check` probes every machine (as `fleet status` does) and reads each reachable one's own
   backlog (`fleet check --local --json` over ssh). A reachable machine with no active run while queued work, or a
   stale active task, exists for a project cloned there is idle; every machine's stale tasks are named too, and so is

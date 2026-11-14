@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AgentReporter } from "../src/records/agents.ts";
+import { AgentReporter, markReportingSession } from "../src/records/agents.ts";
 import { sandbox } from "./helpers.ts";
 
 const START = new Date("2026-03-04T08:00:00.000Z");
@@ -39,5 +39,23 @@ describe("AgentReporter (the omp extension's per-subagent liveness report, T1419
             reporter.ended(END);
         }
         expect(existsSync(join(box.root, "state", "agents"))).toBe(false);
+    });
+});
+
+describe("markReportingSession (the extension's mark that its omp's subagents report, T1429)", () => {
+    test("marks the loading omp and drops the marks of omp processes that are gone", async () => {
+        const box = sandbox();
+        const dir = join(box.root, "state", "agent-sessions");
+        const gone = Bun.spawn(["true"]);
+        await gone.exited;
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, `${gone.pid}.json`), "{}");
+        writeFileSync(join(dir, "stray.json"), "{}");
+        markReportingSession(box.root, process.pid, START);
+        expect(readdirSync(dir)).toEqual([`${process.pid}.json`]);
+        expect(JSON.parse(readFileSync(join(dir, `${process.pid}.json`), "utf8"))).toEqual({
+            pid: process.pid,
+            startedAt: START.toISOString(),
+        });
     });
 });

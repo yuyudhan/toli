@@ -27,6 +27,7 @@ import { type DelegateState, type DelegationUpdate, fleetId, REPORTED, splitFlee
 import { forwardAnswer } from "./fleet-tasks.ts";
 import { matchOption } from "./hold-options.ts";
 import { addInboxItem } from "./inbox.ts";
+import { delegateWait, rewait, sliceOpen } from "./slice-wait.ts";
 
 /** What `task link` sends the owner (JSON on `delegation link`'s stdin). */
 export type DelegationLink = { from: string; task: string; id: string };
@@ -84,6 +85,7 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         if (slice && status === "done" && commit !== undefined && seen?.commit !== commit)
             task.notes.push(`${id} commit: ${commit}`);
         settle(task, id, status, commit, slice);
+        if (slice) rewait(task);
     });
     return applied;
 }
@@ -312,13 +314,15 @@ function ownJawan(task: Task): boolean {
 
 /**
  * Record `fid` (a new delegation or a link) on the `--for` task, with `note`. While the task's own jawan works on it,
- * `fid` is a slice (`slices`): its outcome is noted and wakes this lead, and the task stays with its jawan. Otherwise
- * it is the task's delegation (`delegatedTo`): the task works through it and is done once every delegation is.
+ * `fid` is a slice (`slices`): its outcome is noted and wakes this lead, and the task stays with its jawan, waiting on
+ * the slice (`waitingOn`) until that is through, since the work is held on the other machine meanwhile (T1427).
+ * Otherwise it is the task's delegation (`delegatedTo`): the task works through it and is done once every delegation is.
  */
 export function recordDelegation(task: Task, fid: string, note: string): void {
     if (task.slices?.includes(fid) || (!task.delegatedTo?.includes(fid) && ownJawan(task))) {
         if (!task.slices?.includes(fid)) task.slices = [...(task.slices ?? []), fid];
         task.notes.push(`${note} (a slice: ${task.id} stays with its own jawan)`);
+        if (task.status === "active" && sliceOpen(task, fid)) task.waitingOn = delegateWait(fid);
         return;
     }
     if (!task.delegatedTo?.includes(fid)) task.delegatedTo = [...(task.delegatedTo ?? []), fid];

@@ -9,7 +9,7 @@ import { hasMachine, loadMachine, machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isValidName, now, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { ACTIVE, type JawanRun, listRuns } from "../jawans/runs.ts";
-import { agentState, nativeAgent } from "./agents.ts";
+import { agentState, labelHolder, nativeAgent } from "./agents.ts";
 import type { Task } from "./backlog.ts";
 import { addInboxItem } from "./inbox.ts";
 
@@ -199,10 +199,13 @@ export function staleTasks(tasks: Task[], input: StaleInput): StaleTask[] {
         };
         const dispatched = task.dispatchedAt ?? task.startedAt ?? task.createdAt;
         let end: Pick<StaleTask, "reason" | "endedAt" | "lastLine" | "evidence"> & Partial<Pick<StaleTask, "session">>;
-        if (task.waitingOn !== undefined) {
+        // A label naming another machine (`<machine> coordinates (talk ...)`) is that machine's work: it waits there.
+        const holder = task.agent === undefined ? null : labelHolder(task.agent);
+        const waitingOn = task.waitingOn ?? (holder === null ? undefined : `${holder} (agent: ${task.agent})`);
+        if (waitingOn !== undefined) {
             found.push({
                 ...base,
-                waitingOn: task.waitingOn,
+                waitingOn,
                 reason: "waiting",
                 endedAt: null,
                 lastLine: null,

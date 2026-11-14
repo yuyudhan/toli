@@ -130,6 +130,24 @@ describe("delegated tasks write back to the --for task", () => {
         m2.ok(["task", "done", "T1", "--commit", "9a1e"]);
         expect(parent(m1)).toMatchObject({ status: "done", commit: "9a1e" });
     });
+
+    test("a task delegated with --for while its old agent stays recorded waits on the delegate (T1427)", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        m1.ok(["task", "add", "app", "release"]);
+        const start = "2026-03-04T08:00:00.000Z";
+        const later = "2026-03-04T08:30:00.000Z";
+        m1.ok(["task", "start", "T1", "--agent", "ReleaseSub"], { now: start });
+        m1.ok(["delegate", "m2", "the rest", "--brief", brief(m1), "--for", "T1"], { now: start });
+        const digest = m1.ok(["digest"], { now: later });
+        expect(digest).toContain("T1 (app) is active, waiting on m2/T1 (delegated)");
+        expect(digest).not.toContain("T1 (app) is active but");
+        // Once the delegate is through, the task is its local agent's again, and a dead one is named.
+        m2.ok(["task", "done", "T1", "--commit", "11ab"]);
+        expect(m1.ok(["digest"], { now: later })).toContain(
+            "T1 (app) is active but its agent ReleaseSub never reported running",
+        );
+    });
 });
 
 describe("a delegated task's question goes to the delegating lead", () => {

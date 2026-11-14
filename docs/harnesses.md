@@ -79,9 +79,13 @@ has every subagent session report itself running in `state/agents/<id>.json` (it
 minute, and its end when its loop ends); a subagent counts while that report is fresh (3 minutes) from a running omp.
 An agent no harness reports (a Claude Code subagent, a label naming who works on it) counts only for
 `oversight.staleTaskMinutes` after it was recorded; a `bin/toli remote` run (`remote:<machine>:...`) is the target's
-jawan, never one here. `task start --agent` also records the lead session that runs it (the extension-registered
+jawan, never one here, and so is a label naming another fleet machine (the task waits on that machine,
+docs/fleet.md). `task start --agent` also records the lead session that runs it (the extension-registered
 session, the `lead attach` omp or a headless turn's omp, whichever is an ancestor of the command); once its pid is
-gone, its subagents died with it. The digest's Next block lists a task whose subagent died with its session (`its
+gone, its subagents died with it. Each omp that loads the extension marks itself in
+`state/agent-sessions/<pid>.json`; a live lead session without that mark started before an upgrade brought agent
+reports, so its subagents never report and count as running while it runs (the earlier rule), until it restarts.
+The digest's Next block lists a task whose subagent died with its session (`its
 agent <id> died with its session <pid>`), reported its end (`its run <id> ended ... (state/agents/<id>.json)`),
 stopped reporting (`has not reported running since ...`) or never reported (`never reported running`) for a
 re-dispatch, after the grace minutes. `spawn` with every slot busy
