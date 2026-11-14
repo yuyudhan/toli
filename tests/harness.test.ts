@@ -2,16 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { GENERIC_NAMES, guidanceRules, leadGuidance } from "../src/harness/guidance.ts";
-import { HARNESSES, headlessCommand } from "../src/harness/harness.ts";
+import { briefPointer, HARNESSES, headlessCommand } from "../src/harness/harness.ts";
 import { claudeAction, guardDecision, ompAction } from "../src/harness/lead-guard.ts";
 import { headlessOmpArgs } from "../src/harness/omp-args.ts";
 import { shimItems, syncShims } from "../src/harness/sync.ts";
 import { sandbox, tempDir } from "./helpers.ts";
 
-const INPUT = { brief: "TOLI_BRIEF v1\ndo it", cwd: "/w/projects/alpha", root: "/w", maxMinutes: 30 };
+const INPUT = {
+    brief: "TOLI_BRIEF v1\ndo it",
+    briefPath: "/w/data/projects/alpha/runs/r1/brief.md",
+    cwd: "/w/projects/alpha",
+    root: "/w",
+    maxMinutes: 30,
+};
 
 describe("headless commands", () => {
-    test("each harness gets its documented non-interactive flags; the brief goes on stdin or as the prompt", () => {
+    test("each harness gets its documented non-interactive flags; the brief goes on stdin or its file is the prompt", () => {
         expect(headlessCommand("omp", INPUT)).toEqual({
             argv: [
                 "omp",
@@ -24,9 +30,8 @@ describe("headless commands", () => {
                 "yolo",
                 "--max-time",
                 "30m",
-                INPUT.brief,
             ],
-            stdin: null,
+            stdin: INPUT.brief,
         });
         expect(headlessCommand("claude", { ...INPUT, model: "sonnet" })).toEqual({
             argv: [
@@ -63,7 +68,16 @@ describe("headless commands", () => {
             stdin: INPUT.brief,
         });
         expect(headlessCommand("cursor", { ...INPUT, model: "m" })).toEqual({
-            argv: ["cursor-agent", "-p", "--force", "--output-format", "text", "--model", "m", INPUT.brief],
+            argv: [
+                "cursor-agent",
+                "-p",
+                "--force",
+                "--output-format",
+                "text",
+                "--model",
+                "m",
+                briefPointer(INPUT.briefPath),
+            ],
             stdin: null,
         });
         expect(headlessCommand("grok", INPUT)).toEqual({
@@ -76,13 +90,13 @@ describe("headless commands", () => {
                 "--output-format",
                 "plain",
                 "-p",
-                INPUT.brief,
+                briefPointer(INPUT.briefPath),
             ],
             stdin: null,
         });
         expect(headlessCommand("pi", { ...INPUT, model: "anthropic/x" })).toEqual({
-            argv: ["pi", "-p", "--model", "anthropic/x", INPUT.brief],
-            stdin: null,
+            argv: ["pi", "-p", "--model", "anthropic/x"],
+            stdin: INPUT.brief,
         });
         expect(HARNESSES.map((harness) => headlessCommand(harness, INPUT).argv[0])).toEqual([
             "omp",
@@ -109,6 +123,27 @@ describe("headless commands", () => {
             "do it",
         ]);
         expect(headlessCommand("omp", INPUT).argv).toContain("--wait-async");
+    });
+
+    test("no harness gets the brief on its command line; it reads it from stdin or the brief file", () => {
+        // A brief's text in argv is visible in `ps` and matched by `pkill -f`, which once killed unrelated jawans.
+        const dir = tempDir("brief-argv");
+        const briefPath = join(dir, "brief.md");
+        const brief = "TOLI_BRIEF v1\nThen run git push origin develop. MARKER-T1505";
+        writeFileSync(briefPath, brief);
+        for (const harness of HARNESSES) {
+            const command = headlessCommand(harness, { ...INPUT, brief, briefPath, model: "m" });
+            expect({ harness, argv: command.argv.filter((word) => word.includes("MARKER-T1505")) }).toEqual({
+                harness,
+                argv: [],
+            });
+            if (command.stdin === null) {
+                const prompt = command.argv.at(-1) ?? "";
+                expect(prompt.startsWith("TOLI_BRIEF v1\n")).toBe(true);
+                expect(prompt).toContain(briefPath);
+                expect(readFileSync(briefPath, "utf8")).toBe(brief);
+            } else expect({ harness, stdin: command.stdin }).toEqual({ harness, stdin: brief });
+        }
     });
 
     test("omp runs have no --max-time unless asked, keep their session, and load toli's overlay outside its root", () => {

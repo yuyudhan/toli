@@ -24,7 +24,7 @@ import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
 import { LEAD_TURN_ENV } from "../fleet/full.ts";
 import { subagentJawans } from "../fleet/queue.ts";
 import { capacityFor, stallMinutes } from "../fleet/resources.ts";
-import { type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
+import { briefPointer, type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
 import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { deadlineSection } from "./limits.ts";
@@ -128,6 +128,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         attached === undefined
             ? headlessCommand(input.harness, {
                   brief,
+                  briefPath,
                   cwd: input.cwd,
                   root: paths.root(),
                   model: input.model ?? undefined,
@@ -149,7 +150,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         briefPath,
         logPath: join(runDir, "output.log"),
         command: [
-            ...command.argv.map((word) => (word === brief ? "<brief>" : word)),
+            ...command.argv.map((word) => (word === briefPointer(briefPath) ? "<brief pointer>" : word)),
             ...(command.stdin === null ? [] : ["< brief"]),
         ].join(" "),
         maxMinutes: input.maxMinutes,

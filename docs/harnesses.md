@@ -144,14 +144,19 @@ and scheduled headless jobs.
 
 Headless commands (`src/harness/harness.ts`):
 
-| Harness | Command                                                                                                                                                                                 | Source                                                                                     |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| omp     | `omp -p --wait-async --cwd <dir> --no-title --approval-mode yolo [--max-time <n>m] [--config <toli>/.omp/config.yml] --session-dir <run>/session [--resume <file>] [--model M] <brief>` | `omp --help`, `omp://cli-reference.md`                                                     |
-| claude  | `claude -p --output-format text --permission-mode acceptEdits --allowedTools Bash,Read,Edit,Write,... --add-dir <toli> [--model M]`, brief on stdin                                     | `claude --help`, [CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) |
-| codex   | `codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir <toli> --skip-git-repo-check -C <dir> [-m M] -`, brief on stdin                          | [non-interactive mode](https://developers.openai.com/codex/noninteractive)                 |
-| cursor  | `cursor-agent -p --force --output-format text [--model M] <brief>`, cwd = project                                                                                                       | [headless](https://docs.cursor.com/en/cli/headless)                                        |
-| grok    | `grok --cwd <dir> --always-approve --no-auto-update --output-format plain [-m M] -p <brief>`                                                                                            | [headless & scripting](https://docs.x.ai/build/cli/headless-scripting)                     |
-| pi      | `pi -p [--model M] <brief>`, cwd = project                                                                                                                                              | [pi README](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md) |
+| Harness | Command                                                                                                                                                                                         | Source                                                                                     |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| omp     | `omp -p --wait-async --cwd <dir> --no-title --approval-mode yolo [--max-time <n>m] [--config <toli>/.omp/config.yml] --session-dir <run>/session [--resume <file>] [--model M]`, brief on stdin | `omp --help`, `omp://cli-reference.md`                                                     |
+| claude  | `claude -p --output-format text --permission-mode acceptEdits --allowedTools Bash,Read,Edit,Write,... --add-dir <toli> [--model M]`, brief on stdin                                             | `claude --help`, [CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) |
+| codex   | `codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir <toli> --skip-git-repo-check -C <dir> [-m M] -`, brief on stdin                                  | [non-interactive mode](https://developers.openai.com/codex/noninteractive)                 |
+| cursor  | `cursor-agent -p --force --output-format text [--model M] <pointer>`, cwd = project                                                                                                             | [headless](https://docs.cursor.com/en/cli/headless)                                        |
+| grok    | `grok --cwd <dir> --always-approve --no-auto-update --output-format plain [-m M] -p <pointer>`                                                                                                  | [headless & scripting](https://docs.x.ai/build/cli/headless-scripting)                     |
+| pi      | `pi -p [--model M]`, brief on stdin, cwd = project                                                                                                                                              | [pi README](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md) |
+
+The brief never goes on a jawan's command line: there `ps` shows it to every user, `pkill -f <pattern>` matches every
+jawan whose brief mentions the pattern, and a long brief can exceed the argument length limit. Harnesses that read
+their prompt from stdin get it there unchanged. Cursor CLI and Grok document no stdin prompt, so their `<pointer>` is
+a two-line prompt, `TOLI_BRIEF v1` and a sentence naming the run's `brief.md` to read in full and follow.
 
 `--add-dir <toli>` lets Claude and Codex jawans write their report and run `bin/toli` in toli's root. Codex jawans
 have network access by default: Codex's `workspace-write` sandbox blocks the network on its own, and toli always

@@ -61,6 +61,7 @@ async function harnessOnce(
     const run = loadRun(id);
     const command = headlessCommand(run.harness, {
         brief: readFileSync(run.briefPath, "utf8"),
+        briefPath: run.briefPath,
         cwd: run.cwd,
         root: paths.root(),
         model: run.model ?? undefined,
@@ -83,7 +84,13 @@ async function harnessOnce(
     const { promise: exited, resolve: done } = Promise.withResolvers<ChildExit>();
     child.once("error", (error) => done({ code: null, signal: null, error: error.message }));
     child.once("exit", (code, signal) => done({ code, signal, error: null }));
-    if (command.stdin !== null) child.stdin?.end(command.stdin);
+    if (command.stdin !== null) {
+        // A harness that exits before reading all of its brief closes the pipe: note it rather than crash on EPIPE.
+        child.stdin?.once("error", (error) => {
+            writeSync(logFd, `\n[toli] the harness did not read its whole brief: ${error.message}\n`);
+        });
+        child.stdin?.end(command.stdin);
+    }
     const childPid = child.pid ?? null;
     if (childPid !== null)
         updateRun(id, (record) => {

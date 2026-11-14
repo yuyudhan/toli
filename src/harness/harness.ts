@@ -113,6 +113,8 @@ export function requireInstalled(harness: Harness): string {
 export type HeadlessInput = {
     /** Full brief text; its first line is `TOLI_BRIEF v1`. */
     brief: string;
+    /** The file holding `brief`, which a harness that cannot read its prompt from stdin is pointed at. */
+    briefPath: string;
     /** Working directory of the jawan (the project clone). */
     cwd: string;
     /** toli's root, granted as an extra writable directory so the jawan can write its report there. */
@@ -130,8 +132,17 @@ export type HeadlessCommand = { argv: string[]; stdin: string | null };
 const CLAUDE_JAWAN_TOOLS = "Bash,Read,Edit,Write,MultiEdit,NotebookEdit,Glob,Grep,WebFetch,WebSearch,Task,TodoWrite";
 
 /**
+ * The prompt argument for a harness without a documented stdin prompt: it names the brief file instead of carrying
+ * the brief, so the brief's text never reaches the command line.
+ */
+export function briefPointer(briefPath: string): string {
+    return `TOLI_BRIEF v1\nYour brief is the file ${briefPath}. Read all of it before anything else and follow it as your task.`;
+}
+
+/**
  * The non-interactive command for one jawan run on `harness`. Flags per harness are documented with sources in
- * docs/harnesses.md. The brief goes on stdin where the CLI reads it there, otherwise as the prompt argument.
+ * docs/harnesses.md. The brief never goes on the command line, where `ps` shows it and `pkill -f` matches it: it goes
+ * on stdin where the CLI reads its prompt there, otherwise the prompt argument points at the brief file.
  */
 export function headlessCommand(harness: Harness, input: HeadlessInput): HeadlessCommand {
     const model = input.model;
@@ -146,9 +157,8 @@ export function headlessCommand(harness: Harness, input: HeadlessInput): Headles
                         input.session ?? null,
                     ),
                     ...(model ? ["--model", model] : []),
-                    input.brief,
                 ],
-                stdin: null,
+                stdin: input.brief,
             };
         case "claude":
             return {
@@ -195,7 +205,7 @@ export function headlessCommand(harness: Harness, input: HeadlessInput): Headles
                     "--output-format",
                     "text",
                     ...(model ? ["--model", model] : []),
-                    input.brief,
+                    briefPointer(input.briefPath),
                 ],
                 stdin: null,
             };
@@ -211,12 +221,12 @@ export function headlessCommand(harness: Harness, input: HeadlessInput): Headles
                     "plain",
                     ...(model ? ["-m", model] : []),
                     "-p",
-                    input.brief,
+                    briefPointer(input.briefPath),
                 ],
                 stdin: null,
             };
         case "pi":
-            return { argv: ["pi", "-p", ...(model ? ["--model", model] : []), input.brief], stdin: null };
+            return { argv: ["pi", "-p", ...(model ? ["--model", model] : [])], stdin: input.brief };
     }
 }
 

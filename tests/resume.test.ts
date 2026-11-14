@@ -37,8 +37,9 @@ const FAST = { TOLI_RUN_MINUTE_MS: "1000" };
 const NOISE = 'echo "Warning: MCP server \\"atlassian\\" failed to connect: HTTP 401"; echo "Working..."';
 
 /**
- * An omp stand-in that logs its argv. A fresh run writes a session file into its `--session-dir` and then hangs with no
- * output, CPU or file change (a stall); a run given `--resume <file>` appends to that file and reports.
+ * An omp stand-in that logs its argv, then its prompt (stdin). A fresh run writes a session file into its
+ * `--session-dir` and then hangs with no output, CPU or file change (a stall); a run given `--resume <file>` appends
+ * to that file and reports.
  */
 function sessionOmp(argvLog: string): string {
     return [
@@ -47,7 +48,7 @@ function sessionOmp(argvLog: string): string {
         '    case "$prev" in --session-dir) dir="$arg" ;; --resume) resume="$arg" ;; esac',
         '    prev="$arg"',
         "done",
-        `printf '%s\\n---\\n' "$*" >> "${argvLog}"`,
+        `{ printf '%s\\nprompt: ' "$*"; cat; printf '\\n---\\n'; } >> "${argvLog}"`,
         'if [ -n "$resume" ]; then echo "{}" >> "$resume"; echo "Jane, the work is done and committed as abc123."; exit 0; fi',
         'echo "{}" > "$dir/s1.jsonl"',
         NOISE,
@@ -214,7 +215,7 @@ describe("stall detection", () => {
         expect(second.resumeSession).toBe(join(first.sessionDir ?? "", "s1.jsonl"));
         const calls = readFileSync(argvLog, "utf8").split("\n---\n");
         expect(calls[1]).toContain(`--session-dir ${first.sessionDir} --resume ${second.resumeSession}`);
-        expect(calls[1]).toContain("TOLI_BRIEF v1\n## RESUME (auto, 1)");
+        expect(calls[1]).toContain("prompt: TOLI_BRIEF v1\n## RESUME (auto, 1)");
         expect(calls[1]).not.toContain("build it");
         expect(readFileSync(second.resumeSession ?? "", "utf8")).toBe("{}\n{}\n");
         const backlog = JSON.parse(readFileSync(join(box.root, "data", "backlog.json"), "utf8")) as {
