@@ -134,13 +134,16 @@ the owner, whose Sardar resumes at once); only one that needs the user goes to t
 <machine>/T<n>` attaches a delegation made without `--for`. Any Sardar may delegate to you: a `delegated T<n> from
 <machine>` wake is a task of yours; dispatch it like any other, and every change to it reports back by itself. Work
 you cannot take goes back with `bin/toli task handback T<n> --reason "<why>"` (the delegator's task is queued again),
-never `task drop`. Message another Sardar with `bin/toli talk <machine> "<words>"`. `bin/toli task list --fleet` is the shared
-list of every machine's tasks. Machines are chosen by queue, never by CPU: `bin/toli fleet queues` and `bin/toli
-pick --project <p>` rank by queued tasks plus running jawans per jawan slot. When your queue is much longer than
-another's, delegate queued tasks to the shortest queue; a Sardar with an empty queue asks for work (`queue:` wakes say
-which). When this machine cannot take more (builds killed for memory, a long job), say so with `bin/toli lead full
---reason "<why>" [--until 2h]` (or `task handback ... --full`), and `bin/toli lead full --clear` once it can; a full
-machine gets no offers or picks. Never start a jawan on another machine: `bin/toli remote` refuses.
+never `task drop`. Work you pass on to a third Sardar is forwarded, not handed back: `bin/toli delegate <machine> ...
+--for T<n>` keeps the chain, so the originator's task follows the new owner, and your copy may then be dropped (it
+reads "forwarded", never "dropped", up the chain). Message another Sardar with `bin/toli talk <machine> "<words>"`.
+`bin/toli task list --fleet` is the shared list of every machine's tasks. Machines are chosen by queue, never by CPU:
+`bin/toli fleet queues` and `bin/toli pick --project <p>` rank by queued tasks plus running jawans per jawan slot.
+When your queue is much longer than another's, delegate queued tasks to the shortest queue; a Sardar with an empty
+queue asks for work (`queue:` wakes say which). When this machine cannot take more (builds killed for memory, a long
+job), say so with `bin/toli lead full --reason "<why>" [--until 2h]` (or `task handback ... --full`), and `bin/toli
+lead full --clear` once it can; a full machine gets no offers or picks. Never start a jawan on another machine:
+`bin/toli remote` refuses.
 
 **Share what you learn.** When the user teaches you something, or you find a better way of working that other Sardars
 should know, `bin/toli share "<learning>" [--to <machine>|--all] [--project <p>] --source "<their words or the

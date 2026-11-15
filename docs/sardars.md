@@ -143,17 +143,18 @@ A new outcome (done, held, dropped) also wakes the delegating lead with `<owner>
 commit, report text (truncated) and, for a hold, the question and its options. **The delegating lead answers its
 delegated work's questions itself**: `bin/toli task answer <owner>/T<n> "<answer>"` from any machine forwards the
 words to the owner's `task answer` (an `answer` outbox item, over HTTPS or ssh). Only the machine that delegated the
-task may answer it, and only the task's owner may send its updates: anything else is refused there. The answer
-releases the task and wakes the owner's lead, who resumes the work at once. An answer that reaches the owner after it
-took the hold up again itself (the task is no longer held) is never refused or dropped: it becomes a note on the task
-and an inbox item (`answer from <machine> for T<n> (<status>)`) that wakes the owner's lead, which passes it to the
-jawan. A question only the user can decide (push, merge, release, money, security, a destructive step, his taste)
-goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task with `<owner>/T<n> asks: <question>` and its
-options, so it sits in this machine's Needs-you queue; his `task answer T<n> "<words>"` there is recorded here and
-forwarded to the owner too.
+task (or one above it, for work forwarded on) may answer it, and only the task's owner may send its updates: anything
+else is refused there. The answer releases the task and wakes the owner's lead, who resumes the work at once. An
+answer that reaches the owner after it took the hold up again itself (the task is no longer held) is never refused or
+dropped: it becomes a note on the task and an inbox item (`answer from <machine> for T<n> (<status>)`) that wakes the
+owner's lead, which passes it to the jawan. A question only the user can decide (push, merge, release, money,
+security, a destructive step, his taste) goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task
+with `<owner>/T<n> asks: <question>` and its options, so it sits in this machine's Needs-you queue; his `task answer
+T<n> "<words>"` there is recorded here and forwarded to the owner too.
 
 A delegation made without `--for` is attached later with `bin/toli task link T<n> <owner>/T<n>`: the owner's task
-then names this task as its delegator and sends its current state back at once.
+then names this task as its delegator and sends its current state back at once. The owner refuses a link from any
+machine other than the one that delegated its task (`T<n> was delegated by <machine>, not <sender>`).
 
 **Handing work back.** A lead that cannot take delegated work (overloaded, project not cloneable, wrong machine)
 gives it back with `bin/toli task handback T<n> --reason "<why>"`, never `task drop`: its task is dropped there, and
@@ -162,6 +163,16 @@ the delegator's `--for` task goes back to queued with `<owner>/T<n> handed the w
 means the work itself is given up, and drops the `--for` task once every delegation of it is dropped. Delegating or
 linking for a done or dropped task reopens it (`reopened (was dropped)` in its notes); a dropped delegation never
 keeps the `--for` task from being done by the others.
+
+**Forwarding work on.** A lead that hands delegated work on to a third Sardar, rather than giving it back, delegates
+it with `--for` its own task (or links it with `task link`): `bin/toli delegate <machine> "<title>" --brief <file>
+--for T<n>`. The delegation then carries the chain above it (`upstream`, origin first), and the new task reports to
+every machine in that chain, not only to the lead that forwarded it: each `--for` task up the chain records the new
+owner (`<forwarder>/T<n> forwarded the work to <owner>/T<n>` in its notes, which become its `delegatedTo` and its
+jawan) and follows its done, held and handed-back reports, and any machine in the chain may answer its question.
+The forwarding lead may then drop its own copy: while a delegation it made is live, that drop reads
+`<forwarder>/T<n> forwarded to <owner>/T<n>` above it, never "dropped", and the originator's task stays active with
+the new owner. A delegation made while the task's own jawan works on it is a slice and carries no chain.
 
 ## The shared task list
 

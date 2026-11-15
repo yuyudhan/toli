@@ -25,8 +25,9 @@ import { type Delivered, type OutboxItem, queuedText, sendNow } from "../jobs/ou
 import { bodyLimit, TITLE_MAX } from "../peer/envelope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
-import { fleetId } from "../records/delegation-report.ts";
-import { applyUpdate, parseLink, parseUpdate, receiveLink, recordDelegation } from "../records/delegation-sync.ts";
+import { parseLink, receiveLink } from "../records/delegation-link.ts";
+import { fleetId, parseUpstream, type Upstream } from "../records/delegation-report.ts";
+import { applyUpdate, forwardChain, parseUpdate, recordDelegation } from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
 
 /** What travels to the target (JSON on `delegation receive`'s stdin). */
@@ -47,6 +48,11 @@ export type Delegation = {
     note?: string;
     shape?: Shape;
     tier?: Tier;
+    /**
+     * When the delegator forwards a task delegated to it (`--for` that task), the tasks above it, origin first: the
+     * new task reports to each of them too (src/records/delegation-report.ts).
+     */
+    upstream?: Upstream[];
 };
 
 /** The project a delegation without `--project` is filed under: work on toli itself or on the machine. */
@@ -86,6 +92,7 @@ function parseDelegation(text: string): Delegation {
     const tier = parseOptionalTier(field("tier"));
     const url = field("url");
     const note = field("note");
+    const upstream = parseUpstream(Reflect.get(value, "upstream"), "delegation receive");
     return {
         id,
         from: requireName("machine", field("from")),
@@ -97,6 +104,7 @@ function parseDelegation(text: string): Delegation {
         ...(note === undefined ? {} : { note }),
         ...(shape === undefined ? {} : { shape }),
         ...(tier === undefined ? {} : { tier }),
+        ...(upstream.length === 0 ? {} : { upstream }),
     };
 }
 
@@ -135,6 +143,8 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
     const project = delegation.project ?? DEFAULT_PROJECT;
     const cloned = existsSync(paths.projectDir(project));
     const key = delegationKey(delegation);
+    // A chain that comes back here holds this machine's own task, which needs no report from itself.
+    const upstream = (delegation.upstream ?? []).filter((entry) => entry.machine !== loadMachine().name);
     const result = updateBacklog((backlog) => {
         const existing =
             backlog.tasks.find((task) => task.delegatedBy?.id === delegation.id) ??
@@ -164,6 +174,7 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
                 id: delegation.id,
                 key,
                 at,
+                ...(upstream.length === 0 ? {} : { upstream }),
             },
             createdAt: at,
             updatedAt: at,
@@ -323,8 +334,10 @@ export function delegateCommand(argv: string[]): number {
     const project = args.str("project");
     if (project !== undefined) requireName("project", project);
     const forTask = args.str("for")?.toUpperCase();
-    if (forTask !== undefined && !loadBacklog().tasks.some((task) => task.id === forTask))
+    const forEntry = forTask === undefined ? undefined : loadBacklog().tasks.find((task) => task.id === forTask);
+    if (forTask !== undefined && forEntry === undefined)
         throw new ToliError(`unknown task "${forTask}" (--for names this machine's own task)`);
+    const upstream = forwardChain(forEntry);
     const shape = args.str("shape");
     if (shape !== undefined && shape !== "ship" && shape !== "scout")
         throw new ToliError("--shape must be ship or scout");
@@ -342,6 +355,7 @@ export function delegateCommand(argv: string[]): number {
         ...(note === undefined ? {} : { note }),
         ...(shape === undefined ? {} : { shape }),
         ...(tier === undefined ? {} : { tier }),
+        ...(upstream.length === 0 ? {} : { upstream }),
     };
     const body = JSON.stringify(delegation);
     const size = Buffer.byteLength(body);

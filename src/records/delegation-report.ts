@@ -7,17 +7,28 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, stamp, warn } from "../core/util.ts";
+import { now, requireName, stamp, ToliError, warn } from "../core/util.ts";
 import { sendNow } from "../jobs/outbox.ts";
 import type { Status, Task } from "./backlog.ts";
 import type { HoldOption } from "./hold-options.ts";
 
+/** A delegating machine's task that a delegated task works for: `<machine>/<task>`. */
+export type Upstream = { machine: string; task: string };
+
 /**
  * Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there.
  * `key` is the delegated work's delegationKey (src/fleet/delegate.ts): a repeat of it while this task is open is this
- * task.
+ * task. `upstream` is the chain above `machine` when it forwarded its own delegated task here (origin first): each
+ * of those tasks gets the same reports, so the work's originator follows it wherever it went.
  */
-export type DelegatedBy = { machine: string; task?: string; id: string; key?: string; at: string };
+export type DelegatedBy = {
+    machine: string;
+    task?: string;
+    id: string;
+    key?: string;
+    at: string;
+    upstream?: Upstream[];
+};
 
 /** The last state of one delegated task, as its owner sent it (`delegation update`). */
 export type DelegateState = {
@@ -62,6 +73,11 @@ export type DelegationUpdate = {
     forTask?: string;
     task: Pick<Task, "status" | "title" | "updatedAt" | "notes"> &
         Partial<Pick<Task, "question" | "options" | "recommend" | "blocks" | "commit" | "handedBack">>;
+    /**
+     * Fleet ids this delegated task was itself delegated on as (its live `delegatedTo`): the work goes on there, and
+     * the receiving task follows those too.
+     */
+    forwardedTo?: string[];
     /** The task's report file, read on the owner. */
     report: string | null;
     /** The wake the delegator's lead gets for a new outcome. */
@@ -82,6 +98,40 @@ export function splitFleetId(id: string): { machine: string | null; id: string }
     const slash = id.indexOf("/");
     if (slash < 0) return { machine: null, id: id.toUpperCase() };
     return { machine: id.slice(0, slash), id: id.slice(slash + 1).toUpperCase() };
+}
+
+/** The machines that may answer a delegated task's question: its delegator and every machine above it. */
+export function delegators(by: DelegatedBy | undefined): string[] {
+    return by === undefined ? [] : [by.machine, ...(by.upstream ?? []).map((entry) => entry.machine)];
+}
+
+/** Every machine and task a delegated task reports to: its delegator, then the chain above it. */
+function reportTargets(by: DelegatedBy): Array<{ machine: string; task?: string }> {
+    return [{ machine: by.machine, ...(by.task === undefined ? {} : { task: by.task }) }, ...(by.upstream ?? [])];
+}
+
+/**
+ * The fleet ids `task` was delegated as that still carry its work (not dropped, not handed back). On a delegated
+ * task these are where it was forwarded: its own drop then means "forwarded", not "given up".
+ */
+export function liveDelegations(task: Task): string[] {
+    return (task.delegatedTo ?? []).filter((id) => {
+        const state = task.delegates?.[id];
+        return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
+    });
+}
+
+/** The `upstream` chain a delegation or link carries (`what` names it in errors); absent is an empty chain. */
+export function parseUpstream(value: unknown, what: string): Upstream[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) throw new ToliError(`${what}: upstream must be a list of {machine, task}`);
+    return value.map((entry: unknown) => {
+        const machine: unknown = typeof entry === "object" && entry !== null ? Reflect.get(entry, "machine") : null;
+        const task: unknown = typeof entry === "object" && entry !== null ? Reflect.get(entry, "task") : null;
+        if (typeof machine !== "string" || typeof task !== "string")
+            throw new ToliError(`${what}: upstream must be a list of {machine, task}`);
+        return { machine: requireName("machine", machine), task: requireName("task", task) };
+    });
 }
 
 /** Whether a change from `before` to `after` is one the delegator must get: anything its `--for` task mirrors. */
@@ -106,13 +156,25 @@ function reportText(task: Task): string | null {
         : `${text.slice(0, REPORT_LIMIT)}\n[... truncated; full report on the owner]`;
 }
 
-/** The inbox message the delegator gets for `task` as it is now. */
-export function delegationReport(owner: string, task: Task): { title: string; body: string } {
+/**
+ * The inbox message `by` (the delegator, by default, or a machine above it) gets for `task` as it is now. A task
+ * dropped here while forwarded on reads "forwarded to <fleet id>": the work goes on there.
+ */
+export function delegationReport(
+    owner: string,
+    task: Task,
+    by: { machine: string; task?: string } | undefined = task.delegatedBy,
+): { title: string; body: string } {
     const id = fleetId(owner, task.id);
-    const by = task.delegatedBy;
+    const via = task.delegatedBy !== undefined && by?.machine !== task.delegatedBy.machine ? task.delegatedBy : null;
+    const forwards = liveDelegations(task);
     const lines = [
         `- task: ${id} (${task.status}), owned by ${owner}`,
         ...(by?.task === undefined ? [] : [`- for: ${by.task} on ${by.machine}`]),
+        ...(via === null
+            ? []
+            : [`- via: ${via.machine}${via.task === undefined ? "" : `/${via.task}`}, which forwarded it`]),
+        ...(forwards.length === 0 ? [] : [`- forwarded to: ${forwards.join(", ")}`]),
         ...(task.commit === undefined ? [] : [`- commit: ${task.commit}`]),
         ...(task.report === undefined ? [] : [`- report (on ${owner}): ${task.report}`]),
     ];
@@ -142,17 +204,27 @@ export function delegationReport(owner: string, task: Task): { title: string; bo
     if (notes.length > 0) lines.push("", "## Latest notes", "", ...notes.map((note) => `- ${note}`));
     const report = reportText(task);
     if (report !== null) lines.push("", "## Report", "", report);
-    const status = task.handedBack === undefined ? task.status : "handed back";
+    const status =
+        task.handedBack !== undefined
+            ? "handed back"
+            : task.status === "dropped" && forwards.length > 0
+              ? `forwarded to ${forwards.join(", ")}`
+              : task.status;
     return { title: `${id} ${status}: ${task.title}`, body: lines.join("\n") };
 }
 
-/** The update for `task` as it is now, owned by `owner`. */
-export function delegationUpdate(owner: string, task: Task): DelegationUpdate {
+/** The update for `task` as it is now, owned by `owner`, for `to` (its delegator by default, or one above it). */
+export function delegationUpdate(
+    owner: string,
+    task: Task,
+    to: { machine: string; task?: string } | undefined = task.delegatedBy,
+): DelegationUpdate {
     const { status, title, updatedAt, notes, question, options, recommend, blocks, commit, handedBack } = task;
+    const forwards = liveDelegations(task);
     return {
         owner,
         id: task.id,
-        ...(task.delegatedBy?.task === undefined ? {} : { forTask: task.delegatedBy.task }),
+        ...(to?.task === undefined ? {} : { forTask: to.task }),
         task: {
             status,
             title,
@@ -165,24 +237,31 @@ export function delegationUpdate(owner: string, task: Task): DelegationUpdate {
             ...(commit === undefined ? {} : { commit }),
             ...(handedBack === undefined ? {} : { handedBack }),
         },
+        ...(forwards.length === 0 ? {} : { forwardedTo: forwards }),
         report: reportText(task),
-        message: delegationReport(owner, task),
+        message: delegationReport(owner, task, to),
     };
 }
 
-/** Send `task` as it is now to its delegator; a failure is a warning (the outbox keeps it for the tick). */
+/**
+ * Send `task` as it is now to its delegator and every machine above it (`upstream`); a failure is a warning (the
+ * outbox keeps it for the tick).
+ */
 export function reportToDelegator(task: Task): void {
     const by = task.delegatedBy;
     if (by === undefined) return;
     const owner = loadMachine().name;
-    const target = loadFleet().machines.find((entry) => entry.name === by.machine);
-    if (target === undefined) {
-        warn(`${task.id}: delegator ${by.machine} is not in config/fleet.json; its report was not sent`);
-        return;
+    const at = stamp(now());
+    for (const to of reportTargets(by)) {
+        const target = loadFleet().machines.find((entry) => entry.name === to.machine);
+        if (target === undefined) {
+            warn(`${task.id}: delegator ${to.machine} is not in config/fleet.json; its report was not sent`);
+            continue;
+        }
+        const update = delegationUpdate(owner, task, to);
+        const id = to.machine === by.machine ? `update-${task.id}-${at}` : `update-${task.id}-${to.machine}-${at}`;
+        const sent = sendNow(owner, target, "update", update.message.title, JSON.stringify(update), id);
+        if (!sent.delivered && !sent.pulled)
+            warn(`${task.id}: report to ${to.machine} queued (${sent.error}); the minute tick retries`);
     }
-    const update = delegationUpdate(owner, task);
-    const id = `update-${task.id}-${stamp(now())}`;
-    const sent = sendNow(owner, target, "update", update.message.title, JSON.stringify(update), id);
-    if (!sent.delivered && !sent.pulled)
-        warn(`${task.id}: report to ${by.machine} queued (${sent.error}); the minute tick retries`);
 }

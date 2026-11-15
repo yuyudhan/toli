@@ -13,6 +13,7 @@ import { hasMachine, loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isValidName, pidAlive, readJson, writeJsonAtomic } from "../core/util.ts";
 import type { Task } from "./backlog.ts";
+import { liveDelegations } from "./delegation-report.ts";
 
 /** How often a running subagent reports (the extension's beat). */
 export const AGENT_REPORT_EVERY_MS = 60_000;
@@ -100,10 +101,7 @@ export class AgentReporter {
 
 /** An open delegation to another machine: one not dropped and not handed back. That machine runs the task. */
 export function delegatedAway(task: Task): boolean {
-    return (task.delegatedTo ?? []).some((id) => {
-        const state = task.delegates?.[id];
-        return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
-    });
+    return liveDelegations(task).length > 0;
 }
 
 /**

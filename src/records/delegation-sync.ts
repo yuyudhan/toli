@@ -4,38 +4,43 @@
 // the `--for` task is too, with the commit and report. A slice (a delegation made while the `--for` task's own jawan
 // works on it) only adds its notes, commit and report. A question stays with this machine's lead, who answers it
 // (`task answer <owner>/T<n>`) or, when only the user can decide, `task escalate`s it into the Needs-you queue.
-// `task link` attaches a delegation made without `--for`. Repeats are skipped by the owner's `updatedAt`.
+// `task link` attaches a delegation made without `--for`. Repeats are skipped by the owner's `updatedAt`. Work a
+// delegated task forwards on (its own `delegatedTo`, sent as `forwardedTo`) joins the `--for` task's delegations, so
+// the originator follows the live owner, which reports here directly through its `upstream` chain.
 import { join, relative } from "node:path";
 import { Args } from "../core/args.ts";
-import { fleetMachine, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import {
     now,
     out,
     readJson,
     requireName,
-    stamp,
     ToliError,
     withLock,
     writeJsonAtomic,
     writeTextAtomic,
 } from "../core/util.ts";
 import { fullText, HANDBACK_FULL_MINUTES, setFull } from "../fleet/full.ts";
-import { sendNow } from "../jobs/outbox.ts";
 import { loadBacklog, type Task, updateTask } from "./backlog.ts";
-import { type DelegateState, type DelegationUpdate, fleetId, REPORTED, splitFleetId } from "./delegation-report.ts";
+import { linkTaskCommand } from "./delegation-link.ts";
+import {
+    type DelegateState,
+    type DelegationUpdate,
+    delegators,
+    fleetId,
+    REPORTED,
+    splitFleetId,
+    type Upstream,
+} from "./delegation-report.ts";
 import { forwardAnswer } from "./fleet-tasks.ts";
 import { matchOption } from "./hold-options.ts";
 import { addInboxItem } from "./inbox.ts";
 import { delegateWait, rewait, sliceOpen } from "./slice-wait.ts";
 
-/** What `task link` sends the owner (JSON on `delegation link`'s stdin). */
-export type DelegationLink = { from: string; task: string; id: string };
-
 /** The last update seen per fleet id (state/delegates.json): decides once whether an update wakes this lead. */
 type SeenFile = Record<string, { updatedAt: string; status: string; question?: string }>;
 
-function parseJson<T>(text: string, what: string): T {
+export function parseJson<T>(text: string, what: string): T {
     try {
         return JSON.parse(text) as T;
     } catch {
@@ -69,9 +74,20 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         if (!slice && !task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
         for (const note of notes.slice(seen?.notes ?? 0))
             if (!note.startsWith("delegated by ")) task.notes.push(`${id}: ${note}`);
+        const onward = slice ? [] : (update.forwardedTo ?? []).filter((entry) => entry !== id);
+        for (const entry of onward.filter((fid) => !task.delegatedTo?.includes(fid))) {
+            task.delegatedTo = [...(task.delegatedTo ?? []), entry];
+            task.notes.push(`${id} forwarded the work to ${entry}`);
+            workOnBy(task, entry);
+        }
         if (handedBack !== undefined && seen?.handedBack === undefined)
             task.notes.push(`${id} handed the work back: ${handedBack}`);
-        else if (seen?.status !== status) task.notes.push(`${id} is ${status}`);
+        else if (seen?.status !== status)
+            task.notes.push(
+                status === "dropped" && onward.length > 0
+                    ? `${id} is forwarded to ${onward.join(", ")}`
+                    : `${id} is ${status}`,
+            );
         const state: DelegateState = { status, updatedAt, notes: notes.length };
         if (status === "held") Object.assign(state, { question, options, recommend, blocks });
         if (commit !== undefined) state.commit = commit;
@@ -152,34 +168,15 @@ export function applyUpdate(update: DelegationUpdate): string {
     return `delegation-updated ${id}${local === undefined ? "" : ` ${local.id}${applied ? "" : " (already recorded)"}`}`;
 }
 
-/** `delegation link` (link JSON on stdin), on the owner: the task now reports to `from`'s task, starting now. */
-export function receiveLink(link: DelegationLink): string {
-    const id = splitFleetId(link.id).id;
-    const task = updateTask(id, (entry) => {
-        const by = entry.delegatedBy;
-        if (by !== undefined && by.machine !== link.from)
-            throw new ToliError(`${entry.id} was delegated by ${by.machine}, not ${link.from}`);
-        entry.delegatedBy = {
-            machine: link.from,
-            task: link.task,
-            id: by?.id ?? `link-${link.from}-${link.task}`,
-            ...(by?.key === undefined ? {} : { key: by.key }),
-            at: by?.at ?? now().toISOString(),
-        };
-        // A new note is a change the delegator gets, so this sends the task back as it is now.
-        entry.notes.push(`linked to ${link.from}/${link.task}`);
-    });
-    return `delegation-linked ${fleetId(loadMachine().name, task.id)} to ${link.from}/${link.task}`;
-}
-
 /**
- * `task answer <id> --from <machine>`: another machine's lead answers only a task it delegated here; it never speaks
- * for the user here, and never releases this machine's own holds.
+ * `task answer <id> --from <machine>`: another machine's lead answers only a task it delegated here, or one forwarded
+ * here from work it delegated (`upstream`); it never speaks for the user here, and never releases this machine's own
+ * holds.
  */
 export function requireDelegator(task: Task, from: string): void {
     requireName("machine", from);
     const by = task.delegatedBy?.machine;
-    if (by === from) return;
+    if (delegators(task.delegatedBy).includes(from)) return;
     throw new ToliError(
         by === undefined
             ? `${task.id} was not delegated here: only this machine's lead or user answers it, not ${from}`
@@ -213,47 +210,6 @@ export function noteLateAnswer(task: Task, from: string | undefined, reply: stri
     );
     out(`${task.id} is ${task.status}: the answer from ${from} is noted on it and its lead woken`);
     return true;
-}
-
-/** `task link <T<n>> <machine>/T<n>`: make another machine's task (delegated without `--for`) report to this one. */
-function link(argv: string[]): void {
-    const args = new Args(argv);
-    args.maxPositional(2);
-    const local = args.pos(0, "task").toUpperCase();
-    const { machine, id } = splitFleetId(args.pos(1, "fleet id"));
-    const self = loadMachine().name;
-    if (machine === null || machine === self || !/^T\d+$/.test(id))
-        throw new ToliError("task link needs another machine's task: <machine>/T<n>");
-    const target = fleetMachine(machine);
-    const fid = fleetId(machine, id);
-    let before: Task | undefined;
-    updateTask(local, (task) => {
-        before = structuredClone(task);
-        recordDelegation(task, fid, `linked to ${fid}`);
-    });
-    const body = JSON.stringify({ from: self, task: local, id } satisfies DelegationLink);
-    const sent = sendNow(
-        self,
-        target,
-        "link",
-        `link ${fid} to ${self}/${local}`,
-        body,
-        `link-${local}-${stamp(now())}`,
-    );
-    if (!sent.delivered && sent.refused !== undefined) {
-        // The owner will never take this link: the task is as it was, plus a note saying why.
-        const kept = before;
-        updateTask(local, (task) => {
-            for (const key of Object.keys(task)) Reflect.deleteProperty(task, key);
-            Object.assign(task, kept, { notes: [...(kept?.notes ?? []), `link to ${fid} refused: ${sent.refused}`] });
-        });
-        throw new ToliError(`${machine} refused the link: ${sent.refused}`);
-    }
-    out(
-        sent.delivered
-            ? `${local} linked to ${fid}: ${sent.stdout.trim()}`
-            : `${local} linked to ${fid} here; ${machine} gets the link ${sent.pulled ? "with its next pull" : "from the minute tick"} (${sent.error})`,
-    );
 }
 
 /** `task escalate <machine>/T<n>`: a delegated task's question needs the user; hold the `--for` task with it. */
@@ -310,6 +266,17 @@ function ownJawan(task: Task): boolean {
         task.agent !== undefined &&
         !(task.delegatedTo ?? []).includes(task.agent)
     );
+}
+
+/**
+ * The chain a delegation of `task` (`delegate --for`, `task link`) carries when it forwards work another machine
+ * delegated here: that delegator's task and every one above it, origin first. Empty for this machine's own task, one
+ * delegated without `--for`, and a slice (the task's own jawan keeps the work here).
+ */
+export function forwardChain(task: Task | undefined): Upstream[] {
+    const by = task?.delegatedBy;
+    if (task === undefined || by?.task === undefined || ownJawan(task)) return [];
+    return [...(by.upstream ?? []), { machine: by.machine, task: by.task }];
 }
 
 /**
@@ -372,8 +339,8 @@ function handback(argv: string[]): void {
 
 /** `task link`, `task escalate` and `task handback`; returns whether `sub` was one of them. */
 export function delegationTaskCommand(sub: string, rest: string[]): boolean {
-    if (sub === "link") link(rest);
-    else if (sub === "escalate") escalate(rest);
+    if (linkTaskCommand(sub, rest)) return true;
+    if (sub === "escalate") escalate(rest);
     else if (sub === "handback") handback(rest);
     else return false;
     return true;
@@ -383,12 +350,14 @@ export function parseUpdate(text: string): DelegationUpdate {
     const update = parseJson<DelegationUpdate>(text, "delegation update");
     if (typeof update.owner !== "string" || typeof update.id !== "string" || typeof update.task?.updatedAt !== "string")
         throw new ToliError("delegation update: needs owner, id and task");
+    const forwards: unknown = update.forwardedTo;
+    if (forwards === undefined) return update;
+    if (!Array.isArray(forwards)) throw new ToliError("delegation update: forwardedTo must be a list of fleet ids");
+    for (const entry of forwards) {
+        const { machine, id } = splitFleetId(typeof entry === "string" ? entry : "");
+        if (machine === null || !/^T\d+$/.test(id))
+            throw new ToliError(`delegation update: forwardedTo holds ${JSON.stringify(entry)}, not <machine>/T<n>`);
+        requireName("machine", machine);
+    }
     return update;
-}
-
-export function parseLink(text: string): DelegationLink {
-    const link = parseJson<DelegationLink>(text, "delegation link");
-    if (typeof link.from !== "string" || typeof link.task !== "string" || typeof link.id !== "string")
-        throw new ToliError("delegation link: needs from, task and id");
-    return link;
 }

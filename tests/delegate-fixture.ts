@@ -9,7 +9,7 @@ export type Task = {
     project: string;
     agent?: string;
     notes: string[];
-    delegatedBy?: { machine: string; task?: string; id: string };
+    delegatedBy?: { machine: string; task?: string; id: string; upstream?: { machine: string; task: string }[] };
     delegatedTo?: string[];
     delegates?: Record<string, { status: string; question?: string; options?: { choice: string }[]; commit?: string }>;
     heldFrom?: string;
@@ -39,23 +39,23 @@ export type Pair = {
     up: (machine?: string) => void;
 };
 
-export function pair(): Pair {
-    const m1 = sandbox();
-    const m2 = sandbox();
-    const roots: Record<string, string> = { host1: m1.root, host2: m2.root };
+/** A Pair whose m3 is a real machine too. */
+export type Trio = Pair & { m3: Sandbox };
+
+function machines(count: 2 | 3): Pair & { m3?: Sandbox } {
+    const boxes = Array.from({ length: count }, () => sandbox());
+    const [m1, m2, m3] = boxes as [Sandbox, Sandbox, Sandbox | undefined];
+    const roots: Record<string, string> = Object.fromEntries(boxes.map((box, index) => [`host${index + 1}`, box.root]));
     const flag = (machine: string) => join(m1.root, `.${machine}-down`);
     const fleet = JSON.stringify({
         machines: [
             { name: "m1", ssh: "host1", root: m1.root },
             { name: "m2", ssh: "host2", root: m2.root },
-            { name: "m3", ssh: "host3", root: "/srv/toli" },
+            { name: "m3", ssh: "host3", root: m3?.root ?? "/srv/toli" },
         ],
     });
-    for (const [name, box] of [
-        ["m1", m1],
-        ["m2", m2],
-    ] as const) {
-        box.ok(["init", "--name", name, "--role", "coordinator"]);
+    for (const [index, box] of boxes.entries()) {
+        box.ok(["init", "--name", `m${index + 1}`, "--role", "coordinator"]);
         writeFileSync(join(box.root, "config", "fleet.json"), fleet);
         box.stub(
             "ssh",
@@ -74,9 +74,21 @@ export function pair(): Pair {
     return {
         m1,
         m2,
+        ...(m3 === undefined ? {} : { m3 }),
         down: (machine = "m2") => writeFileSync(flag(machine), "1"),
         up: (machine = "m2") => rmSync(flag(machine), { force: true }),
     };
+}
+
+export function pair(): Pair {
+    return machines(2);
+}
+
+/** Three real machines, m1, m2 and m3, for work forwarded from one to the next. */
+export function trio(): Trio {
+    const { m3, ...rest } = machines(3);
+    if (m3 === undefined) throw new Error("trio() needs a third machine");
+    return { ...rest, m3 };
 }
 
 export function tasks(box: Sandbox): Task[] {

@@ -11,7 +11,7 @@ import { isJsonObject, now, readJson, runAsync, waited, withLock, writeJsonAtomi
 import type { OutboxKind } from "../jobs/outbox.ts";
 import { refusalOf } from "../jobs/refusal.ts";
 import { loadBacklog } from "../records/backlog.ts";
-import { fleetId, splitFleetId } from "../records/delegation-report.ts";
+import { delegators, fleetId, splitFleetId } from "../records/delegation-report.ts";
 import { addInboxItem, listInbox } from "../records/inbox.ts";
 import { canonicalJson, type Identity, signWith, verifySignature } from "./identity.ts";
 import { markReceiving } from "./receiving.ts";
@@ -169,7 +169,8 @@ function parseBody(body: string): Record<string, unknown> | null {
 /**
  * Whether `peer` may say what this message claims (null when it may, else why not): a delegation, link or share
  * speaks only for its sender; an update comes only from the task's owner and, when it names a task here, only for a
- * delegation recorded on that task; an answer goes only to a task that peer delegated here.
+ * delegation recorded on that task; an answer goes only to a task that peer delegated here, or that was forwarded
+ * here from work it delegated (`upstream`).
  */
 export function senderClaimRefusal(peer: string, kind: EnvelopeKind, body: string): string | null {
     if (kind === "inbox") return null;
@@ -196,7 +197,7 @@ export function senderClaimRefusal(peer: string, kind: EnvelopeKind, body: strin
         const id = splitFleetId(value.id).id;
         const task = loadBacklog().tasks.find((entry) => entry.id === id);
         if (task === undefined) return `no task ${id} here`;
-        return task.delegatedBy?.machine === peer ? null : `${id} was not delegated here by ${peer}`;
+        return delegators(task.delegatedBy).includes(peer) ? null : `${id} was not delegated here by ${peer}`;
     }
     return `${kind} is not a message`;
 }
