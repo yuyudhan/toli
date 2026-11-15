@@ -92,6 +92,7 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         if (status === "held") Object.assign(state, { question, options, recommend, blocks });
         if (commit !== undefined) state.commit = commit;
         if (handedBack !== undefined) state.handedBack = handedBack;
+        if (onward.length > 0 || seen?.forwarded === true) state.forwarded = true;
         task.delegates = { ...task.delegates, [id]: state };
         if (status === "done" && update.report !== null) {
             const report = saveReport(id, update.report);
@@ -108,8 +109,10 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
 
 /**
  * The `--for` task's own status after a delegate's change: done when every delegation not dropped is done, dropped
- * when all are dropped, queued again (for another Sardar or this one) when every delegation was handed back. A slice
- * only releases the hold it escalated; the task's own jawan decides the rest.
+ * when all are dropped, queued again (for another Sardar or this one) when every delegation was handed back. A
+ * delegation dropped after forwarding the work on counts only through the delegations it forwarded to, so when those
+ * are handed back the task is queued again, never dropped. A slice only releases the hold it escalated; the task's own
+ * jawan decides the rest.
  */
 function settle(
     task: Task,
@@ -124,7 +127,10 @@ function settle(
         task.notes.push(`${id} no longer waits on the escalated question`);
     }
     if (slice || (task.status !== "queued" && task.status !== "active")) return;
-    const live = (task.delegatedTo ?? []).filter((entry) => task.delegates?.[entry]?.handedBack === undefined);
+    const live = (task.delegatedTo ?? []).filter((entry) => {
+        const state = task.delegates?.[entry];
+        return state?.handedBack === undefined && !(state?.status === "dropped" && state.forwarded === true);
+    });
     const open = live
         .map((entry) => task.delegates?.[entry]?.status ?? "active")
         .filter((entry) => entry !== "dropped");
@@ -286,6 +292,14 @@ export function forwardChain(task: Task | undefined): Upstream[] {
  * Otherwise it is the task's delegation (`delegatedTo`): the task works through it and is done once every delegation is.
  */
 export function recordDelegation(task: Task, fid: string, note: string): void {
+    // Its owner's report can land first (it handed the work back on arrival): the task then stays as that left it.
+    const handedBack = task.delegates?.[fid]?.handedBack;
+    if (handedBack !== undefined) {
+        if (!task.delegatedTo?.includes(fid) && !task.slices?.includes(fid))
+            task.delegatedTo = [...(task.delegatedTo ?? []), fid];
+        task.notes.push(`${note} (handed back already: ${handedBack})`);
+        return;
+    }
     if (task.slices?.includes(fid) || (!task.delegatedTo?.includes(fid) && ownJawan(task))) {
         if (!task.slices?.includes(fid)) task.slices = [...(task.slices ?? []), fid];
         task.notes.push(`${note} (a slice: ${task.id} stays with its own jawan)`);
@@ -314,16 +328,11 @@ function workOnBy(task: Task, fid: string): void {
 }
 
 /**
- * `task handback <id> --reason "..." [--full]`: give a task another machine delegated here back to it (overloaded,
- * not cloned, wrong machine). It is dropped here; the delegator's `--for` task goes back to queued with the reason,
- * never dropped. `--full` also marks this machine full for two hours (`lead full`), so no lead offers it more work.
+ * Give task `id`, which another machine delegated here, back to it with `reason`: it is dropped here, and its report
+ * queues the delegator's `--for` task again with the reason, never dropping it.
  */
-function handback(argv: string[]): void {
-    const args = new Args(argv, { values: ["reason"], booleans: ["full"] });
-    args.maxPositional(1);
-    const reason = args.str("reason")?.trim();
-    if (!reason) throw new ToliError('task handback needs --reason "..."');
-    const task = updateTask(args.pos(0, "id"), (entry) => {
+export function handBack(id: string, reason: string): Task {
+    return updateTask(id, (entry) => {
         if (entry.delegatedBy === undefined)
             throw new ToliError(`${entry.id} was not delegated here: drop it instead (bin/toli task drop ${entry.id})`);
         if (entry.status === "done" || entry.status === "dropped")
@@ -333,6 +342,19 @@ function handback(argv: string[]): void {
         entry.notes.push(`handed back to ${entry.delegatedBy.machine}: ${reason}`);
         delete entry.waitingOn;
     });
+}
+
+/**
+ * `task handback <id> --reason "..." [--full]`: give a task another machine delegated here back to it (overloaded,
+ * not cloned, wrong machine). `--full` also marks this machine full for two hours (`lead full`), so no lead offers it
+ * more work.
+ */
+function handback(argv: string[]): void {
+    const args = new Args(argv, { values: ["reason"], booleans: ["full"] });
+    args.maxPositional(1);
+    const reason = args.str("reason")?.trim();
+    if (!reason) throw new ToliError('task handback needs --reason "..."');
+    const task = handBack(args.pos(0, "id"), reason);
     out(`${task.id}\thanded back to ${task.delegatedBy?.machine}: ${reason}`);
     if (args.bool("full")) out(fullText(setFull(`handed back ${task.id}: ${reason}`, HANDBACK_FULL_MINUTES)));
 }

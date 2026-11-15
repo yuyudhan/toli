@@ -198,6 +198,7 @@ function machine(
         available?: boolean;
         maxRuns?: number;
         full?: { reason: string; since: string; until: string | null };
+        verifyOnly?: string[];
     } = {},
 ): FleetEntry {
     const available = options.available ?? true;
@@ -230,6 +231,7 @@ function machine(
                       depth,
                       ...(options.full === undefined ? {} : { full: options.full }),
                   },
+        ...(options.verifyOnly === undefined ? {} : { verifyOnly: options.verifyOnly }),
     };
     return { machine: name, local: options.local ?? false, reachable: true, available, reasons, resources };
 }
@@ -315,5 +317,16 @@ describe("pick ranking", () => {
         expect(pick.rejected).toEqual([
             { machine: "idle", reasons: ["full: earlyoom kills builds (until lead full --clear)"] },
         ]);
+    });
+
+    test("a machine that marked the project verify-only gets no ship work for it, but still scout work", () => {
+        const entries = [machine("verifier", 0, { projects: ["x"], verifyOnly: ["x"] }), machine("here", 4)];
+        const ship = rankMachines(entries, { name: "x", urlKnown: true });
+        expect(ship.machine).toBe("here");
+        expect(ship.rejected).toEqual([
+            { machine: "verifier", reasons: ["verify-only for x: it takes no ship work for it"] },
+        ]);
+        expect(rankMachines(entries, { name: "x", urlKnown: true, shape: "scout" }).machine).toBe("verifier");
+        expect(rankMachines(entries, { name: "other", urlKnown: true }).machine).toBe("verifier");
     });
 });

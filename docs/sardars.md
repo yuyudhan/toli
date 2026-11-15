@@ -159,10 +159,11 @@ machine other than the one that delegated its task (`T<n> was delegated by <mach
 **Handing work back.** A lead that cannot take delegated work (overloaded, project not cloneable, wrong machine)
 gives it back with `bin/toli task handback T<n> --reason "<why>"`, never `task drop`: its task is dropped there, and
 the delegator's `--for` task goes back to queued with `<owner>/T<n> handed the work back: <why>` in its notes and a
-`<owner>/T<n> handed back` wake, so its lead delegates it to another Sardar or dispatches it itself. `task drop`
-means the work itself is given up, and drops the `--for` task once every delegation of it is dropped. Delegating or
-linking for a done or dropped task reopens it (`reopened (was dropped)` in its notes); a dropped delegation never
-keeps the `--for` task from being done by the others.
+`<owner>/T<n> handed back` wake, so its lead delegates it to another Sardar or dispatches it itself. This holds for
+work forwarded on too: when the live owner hands it back, the originator's task is queued again, not dropped by the
+forwarder's earlier drop. `task drop` means the work itself is given up, and drops the `--for` task once every
+delegation of it is dropped. Delegating or linking for a done or dropped task reopens it (`reopened (was dropped)` in
+its notes); a dropped delegation never keeps the `--for` task from being done by the others.
 
 **Forwarding work on.** A lead that hands delegated work on to a third Sardar, rather than giving it back, delegates
 it with `--for` its own task (or links it with `task link`): `bin/toli delegate <machine> "<title>" --brief <file>
@@ -201,7 +202,7 @@ Rules that keep the list consistent without locks across machines:
 
     bin/toli fleet queues [--json]       # every machine's queue, lightest per jawan slot first
     bin/toli lead full [--reason "..."] [--until 2h] | --clear | --status
-    bin/toli pick [--project <p>] [--json]
+    bin/toli pick [--project <p>] [--shape ship|scout] [--json]
 
 Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, running
 jawans, queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a jawan plus
@@ -215,8 +216,8 @@ and held tasks are not queue. `pick` and
 `fleet queues` rank machines by depth per jawan slot (`capacity.maxRuns`), lightest first; on equal load a machine
 with the project's clone wins, then this machine, then name order. CPU load, memory and disk are shown for
 information and are never a reason to pass a machine over: a machine busy with builds but with an empty queue gets
-work first. Left out: an unreachable machine, a full one (below), or one without the project's clone when its URL is
-unknown here.
+work first. Left out: an unreachable machine, a full one (below), one without the project's clone when its URL is
+unknown here, or, for ship work, one that marked the project verify-only (below).
 
 **A full machine.** A lead whose machine cannot take more (builds killed for memory, a long job running) says so:
 `bin/toli lead full --reason "<why>" [--until 30m|2h|<ISO time>]`, ended by `--until` or `bin/toli lead full
@@ -224,6 +225,14 @@ unknown here.
 machine full for two hours. While full, `pick` and every other lead's balancing pass it over (no offers go to it,
 no work is asked of it), `fleet queues` shows `full: <why>`, and it asks no one for work itself; it may still offer
 its own queued work away.
+
+**A verify-only machine.** A lead whose machine only reviews a project's work, and no longer builds or ships it, marks
+that project there: `bin/toli project set <p> --role verify-only` (`--role full` undoes it). Each lead sets its own
+machine's roles; the setting travels with its resources. `pick --project <p>`, `fleet queues` and the balancing
+offers then pass it over for ship work of that project (scout work still goes to it), `delegate` refuses ship work of
+it there naming the next machine by queue (`--force` sends it anyway), and so does a lead forwarding a delegated task
+on. A ship delegation that reaches it anyway is handed back on arrival with the reason, and the originator's task is
+queued again. Details: [projects.md](projects.md#verify-only-machines).
 
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer

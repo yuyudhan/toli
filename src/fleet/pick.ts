@@ -10,6 +10,8 @@ import {
 import { out, printJson, runAsync } from "../core/util.ts";
 import { httpPeer } from "../peer/transport.ts";
 import { loadProjects } from "../projects/projects.ts";
+import type { Shape } from "../records/backlog.ts";
+import { parseShape } from "../records/task-shape.ts";
 import { type Full, fullText } from "./full.ts";
 import { outsideBuildText } from "./outside-builds.ts";
 import { perSlot, type Queue, queueText, slotText } from "./queue.ts";
@@ -31,6 +33,7 @@ export function availabilityLine(entry: FleetEntry): string {
         ...(r.buildSlots === undefined ? [] : [`builds ${r.buildSlotsBusy ?? 0}/${r.buildSlots}`]),
         ...(r.buildsOutsideSlots ?? []).map((build) => `build outside the slots: ${outsideBuildText(build)}`),
         `projects ${r.projects.length === 0 ? "none" : r.projects.join(",")}`,
+        ...(r.verifyOnly === undefined || r.verifyOnly.length === 0 ? [] : [`verify-only ${r.verifyOnly.join(",")}`]),
     ].join(", ");
     return `${name}: ${state} (${detail})`;
 }
@@ -56,6 +59,19 @@ export type PickResult = {
     candidates: Candidate[];
     rejected: Rejection[];
 };
+
+/** What one unit of work needs from a machine: its project (and whether its git URL is known here) and its shape. */
+export type Work = { name: string; urlKnown: boolean; shape?: Shape };
+
+/** Why a machine that marked `project` verify-only gets no ship work for it (pick, delegate, the balancing offers). */
+export function verifyOnlyText(project: string): string {
+    return `verify-only for ${project}: it takes no ship work for it`;
+}
+
+/** Whether `resources` says its machine takes no ship work for `project` (`project set <p> --role verify-only`). */
+export function refusesShip(resources: Resources, project: string): boolean {
+    return resources.verifyOnly?.includes(project) === true;
+}
 
 const PROBE_CONNECT_SECONDS = 10;
 const PROBE_CAP_MS = 20_000;
@@ -132,6 +148,7 @@ export function parseResources(text: string): Resources {
             ...(full === undefined ? {} : { full }),
         };
     }
+    const verifyOnly = fields.get("verifyOnly") === undefined ? undefined : strings("verifyOnly");
     return {
         machine: str("machine"),
         platform: str("platform"),
@@ -149,10 +166,12 @@ export function parseResources(text: string): Resources {
         reasons: strings("reasons"),
         at: str("at"),
         queue,
+        ...(verifyOnly === undefined ? {} : { verifyOnly }),
     };
 }
 
-async function probe(machine: FleetMachine): Promise<FleetEntry> {
+/** Probe one other fleet machine for its `resources --json` (HTTPS when paired, else ssh); never throws. */
+export async function probeMachine(machine: FleetMachine): Promise<FleetEntry> {
     const unreachable = (detail: string): FleetEntry => ({
         machine: machine.name,
         local: false,
@@ -209,7 +228,7 @@ async function probe(machine: FleetMachine): Promise<FleetEntry> {
 export async function fleetStatus(): Promise<FleetEntry[]> {
     const local = localResources();
     const others = loadFleet().machines.filter((machine) => machine.name !== local.machine);
-    const remote = await Promise.all(others.map(probe));
+    const remote = await Promise.all(others.map(probeMachine));
     return [
         {
             machine: local.machine,
@@ -228,10 +247,10 @@ export async function fleetStatus(): Promise<FleetEntry[]> {
  * `capacity.maxRuns`), lightest first; on equal load a machine with the project's clone wins, then this machine, then
  * name order. A machine whose toli reports no queue ranks after every known queue. Load, memory, disk and `available`
  * never pass a machine over: a machine busy with builds but with an empty queue gets work first. Rejected: an
- * unreachable machine, one whose lead said it is full (`lead full`), or (with a project) one without the clone when
- * the project's URL is not known here.
+ * unreachable machine, one whose lead said it is full (`lead full`), and with a project, one without the clone when
+ * the project's URL is not known here, or (for ship work, the default shape) one that marked it verify-only.
  */
-export function rankMachines(entries: FleetEntry[], project?: { name: string; urlKnown: boolean }): PickResult {
+export function rankMachines(entries: FleetEntry[], project?: Work): PickResult {
     const candidates: Candidate[] = [];
     const rejected: Rejection[] = [];
     for (const entry of entries) {
@@ -245,6 +264,14 @@ export function rankMachines(entries: FleetEntry[], project?: { name: string; ur
         const full = entry.resources.queue?.full;
         if (full !== undefined) {
             rejected.push({ machine: entry.machine, reasons: [fullText(full)] });
+            continue;
+        }
+        if (
+            project !== undefined &&
+            (project.shape ?? "ship") === "ship" &&
+            refusesShip(entry.resources, project.name)
+        ) {
+            rejected.push({ machine: entry.machine, reasons: [verifyOnlyText(project.name)] });
             continue;
         }
         const hasClone = project !== undefined && entry.resources.projects.includes(project.name);
@@ -285,12 +312,15 @@ export function rankMachines(entries: FleetEntry[], project?: { name: string; ur
     };
 }
 
-/** Pick across the live fleet; `project` is checked against this machine's registry for a clonable URL. */
-export async function pickMachine(projectName: string | undefined): Promise<PickResult> {
+/**
+ * Pick across the live fleet; `projectName` is checked against this machine's registry for a clonable URL, and
+ * `shape` (ship by default) against each machine's verify-only projects.
+ */
+export async function pickMachine(projectName: string | undefined, shape: Shape = "ship"): Promise<PickResult> {
     const entries = await fleetStatus();
     if (projectName === undefined) return rankMachines(entries);
     const known = loadProjects().find((entry) => entry.name === projectName);
-    return rankMachines(entries, { name: projectName, urlKnown: Boolean(known?.url) });
+    return rankMachines(entries, { name: projectName, urlKnown: Boolean(known?.url), shape });
 }
 
 function noCandidateText(pick: PickResult): string {
@@ -302,10 +332,10 @@ function noCandidateText(pick: PickResult): string {
 
 /** Prints the chosen machine; exit 2 with each machine's reasons when none qualifies. */
 export async function pickCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv, { booleans: ["json"], values: ["project"] });
+    const args = new Args(argv, { booleans: ["json"], values: ["project", "shape"] });
     args.maxPositional(0);
     const project = args.str("project");
-    const pick = await pickMachine(project);
+    const pick = await pickMachine(project, parseShape(args.str("shape"), "ship"));
     if (args.bool("json")) printJson(pick);
     else out(pick.machine ?? noCandidateText(pick));
     return pick.machine === null ? 2 : 0;

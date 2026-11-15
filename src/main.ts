@@ -1,6 +1,7 @@
 import { out, ToliError, warn } from "./core/util.ts";
 import { buildSlotCommand } from "./fleet/build-slots.ts";
-import { delegateCommand, delegationCommand } from "./fleet/delegate.ts";
+import { delegateCommand } from "./fleet/delegate.ts";
+import { delegationCommand } from "./fleet/delegation-receive.ts";
 import { diskCommand } from "./fleet/disk-command.ts";
 import { execCommand } from "./fleet/exec.ts";
 import { initCommand, syncCommand } from "./fleet/fleet.ts";
@@ -53,7 +54,7 @@ const USAGE = `usage: bin/toli <command> [args]
   project list [--json] | path <name>
   project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
               [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no] [--standing-pr yes|no]
-              [--live-stack yes|no]
+              [--live-stack yes|no] [--role full|verify-only]
   project set --all --workspace <strategy>
   project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
   project setup <name> [--json] | setup --all [--json]
@@ -65,7 +66,7 @@ const USAGE = `usage: bin/toli <command> [args]
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
   task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
   task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..." [--full]
-  delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>]
+  delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>] [--force]
   delegation receive|update|link [--from <machine>] (JSON on stdin)
   talk <machine> ["<words>"]
   share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
@@ -117,7 +118,7 @@ const USAGE = `usage: bin/toli <command> [args]
   fleet queues [--json]
   fleet export | sync
   fleet check [--json] [--wake] [--local]
-  pick [--project <name>] [--json]
+  pick [--project <name>] [--shape ship|scout] [--json]
   exec [--task <id>] (prompt on stdin; runs here only)
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]

@@ -44,6 +44,11 @@ export type DelegateState = {
     commit?: string;
     /** The owner handed the work back (`task handback`) with this reason: it no longer counts for the `--for` task. */
     handedBack?: string;
+    /**
+     * The owner forwarded the work on (its update named `forwardedTo`): once it drops its copy, the work lives only in
+     * those delegations, so this one no longer counts for the `--for` task either way.
+     */
+    forwarded?: true;
 };
 
 /** The delegation fields of a task (src/records/backlog.ts `Task`). */

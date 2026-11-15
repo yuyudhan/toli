@@ -1,251 +1,31 @@
 // `bin/toli delegate`: hand one task to another machine's lead (docs/sardars.md). The target's
-// `bin/toli delegation receive` adds it to that machine's own backlog (owned there, `delegatedBy` naming this machine),
-// saves the brief, and posts it to that machine's inbox, which wakes its lead; that lead dispatches its own jawans.
-// The task's results and questions come back by themselves (src/records/delegation-report.ts).
-import { createHash } from "node:crypto";
+// `bin/toli delegation receive` (src/fleet/delegation-receive.ts) adds it to that machine's own backlog (owned there,
+// `delegatedBy` naming this machine), saves the brief, and posts it to that machine's inbox, which wakes its lead; that
+// lead dispatches its own jawans. The task's results and questions come back by themselves
+// (src/records/delegation-report.ts).
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { fleetMachine, loadMachine } from "../core/config.ts";
+import { type FleetMachine, fleetMachine, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import {
-    isValidName,
-    now,
-    out,
-    readJson,
-    readStdin,
-    requireName,
-    stamp,
-    ToliError,
-    warn,
-    writeTextAtomic,
-} from "../core/util.ts";
-import { parseOptionalTier, type Tier } from "../harness/models.ts";
+import { out, readJson, requireName, stamp, ToliError, warn } from "../core/util.ts";
+import { parseOptionalTier } from "../harness/models.ts";
 import { type Delivered, type OutboxItem, queuedText, sendNow } from "../jobs/outbox.ts";
 import { bodyLimit, TITLE_MAX } from "../peer/envelope.ts";
 import { loadProjects } from "../projects/projects.ts";
-import { loadBacklog, type Shape, type Task, updateBacklog, updateTask } from "../records/backlog.ts";
-import { parseLink, receiveLink } from "../records/delegation-link.ts";
-import { fleetId, parseUpstream, type Upstream } from "../records/delegation-report.ts";
-import { applyUpdate, forwardChain, parseUpdate, recordDelegation } from "../records/delegation-sync.ts";
+import { loadBacklog, updateTask } from "../records/backlog.ts";
+import { forwardChain, recordDelegation } from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
+import { parseShape } from "../records/task-shape.ts";
+import { DEFAULT_PROJECT, type Delegation, delegationKey, parseDelegation } from "./delegation-receive.ts";
+import { pickMachine, probeMachine, refusesShip } from "./pick.ts";
 
-/** What travels to the target (JSON on `delegation receive`'s stdin). */
-export type Delegation = {
-    /**
-     * `<from>-<timestamp>`, fresh per `bin/toli delegate` run: a repeat of the same id returns the task already
-     * created, and so does the same work under a new id while that task is open (delegationKey).
-     */
-    id: string;
-    from: string;
-    /** The delegating machine's own task this one works for (`--for`). */
-    fromTask?: string;
-    title: string;
-    brief: string;
-    project?: string;
-    /** The project's git URL as the delegator knows it, so the target's lead can clone it. */
-    url?: string;
-    note?: string;
-    shape?: Shape;
-    tier?: Tier;
-    /**
-     * When the delegator forwards a task delegated to it (`--for` that task), the tasks above it, origin first: the
-     * new task reports to each of them too (src/records/delegation-report.ts).
-     */
-    upstream?: Upstream[];
-};
-
-/** The project a delegation without `--project` is filed under: work on toli itself or on the machine. */
-const DEFAULT_PROJECT = "toli";
 const ACCEPTED = /^delegation-accepted (\S+) (created|existing)$/m;
+/** The receiver's line when it handed a new task back at once (a ship task for a project it marked verify-only). */
+const HANDED_BACK = /^delegation-handed-back (.+)$/m;
 /** The outbox title of a delegation: the receiver refuses one over TITLE_MAX characters (src/peer/envelope.ts). */
 const TITLE_PREFIX = "delegate ";
 const DELEGATION_TITLE_MAX = TITLE_MAX - TITLE_PREFIX.length;
-
-function parseDelegation(text: string): Delegation {
-    let value: unknown;
-    try {
-        value = JSON.parse(text);
-    } catch {
-        throw new ToliError("delegation receive needs the delegation JSON on stdin");
-    }
-    if (typeof value !== "object" || value === null) throw new ToliError("delegation receive: not a JSON object");
-    const field = (key: string): string | undefined => {
-        const raw: unknown = Reflect.get(value, key);
-        if (raw === undefined) return undefined;
-        if (typeof raw !== "string") throw new ToliError(`delegation receive: ${key} must be a string`);
-        return raw;
-    };
-    const id = field("id");
-    if (id === undefined || !isValidName(id)) throw new ToliError("delegation receive: missing or invalid id");
-    const title = field("title")?.trim();
-    if (!title) throw new ToliError("delegation receive: missing title");
-    const brief = field("brief") ?? "";
-    if (brief.trim() === "") throw new ToliError("delegation receive: empty brief");
-    const project = field("project");
-    if (project !== undefined) requireName("project", project);
-    const fromTask = field("fromTask");
-    if (fromTask !== undefined) requireName("task", fromTask);
-    const shape = field("shape");
-    if (shape !== undefined && shape !== "ship" && shape !== "scout")
-        throw new ToliError("delegation receive: shape must be ship or scout");
-    const tier = parseOptionalTier(field("tier"));
-    const url = field("url");
-    const note = field("note");
-    const upstream = parseUpstream(Reflect.get(value, "upstream"), "delegation receive");
-    return {
-        id,
-        from: requireName("machine", field("from")),
-        title,
-        brief,
-        ...(fromTask === undefined ? {} : { fromTask }),
-        ...(project === undefined ? {} : { project }),
-        ...(url === undefined ? {} : { url }),
-        ...(note === undefined ? {} : { note }),
-        ...(shape === undefined ? {} : { shape }),
-        ...(tier === undefined ? {} : { tier }),
-        ...(upstream.length === 0 ? {} : { upstream }),
-    };
-}
-
-/**
- * The piece of work a delegation hands over, independent of its id: sender, `--for` task, project, title and brief.
- * Each run of `bin/toli delegate` gets a fresh id, so a lead that runs the same delegation again (after a slow ssh,
- * while an unreachable target's copies wait in its outbox) sends the same key under a new id.
- */
-export function delegationKey(delegation: Delegation): string {
-    const work = [delegation.from, delegation.fromTask ?? "", delegation.project ?? "", delegation.title];
-    return createHash("sha256")
-        .update(JSON.stringify([...work, delegation.brief.trim()]))
-        .digest("hex")
-        .slice(0, 16);
-}
-
-/**
- * Whether `task` is an open delegation of the same work from the same delegator: the same key, or the same `--for`
- * task and title.
- */
-function sameOpenWork(task: Task, delegation: Delegation, key: string): boolean {
-    const by = task.delegatedBy;
-    if (by === undefined || by.machine !== delegation.from || task.status === "done" || task.status === "dropped")
-        return false;
-    if (by.key === key) return true;
-    return delegation.fromTask !== undefined && by.task === delegation.fromTask && task.title === delegation.title;
-}
-
-/**
- * Record a delegation in this machine's backlog, once per delegation id, and once per open piece of work: the same
- * work (delegationKey) from the same delegator while an earlier copy is open (a copy queued for the tick and a retry
- * that went through, or the delegating lead running the command again) returns that task. Returns the task and whether
- * it was new; a new one gets its brief saved and an inbox item that wakes this machine's lead.
- */
-export function receiveDelegation(delegation: Delegation): { task: Task; created: boolean } {
-    const project = delegation.project ?? DEFAULT_PROJECT;
-    const cloned = existsSync(paths.projectDir(project));
-    const key = delegationKey(delegation);
-    // A chain that comes back here holds this machine's own task, which needs no report from itself.
-    const upstream = (delegation.upstream ?? []).filter((entry) => entry.machine !== loadMachine().name);
-    const result = updateBacklog((backlog) => {
-        const existing =
-            backlog.tasks.find((task) => task.delegatedBy?.id === delegation.id) ??
-            backlog.tasks.find((task) => sameOpenWork(task, delegation, key));
-        if (existing) return { task: { ...existing }, created: false };
-        const at = now().toISOString();
-        const by = delegation.fromTask === undefined ? delegation.from : `${delegation.from}/${delegation.fromTask}`;
-        const task: Task = {
-            id: `T${backlog.nextId}`,
-            project,
-            title: delegation.title,
-            shape: delegation.shape ?? "ship",
-            status: "queued",
-            ...(delegation.tier === undefined ? {} : { tier: delegation.tier }),
-            notes: [
-                ...(delegation.note === undefined ? [] : [delegation.note]),
-                `delegated by ${by}`,
-                ...(cloned || delegation.project === undefined
-                    ? []
-                    : [
-                          `projects/${project} is not cloned here: \`bin/toli project ensure ${project} ${delegation.url ?? "<git-url>"}\` first`,
-                      ]),
-            ],
-            delegatedBy: {
-                machine: delegation.from,
-                ...(delegation.fromTask === undefined ? {} : { task: delegation.fromTask }),
-                id: delegation.id,
-                key,
-                at,
-                ...(upstream.length === 0 ? {} : { upstream }),
-            },
-            createdAt: at,
-            updatedAt: at,
-        };
-        backlog.nextId += 1;
-        backlog.tasks.push(task);
-        return { task: { ...task }, created: true };
-    });
-    if (!result.created) return result;
-    const { task } = result;
-    const briefFile = join(paths.projectBriefsDir(project), `${task.id}.md`);
-    if (!existsSync(briefFile)) writeTextAtomic(briefFile, `${delegation.brief.trimEnd()}\n`);
-    const self = loadMachine().name;
-    addInboxItem(
-        delegation.from,
-        `delegated ${task.id} from ${delegation.from}: ${task.title}`,
-        [
-            `${delegation.from}'s lead delegated this task to you as ${fleetId(self, task.id)}: it is yours now.`,
-            `Dispatch your own jawan for it (toli-dispatch skill; \`bin/toli task start ${task.id} --agent <id>\` or`,
-            `\`bin/toli spawn --task ${task.id} --brief ${briefFile}\`). Marking it done, held or dropped reports back to`,
-            `${delegation.from} by itself; a question for the user goes in \`bin/toli task hold ${task.id}\`.`,
-            "",
-            `- brief: ${briefFile}`,
-            `- project: ${project}${cloned ? "" : " (not cloned here)"}`,
-            ...(delegation.fromTask === undefined ? [] : [`- for: ${delegation.fromTask} on ${delegation.from}`]),
-            ...(delegation.note === undefined ? [] : [`- note: ${delegation.note}`]),
-        ].join("\n"),
-    );
-    return result;
-}
-
-/**
- * `delegation receive|update|link [--from <machine>]` (JSON on stdin): what another machine's lead runs here (over
- * ssh, or applied from a pull or a peer's signed message). `receive`: a new delegation (`delegate`); `update`: a
- * delegated task's owner reports it (src/records/delegation-sync.ts); `link`: this machine's task starts reporting to
- * the delegator's (`task link`). `--from` names the sender as the transport verified it; the JSON must speak for that
- * machine only.
- */
-export function delegationCommand(argv: string[]): void {
-    const [sub, ...rest] = argv;
-    const args = new Args(rest, { values: ["from"] });
-    args.maxPositional(0);
-    const from = args.str("from");
-    if (from !== undefined) requireName("machine", from);
-    const claim = (claimed: string, what: string): void => {
-        if (from !== undefined && claimed !== from) throw new ToliError(`${what} cannot come from ${from}`);
-    };
-    switch (sub) {
-        case "receive": {
-            const delegation = parseDelegation(readStdin());
-            claim(delegation.from, `a delegation from ${delegation.from}`);
-            const { task, created } = receiveDelegation(delegation);
-            out(`delegation-accepted ${fleetId(loadMachine().name, task.id)} ${created ? "created" : "existing"}`);
-            return;
-        }
-        case "update": {
-            const update = parseUpdate(readStdin());
-            claim(update.owner, `an update for ${update.owner}'s task`);
-            out(applyUpdate(update));
-            return;
-        }
-        case "link": {
-            const link = parseLink(readStdin());
-            claim(link.from, `a link from ${link.from}`);
-            out(receiveLink(link));
-            return;
-        }
-        default:
-            throw new ToliError("usage: toli delegation receive|update|link [--from <machine>] (JSON on stdin)");
-    }
-}
 
 /**
  * Record the target's answer to a delivered delegation on the `--for` task (src/records/delegation-sync.ts
@@ -273,14 +53,36 @@ export function onOutboxDelivered({ item, stdout }: Delivered): void {
     const delegation = parseDelegation(item.body);
     const id = acceptDelegation(delegation, stdout);
     const existing = ACCEPTED.exec(stdout)?.[2] === "existing";
+    const handedBack = HANDED_BACK.exec(stdout)?.[1];
     const target = item.to?.name ?? "the target";
     addInboxItem(
         delegation.from,
         `delegated ${id}: ${delegation.title}`,
         existing
             ? `The delegation queued for ${target} was already there as ${id} (an earlier copy landed first); no second task was made.`
-            : `The delegation queued for ${target} has landed as ${id}.\nIts lead dispatches it; the result comes back here as a wake.`,
+            : handedBack !== undefined
+              ? `The delegation queued for ${target} landed as ${id} and was handed back at once: ${handedBack}`
+              : `The delegation queued for ${target} has landed as ${id}.\nIts lead dispatches it; the result comes back here as a wake.`,
     );
+}
+
+/**
+ * Why ship work for `project` must not go to `target`: it marked the project verify-only (its `resources`), with the
+ * machine `pick` would choose instead. Null when it takes the work, or cannot be asked now (its own `delegation
+ * receive` then hands the work back).
+ */
+async function verifyOnlyRefusal(target: FleetMachine, project: string): Promise<string | null> {
+    const entry = await probeMachine(target);
+    if (entry.resources === null || !refusesShip(entry.resources, project)) return null;
+    const pick = await pickMachine(project, "ship");
+    const next =
+        pick.machine === null
+            ? "no other machine qualifies"
+            : `next by queue: ${pick.machine}${pick.local ? ", this machine" : ""}`;
+    return [
+        `not sent: ${target.name} is verify-only for ${project} (it takes no ship work for it);`,
+        `${next} (bin/toli pick --project ${project}); --force sends it anyway`,
+    ].join(" ");
 }
 
 /**
@@ -307,11 +109,13 @@ function queuedCopy(target: string, key: string): string | null {
 }
 
 /**
- * `delegate <machine> "<title>" --brief <file> [--project p] [--note "..."] [--for T<n>] [--shape s] [--tier t]`.
- * Prints the fleet id, or that the delegation is queued for the tick while the target is unreachable.
+ * `delegate <machine> "<title>" --brief <file> [--project p] [--note "..."] [--for T<n>] [--shape s] [--tier t]
+ * [--force]`. Prints the fleet id, or that the delegation is queued for the tick while the target is unreachable. Ship
+ * work (the default shape, or the `--for` task's) for a project the target marked verify-only is refused naming the
+ * next machine, unless `--force`.
  */
-export function delegateCommand(argv: string[]): number {
-    const args = new Args(argv, { values: ["brief", "project", "note", "for", "shape", "tier"] });
+export async function delegateCommand(argv: string[]): Promise<number> {
+    const args = new Args(argv, { values: ["brief", "project", "note", "for", "shape", "tier"], booleans: ["force"] });
     args.maxPositional(2);
     const targetName = requireName("machine", args.pos(0, "machine"));
     const title = args.pos(1, "title").trim();
@@ -338,9 +142,8 @@ export function delegateCommand(argv: string[]): number {
     if (forTask !== undefined && forEntry === undefined)
         throw new ToliError(`unknown task "${forTask}" (--for names this machine's own task)`);
     const upstream = forwardChain(forEntry);
-    const shape = args.str("shape");
-    if (shape !== undefined && shape !== "ship" && shape !== "scout")
-        throw new ToliError("--shape must be ship or scout");
+    const shape = parseShape(args.str("shape"), forEntry?.shape ?? "ship");
+    const force = args.bool("force");
     const tier = parseOptionalTier(args.str("tier"));
     const note = args.str("note");
     const url = project === undefined ? undefined : loadProjects().find((entry) => entry.name === project)?.url;
@@ -353,9 +156,10 @@ export function delegateCommand(argv: string[]): number {
         ...(project === undefined ? {} : { project }),
         ...(url ? { url } : {}),
         ...(note === undefined ? {} : { note }),
-        ...(shape === undefined ? {} : { shape }),
+        shape,
         ...(tier === undefined ? {} : { tier }),
         ...(upstream.length === 0 ? {} : { upstream }),
+        ...(force ? { force: true as const } : {}),
     };
     const body = JSON.stringify(delegation);
     const size = Buffer.byteLength(body);
@@ -363,6 +167,10 @@ export function delegateCommand(argv: string[]): number {
         throw new ToliError(
             `the delegation is ${size} bytes; a delegation takes at most ${bodyLimit("delegation")} (the receiver refuses larger ones): shorten the brief`,
         );
+    if (shape === "ship" && !force) {
+        const refusal = await verifyOnlyRefusal(target, project ?? DEFAULT_PROJECT);
+        if (refusal !== null) throw new ToliError(refusal);
+    }
     const earlier = queuedCopy(target.name, delegationKey(delegation));
     const outboxId = `delegation-${delegation.id}`;
     const sent = sendNow(self, target, "delegation", `${TITLE_PREFIX}${title}`, body, outboxId);
@@ -387,6 +195,13 @@ export function delegateCommand(argv: string[]): number {
     }
     const id = acceptDelegation(delegation, sent.stdout);
     const existing = ACCEPTED.exec(sent.stdout)?.[2] === "existing";
+    const handedBack = HANDED_BACK.exec(sent.stdout)?.[1];
+    if (handedBack !== undefined) {
+        out(
+            `${target.name} handed ${id} back at once: ${handedBack}${forTask === undefined ? "" : `; ${forTask} stays queued here`}`,
+        );
+        return 1;
+    }
     out(
         `delegated to ${id}${forTask === undefined ? "" : ` (for ${forTask})`}: ${target.name}'s lead dispatches it${existing ? " (it was already there: no second task was made)" : ""}`,
     );

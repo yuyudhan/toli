@@ -1,4 +1,5 @@
-// `bin/toli project set`: record the user's delivery, forge, workspace strategy, standing-grant and live-stack answers.
+// `bin/toli project set`: record the user's delivery, forge, workspace strategy, standing-grant, live-stack and role
+// answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
@@ -47,6 +48,17 @@ function parseYesNo(value: string | undefined, flag: string): boolean | undefine
     if (value === undefined) return undefined;
     if (value !== "yes" && value !== "no") throw new ToliError(`${flag} must be yes or no, got "${value}"`);
     return value === "yes";
+}
+
+/** `project set --role`: `full` (the default, stored as no role) or `verify-only`. */
+const ROLES = ["full", "verify-only"] as const;
+
+/** `--role`: full or verify-only; full is stored as no role. */
+function parseRole(value: string | undefined): (typeof ROLES)[number] | undefined {
+    if (value === undefined) return undefined;
+    const role = ROLES.find((entry) => entry === value);
+    if (role === undefined) throw new ToliError(`--role must be one of ${ROLES.join(", ")}, got "${value}"`);
+    return role;
 }
 
 /**
@@ -98,9 +110,16 @@ function setAll(args: Args): void {
     const value = args.str("workspace");
     if (args.positional.length > 0) throw new ToliError("project set takes a name or --all, not both");
     if (value === undefined) throw new ToliError("project set --all needs --workspace <strategy>");
-    const others = ["mode", "branch", "forge", "forge-host", "standing-push", "standing-pr", "live-stack"].filter(
-        (flag) => args.str(flag) !== undefined,
-    );
+    const others = [
+        "mode",
+        "branch",
+        "forge",
+        "forge-host",
+        "standing-push",
+        "standing-pr",
+        "live-stack",
+        "role",
+    ].filter((flag) => args.str(flag) !== undefined);
     if (others.length > 0)
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
     const workspace = parseWorkspace(value);
@@ -116,7 +135,17 @@ function setAll(args: Args): void {
 export function projectSetCommand(argv: string[]): void {
     const args = new Args(argv, {
         booleans: ["all"],
-        values: ["mode", "branch", "forge", "forge-host", "workspace", "standing-push", "standing-pr", "live-stack"],
+        values: [
+            "mode",
+            "branch",
+            "forge",
+            "forge-host",
+            "workspace",
+            "standing-push",
+            "standing-pr",
+            "live-stack",
+            "role",
+        ],
     });
     args.maxPositional(1);
     if (args.bool("all")) {
@@ -133,15 +162,16 @@ export function projectSetCommand(argv: string[]): void {
     const standingPush = parseYesNo(args.str("standing-push"), "--standing-push");
     const standingPr = parseYesNo(args.str("standing-pr"), "--standing-pr");
     const liveStack = parseYesNo(args.str("live-stack"), "--live-stack");
+    const role = parseRole(args.str("role"));
     if (
-        [mode, branch, forge, forgeHost, workspace, standingPush, standingPr, liveStack].every(
+        [mode, branch, forge, forgeHost, workspace, standingPush, standingPr, liveStack, role].every(
             (value) => value === undefined,
         )
     )
         throw new ToliError(
             "nothing to set: pass --mode <m>, --branch <b>|none, --forge <f>|none, --forge-host <h>|none, " +
-                "--workspace <s>, --standing-push yes|no, --standing-pr yes|no or --live-stack yes|no " +
-                "(or --all --workspace <s>)",
+                "--workspace <s>, --standing-push yes|no, --standing-pr yes|no, --live-stack yes|no " +
+                "or --role full|verify-only (or --all --workspace <s>)",
         );
     const at = now().toISOString();
     const { updated, note } = updateProjects((projects) => {
@@ -175,6 +205,8 @@ export function projectSetCommand(argv: string[]): void {
         }
         if (liveStack === true) project.liveStack = true;
         else if (liveStack === false) delete project.liveStack;
+        if (role === "verify-only") project.role = role;
+        else if (role === "full") delete project.role;
         return { updated: { ...project }, note: moved };
     });
     if (note !== null) out(note);

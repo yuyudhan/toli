@@ -98,6 +98,46 @@ describe("delegate", () => {
             { title: "delegated m2/T1: later" },
         ]);
     });
+
+    test("ship work for a project the target marked verify-only is refused, naming it and the next machine", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        withProject(m2, "app");
+        expect(m2.ok(["project", "set", "app", "--role", "verify-only"])).toContain("role=verify-only");
+        m1.ok(["task", "add", "app", "parent work"]);
+        const refused = m1.toli(["delegate", "m2", "ship it", "--brief", brief(m1), "--project", "app", "--for", "T1"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr.trim()).toBe(
+            "toli: not sent: m2 is verify-only for app (it takes no ship work for it); " +
+                "next by queue: m1, this machine (bin/toli pick --project app); --force sends it anyway",
+        );
+        expect(existsSync(join(m2.root, "data", "backlog.json"))).toBe(false);
+        expect(tasks(m1)[0]?.status).toBe("queued");
+
+        // Scout work still goes, and so does ship work for another project.
+        const scout = ["delegate", "m2", "review it", "--brief", brief(m1), "--project", "app", "--shape", "scout"];
+        expect(m1.ok(scout)).toContain("delegated to m2/T1");
+        expect(m1.ok(["delegate", "m2", "toli work", "--brief", brief(m1)])).toContain("delegated to m2/T2");
+        // --force overrides the role on both sides.
+        const forced = [
+            "delegate",
+            "m2",
+            "ship it",
+            "--brief",
+            brief(m1),
+            "--project",
+            "app",
+            "--for",
+            "T1",
+            "--force",
+        ];
+        expect(m1.ok(forced)).toContain("delegated to m2/T3 (for T1)");
+        expect(tasks(m2).map((task) => [task.id, task.status, task.shape])).toEqual([
+            ["T1", "queued", "scout"],
+            ["T2", "queued", "ship"],
+            ["T3", "queued", "ship"],
+        ]);
+    });
 });
 
 describe("one open delegation per piece of work", () => {

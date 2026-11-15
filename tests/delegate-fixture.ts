@@ -7,6 +7,7 @@ export type Task = {
     id: string;
     status: string;
     project: string;
+    shape?: string;
     agent?: string;
     notes: string[];
     delegatedBy?: { machine: string; task?: string; id: string; upstream?: { machine: string; task: string }[] };

@@ -33,6 +33,7 @@ export type Forge = (typeof FORGES)[number];
  * `liveStack`: the project runs in live-stack mode (docs/projects.md "Live-stack mode"): its jawans code in the one
  * shared checkout against the machine's running dev stack, which rebuilds on every save, instead of building
  * themselves.
+ * `role`: `verify-only` when this machine takes no ship work for the project (docs/projects.md "Verify-only machines").
  */
 export type Project = {
     name: string;
@@ -47,6 +48,7 @@ export type Project = {
     workspaceSetAt?: string;
     standing?: Standing;
     liveStack?: true;
+    role?: "verify-only";
     /** Set for `project link`: the user's own checkout that projects/<name> is a symlink to (never deleted by toli). */
     linkedTo?: string;
 };
@@ -73,6 +75,7 @@ export function loadProjects(): Project[] {
             workspaceSetAt,
             standing,
             liveStack,
+            role,
             linkedTo,
         }) => ({
             name,
@@ -87,6 +90,7 @@ export function loadProjects(): Project[] {
             ...(workspaceSetAt ? { workspaceSetAt } : {}),
             ...(standing ? { standing: { push: standing.push === true, pr: standing.pr === true } } : {}),
             ...(liveStack === true ? { liveStack: true as const } : {}),
+            ...(role === "verify-only" ? { role } : {}),
             ...(linkedTo ? { linkedTo } : {}),
         }),
     );
@@ -285,7 +289,7 @@ function list(argv: string[]): void {
     }
 }
 
-/** `branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=` labels for the fields that are set. */
+/** `branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=`, `role=` labels for the fields that are set. */
 export function overrideLabels(project: Project): string[] {
     return [
         ...(project.branch ? [`branch=${project.branch}`] : []),
@@ -293,6 +297,7 @@ export function overrideLabels(project: Project): string[] {
         ...(project.forgeHost ? [`forge-host=${project.forgeHost}`] : []),
         ...(project.standing ? [`standing=${standingText(project.standing)}`] : []),
         ...(project.liveStack ? ["live-stack=yes"] : []),
+        ...(project.role ? [`role=${project.role}`] : []),
     ];
 }
 

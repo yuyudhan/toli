@@ -385,4 +385,13 @@ describe("work forwarded on (m1 -> m2 -> m3)", () => {
         expect(refused.stderr).toContain("m3 refused the link: T1 was delegated by m2, not m1");
         expect(tasks(m3)[0]?.delegatedBy).toMatchObject({ machine: "m2", task: "T1" });
     });
+
+    test("the live owner handing the work back queues the originator's task again, never drops it", () => {
+        const { m1, m3 } = forwarded();
+        m3.ok(["task", "handback", "T1", "--reason", "verifier only"]);
+        const task = parent(m1);
+        expect(task.status).toBe("queued");
+        expect(task.agent).toBeUndefined();
+        expect(task.notes).toContain("m3/T1 handed the work back: verifier only");
+    });
 });

@@ -73,7 +73,7 @@ export function diskBuildTools(machine: Machine): string[] {
     return raw;
 }
 
-/** One machine's self-reported snapshot (`bin/toli resources --json`). */
+/** One machine's self-reported snapshot (`bin/toli resources --json`); `verifyOnly`: its `--role verify-only` projects. */
 export type Resources = {
     machine: string;
     platform: string;
@@ -102,6 +102,7 @@ export type Resources = {
     buildsOutsideSlots?: OutsideBuild[];
     /** The work queue that ranks machines; null from a machine on a toli older than queue ranking. */
     queue: Queue | null;
+    verifyOnly?: string[];
 };
 
 /** A unit of work counted as load on this machine: `state/runs/<runId>.json`. */
@@ -327,6 +328,7 @@ export function localResources(): Resources {
         ...(typeof memory === "string" ? [`memory unknown: ${memory}`] : []),
         ...availabilityReasons(measured, capacity),
     ];
+    const projects = loadProjects();
     return {
         machine: machine.name,
         platform: platform(),
@@ -338,14 +340,13 @@ export function localResources(): Resources {
         buildSlots: capacity.buildSlots,
         buildSlotsBusy: busyBuildSlots() + outside.length,
         buildsOutsideSlots: outside,
-        projects: loadProjects()
-            .map((project) => project.name)
-            .filter((name) => isGitRepo(paths.projectDir(name))),
+        projects: projects.map((project) => project.name).filter((name) => isGitRepo(paths.projectDir(name))),
         available: reasons.length === 0,
         reasons,
         at: now().toISOString(),
         models: modelTotalsToday(),
         queue: localQueue(),
+        verifyOnly: projects.filter((project) => project.role === "verify-only").map((project) => project.name),
     };
 }
 

@@ -141,7 +141,7 @@ while one is running.
     bin/toli resources [--json]               # this machine: queue, load, memory/disk, runs, build slots, clones
     bin/toli fleet status [--json]            # every machine, probed over ssh in parallel; unreachable is not fatal
     bin/toli fleet queues [--json]            # every machine's queue, lightest per jawan slot first
-    bin/toli pick [--project <p>] [--json]    # the machine for one unit of work; exit 2 with reasons when none
+    bin/toli pick [--project <p>] [--shape s] [--json]   # the machine for one unit of work; exit 2 with reasons when none
 
 `pick` and `fleet queues` rank machines by queue per jawan slot: queued tasks plus running jawans (spawn runs and
 native subagents recorded with `task start --agent`) plus waiting runs, over `capacity.maxRuns` (active tasks with no

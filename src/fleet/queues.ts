@@ -20,7 +20,7 @@ import { sendToMachine } from "../jobs/outbox.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
-import { fleetStatus, rankMachines } from "./pick.ts";
+import { fleetStatus, rankMachines, refusesShip, verifyOnlyText } from "./pick.ts";
 import { perSlot, type Queue, queueText, slotText, waitingTasks } from "./queue.ts";
 import type { FleetEntry } from "./resources.ts";
 
@@ -56,6 +56,8 @@ type QueueRow = {
     /** Its jawan slots (`capacity.maxRuns`), which native subagent jawans share with spawn runs. */
     slots: number | null;
     reasons: string[];
+    /** The projects it takes no ship work for (`project set <p> --role verify-only` there). */
+    verifyOnly: string[];
 };
 
 /** A machine with a known queue, for comparing depths. */
@@ -78,6 +80,7 @@ function queueRows(entries: FleetEntry[]): QueueRow[] {
                 load: queue === null || entry.resources === null ? null : perSlot(queue.depth, entry.resources.maxRuns),
                 slots: entry.resources?.maxRuns ?? null,
                 reasons: entry.resources === null ? entry.reasons : [],
+                verifyOnly: entry.resources?.verifyOnly ?? [],
             },
         ];
     });
@@ -103,6 +106,11 @@ function deepestQueue(rows: Known[]): Known | undefined {
     );
 }
 
+/** `; <machine> takes no ship work for <p>, <q>` when it marked projects verify-only, else nothing. */
+function noShipText(machine: string, verifyOnly: string[]): string {
+    return verifyOnly.length === 0 ? "" : `; ${machine} takes no ship work for ${verifyOnly.join(", ")} (verify-only)`;
+}
+
 /** The delegation `fleet queues` suggests when the longest known queue is at least `gap` deeper than the shortest. */
 function queueSuggestion(rows: QueueRow[], gap: number): string | null {
     const depths = knownQueues(rows);
@@ -111,10 +119,11 @@ function queueSuggestion(rows: QueueRow[], gap: number): string | null {
     if (shortest === undefined || longest === undefined) return null;
     const difference = longest.queue.depth - shortest.queue.depth;
     if (difference < gap) return null;
+    const verifyOnly = rows.find((row) => row.machine === shortest.machine)?.verifyOnly ?? [];
     return [
         `suggestion: ${longest.machine}'s queue (${longest.queue.depth}) is ${difference} deeper than`,
         `${shortest.machine}'s (${shortest.queue.depth}); on ${longest.machine}, hand queued work over with`,
-        `bin/toli delegate ${shortest.machine} "<title>" --brief <file> [--project <p>]`,
+        `bin/toli delegate ${shortest.machine} "<title>" --brief <file> [--project <p>]${noShipText(shortest.machine, verifyOnly)}`,
     ].join(" ");
 }
 
@@ -123,7 +132,8 @@ function rowLine(row: QueueRow): string {
     if (!row.reachable) return `${name}: ${row.reasons.join("; ") || "unreachable"}`;
     if (row.queue === null) return `${name}: queue unknown (its toli reports no queue)`;
     const slots = row.slots === null ? "" : `, ${slotText(row.queue, row.slots)}`;
-    return `${name}: ${queueText(row.queue)}, ${row.load} per jawan slot${slots}`;
+    const verifyOnly = row.verifyOnly.length === 0 ? "" : `, verify-only ${row.verifyOnly.join(",")}`;
+    return `${name}: ${queueText(row.queue)}, ${row.load} per jawan slot${slots}${verifyOnly}`;
 }
 
 /** `toli fleet queues [--json]`: every machine's queue, shortest first, then a suggested delegation if one is due. */
@@ -172,8 +182,9 @@ function recordSent(sent: BalanceSent): void {
 
 /**
  * The delegate command for each of this machine's tasks waiting for a jawan that can go to `target`, with its brief
- * when it has one. A task bound to this machine stays out: pinned here (`task pin`), or of a project `target` has no
- * clone of and whose git URL is not registered here (`target` could not clone it; the pick rule).
+ * when it has one. A task bound to this machine stays out: pinned here (`task pin`), of a project `target` has no
+ * clone of and whose git URL is not registered here (`target` could not clone it; the pick rule), or ship work of a
+ * project `target` marked verify-only. A scout task's command keeps its shape.
  */
 function delegateLines(target: FleetEntry): string[] {
     const cloned = new Set(target.resources?.projects ?? []);
@@ -182,7 +193,8 @@ function delegateLines(target: FleetEntry): string[] {
         .filter(
             (task) =>
                 task.pinned === undefined &&
-                (task.project === "" || cloned.has(task.project) || clonable.has(task.project)),
+                (task.project === "" || cloned.has(task.project) || clonable.has(task.project)) &&
+                !(task.shape === "ship" && target.resources !== null && refusesShip(target.resources, task.project)),
         )
         .map((task) => {
             const brief = briefPath(task.project, task.id);
@@ -190,6 +202,7 @@ function delegateLines(target: FleetEntry): string[] {
                 `  ${task.id}: bin/toli delegate ${target.machine} ${shellQuote(task.title)}`,
                 `--brief ${brief === null ? "<file>" : shellQuote(brief)}`,
                 ...(task.project === "" ? [] : [`--project ${shellQuote(task.project)}`]),
+                ...(task.shape === "ship" ? [] : [`--shape ${task.shape}`]),
             ].join(" ");
         });
 }
@@ -232,9 +245,11 @@ export async function balancePass(): Promise<string | null> {
         return `queue: offered work to ${shortest.machine} (${machine.name} ${depth}, ${shortest.machine} ${shortest.queue.depth})`;
     }
     if (depth !== 0 || deepest.queue.depth < gap) return null;
+    const verifyOnly = entries.find((entry) => entry.local)?.resources?.verifyOnly ?? [];
     const body = [
         `${machine.name}'s queue is empty; ${deepest.machine}'s is ${deepest.queue.depth} deep (lead.balanceGap ${gap}).`,
         `Hand queued work over with: bin/toli delegate ${machine.name} "<title>" --brief <file> [--project <p>]`,
+        ...verifyOnly.map((project) => `No ship work of ${project}: ${machine.name} is ${verifyOnlyText(project)}.`),
         `Reply with: bin/toli talk ${machine.name} "<reply>"`,
     ];
     const sent = sendToMachine(

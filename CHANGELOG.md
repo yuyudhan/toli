@@ -4,6 +4,23 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.31 - unreleased
+
+### Added
+
+- A machine can be verify-only for a project: `bin/toli project set <p> --role verify-only` (`--role full` undoes
+  it). The role is that machine's own, published with its resources (`verifyOnly` in `resources --json`). Ship work
+  for the project is no longer placed on it: `pick --project <p>` (new `--shape ship|scout`, ship by default), `fleet
+queues` and the balancing offers pass it over, and `delegate` refuses ship work of it there, a lead forwarding a
+  delegated task on included, naming the next machine by queue (`--force` sends it anyway). Scout work still goes to
+  it. A ship delegation that reaches it anyway is handed back on arrival with the reason.
+
+### Fixed
+
+- Work forwarded on and then handed back by its live owner queues the originator's task again instead of dropping
+  it, and a delegation handed back before its delegator recorded it no longer leaves the `--for` task active.
+- A balancing offer of a scout task keeps its shape, and `delegate --for` without `--shape` keeps the `--for` task's.
+
 ## v0.5.30 - 2026-11-15
 
 ### Fixed

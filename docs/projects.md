@@ -182,6 +182,32 @@ host sees a container's processes) and waits for it to finish ([fleet.md](fleet.
 its width too, give the container one slot's share in its own environment: `CARGO_BUILD_JOBS` in its compose file at
 the machine's `capacity.cargoJobs` ([fleet.md](fleet.md#heavy-build-slots)).
 
+## Verify-only machines
+
+A machine whose lead reviews a project's work but no longer builds or ships it (too small for the project's build, or
+kept as its code-review verifier) marks that project verify-only, on that machine:
+
+    bin/toli project set app --role verify-only      # --role full takes ship work again
+
+`role=verify-only` shows in `bin/toli project list` (`"role": "verify-only"` in `--json`). The role is this
+machine's own choice, kept in its `data/projects.json`, and published with its resources (`verifyOnly` in
+`bin/toli resources --json`, `verify-only <p>` in `fleet status`), so every other machine sees it. No ship task for
+the project is then placed on it; scout and review work still is:
+
+- `bin/toli pick --project app` (ship by default; `--shape scout` for review work) passes it over with
+  `verify-only for app: it takes no ship work for it`.
+- `bin/toli fleet queues` shows `verify-only app` on its row, and a suggestion to hand work to it says it takes no
+  ship work for app.
+- The balancing offers (`queue: offer work to <machine>`) list no ship task of app for it; a scout task's command
+  carries `--shape scout`. Its own ask for work names the projects it takes no ship work for.
+- `bin/toli delegate <machine> ... --project app` with ship work (the default shape, or the `--for` task's when
+  `--shape` is not given), including a lead forwarding a delegated task on, is refused before anything is sent:
+  `not sent: <machine> is verify-only for app (it takes no ship work for it); next by queue: <other machine>`.
+  `--force` sends it anyway; the receiving task then notes that it came with `--force`.
+- A delegation that still reaches it (sent while it was unreachable, or by an older toli) is handed back on arrival
+  (`bin/toli task handback`, docs/sardars.md): its task is dropped there with the reason, and the delegator's `--for`
+  task goes back to queued, never dropped, even when the work was forwarded through another machine first.
+
 ## Setting up an existing project
 
 Projects registered before the interview, imported clones, and notes that drifted get the same treatment:
