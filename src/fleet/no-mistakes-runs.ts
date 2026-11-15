@@ -180,12 +180,15 @@ function nestedKind(path: string, name: string): BuildKind | null {
     return existsSync(join(path, "CACHEDIR.TAG")) || existsSync(join(path, ".rustc_info.json")) ? "target" : null;
 }
 
-/** What the keeper's step 1 hands `freeRunWorktrees`: its run's mode, checkouts, and its deleting and logging. */
+/**
+ * What the keeper's step 1 hands `freeRunWorktrees`: its run's mode, checkouts, and its deleting and logging. `remove`
+ * hands its deletion the run's `dryRun`: then it says only why the folder would stay, deleting nothing.
+ */
 export type RunFreeing = {
     dryRun: boolean;
     checkouts: Checkout[];
     enough: () => boolean;
-    remove: (path: string, step: string, deleteIt: () => string | null) => void;
+    remove: (path: string, step: string, deleteIt: (dryRun: boolean) => string | null) => void;
     say: (line: string) => void;
 };
 
@@ -206,7 +209,7 @@ export function freeRunWorktrees(context: RunFreeing): void {
             if (reason === null && !dryRun)
                 reason = runWorktreeUse(tree.checkout.path) ?? checkoutUse(dir.checkout, currentHolders(), checkouts);
             if (reason === null)
-                remove(dir.path, `step 1: finished no-mistakes run's ${dir.kind}`, () => freeRunOutput(dir));
+                remove(dir.path, `step 1: finished no-mistakes run's ${dir.kind}`, (dry) => freeRunOutput(dir, dry));
             else say(`skipped ${dir.path}: ${reason}`);
         }
     }
@@ -215,16 +218,18 @@ export function freeRunWorktrees(context: RunFreeing): void {
 /**
  * Delete one build folder of a finished run's worktree, or say why it stays: the keeper's pause, cargo's locks and
  * every in-use check a target wipe makes (a cargo in its workspace, a process running from it or working there, an open
- * file), or an open file for a `node_modules`. Root-owned files go through `removeAsRoot`.
+ * file), or an open file for a `node_modules`. Root-owned files go through `removeTree`. With `dryRun` it makes the
+ * same checks and deletes nothing.
  */
-export function freeRunOutput(dir: BuildDir): string | null {
+export function freeRunOutput(dir: BuildDir, dryRun: boolean): string | null {
     const paused = pauseHold();
     if (paused !== null) return paused;
+    const removed = (): string | null => (dryRun ? null : removeTree(dir.path));
     if (dir.kind !== "target") {
         const open = openBelow(dir.path);
-        return open.length > 0 ? `open files, e.g. ${open.join(", ")}` : removeTree(dir.path);
+        return open.length > 0 ? `open files, e.g. ${open.join(", ")}` : removed();
     }
-    const outcome = whileIdle(dir.path, () => removeTree(dir.path));
+    const outcome = whileIdle(dir.path, removed);
     return outcome.ran ? outcome.value : outcome.reason;
 }
 

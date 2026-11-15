@@ -118,20 +118,45 @@ function useBesideLocks(target: string, probes: UseProbes): string | null {
 export type IdleOutcome<T> = { ran: true; value: T } | { ran: false; reason: string };
 
 /**
- * Run `body` while holding every cargo lock of `target`, only when no build holds one and nothing else uses the
- * target (see useBesideLocks); otherwise run nothing and say why. A cargo that starts meanwhile waits on the lock.
+ * Run `body` while holding every cargo lock of `target`, only when no build holds one, `holdOff` gives no reason to
+ * wait and nothing else uses the target (see useBesideLocks); otherwise run nothing and say why. A cargo that starts
+ * meanwhile waits on the lock.
  */
-export function whileIdle<T>(target: string, body: () => T, probes: UseProbes = LIVE_PROBES): IdleOutcome<T> {
+export function whileIdle<T>(
+    target: string,
+    body: () => T,
+    probes: UseProbes = LIVE_PROBES,
+    holdOff: () => string | null = () => null,
+): IdleOutcome<T> {
     const lock = flock();
     if (lock === null) return { ran: false, reason: "cannot load libc flock to take cargo's locks" };
     const held = tryLockAll(cargoLockFiles(target), lock);
     if (typeof held === "string") return { ran: false, reason: `a build holds ${held}` };
     try {
-        const busy = useBesideLocks(target, probes);
+        const busy = holdOff() ?? useBesideLocks(target, probes);
         return busy === null ? { ran: true, value: body() } : { ran: false, reason: busy };
     } finally {
         release(held, lock);
     }
+}
+
+/**
+ * One try at wiping `target` between build steps (wipeTargetBetweenBuilds, no waiting): why it stays, or null once it
+ * is gone. With `dryRun` it makes the same checks (cargo's locks, `holdOff`, useBesideLocks) and deletes nothing, so
+ * the keeper's dry run keeps what the real run keeps.
+ */
+export function wipeNow(
+    target: string,
+    dryRun: boolean,
+    holdOff: () => string | null = () => null,
+    probes: UseProbes = LIVE_PROBES,
+): string | null {
+    if (dryRun) {
+        const outcome = whileIdle(target, () => null, probes, holdOff);
+        return outcome.ran ? null : outcome.reason;
+    }
+    const outcome = wipeTargetBetweenBuilds(target, 0, holdOff, probes);
+    return outcome.wiped ? null : outcome.reason;
 }
 
 /**

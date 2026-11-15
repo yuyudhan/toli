@@ -108,6 +108,51 @@ describe("the disk keeper on Linux, without lsof", () => {
             release();
         }
     });
+
+    keeperTest(
+        "an uninspectable process tied to no folder keeps none, and a dry run keeps what the real run keeps",
+        () => {
+            const box = keeperBox();
+            const [idle = "", held = ""] = clones(box, ["alpha", "beta"]);
+            ageOutput(held, 600);
+            ageOutput(idle, 300);
+            // The user's systemd PAM helper: /proc shows its working directory `/` but not its executable.
+            const proc = tempDir("proc");
+            mkdirSync(join(proc, "965"));
+            symlinkSync("/", join(proc, "965", "cwd"));
+            box.stub("ps", `case "$*" in *uid=*) echo "  965 ${process.getuid?.() ?? 0} Ss (sd-pam)" ;; esac`);
+            // 1 GB free while the idle target exists, 100 GB once it is gone; floor 50.
+            const target = join(idle, "target");
+            box.stub("df", `if [ -e "${target}" ]; then kb=1048576; else kb=104857600; fi\n${dfLine(200)}`);
+            const lock = join(held, "target", "debug", ".cargo-lock");
+            const release = holdLock(lock);
+            const env = { TOLI_PLATFORM: "linux", TOLI_PROC_DIR: proc };
+            try {
+                const plan = keep(box, ["--dry-run", "--floor", "50"], { ...env, TOLI_DRY_RUN: "1" });
+                const real = keep(box, ["--floor", "50"], env);
+                /** What a run decided first for the target of `clone`: kept (with why) or deleted. */
+                const decided = (report: KeepReport, clone: string): string => {
+                    const path = join(clone, "target");
+                    const line = report.lines.find(
+                        (text) =>
+                            text.startsWith(`kept ${path}:`) ||
+                            text.startsWith(`would delete ${path} (`) ||
+                            text.startsWith(`deleted ${path},`),
+                    );
+                    if (line === undefined) return "no decision";
+                    return line.startsWith(`kept ${path}:`) ? line : `deleted ${path}`;
+                };
+                expect(decided(plan, held)).toBe(`kept ${join(held, "target")}: a build holds ${lock}`);
+                expect(decided(plan, idle)).toBe(`deleted ${target}`);
+                for (const clone of [held, idle]) expect(decided(real, clone)).toBe(decided(plan, clone));
+                for (const report of [plan, real]) expect(report.lines.join("\n")).not.toContain("process 965");
+                expect(existsSync(target)).toBe(false);
+                expect(existsSync(join(held, "target", "debug", "deps", "libx.rlib"))).toBe(true);
+            } finally {
+                release();
+            }
+        },
+    );
 });
 
 describe("the disk keeper's pause marker", () => {

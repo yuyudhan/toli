@@ -35,7 +35,7 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { out, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
-import { wipeTargetBetweenBuilds } from "./cargo-lock.ts";
+import { wipeNow } from "./cargo-lock.ts";
 import { containerUseOnce } from "./container-mounts.ts";
 import { diskAlertBeforeWork, diskKeepSetting } from "./disk-alert.ts";
 import { playwrightBrowsers, trimSccache } from "./disk-caches.ts";
@@ -219,31 +219,30 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             say(`kept ${path}: ${why}; a folder a live container mounts is never deleted`);
             return true;
         };
-        /** Delete `path` (`step` names the step, for the log), or record why it stays. */
-        const remove = (path: string, step: string, deleteIt: () => string | null): void => {
+        /** Delete `path` (`step` names the step, for the log) or record why it stays; a dry run only checks. */
+        const remove = (path: string, step: string, deleteIt: (dryRun: boolean) => string | null): void => {
             if (mounted(path)) return;
-            if (dryRun) {
-                const size = sizeGB(path);
-                simulated += size;
-                done.add(path);
-                say(`would delete ${path} (${gb(size)}, ${step})`);
-                return;
-            }
             const before = free();
-            const refusal = deleteIt();
+            const size = dryRun ? sizeGB(path) : 0;
+            const refusal = deleteIt(dryRun);
             if (refusal !== null) {
                 kept.set(path, { reason: refusal, tried: true });
                 say(`kept ${path}: ${refusal}`);
                 return;
             }
             done.add(path);
+            if (dryRun) {
+                simulated += size;
+                say(`would delete ${path} (${gb(size)}, ${step})`);
+                return;
+            }
             log.open();
             say(`deleted ${path}, freed ${gb(Math.max(0, free() - before))} (${step})`);
         };
         const idleTier = (
             step: number,
             kinds: BuildDir["kind"][],
-            deleteIt: (dir: BuildDir) => string | null,
+            deleteIt: (dir: BuildDir, dryRun: boolean) => string | null,
         ): void => {
             const holders = currentHolders();
             for (const dir of dirs) {
@@ -257,7 +256,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 }
                 let reason = checkoutUse(dir.checkout, holders, checkouts);
                 if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
-                if (reason === null) remove(dir.path, `step ${step}: idle ${dir.kind}`, () => deleteIt(dir));
+                if (reason === null) remove(dir.path, `step ${step}: idle ${dir.kind}`, (dry) => deleteIt(dir, dry));
                 else {
                     kept.set(dir.path, { reason, tried: false });
                     say(`skipped ${dir.path}: ${reason}`);
@@ -266,11 +265,11 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         };
         freeRunWorktrees({ dryRun, checkouts, enough, remove, say });
         // 1 and 2: idle checkouts. The target wipe still takes cargo's locks once, for builds run from elsewhere.
-        idleTier(1, ["target"], (dir) => wipeOutcome(dir.path));
-        idleTier(2, ["node_modules", "dist"], (dir) => {
+        idleTier(1, ["target"], (dir, dry) => wipeNow(dir.path, dry, pauseHold));
+        idleTier(2, ["node_modules", "dist"], (dir, dry) => {
             const open = openBelow(dir.path);
             if (open.length > 0) return `open files, e.g. ${open.join(", ")}`;
-            rmSync(dir.path, { recursive: true, force: true });
+            if (!dry) rmSync(dir.path, { recursive: true, force: true });
             return null;
         });
         // 3 and 4: machine-wide caches.
@@ -306,7 +305,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             const why = kept.get(dir.path);
             if (why?.tried !== true) {
                 say(`${dir.path} is in use (${why?.reason ?? "no reason recorded"}): wiping it between build steps`);
-                remove(dir.path, "step 6: in use, between build steps", () => wipeOutcome(dir.path));
+                remove(dir.path, "step 6: in use, between build steps", (dry) => wipeNow(dir.path, dry, pauseHold));
             }
         }
         // 7: the last resort, under the emergency level after 1 to 6: the targets left go now, in use or not, those no
@@ -324,7 +323,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 const why = build ?? kept.get(path)?.reason;
                 const cut = build === null ? "" : "; that build fails and must run again";
                 if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway${cut}`);
-                remove(path, "step 7: last resort", () => forceDelete(path));
+                remove(path, "step 7: last resort", (dry) => forceDelete(path, dry));
             };
             const left = (dir: BuildDir): boolean =>
                 !done.has(dir.path) && ![...done].some((gone) => within(dir.path, gone)) && existsSync(dir.path);
@@ -357,13 +356,9 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
     return report;
 }
 
-function wipeOutcome(target: string): string | null {
-    const outcome = wipeTargetBetweenBuilds(target, 0, pauseHold);
-    return outcome.wiped ? null : outcome.reason;
-}
-
 /** Delete `path` whatever uses it; the reason when it could not (a build may keep writing into it meanwhile). */
-function forceDelete(path: string): string | null {
+function forceDelete(path: string, dryRun: boolean): string | null {
+    if (dryRun) return null;
     try {
         rmSync(path, { recursive: true, force: true, maxRetries: 3 });
         return null;

@@ -33,8 +33,10 @@ finds its disk full runs `bin/toli disk keep` and never asks first.
   The tick's own queue drain runs no keeper. A slow keeper (on an I/O-starved disk one run can take an hour) so never
   holds up a tick. Nothing starts while a keeper runs or a live pause holds it; in a dry run nothing starts.
 - By hand, with `bin/toli disk keep`. `--dry-run` (or `TOLI_DRY_RUN=1`) lists what would go and counts each folder's
-  size as freed. `--floor` overrides the floor and is not capped (it is the caller's choice), so a dry run with a high
-  floor shows the whole plan.
+  size as freed. It makes every check a real deletion makes (cargo's locks, taken and released at once, the processes,
+  live builds and open files of step 6, open files under a `node_modules` or `dist`) and deletes nothing, so it keeps
+  what a real run would keep, with the same reason. `--floor` overrides the floor and is not capped (it is the
+  caller's choice), so a dry run with a high floor shows the whole plan.
 
 Only one keeper runs at a time (`state/disk-keep.lock` holds its pid). Every action goes to `logs/disk.log`. A reason
 the keeper did not run (paused, or another keeper busy) is logged once when it starts, not on every minute's tick.

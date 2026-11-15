@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { closeSync, existsSync, mkdirSync, openSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
+import { wipeNow, wipeTargetBetweenBuilds } from "../src/fleet/cargo-lock.ts";
 import { containerMounts } from "../src/fleet/disk-proc.ts";
 import type { HeldFile } from "../src/fleet/disk-scan.ts";
 import type { ProcessUse, UseProbes } from "../src/fleet/target-use.ts";
@@ -169,6 +169,29 @@ describe("wiping a target between build steps", () => {
         });
         expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
+    });
+
+    test("an uninspectable process working in / keeps no target, in the dry run's check as in the wipe", () => {
+        const { target } = workspaceTarget();
+        const machine = quiet();
+        // systemd's PAM helper: /proc shows its working directory but not its executable.
+        machine.processes.push({ pid: "965", args: "(sd-pam)", files: [], cwd: "/", uninspected: true });
+        expect(wipeNow(target, true, undefined, probes(machine))).toBeNull();
+        expect(existsSync(target)).toBe(true);
+        expect(wipeNow(target, false, undefined, probes(machine))).toBeNull();
+        expect(existsSync(target)).toBe(false);
+    });
+
+    test("the dry run's check keeps a target for the same reason the wipe does, deleting nothing", () => {
+        const { workspace, target } = workspaceTarget();
+        const machine = quiet();
+        machine.processes.push(sleeping("4111", workspace));
+        const reason = `process 4111 runs in ${workspace}`;
+        expect(wipeNow(target, true, undefined, probes(machine))).toBe(reason);
+        expect(wipeNow(target, false, undefined, probes(machine))).toBe(reason);
+        expect(wipeNow(target, true, () => "paused", probes(machine))).toBe("paused");
+        expect(wipeNow(target, false, () => "paused", probes(machine))).toBe("paused");
+        expect(existsSync(target)).toBe(true);
     });
 
     test("keeps the target while a process that cannot be inspected runs a program from it", () => {
