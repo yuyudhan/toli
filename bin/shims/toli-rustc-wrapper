@@ -20,6 +20,16 @@
 # holds a job ends, so the pool never deadlocks; one started from inside a compilation that holds a job (a proc macro
 # that runs cargo; TOLI_BUILD_JOB set) uses that job. The wrapper then runs the wrapper it replaced
 # (TOLI_RUSTC_WRAPPER_NEXT, such as sccache) or rustc itself.
+#
+# A compilation that holds a job compiles in one codegen unit when it runs through that replaced wrapper (T1560):
+# sccache's server, not cargo, starts rustc, with the server's own jobserver (as many tokens as the machine has cores)
+# in place of cargo's, so rustc's codegen threads (one per codegen unit: 16 at a dev profile's opt-level 1, each
+# optimizing its local ThinLTO module) escape CARGO_BUILD_JOBS and the job pool alike. On a 12-core Linux worker one
+# cargo holding its one slot of 8 jobs ran 8 compilations, one of them at 16 codegen threads, at load 58. rustc has no
+# stable thread cap (`-Z threads` is nightly and caps only its front end); `-C codegen-units` is the stable lever over
+# how many codegen threads it starts, so one unit keeps a compilation to one codegen thread beside its front end.
+# Without such a wrapper rustc takes its codegen threads from cargo's jobserver, sized at CARGO_BUILD_JOBS, and keeps
+# its units.
 shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127
 next=${TOLI_RUSTC_WRAPPER_NEXT:-}
 slots="${TOLI_ROOT:-$shims/../..}/state/build-slots"
@@ -46,17 +56,8 @@ holder_slot() {
     done
 }
 
-[ -n "${TOLI_BUILD_JOB:-}" ] && run "$@"
-
-if [ "$#" -eq 2 ] && [ "$2" = "-vV" ]; then
-    [ -n "${TOLI_BUILD_SLOT:-}" ] && run "$@"
-    [ -n "$(holder_slot)" ] && run "$@"
-    # Never fail a build over toli: on any error the build runs (build-slot says why on stderr).
-    "$shims/../toli" build-slot --cargo "$PPID" || :
-    run "$@"
-fi
-
-# A crate compilation names its crate; cargo's target-info probe compiles the crate `___`, which builds nothing.
+# A crate compilation names its crate; cargo's target-info probe compiles the crate `___`, which builds nothing, and its
+# `rustc -vV` probe names none.
 crate=""
 prev=""
 for arg in "$@"; do
@@ -67,7 +68,24 @@ for arg in "$@"; do
     [ -n "$crate" ] && break
     prev=$arg
 done
-[ -n "$crate" ] && [ "$crate" != "___" ] || run "$@"
+[ "$crate" = "___" ] && crate=""
+
+# Inside a compilation that holds a job: a crate compilation uses that job, as one codegen unit through the replaced
+# wrapper (see above).
+if [ -n "${TOLI_BUILD_JOB:-}" ]; then
+    [ -n "$crate" ] && [ -n "$next" ] && exec "$next" "$@" -C codegen-units=1
+    run "$@"
+fi
+
+if [ "$#" -eq 2 ] && [ "$2" = "-vV" ]; then
+    [ -n "${TOLI_BUILD_SLOT:-}" ] && run "$@"
+    [ -n "$(holder_slot)" ] && run "$@"
+    # Never fail a build over toli: on any error the build runs (build-slot says why on stderr).
+    "$shims/../toli" build-slot --cargo "$PPID" || :
+    run "$@"
+fi
+
+[ -n "$crate" ] || run "$@"
 
 slot=${TOLI_BUILD_SLOT:-}
 [ -n "$slot" ] || slot=$(holder_slot)
@@ -109,7 +127,7 @@ trap 'exit 143' TERM
 TOLI_BUILD_JOB=$job
 export TOLI_BUILD_JOB
 if [ -n "$next" ]; then
-    "$next" "$@"
+    "$next" "$@" -C codegen-units=1
 else
     "$@"
 fi

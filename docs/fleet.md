@@ -283,6 +283,14 @@ target-info crate) take none. A compilation waits only for a job, and every comp
 pool cannot deadlock; a cargo run from inside a compilation that holds a job (a proc macro that runs cargo,
 `TOLI_BUILD_JOB` set) uses that job. A cargo with no slot (a live-stack checkout's) compiles without the pool.
 
+The jobs count compilations, and cargo's jobserver (sized at `CARGO_BUILD_JOBS`) caps the codegen threads each
+rustc starts, one per codegen unit, beside them. A compilation through the wrapper toli's replaced (sccache) loses
+that cap: sccache's server, not cargo, starts the rustc, with the server's own jobserver of every core, so one crate
+at a dev profile's opt-level 1 optimizes its 16 codegen units on 16 threads whatever the slot's share. A compilation
+that holds a job and runs through such a wrapper therefore compiles as one codegen unit (`-C codegen-units=1`, after
+cargo's own arguments): one codegen thread beside rustc's front end. rustc has no stable thread cap, so the units are
+the lever; a compilation without such a wrapper keeps its units, as cargo's jobserver already caps its threads.
+
 Whoever takes a slot writes its pid, the directory its build runs in and its `CARGO_TARGET_DIR` into the slot's lock
 file (`state/build-slots/<n>.lock`), so the disk keeper never deletes the target a slot's build compiles into, even
 between two cargo runs ([disk.md](disk.md#live-builds)).

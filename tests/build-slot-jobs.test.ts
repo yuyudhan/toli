@@ -22,7 +22,8 @@ function script(file: string, body: string): void {
 /**
  * A cargo installation (`<root>/.cargo/bin`). Its rustc answers `-vV`, and for a crate compilation logs `peak <crate>
  * <n>` to `<log>.compiles`, where n is how many compilations run at that moment (each one is an entry in
- * `<log>.running` while it runs), stays busy for a second and logs `done <crate>`; the compilation of the crate named
+ * `<log>.running` while it runs), and `<crate> <its arguments>` to `<log>.args`, stays busy for a second and logs
+ * `done <crate>`; the compilation of the crate named
  * in PROC_MACRO_CARGO first runs `$CARGO build`, as a proc macro that runs cargo does. Its cargo, like a real one,
  * exports its own path as CARGO, probes rustc through `RUSTC_WRAPPER` and compiles CRATES crates (default 2) at once
  * through it; with TESTS set it then runs that many test binaries at once, each starting `$CARGO build` (a test kit's
@@ -39,6 +40,7 @@ function toolchain(box: Sandbox, log: string): string {
             `running="${log}.running"`,
             'mkdir -p "$running" && mkdir "$running/$crate.$$" || exit 1',
             `echo "peak $crate $(ls "$running" | wc -l | tr -d ' ')" >> "${log}.compiles"`,
+            `echo "$crate $*" >> "${log}.args"`,
             'if [ -n "${PROC_MACRO_CARGO:-}" ] && [ "$crate" = "$PROC_MACRO_CARGO" ]; then',
             '    PROC_MACRO_CARGO="" STUB_LABEL="${crate}_m" CRATES=1 TESTS="" "$CARGO" build || exit 1',
             "fi",
@@ -78,6 +80,14 @@ function toolchain(box: Sandbox, log: string): string {
         ].join("\n"),
     );
     return bin;
+}
+
+/** The arguments each crate's compilation reached rustc with, by crate. */
+function rustcArgs(log: string): Record<string, string> {
+    const lines = readFileSync(`${log}.args`, "utf8").trim().split("\n");
+    return Object.fromEntries(
+        lines.map((line) => [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)]),
+    );
 }
 
 /** The compilations logged: the most that ran at once, and the crates that finished. */
@@ -182,6 +192,60 @@ describe("the cargos in one heavy-build slot compile at most the slot's share of
             expect(result.code).toBe(0);
             expect(result.stderr).not.toContain("waiting");
             expect(compiles(log).done).toEqual(["m_1", "m_1_m_1"]);
+        },
+        LOADED_MS,
+    );
+});
+
+// sccache's server, not cargo, starts the rustc it caches for, with the server's own jobserver of every core in place
+// of cargo's, so rustc's codegen threads escaped the slot's share (T1560: on a 12-core Linux worker one cargo in a slot
+// of 8 jobs ran 8 compilations, one of them at 16 codegen threads, load 58). A compilation that holds one of the
+// slot's jobs and runs through the wrapper toli's replaced compiles as one codegen unit: one codegen thread.
+describe("a compilation in a slot through the rustc wrapper toli's replaced runs as one codegen unit (T1560)", () => {
+    test(
+        "through sccache each crate compilation, a proc macro's cargo's too, gets one codegen unit; probes do not",
+        async () => {
+            const { box, log } = slotBox(1, 2);
+            const bin = toolchain(box, log);
+            const sccache = join(bin, "sccache");
+            // sccache's client runs the compiler it is given; this one also logs the probes it passes on.
+            const probe = `[ "$#" -eq 2 ] && [ "$2" = "-vV" ] && echo "probe $*" >> "${log}.probes"`;
+            script(sccache, [probe, 'exec "$@"'].join("\n"));
+            const build = start(box, toliArgs("build-slot", "--", join(bin, "cargo"), "build"), {
+                ...jawan(box),
+                TOLI_RUSTC_WRAPPER_NEXT: sccache,
+                STUB_LABEL: "s",
+                PROC_MACRO_CARGO: "s_1",
+            });
+            const result = await build.done;
+            expect(result.code).toBe(0);
+            const args = rustcArgs(log);
+            expect(Object.keys(args).sort()).toEqual(["s_1", "s_1_m_1", "s_2"]);
+            for (const crate of Object.keys(args)) {
+                expect(args[crate]).toBe(`--crate-name ${crate} --edition 2021 src/lib.rs -C codegen-units=1`);
+            }
+            expect(readFileSync(`${log}.probes`, "utf8")).not.toContain("codegen-units");
+        },
+        LOADED_MS,
+    );
+
+    test(
+        "without a replaced wrapper rustc shares cargo's jobserver and keeps its codegen units",
+        async () => {
+            const { box, log } = slotBox(1, 2);
+            const cargo = join(toolchain(box, log), "cargo");
+            const build = start(box, toliArgs("build-slot", "--", cargo, "build"), {
+                ...jawan(box),
+                STUB_LABEL: "n",
+                PROC_MACRO_CARGO: "n_1",
+            });
+            const result = await build.done;
+            expect(result.code).toBe(0);
+            expect(rustcArgs(log)).toEqual({
+                n_1: "--crate-name n_1 --edition 2021 src/lib.rs",
+                n_1_m_1: "--crate-name n_1_m_1 --edition 2021 src/lib.rs",
+                n_2: "--crate-name n_2 --edition 2021 src/lib.rs",
+            });
         },
         LOADED_MS,
     );
