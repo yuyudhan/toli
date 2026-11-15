@@ -12,6 +12,42 @@
                 ]
             }
         ],
+        "PostToolUse": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "\"$CLAUDE_PROJECT_DIR\"/bin/toli hook claude-agent",
+                        "timeout": 30,
+                        "async": true
+                    }
+                ]
+            }
+        ],
+        "SubagentStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "\"$CLAUDE_PROJECT_DIR\"/bin/toli hook claude-agent",
+                        "timeout": 30,
+                        "async": true
+                    }
+                ]
+            }
+        ],
+        "SubagentStop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "\"$CLAUDE_PROJECT_DIR\"/bin/toli hook claude-agent",
+                        "timeout": 30,
+                        "async": true
+                    }
+                ]
+            }
+        ],
         "UserPromptSubmit": [
             {
                 "hooks": [

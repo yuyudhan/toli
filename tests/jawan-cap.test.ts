@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENV, editBacklog, fleet, liveRun, ROOMY, remoteSnapshot, resourcesQueue } from "./fleet-fixture.ts";
 import { GIT_ENV, type Sandbox, TOLI_BIN, withProject } from "./helpers.ts";
@@ -41,11 +41,14 @@ function agentReport(box: Sandbox, id: string, report: { pid: number; at: string
     writeFileSync(join(dir, `${id}.json`), JSON.stringify(report));
 }
 
-/** What the omp extension writes when it loads in omp `pid` (state/agent-sessions/<pid>.json): its subagents report. */
+/** What the omp extension writes when it watches omp `pid`'s subagents (state/agent-sessions/<pid>.json). */
 function reportingSession(box: Sandbox, pid: number): void {
     const dir = join(box.root, "state", "agent-sessions");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${pid}.json`), JSON.stringify({ pid, startedAt: "2026-03-04T07:00:00.000Z" }));
+    writeFileSync(
+        join(dir, `${pid}.json`),
+        JSON.stringify({ pid, startedAt: "2026-03-04T07:00:00.000Z", watches: true }),
+    );
 }
 
 function queueAt(box: Sandbox, now: string): Record<string, unknown> {
@@ -236,6 +239,68 @@ describe("a lead session started before agent reports existed keeps its subagent
             expect(box.ok(["digest"], { now: LATER })).toContain(
                 "T1 (x) is active but its agent T11Sub has not reported running since 19m ago (state/agents/T11Sub.json)",
             );
+        } finally {
+            lead.kill();
+            await lead.exited;
+        }
+    });
+});
+
+describe("a native subagent its harness reports is not flagged while it works, and is once it ends (T1541)", () => {
+    // T1541: every fleet check flagged live native subagents as "no live run" after the grace minutes: a Claude Code
+    // subagent never reported, and an omp lead whose extension loaded before its subagents were watched carried the
+    // reporting mark while none of its subagents reported.
+    const START = "2026-03-04T08:00:00.000Z";
+    const claude = (box: Sandbox, input: Record<string, string>, now: string): string =>
+        box.ok(["hook", "claude-agent"], { stdin: JSON.stringify(input), now });
+
+    test("a Claude Code subagent counts while its hooks report it working, and is flagged once it stops", () => {
+        const box = twoSlots(1);
+        box.ok(["task", "start", "T1", "--agent", "a1b2c3"], { now: START });
+        const agent = { agent_id: "a1b2c3", agent_type: "general-purpose" };
+        expect(claude(box, { ...agent, hook_event_name: "SubagentStart" }, "2026-03-04T08:00:05.000Z")).toBe("");
+        claude(box, { ...agent, hook_event_name: "PostToolUse", tool_name: "Bash" }, "2026-03-04T08:50:00.000Z");
+        // An hour in, its last tool call ten minutes ago: it is working.
+        expect(queueAt(box, "2026-03-04T09:00:00.000Z")).toMatchObject({ subagents: 1 });
+        expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).not.toContain("T1 (x) is active");
+        claude(box, { ...agent, hook_event_name: "SubagentStop" }, "2026-03-04T09:01:00.000Z");
+        // A tool-call report that lands after the stop never revives it.
+        claude(box, { ...agent, hook_event_name: "PostToolUse", tool_name: "Bash" }, "2026-03-04T09:01:01.000Z");
+        expect(queueAt(box, "2026-03-04T09:02:00.000Z")).toMatchObject({ subagents: 0 });
+        expect(box.ok(["digest"], { now: "2026-03-04T09:20:00.000Z" })).toContain(
+            "T1 (x) is active but its run a1b2c3 ended 19m ago (state/agents/a1b2c3.json)",
+        );
+    });
+
+    test("a Claude Code subagent that stops reporting is flagged after the grace minutes", () => {
+        const box = twoSlots(1);
+        box.ok(["task", "start", "T1", "--agent", "a1b2c3"], { now: START });
+        const agent = { agent_id: "a1b2c3", agent_type: "general-purpose" };
+        claude(box, { ...agent, hook_event_name: "SubagentStart" }, START);
+        claude(box, { ...agent, hook_event_name: "PostToolUse", tool_name: "Bash" }, "2026-03-04T08:10:00.000Z");
+        expect(box.ok(["digest"], { now: "2026-03-04T08:20:00.000Z" })).not.toContain("T1 (x) is active");
+        expect(box.ok(["digest"], { now: "2026-03-04T08:30:00.000Z" })).toContain(
+            "T1 (x) is active but its agent a1b2c3 has not reported running since 20m ago (state/agents/a1b2c3.json)",
+        );
+    });
+
+    test("the main session's tool calls and an id that names no file report nothing", () => {
+        const box = twoSlots(0);
+        claude(box, { hook_event_name: "PostToolUse", tool_name: "Bash" }, START);
+        claude(box, { hook_event_name: "SubagentStart", agent_id: "../escape" }, START);
+        expect(existsSync(join(box.root, "state", "agents"))).toBe(false);
+    });
+
+    test("an omp lead marked before it watched its subagents keeps them alive while it lives", async () => {
+        const box = twoSlots(1);
+        const lead = await leadSession(box, ["task", "start", "T1", "--agent", "T11Sub"], START);
+        try {
+            // The mark an extension wrote before it watched its subagents (no `watches`): none of them ever reports.
+            const dir = join(box.root, "state", "agent-sessions");
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, `${lead.pid}.json`), JSON.stringify({ pid: lead.pid, startedAt: START }));
+            expect(queueAt(box, "2026-03-04T09:00:00.000Z")).toMatchObject({ subagents: 1 });
+            expect(box.ok(["digest"], { now: "2026-03-04T09:00:00.000Z" })).not.toContain("T1 (x) is active");
         } finally {
             lead.kill();
             await lead.exited;

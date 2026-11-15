@@ -1,14 +1,16 @@
 // `bin/toli hook <name>`: harness hook entry points. Claude Code runs these from .claude/settings.json
 // (written by `bin/toli harness sync`); each reads the hook's JSON on stdin. A hook never fails closed:
 // any internal error allows the call, so a toli bug can never block a jawan or the lead's bookkeeping.
+// `claude-agent` reports a native subagent running (src/records/agents.ts); Claude Code runs it in the background.
 // `lead-build-env` is the omp extension's: it reads no stdin.
 import { appendFileSync, closeSync, openSync, readSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { out, readStdin, shellQuote, ToliError, warn } from "../core/util.ts";
+import { now, out, readStdin, shellQuote, ToliError, warn } from "../core/util.ts";
 import { capacityFor } from "../fleet/resources.ts";
 import { leadBuildEnv } from "../jawans/env.ts";
+import { type HookAgentEvent, reportHookEvent } from "../records/agents.ts";
 import { takeWake, wakeMessage } from "../records/wake.ts";
 import { leadNoticeContext, takeSetupNotice } from "../setup/setup.ts";
 import { leadGuidance } from "./guidance.ts";
@@ -17,11 +19,15 @@ import { claudeAction, guardDecision, isBrief, jawanEnv } from "./lead-guard.ts"
 type ClaudeHookInput = {
     cwd?: string;
     transcript_path?: string;
+    hook_event_name?: string;
     tool_name?: string;
     tool_input?: Record<string, unknown>;
     agent_id?: string;
     prompt?: string;
 };
+
+/** The subagent events `claude-agent` reports, by Claude Code hook event; a tool call is any other event. */
+const CLAUDE_AGENT_EVENTS: Record<string, HookAgentEvent> = { SubagentStart: "start", SubagentStop: "stop" };
 
 const TRANSCRIPT_PREFIX_BYTES = 256 * 1024;
 
@@ -98,6 +104,16 @@ export function claudeSessionContext(input: ClaudeHookInput, env: Record<string,
 }
 
 /**
+ * Report the subagent a Claude Code hook fired in (`agent_id`, absent in the main session) as running: at its start,
+ * after each of its tool calls, and at its stop (src/records/agents.ts reportHookEvent).
+ */
+export function claudeAgentReport(input: ClaudeHookInput, at: Date): void {
+    const id = input.agent_id ?? "";
+    if (id === "") return;
+    reportHookEvent(paths.root(), id, CLAUDE_AGENT_EVENTS[input.hook_event_name ?? ""] ?? "tool", at);
+}
+
+/**
  * The build variables a lead session sets for itself and the native subagents it starts (src/jawans/env.ts
  * `leadBuildEnv`), or null in a `bin/toli spawn` jawan, whose supervisor set its own (a live-stack project's without
  * the shim).
@@ -167,9 +183,12 @@ export function hookCommand(argv: string[]): void {
         case "lead-build-env":
             out(JSON.stringify(leadBuildVars(process.env) ?? {}));
             return;
+        case "claude-agent":
+            guarded(name, () => claudeAgentReport(parseInput(), now()));
+            return;
         default:
             throw new ToliError(
-                "usage: toli hook claude-pre-tool|claude-prompt|claude-session-start (JSON on stdin) | lead-build-env",
+                "usage: toli hook claude-pre-tool|claude-prompt|claude-session-start|claude-agent (JSON on stdin) | lead-build-env",
             );
     }
 }

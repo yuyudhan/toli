@@ -25,9 +25,15 @@ function hookCommand(name: string): { type: "command"; command: string; timeout:
 }
 
 function claudeSettings(): string {
+    // A subagent's start, each of its tool calls and its stop report it running (src/records/agents.ts); in the
+    // background, so no tool call waits on the report.
+    const agentReport = [{ hooks: [{ ...hookCommand("claude-agent"), async: true }] }];
     const settings = {
         hooks: {
             PreToolUse: [{ matcher: CLAUDE_HOOK_MATCHER, hooks: [hookCommand("claude-pre-tool")] }],
+            PostToolUse: agentReport,
+            SubagentStart: agentReport,
+            SubagentStop: agentReport,
             UserPromptSubmit: [{ hooks: [hookCommand("claude-prompt")] }],
             SessionStart: [{ hooks: [hookCommand("claude-session-start")] }],
         },

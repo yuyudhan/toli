@@ -31,18 +31,23 @@
 // Two things are not. When the extension loads in any omp that is not a `bin/toli spawn`
 // jawan, it puts the lead's build variables (`bin/toli hook lead-build-env`: the cargo shim
 // first on PATH, CARGO_BUILD_JOBS, toli's rustc wrapper) into this process's environment, before any shell starts,
-// so the bash tool and every native subagent (omp `task`) build through the heavy-build slots. And every subagent
-// session reports itself running in state/agents/<id>.json from its agent loop's start, every minute, until its
-// loop ends (src/records/agents.ts AgentReporter): a native jawan counts as running only on that evidence, never
-// because the lead session that started it is still open. Loading marks this omp as one whose subagents report
-// (state/agent-sessions/<pid>.json); a lead omp without the mark predates the reports, and its subagents count while
-// it runs, until it restarts.
+// so the bash tool and every native subagent (omp `task`) build through the heavy-build slots. And every session
+// watches the subagents it runs: every minute it reads omp's own async-job snapshot and reports each running `task`
+// subagent in state/agents/<id>.json, then its end once it stops running (src/records/agents.ts SubagentWatch). A
+// native jawan counts as running only on that evidence, never because the lead session that started it is still
+// open. Watching marks this omp in state/agent-sessions/<pid>.json; a lead omp without the mark predates the watch,
+// and its subagents count while it runs, until it restarts.
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CliHealth } from "../../src/harness/cli-health.ts";
 import { guardDecision, isBrief, jawanEnv, ompAction } from "../../src/harness/lead-guard.ts";
-import { AGENT_REPORT_EVERY_MS, AgentReporter, markReportingSession } from "../../src/records/agents.ts";
+import {
+    AGENT_REPORT_EVERY_MS,
+    markWatchingSession,
+    runningSubagents,
+    SubagentWatch,
+} from "../../src/records/agents.ts";
 
 // omp ships no installable type package; declare the surface this file uses.
 type Timer = unknown;
@@ -51,6 +56,8 @@ type Context = {
     cwd: string;
     /** The agent this session runs; subagents (task, advisor) report kind "sub". */
     agent?: { kind: string; id: string };
+    /** The session's async jobs (running `task` subagents among them); absent in an older omp. */
+    getAsyncJobSnapshot?: () => unknown;
     isIdle(): boolean;
     setInterval(fn: () => unknown, ms: number): Timer;
     ui: { notify(message: string, level: "info" | "warning" | "error"): void };
@@ -197,7 +204,16 @@ export default function toliExtension(pi: ExtensionAPI): void {
         }
     }
 
+    // Every session watches the subagents it runs (see the header); the session's end ends any still running.
+    const watch = new SubagentWatch(REPO_ROOT, process.pid);
     pi.on("session_start", async (_event, ctx) => {
+        if (ctx.getAsyncJobSnapshot !== undefined) {
+            markWatchingSession(REPO_ROOT, process.pid, new Date());
+            ctx.setInterval(
+                () => watch.observe(runningSubagents(ctx.getAsyncJobSnapshot?.()), new Date()),
+                AGENT_REPORT_EVERY_MS,
+            );
+        }
         if (!isMainInteractiveSession(ctx)) return;
         await guarded(ctx, async () => {
             await register();
@@ -231,20 +247,8 @@ export default function toliExtension(pi: ExtensionAPI): void {
         return decision.allow ? undefined : { block: true, reason: decision.reason };
     });
 
-    // A subagent session reports itself running (see the header); the main session's reporter does nothing.
-    markReportingSession(REPO_ROOT, process.pid, new Date());
-    const reporter = new AgentReporter(REPO_ROOT, process.pid);
-    let beating = false;
-    pi.on("agent_start", (_event, ctx) => {
-        reporter.started(ctx.agent, new Date());
-        if (beating || ctx.agent?.kind !== "sub") return;
-        beating = true;
-        ctx.setInterval(() => reporter.beat(new Date()), AGENT_REPORT_EVERY_MS);
-    });
-    pi.on("agent_end", () => reporter.ended(new Date()));
-
     pi.on("session_shutdown", async () => {
-        reporter.ended(new Date());
+        watch.observe([], new Date());
         if (!registered) return;
         registered = false;
         await runToli(["session", "end", "--pid", String(process.pid)]);

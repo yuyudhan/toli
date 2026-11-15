@@ -13,14 +13,14 @@ run by the tests and `bin/toli doctor`) reports drift.
 
 ## Matrix
 
-| Harness     | CLI            | Lead context                           | Skills / commands                               | Background subagents                    | Per-turn guidance and guard                                                              |
-| ----------- | -------------- | -------------------------------------- | ----------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| omp         | `omp`          | `AGENTS.md`                            | `.omp/skills`, `.omp/commands`                  | yes (`task` tool)                       | `.omp/extensions/toli.ts`: guidance every turn, lead guard, result push                  |
-| Claude Code | `claude`       | `CLAUDE.md` (imports `@AGENTS.md`)     | `.claude/skills`, `.claude/commands` (symlinks) | yes (Agent tool, background by default) | `.claude/settings.json` hooks: UserPromptSubmit, PreToolUse, SessionStart (setup notice) |
-| Codex CLI   | `codex`        | `AGENTS.md`                            | `.agents/skills` (no project commands)          | no: the main turn waits, use `spawn`    | rules in `AGENTS.md` only                                                                |
-| Cursor CLI  | `cursor-agent` | `AGENTS.md` + `.cursor/rules/toli.mdc` | `.agents/skills`, `.cursor/commands`            | waits in CLI mode, use `spawn`          | `.cursor/rules/toli.mdc` (always applied)                                                |
-| Grok CLI    | `grok`         | `AGENTS.md`                            | `.claude/skills` (Grok reads Claude skills)     | yes (`spawn_subagent`, background)      | rules in `AGENTS.md`                                                                     |
-| pi          | `pi`           | `AGENTS.md`                            | `.agents/skills`, `.pi/prompts`                 | none by design, use `spawn`             | rules in `AGENTS.md`                                                                     |
+| Harness     | CLI            | Lead context                           | Skills / commands                               | Background subagents                    | Per-turn guidance and guard                                                                                                                           |
+| ----------- | -------------- | -------------------------------------- | ----------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| omp         | `omp`          | `AGENTS.md`                            | `.omp/skills`, `.omp/commands`                  | yes (`task` tool)                       | `.omp/extensions/toli.ts`: guidance every turn, lead guard, result push, subagent reports                                                             |
+| Claude Code | `claude`       | `CLAUDE.md` (imports `@AGENTS.md`)     | `.claude/skills`, `.claude/commands` (symlinks) | yes (Agent tool, background by default) | `.claude/settings.json` hooks: UserPromptSubmit, PreToolUse, SessionStart (setup notice), subagent reports (SubagentStart, PostToolUse, SubagentStop) |
+| Codex CLI   | `codex`        | `AGENTS.md`                            | `.agents/skills` (no project commands)          | no: the main turn waits, use `spawn`    | rules in `AGENTS.md` only                                                                                                                             |
+| Cursor CLI  | `cursor-agent` | `AGENTS.md` + `.cursor/rules/toli.mdc` | `.agents/skills`, `.cursor/commands`            | waits in CLI mode, use `spawn`          | `.cursor/rules/toli.mdc` (always applied)                                                                                                             |
+| Grok CLI    | `grok`         | `AGENTS.md`                            | `.claude/skills` (Grok reads Claude skills)     | yes (`spawn_subagent`, background)      | rules in `AGENTS.md`                                                                                                                                  |
+| pi          | `pi`           | `AGENTS.md`                            | `.agents/skills`, `.pi/prompts`                 | none by design, use `spawn`             | rules in `AGENTS.md`                                                                                                                                  |
 
 Sources: omp `omp://context-files.md`, `omp://skills.md` (same-file symlinks are de-duplicated by realpath),
 `omp://extensions.md` (`before_agent_start`, `tool_call`); Claude Code
@@ -74,17 +74,22 @@ coordinator's inbox. Run records live in `state/jawans/<id>.json`.
 **Jawan slots.** A machine runs at most `capacity.maxRuns` jawans at once (config/machine.json, default a quarter of
 the cores): running spawn runs plus the lead's native subagents that are running now, one per distinct agent id
 recorded with `task start --agent <id>` on an active task no spawn run works on. A live lead session is no evidence
-that any one of its subagents runs: one interactive session outlives the many subagents it started. The omp extension
-has every subagent session report itself running in `state/agents/<id>.json` (its omp pid and last report, every
-minute, and its end when its loop ends); a subagent counts while that report is fresh (3 minutes) from a running omp.
-An agent no harness reports (a Claude Code subagent, a label naming who works on it) counts only for
+that any one of its subagents runs: one interactive session outlives the many subagents it started. The harness
+reports each subagent running in `state/agents/<id>.json`, with nothing for the jawan to do. omp: the extension in the
+session that started it reads that session's own async-job list every minute and reports each running `task`
+subagent (the omp pid and the time), then its end once it stops running; it counts while that report is fresh (3
+minutes) from a running omp. Claude Code: the `SubagentStart`, `PostToolUse` and `SubagentStop` hooks (`bin/toli hook
+claude-agent`, run in the background) report it at its start, after each of its tool calls and at its stop; it counts
+while its last report is younger than `oversight.staleTaskMinutes`, so the lead records the Agent tool's `agentId`.
+An agent no harness reports (a label naming who works on it) counts only for
 `oversight.staleTaskMinutes` after it was recorded; a `bin/toli remote` run (`remote:<machine>:...`) is the target's
 jawan, never one here, and so is a label naming another fleet machine (the task waits on that machine,
 docs/fleet.md). `task start --agent` also records the lead session that runs it (the extension-registered
 session, the `lead attach` omp or a headless turn's omp, whichever is an ancestor of the command); once its pid is
-gone, its subagents died with it. Each omp that loads the extension marks itself in
-`state/agent-sessions/<pid>.json`; a live lead session without that mark started before an upgrade brought agent
-reports, so its subagents never report and count as running while it runs (the earlier rule), until it restarts.
+gone, its subagents died with it. Each omp whose extension watches its subagents marks itself in
+`state/agent-sessions/<pid>.json` (`watches: true`); a live lead session without that mark started before an upgrade
+brought the watch, so its subagents are never reported and count as running while it runs (the earlier rule), until
+it restarts.
 The digest's Next block lists a task whose subagent died with its session (`its
 agent <id> died with its session <pid>`), reported its end (`its run <id> ended ... (state/agents/<id>.json)`),
 stopped reporting (`has not reported running since ...`) or never reported (`never reported running`) for a
