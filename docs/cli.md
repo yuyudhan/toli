@@ -121,6 +121,7 @@ the interactive Sardar's subagents.
 ### Landing work
 
     commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
+      (--resolved -- <conflicted paths> [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers)
     branch <project> <branch>
     workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]

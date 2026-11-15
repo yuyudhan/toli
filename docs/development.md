@@ -21,6 +21,7 @@ bin/toli commit toli -m "Fix the digest's footer" -- src/records/digest.ts tests
 bin/toli commit toli -m "Fix one hunk" --patch my.diff       # only the hunks in my.diff (--patch repeats)
 bin/toli commit app -m "Merge feature" --merge feature        # a clean two-parent merge, nothing else named
 bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   # conflicts resolved in the tree
+bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Cargo.lock src/b.rs   # plus fixes to merged files
 ```
 
 `bin/toli commit` (all projects; `toli` means this checkout, on `develop`) never uses the shared index:
@@ -56,19 +57,26 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   
    edited. Repeated `-m` values become separate paragraphs, as with `git commit`.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
-   above. It refuses a ref already merged, local changes or untracked files at paths the merge changes, and named
-   paths the merge also changes (commit the merge first), except a lock file: a clean merge can leave `Cargo.lock` or
-   `bun.lock` stale (each side's text merges, the entries both sides need do not), so a named, regenerated lock file
-   replaces the merged one and goes through the lock check like any staged lock. A conflicted merge is refused, naming
+   above. It refuses a ref already merged, local changes or untracked files at paths the merge changes (other than
+   the named ones of a `--resolved` merge), and on a clean merge named paths the merge also changes (commit the merge
+   first), except a lock file: a clean merge can leave `Cargo.lock` or `bun.lock` stale (each side's text merges, the
+   entries both sides need do not), so a named, regenerated lock file replaces the merged one and goes through the
+   lock check like any staged lock. A conflicted merge is refused, naming
    the conflicted paths and the merge-tree tree (`git show <tree>:<path>` shows each with conflict markers). Write the
    resolved files in the working tree, then run the same commit with `--resolved -- <conflicted paths>`: the named files
    replace the conflicted ones, every conflicted path must be named and free of conflict markers, and every check
-   above runs on the result (`--resolved` on a clean merge is refused). After the branch moves it checks the merged
+   above runs on the result (`--resolved` on a clean merge is refused). A resolved merge may also change paths the
+   merge changed cleanly, named after `--` (their working-tree files) or in a `--patch` applied on top of the merge
+   result: an evil merge, for fixes the bare merge result needs (a refreshed `Cargo.lock`, lint fixes to files the ref
+   added), landed in the one two-parent commit, since the bare merge alone may fail the pre-commit hook. Every check
+   above still runs. Such paths are listed in the commit's `Merge-amended: <path>` trailers and printed after the
+   sha; review them with `git show --remerge-diff <sha> -- <path>`. After the branch moves it checks the merged
    files out into the shared index and working tree (`git restore --source=<commit> --staged --worktree`).
    A `git merge` already in progress in the checkout (MERGE_HEAD) lands the same way, with `--merge <its sha>` (or
    `--merge MERGE_HEAD`), plus `--resolved -- <conflicted paths>` when it had conflicts: the merge-tree result is the
-   start, merged files not named must match it in the working tree (name a file to commit your edit of it), and after
-   the branch moves `git merge --quit` ends the merge. Any other commit is refused while a merge is in progress, since
+   start, merged files not named must match it in the working tree (name a file to commit your edit of it, listed in
+   a `Merge-amended:` trailer), and after the branch moves `git merge --quit` ends the merge. Any other commit is
+   refused while a merge is in progress, since
    it would record one parent and drop the merged one; so is an octopus merge.
 
 For toli, it then refreshes the installed runtime (below), so the live session runs the new commit from the next

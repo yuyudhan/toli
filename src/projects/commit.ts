@@ -11,7 +11,9 @@
 // parent; the files the merge brought are then checked out into the shared index and working tree. A conflicted merge
 // is refused unless `--resolved`: then the named working-tree files replace merge-tree's conflicted ones, every
 // conflicted path must be named and marker-free, and the usual checks run on the result. A named path the merge
-// conflicts on or changes that is in neither the working tree nor the merge result is resolved by deleting it.
+// conflicts on or changes that is in neither the working tree nor the merge result is resolved by deleting it. A
+// resolved merge may also change paths the merge changed cleanly (an evil merge: fixes the bare result needs, by name
+// or patch); they land in the same commit, listed in `Merge-amended:` trailers. A clean merge refuses such edits.
 // A `git merge` in progress (MERGE_HEAD) must be landed with `--merge <its sha>`: the commit then adopts it (merged
 // files not named must match the merge result in the working tree, named ones may change it) and ends it with
 // `git merge --quit`. Any other commit is refused while it is in progress, since it would drop the merged parent.
@@ -58,7 +60,8 @@ export type CommitRequest = {
     merge?: string;
     /**
      * The merge's conflicts are resolved in the working tree: every conflicted path must be among `paths`, free of
-     * conflict markers. Without it a conflicted merge is refused.
+     * conflict markers. Without it a conflicted merge is refused. With it, named or patched paths the merge changed
+     * cleanly may change too (recorded as `Merge-amended:` trailers).
      */
     resolved?: boolean;
 };
@@ -66,13 +69,17 @@ export type CommitRequest = {
 /** One `--patch` file: its name as given (for errors) and its diff. */
 export type CommitPatch = { name: string; diff: string };
 
-/** `files`: every path changed against the first parent; `merged`: those the merge brought in (not named). */
+/**
+ * `files`: every path changed against the first parent; `merged`: those the merge brought in (not named); `amended`:
+ * the merge-changed paths the commit changes again on top of the merge result (its `Merge-amended:` trailers).
+ */
 export type Committed = {
     sha: string;
     branch: string;
     parent: string;
     files: string[];
     merged: string[];
+    amended: string[];
     attempts: number;
 };
 
@@ -90,13 +97,13 @@ function attemptCommit(
     if (branch === null) throw new ToliError(`refusing: ${dir} is on a detached HEAD; commit on a branch`);
     const ref = `refs/heads/${branch}`;
     const parent = headSha(dir, ref);
-    const { sha, subject, files, merge } = buildCommit(request, parent, branch, adopted);
+    const { sha, subject, files, merge, amended } = buildCommit(request, parent, branch, adopted);
     hooks.beforeUpdateRef?.(attemptNo);
     const moved = git(dir, ["update-ref", "-m", `toli commit: ${subject}`, ref, sha, parent]);
     if (moved.code !== 0) return null;
     // A path the merge touches that ends as in `parent` (a conflict resolved by deleting it) has nothing to check out.
     const merged = merge?.files.filter((file) => files.includes(file)) ?? [];
-    return { sha, branch, parent, files, merged, attempts: attemptNo };
+    return { sha, branch, parent, files, merged, amended, attempts: attemptNo };
 }
 
 /** A commit built for export: `patch` is its `git format-patch` text; no ref, index or working tree moved. */
@@ -325,6 +332,10 @@ export function commitCommand(argv: string[]): void {
     }
     const committed = safeCommit(request);
     out(committed.sha);
+    if (committed.amended.length > 0)
+        warn(
+            `toli: the merge commit also amends ${committed.amended.length} path(s) the merge itself changed, recorded as Merge-amended: trailers (review: git show --remerge-diff ${committed.sha.slice(0, 12)} -- <path>): ${committed.amended.join(", ")}`,
+        );
     // toli's own checkout: the live session runs the installed runtime, so move it to the new commit. Not after a
     // merge: the merged code has not passed `just check` here yet, so the runtime waits for `bin/toli self sync`.
     if (samePath(dir, paths.root()) && activeRuntime(dir) !== null) {

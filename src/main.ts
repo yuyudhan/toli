@@ -75,6 +75,7 @@ const USAGE = `usage: bin/toli <command> [args]
   lead install|uninstall | status [--json] | run [--once] | attach | full [--reason "..."] [--until 30m|2h|<time>] | full --clear|--status
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
+    (--resolved -- <conflicted paths> [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers)
   branch <project> <branch>
   workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
   self sync [--json] | status [--json]

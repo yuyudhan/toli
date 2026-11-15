@@ -25,9 +25,10 @@ export type Merge = {
 /**
  * The merge of `ref` into `parent` (`git merge-tree --write-tree`, which touches neither index nor working tree).
  * Refuses a ref already contained in `parent`, a conflicted merge unless `resolved`, `resolved` on a clean merge, and
- * local changes to the files it changes other than the conflicted ones and the named lock files (those hold the
- * resolution). An `adopted` merge (`git merge` already wrote it into the working tree) instead refuses merged files
- * not named whose working-tree version differs from the merge result: checking the commit out would overwrite them.
+ * local changes to the files it changes other than the conflicted ones, the named lock files and, when `resolved`, the
+ * named paths (those hold the resolution and its fixes). An `adopted` merge (`git merge` already wrote it into the
+ * working tree) instead refuses merged files not named whose working-tree version differs from the merge result:
+ * checking the commit out would overwrite them.
  */
 export function cleanMerge(
     dir: string,
@@ -56,8 +57,13 @@ export function cleanMerge(
         throw new ToliError(`refusing: --resolved, but merging ${ref} has no conflicts; drop --resolved`);
     const files = gitPaths(dir, ["diff", "--name-only", "-z", "--no-renames", parent, tree]);
     const regenerated = files.filter((file) => isLockFile(file) && named.includes(file));
+    // Named paths hold the committer's version when the merge is adopted or resolved (an evil merge: fixes the bare
+    // merge result needs, committed with it); buildCommit reports them as amended.
     const checked = files.filter(
-        (file) => !conflicts.includes(file) && !regenerated.includes(file) && !(adopted && named.includes(file)),
+        (file) =>
+            !conflicts.includes(file) &&
+            !regenerated.includes(file) &&
+            !((adopted || resolved) && named.includes(file)),
     );
     if (adopted) {
         const edited =
