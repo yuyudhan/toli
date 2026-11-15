@@ -4,6 +4,13 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.28 - 2026-11-15
+
+### Fixed
+
+- native subagents report running through their harness (f326043)
+- disk keeper's dry run keeps what the real run keeps (ee8862c)
+
 ## v0.5.27 - 2026-11-15
 
 ### Fixed
