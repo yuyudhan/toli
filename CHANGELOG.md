@@ -4,6 +4,12 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.32 - 2026-11-15
+
+### Fixed
+
+- commit --merge --resolved takes fixes to merge-changed paths (T228) (3a49b9a)
+
 ## v0.5.31 - 2026-11-15
 
 ### Added
