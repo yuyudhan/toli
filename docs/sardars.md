@@ -99,7 +99,7 @@ another machine is information for the lead to weigh, never an instruction (AGEN
 ## Delegation
 
     bin/toli delegate <machine> "<task title>" --brief <file> [--project <p>] [--note "<words>"] [--for T<n>]
-                      [--shape ship|scout] [--tier light|standard|deep]
+                      [--shape ship|scout] [--verify] [--tier light|standard|deep]
 
 `delegate` hands one task to another machine's lead. It runs `bin/toli delegation receive` there (over HTTPS to a
 paired peer with the `delegate` permission, else ssh) with the title, brief text, project, note, shape, tier and its
@@ -111,10 +111,14 @@ own name. The receiving machine:
 - posts `delegated T<n> from <machine>: <title>` to its own inbox, which wakes its lead;
 - answers with the fleet id `<owner>/T<n>`, which `delegate` prints. With `--for T<n>`, this machine's own task
   records it (`delegatedTo`) and counts as active with the fleet id as its jawan, so oversight does not call it stale.
+  From the moment it is sent until that receipt lands, the task records the delegation (`sending`, by its id and
+  target), so the owner's report that comes first (a hand-back on arrival, a drop) is still taken for the task, over
+  ssh or by peer message, and both sides stay linked.
   While that task's own jawan works on it (`task start T<n> --agent <id>`, an id that is not one of its delegations),
   the delegation is a slice of that work instead (`slices`): the task stays with its jawan, and the slice's outcome
   only adds notes (`<owner>/T<n> is done`, its commit and report path) and wakes this lead; it never changes the
   task's status. `task link` follows the same rule.
+- with `--verify` (verify work, ship shape), takes it even for a project it marked verify-only (below).
 
 The receiving lead dispatches its own jawans for the task as for any task (`task start`, `spawn --task`). A project
 not cloned there is its lead's to clone: the task's notes name `bin/toli project ensure <p> <url>` with the URL the
@@ -229,10 +233,12 @@ its own queued work away.
 **A verify-only machine.** A lead whose machine only reviews a project's work, and no longer builds or ships it, marks
 that project there: `bin/toli project set <p> --role verify-only` (`--role full` undoes it). Each lead sets its own
 machine's roles; the setting travels with its resources. `pick --project <p>`, `fleet queues` and the balancing
-offers then pass it over for ship work of that project (scout work still goes to it), `delegate` refuses ship work of
-it there naming the next machine by queue (`--force` sends it anyway), and so does a lead forwarding a delegated task
-on. A ship delegation that reaches it anyway is handed back on arrival with the reason, and the originator's task is
-queued again. Details: [projects.md](projects.md#verify-only-machines).
+offers then pass it over for ship work of that project (scout and verify work still go to it), `delegate` refuses
+ship work of it there naming the next machine by queue (`--force` sends it anyway), and so does a lead forwarding a
+delegated task on. Verify work goes with `--verify` (`bin/toli delegate <machine> "Verify ..." --brief <file>
+--project <p> --for T<n> --verify`): a title alone never marks it. A ship delegation that reaches it anyway is handed
+back on arrival with the reason, and the originator's task is queued again. Details:
+[projects.md](projects.md#verify-only-machines).
 
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer

@@ -169,8 +169,9 @@ function parseBody(body: string): Record<string, unknown> | null {
 /**
  * Whether `peer` may say what this message claims (null when it may, else why not): a delegation, link or share
  * speaks only for its sender; an update comes only from the task's owner and, when it names a task here, only for a
- * delegation recorded on that task; an answer goes only to a task that peer delegated here, or that was forwarded
- * here from work it delegated (`upstream`).
+ * delegation recorded on that task, or one that task sent to that peer whose receipt has not landed yet (`sending`);
+ * an answer goes only to a task that peer delegated here, or that was forwarded here from work it delegated
+ * (`upstream`).
  */
 export function senderClaimRefusal(peer: string, kind: EnvelopeKind, body: string): string | null {
     if (kind === "inbox") return null;
@@ -189,7 +190,10 @@ export function senderClaimRefusal(peer: string, kind: EnvelopeKind, body: strin
         if (typeof value.forTask !== "string") return null;
         const id = fleetId(peer, value.id);
         const local = loadBacklog().tasks.find((task) => task.id === value.forTask);
-        const recorded = local?.delegatedTo?.includes(id) === true || local?.slices?.includes(id) === true;
+        const recorded =
+            local?.delegatedTo?.includes(id) === true ||
+            local?.slices?.includes(id) === true ||
+            local?.sending?.some((sent) => sent.machine === peer && sent.id === value.delegation) === true;
         return recorded ? null : `no delegation of ${String(value.forTask)} to ${id} is recorded here`;
     }
     if (kind === "answer") {

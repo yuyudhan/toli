@@ -57,6 +57,14 @@ work goes, never CPU, load or memory; there is no locking between jawans.
     Unreachable machines get it from `state/outbox/` once they answer. Tell the user in one line where it went and end
     the turn.
 
+- Verifying on another machine (step 6, a verify-only machine for the project, or any other): delegate the filled
+  verify brief with `--verify`, never by title alone:
+
+        bin/toli delegate <machine> "Verify T<n>: <short title>" --brief data/projects/<project>/briefs/T<n>-verify.md \
+          --project <project> --for T<n> --verify
+
+    A machine verify-only for the project takes verify work; plain ship work it hands back.
+
 - Several independent tasks (a toli): spread them by delegating to the shortest queues (`bin/toli fleet queues`,
   run async) instead of stacking them on one machine.
 - `pick` exits 2 only when no machine is reachable or qualifies (each machine's reason is printed): queue it with

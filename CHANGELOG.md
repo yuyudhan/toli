@@ -4,6 +4,20 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.33 - unreleased
+
+### Added
+
+- `bin/toli delegate ... --verify` marks verify work (a verifier checking ship work another machine made), so a
+  machine verify-only for the project takes it instead of handing it back as ship work. A delegated verify task keeps
+  the mark when forwarded on and in the balancing offers, and the hand-back of unmarked ship work names the flag.
+
+### Fixed
+
+- A delegation handed back or dropped by its receiver before the delegator recorded its receipt is no longer refused
+  as unrecorded when the report comes by peer message: the `--for` task records the delegation from the moment it is
+  sent, so both sides stay linked.
+
 ## v0.5.32 - 2026-11-15
 
 ### Fixed

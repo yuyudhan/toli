@@ -109,7 +109,7 @@ describe("delegate", () => {
         expect(refused.code).toBe(1);
         expect(refused.stderr.trim()).toBe(
             "toli: not sent: m2 is verify-only for app (it takes no ship work for it); " +
-                "next by queue: m1, this machine (bin/toli pick --project app); --force sends it anyway",
+                "next by queue: m1, this machine (bin/toli pick --project app); verify work goes with --verify; --force sends it anyway",
         );
         expect(existsSync(join(m2.root, "data", "backlog.json"))).toBe(false);
         expect(tasks(m1)[0]?.status).toBe("queued");

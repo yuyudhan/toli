@@ -62,12 +62,23 @@ export type DelegationFields = {
      * and report, and a wake, but never changes this task's status (src/records/delegation-sync.ts).
      */
     slices?: string[];
+    /**
+     * Delegations sent from this task (`delegate --for`) whose receipt, with the task's fleet id, has not landed yet
+     * (queued, pulled, or still crossing): `id` is the delegation's id. The owner's report can arrive first (it handed
+     * the work back or dropped it on arrival), and is taken for this task by that id (src/peer/envelope.ts).
+     */
+    sending?: Array<{ machine: string; id: string }>;
     /** Each delegated task's last reported state, by fleet id. */
     delegates?: Record<string, DelegateState>;
     /** `task escalate`: this hold is a delegated task's question; answering it here also answers it there. */
     heldFrom?: string;
     /** `task handback`: this delegated task was given back to its delegator, for this reason. */
     handedBack?: string;
+    /**
+     * Verify work (`delegate --verify`): it checks ship work another jawan or machine made, so a machine verify-only
+     * for the project takes it (docs/projects.md "Verify-only machines"). Its jawan is a verifier (`--work verify`).
+     */
+    verify?: true;
 };
 
 /** What travels to the delegator (JSON on `delegation update`'s stdin). */
@@ -78,6 +89,11 @@ export type DelegationUpdate = {
     forTask?: string;
     task: Pick<Task, "status" | "title" | "updatedAt" | "notes"> &
         Partial<Pick<Task, "question" | "options" | "recommend" | "blocks" | "commit" | "handedBack">>;
+    /**
+     * The delegation's id (`delegatedBy.id`), in the update to the delegator: it names the delegation the `--for` task
+     * sent before it knew this task's fleet id (`sending`).
+     */
+    delegation?: string;
     /**
      * Fleet ids this delegated task was itself delegated on as (its live `delegatedTo`): the work goes on there, and
      * the receiving task follows those too.
@@ -124,6 +140,19 @@ export function liveDelegations(task: Task): string[] {
         const state = task.delegates?.[id];
         return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
     });
+}
+
+/** Record that `task` sent delegation `id` to `machine` (`delegate --for`), until its receipt or report lands. */
+export function noteSending(task: Task, machine: string, id: string): void {
+    if (task.sending?.some((sent) => sent.machine === machine && sent.id === id)) return;
+    task.sending = [...(task.sending ?? []), { machine, id }];
+}
+
+/** Delegation `id` to `machine` landed (its receipt or its owner's report) or was given up: no longer `sending`. */
+export function landSending(task: Task, machine: string, id: string): void {
+    const left = (task.sending ?? []).filter((sent) => sent.machine !== machine || sent.id !== id);
+    if (left.length > 0) task.sending = left;
+    else delete task.sending;
 }
 
 /** The `upstream` chain a delegation or link carries (`what` names it in errors); absent is an empty chain. */
@@ -226,10 +255,13 @@ export function delegationUpdate(
 ): DelegationUpdate {
     const { status, title, updatedAt, notes, question, options, recommend, blocks, commit, handedBack } = task;
     const forwards = liveDelegations(task);
+    const by = task.delegatedBy;
+    const direct = by !== undefined && to?.machine === by.machine && to.task === by.task;
     return {
         owner,
         id: task.id,
         ...(to?.task === undefined ? {} : { forTask: to.task }),
+        ...(direct ? { delegation: by.id } : {}),
         task: {
             status,
             title,

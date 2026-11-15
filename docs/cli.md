@@ -82,7 +82,7 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
     task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>
     task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..." [--full]
-    delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--tier <t>] [--force]
+    delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--verify] [--tier <t>] [--force]
     delegation receive|update|link [--from <machine>] (JSON on stdin)
     talk <machine> ["<words>"]
     share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]

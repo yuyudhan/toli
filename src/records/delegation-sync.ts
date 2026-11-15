@@ -11,6 +11,7 @@ import { join, relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import {
+    isValidName,
     now,
     out,
     readJson,
@@ -28,6 +29,7 @@ import {
     type DelegationUpdate,
     delegators,
     fleetId,
+    landSending,
     REPORTED,
     splitFleetId,
     type Upstream,
@@ -72,6 +74,7 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         const { status, updatedAt, notes, question, options, recommend, blocks, commit, handedBack } = update.task;
         const slice = task.slices?.includes(id) === true;
         if (!slice && !task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
+        if (update.delegation !== undefined) landSending(task, update.owner, update.delegation);
         for (const note of notes.slice(seen?.notes ?? 0))
             if (!note.startsWith("delegated by ")) task.notes.push(`${id}: ${note}`);
         const onward = slice ? [] : (update.forwardedTo ?? []).filter((entry) => entry !== id);
@@ -372,6 +375,9 @@ export function parseUpdate(text: string): DelegationUpdate {
     const update = parseJson<DelegationUpdate>(text, "delegation update");
     if (typeof update.owner !== "string" || typeof update.id !== "string" || typeof update.task?.updatedAt !== "string")
         throw new ToliError("delegation update: needs owner, id and task");
+    const delegation: unknown = update.delegation;
+    if (delegation !== undefined && (typeof delegation !== "string" || !isValidName(delegation)))
+        throw new ToliError("delegation update: delegation must be a delegation id");
     const forwards: unknown = update.forwardedTo;
     if (forwards === undefined) return update;
     if (!Array.isArray(forwards)) throw new ToliError("delegation update: forwardedTo must be a list of fleet ids");

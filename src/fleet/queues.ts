@@ -184,7 +184,7 @@ function recordSent(sent: BalanceSent): void {
  * The delegate command for each of this machine's tasks waiting for a jawan that can go to `target`, with its brief
  * when it has one. A task bound to this machine stays out: pinned here (`task pin`), of a project `target` has no
  * clone of and whose git URL is not registered here (`target` could not clone it; the pick rule), or ship work of a
- * project `target` marked verify-only. A scout task's command keeps its shape.
+ * project `target` marked verify-only (verify work goes, with `--verify`). A scout task's command keeps its shape.
  */
 function delegateLines(target: FleetEntry): string[] {
     const cloned = new Set(target.resources?.projects ?? []);
@@ -194,7 +194,12 @@ function delegateLines(target: FleetEntry): string[] {
             (task) =>
                 task.pinned === undefined &&
                 (task.project === "" || cloned.has(task.project) || clonable.has(task.project)) &&
-                !(task.shape === "ship" && target.resources !== null && refusesShip(target.resources, task.project)),
+                !(
+                    task.shape === "ship" &&
+                    task.verify !== true &&
+                    target.resources !== null &&
+                    refusesShip(target.resources, task.project)
+                ),
         )
         .map((task) => {
             const brief = briefPath(task.project, task.id);
@@ -203,6 +208,7 @@ function delegateLines(target: FleetEntry): string[] {
                 `--brief ${brief === null ? "<file>" : shellQuote(brief)}`,
                 ...(task.project === "" ? [] : [`--project ${shellQuote(task.project)}`]),
                 ...(task.shape === "ship" ? [] : [`--shape ${task.shape}`]),
+                ...(task.verify === true ? ["--verify"] : []),
             ].join(" ");
         });
 }

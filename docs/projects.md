@@ -192,21 +192,30 @@ kept as its code-review verifier) marks that project verify-only, on that machin
 `role=verify-only` shows in `bin/toli project list` (`"role": "verify-only"` in `--json`). The role is this
 machine's own choice, kept in its `data/projects.json`, and published with its resources (`verifyOnly` in
 `bin/toli resources --json`, `verify-only <p>` in `fleet status`), so every other machine sees it. No ship task for
-the project is then placed on it; scout and review work still is:
+the project is then placed on it; scout, review and verify work still is. Verify work (a verifier checking ship work
+another machine made, `docs/verify-brief-template.md`) is marked explicitly: `bin/toli delegate <machine> "Verify
+..." --brief <file> --project app --for T<n> --verify`. It is ship shape, so a lead forwarding a delegated verify
+task on keeps the mark (`--for` that task), and the receiving lead dispatches a verifier (`spawn --work verify`). A
+title starting with "Verify" without `--verify` is ship work like any other. For ship work of the project:
 
 - `bin/toli pick --project app` (ship by default; `--shape scout` for review work) passes it over with
   `verify-only for app: it takes no ship work for it`.
 - `bin/toli fleet queues` shows `verify-only app` on its row, and a suggestion to hand work to it says it takes no
   ship work for app.
 - The balancing offers (`queue: offer work to <machine>`) list no ship task of app for it; a scout task's command
-  carries `--shape scout`. Its own ask for work names the projects it takes no ship work for.
+  carries `--shape scout`, a verify task's `--verify`. Its own ask for work names the projects it takes no ship work
+  for.
 - `bin/toli delegate <machine> ... --project app` with ship work (the default shape, or the `--for` task's when
   `--shape` is not given), including a lead forwarding a delegated task on, is refused before anything is sent:
-  `not sent: <machine> is verify-only for app (it takes no ship work for it); next by queue: <other machine>`.
-  `--force` sends it anyway; the receiving task then notes that it came with `--force`.
-- A delegation that still reaches it (sent while it was unreachable, or by an older toli) is handed back on arrival
-  (`bin/toli task handback`, docs/sardars.md): its task is dropped there with the reason, and the delegator's `--for`
-  task goes back to queued, never dropped, even when the work was forwarded through another machine first.
+  `not sent: <machine> is verify-only for app (it takes no ship work for it); next by queue: <other machine> (...);
+verify work goes with --verify; --force sends it anyway`. `--force` sends it anyway; the receiving task then notes
+  that it came with `--force`.
+- A delegation that still reaches it (sent while it was unreachable, or by an older toli without `--verify`) is
+  handed back on arrival (`bin/toli task handback`, docs/sardars.md), with a reason that ends `verify work goes with
+bin/toli delegate --verify`: its task is dropped there with the reason, and the delegator's `--for` task goes back
+  to queued, never dropped, even when the work was forwarded through another machine first. The hand-back reaches
+  that task even when it arrives (by peer message) before the delegation's own receipt: the task records the
+  delegation as `sending` from the moment it is sent ([sardars.md](sardars.md)).
 
 ## Setting up an existing project
 

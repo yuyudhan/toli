@@ -14,6 +14,7 @@ import { type Delivered, type OutboxItem, queuedText, sendNow } from "../jobs/ou
 import { bodyLimit, TITLE_MAX } from "../peer/envelope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
+import { landSending, noteSending, splitFleetId } from "../records/delegation-report.ts";
 import { forwardChain, recordDelegation } from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { parseShape } from "../records/task-shape.ts";
@@ -31,7 +32,7 @@ const DELEGATION_TITLE_MAX = TITLE_MAX - TITLE_PREFIX.length;
  * Record the target's answer to a delivered delegation on the `--for` task (src/records/delegation-sync.ts
  * `recordDelegation`): it counts as active with that id as its jawan, so oversight does not call it stale, and a done
  * or dropped `--for` task (its earlier delegation was given up) is reopened; while the task's own jawan works on it,
- * the delegation is a slice that only reports back. Returns the fleet id.
+ * the delegation is a slice that only reports back. The delegation is no longer `sending`. Returns the fleet id.
  */
 export function acceptDelegation(delegation: Delegation, stdout: string): string {
     const accepted = ACCEPTED.exec(stdout);
@@ -39,7 +40,10 @@ export function acceptDelegation(delegation: Delegation, stdout: string): string
     const id = accepted[1] as string;
     const forTask = delegation.fromTask;
     if (forTask !== undefined && loadBacklog().tasks.some((task) => task.id === forTask)) {
-        updateTask(forTask, (task) => recordDelegation(task, id, `delegated to ${id}: ${delegation.title}`));
+        updateTask(forTask, (task) => {
+            recordDelegation(task, id, `delegated to ${id}: ${delegation.title}`);
+            landSending(task, splitFleetId(id).machine ?? "", delegation.id);
+        });
     }
     return id;
 }
@@ -81,7 +85,7 @@ async function verifyOnlyRefusal(target: FleetMachine, project: string): Promise
             : `next by queue: ${pick.machine}${pick.local ? ", this machine" : ""}`;
     return [
         `not sent: ${target.name} is verify-only for ${project} (it takes no ship work for it);`,
-        `${next} (bin/toli pick --project ${project}); --force sends it anyway`,
+        `${next} (bin/toli pick --project ${project}); verify work goes with --verify; --force sends it anyway`,
     ].join(" ");
 }
 
@@ -109,13 +113,18 @@ function queuedCopy(target: string, key: string): string | null {
 }
 
 /**
- * `delegate <machine> "<title>" --brief <file> [--project p] [--note "..."] [--for T<n>] [--shape s] [--tier t]
- * [--force]`. Prints the fleet id, or that the delegation is queued for the tick while the target is unreachable. Ship
- * work (the default shape, or the `--for` task's) for a project the target marked verify-only is refused naming the
- * next machine, unless `--force`.
+ * `delegate <machine> "<title>" --brief <file> [--project p] [--note "..."] [--for T<n>] [--shape s] [--verify]
+ * [--tier t] [--force]`. Prints the fleet id, or that the delegation is queued for the tick while the target is
+ * unreachable. Ship work (the default shape, or the `--for` task's) for a project the target marked verify-only is
+ * refused naming the next machine, unless `--force`; verify work (`--verify`, or a `--for` task that is verify work)
+ * goes to it. A `--for` task records the delegation as `sending` until its receipt lands, so the owner's report
+ * (a hand-back on arrival) is taken for it even when it comes first.
  */
 export async function delegateCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv, { values: ["brief", "project", "note", "for", "shape", "tier"], booleans: ["force"] });
+    const args = new Args(argv, {
+        values: ["brief", "project", "note", "for", "shape", "tier"],
+        booleans: ["force", "verify"],
+    });
     args.maxPositional(2);
     const targetName = requireName("machine", args.pos(0, "machine"));
     const title = args.pos(1, "title").trim();
@@ -142,7 +151,10 @@ export async function delegateCommand(argv: string[]): Promise<number> {
     if (forTask !== undefined && forEntry === undefined)
         throw new ToliError(`unknown task "${forTask}" (--for names this machine's own task)`);
     const upstream = forwardChain(forEntry);
-    const shape = parseShape(args.str("shape"), forEntry?.shape ?? "ship");
+    const verify = args.bool("verify") || forEntry?.verify === true;
+    const shape = parseShape(args.str("shape"), verify ? "ship" : (forEntry?.shape ?? "ship"));
+    if (verify && shape !== "ship")
+        throw new ToliError("--verify is ship work's check: it goes with --shape ship (or no --shape)");
     const force = args.bool("force");
     const tier = parseOptionalTier(args.str("tier"));
     const note = args.str("note");
@@ -157,6 +169,7 @@ export async function delegateCommand(argv: string[]): Promise<number> {
         ...(url ? { url } : {}),
         ...(note === undefined ? {} : { note }),
         shape,
+        ...(verify ? { verify: true as const } : {}),
         ...(tier === undefined ? {} : { tier }),
         ...(upstream.length === 0 ? {} : { upstream }),
         ...(force ? { force: true as const } : {}),
@@ -167,20 +180,28 @@ export async function delegateCommand(argv: string[]): Promise<number> {
         throw new ToliError(
             `the delegation is ${size} bytes; a delegation takes at most ${bodyLimit("delegation")} (the receiver refuses larger ones): shorten the brief`,
         );
-    if (shape === "ship" && !force) {
+    if (shape === "ship" && !verify && !force) {
         const refusal = await verifyOnlyRefusal(target, project ?? DEFAULT_PROJECT);
         if (refusal !== null) throw new ToliError(refusal);
     }
     const earlier = queuedCopy(target.name, delegationKey(delegation));
     const outboxId = `delegation-${delegation.id}`;
+    if (forTask !== undefined) updateTask(forTask, (task) => noteSending(task, target.name, delegation.id));
     const sent = sendNow(self, target, "delegation", `${TITLE_PREFIX}${title}`, body, outboxId);
+    const unsent = (): void => {
+        if (forTask !== undefined) updateTask(forTask, (task) => landSending(task, target.name, delegation.id));
+    };
     if (!sent.delivered) {
         // A refusal is final and the item already sits in state/outbox/cancelled/: nothing is queued to retry.
-        if (sent.refused !== undefined) throw new ToliError(queuedText(target.name, sent));
+        if (sent.refused !== undefined) {
+            unsent();
+            throw new ToliError(queuedText(target.name, sent));
+        }
         if (!sent.pulled) warn(sent.error);
         if (earlier !== null) {
             // The same work already waits in the outbox: keep that copy, never a second one for the target to receive.
             rmSync(join(paths.outboxDir(), `${outboxId}.json`), { force: true });
+            unsent();
             out(
                 `already queued for ${target.name} (${earlier}): that copy goes when it can, and its task id arrives here as a wake; do not delegate it again`,
             );

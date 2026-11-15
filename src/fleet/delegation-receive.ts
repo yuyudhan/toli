@@ -1,7 +1,8 @@
 // The receiving side of `bin/toli delegate` (docs/sardars.md): `bin/toli delegation receive` adds a delegation to this
 // machine's own backlog (owned here, `delegatedBy` naming the delegator), saves the brief and posts it to this
 // machine's inbox, which wakes its lead; `update` and `link` apply a delegated task's reports and links. Ship work for
-// a project this machine marked verify-only is handed back on arrival instead (docs/projects.md).
+// a project this machine marked verify-only is handed back on arrival instead; verify work (`--verify`) it takes
+// (docs/projects.md).
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -35,6 +36,8 @@ export type Delegation = {
     url?: string;
     note?: string;
     shape?: Shape;
+    /** `delegate --verify`: verify work, which a machine verify-only for the project takes. Ship shape only. */
+    verify?: true;
     tier?: Tier;
     /**
      * When the delegator forwards a task delegated to it (`--for` that task), the tasks above it, origin first: the
@@ -81,6 +84,9 @@ export function parseDelegation(text: string): Delegation {
     const upstream = parseUpstream(Reflect.get(value, "upstream"), "delegation receive");
     const force = Reflect.get(value, "force");
     if (force !== undefined && force !== true) throw new ToliError("delegation receive: force must be true");
+    const verify = Reflect.get(value, "verify");
+    if (verify !== undefined && verify !== true) throw new ToliError("delegation receive: verify must be true");
+    if (verify === true && shape === "scout") throw new ToliError("delegation receive: verify work is ship shape");
     return {
         id,
         from: requireName("machine", field("from")),
@@ -91,6 +97,7 @@ export function parseDelegation(text: string): Delegation {
         ...(url === undefined ? {} : { url }),
         ...(note === undefined ? {} : { note }),
         ...(shape === undefined ? {} : { shape }),
+        ...(verify === true ? { verify } : {}),
         ...(tier === undefined ? {} : { tier }),
         ...(upstream.length === 0 ? {} : { upstream }),
         ...(force === true ? { force } : {}),
@@ -127,17 +134,18 @@ function sameOpenWork(task: Task, delegation: Delegation, key: string): boolean 
  * work (delegationKey) from the same delegator while an earlier copy is open (a copy queued for the tick and a retry
  * that went through, or the delegating lead running the command again) returns that task. Returns the task and whether
  * it was new; a new one gets its brief saved and an inbox item that wakes this machine's lead. New ship work for a
- * project this machine marked verify-only (unless sent with `--force`) is handed back at once instead, with the reason
- * in `handedBack`: the delegator's `--for` task is queued again.
+ * project this machine marked verify-only (unless verify work, or sent with `--force`) is handed back at once instead,
+ * with the reason in `handedBack`: the delegator's `--for` task is queued again.
  */
 export function receiveDelegation(delegation: Delegation): { task: Task; created: boolean; handedBack?: string } {
     const project = delegation.project ?? DEFAULT_PROJECT;
     const cloned = existsSync(paths.projectDir(project));
     const key = delegationKey(delegation);
     const self = loadMachine().name;
-    // Ship work for a project this machine marked verify-only: handed back below, unless sent with --force.
+    // Ship work for a project this machine marked verify-only: handed back below, unless verify work or sent with --force.
     const verifyOnly =
         (delegation.shape ?? "ship") === "ship" &&
+        delegation.verify !== true &&
         loadProjects().some((entry) => entry.name === project && entry.role === "verify-only");
     // A chain that comes back here holds this machine's own task, which needs no report from itself.
     const upstream = (delegation.upstream ?? []).filter((entry) => entry.machine !== self);
@@ -153,6 +161,7 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
             project,
             title: delegation.title,
             shape: delegation.shape ?? "ship",
+            ...(delegation.verify === true ? { verify: true as const } : {}),
             status: "queued",
             ...(delegation.tier === undefined ? {} : { tier: delegation.tier }),
             notes: [
@@ -184,7 +193,7 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
     });
     if (!result.created) return result;
     if (verifyOnly && delegation.force !== true) {
-        const reason = `${self} is ${verifyOnlyText(project)} (bin/toli pick --project ${project})`;
+        const reason = `${self} is ${verifyOnlyText(project)} (bin/toli pick --project ${project}); verify work goes with bin/toli delegate --verify`;
         return { task: handBack(result.task.id, reason), created: true, handedBack: reason };
     }
     const { task } = result;
@@ -201,6 +210,11 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
             "",
             `- brief: ${briefFile}`,
             `- project: ${project}${cloned ? "" : " (not cloned here)"}`,
+            ...(delegation.verify === true
+                ? [
+                      `- verify work: dispatch a verifier (docs/verify-brief-template.md, \`bin/toli spawn --task ${task.id} --work verify\`)`,
+                  ]
+                : []),
             ...(delegation.fromTask === undefined ? [] : [`- for: ${delegation.fromTask} on ${delegation.from}`]),
             ...(delegation.note === undefined ? [] : [`- note: ${delegation.note}`]),
         ].join("\n"),
