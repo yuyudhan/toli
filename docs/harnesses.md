@@ -234,9 +234,11 @@ Configuration, all optional, in `config/machine.json`:
 a rate or usage limit (`429`, `rate_limit_error`, "usage limit" in the tail of its output) retries once: on
 `fallback[<model>]` (the same tier on another account or provider) when configured, else one tier lower, never below
 standard for `ship`, `verify`, `release` or work of unknown type (scout and mechanical may drop to light); else on the
-same model after the reset the error names (15 minutes when it names none), unless that is more than
-`limitWaitMinutes` (default 300) away. The decision is logged in the run's output and recorded as `fallback` on the run.
-`bin/toli exec` and scheduled jobs never wait for a reset: they only switch model.
+same model after the reset the error names (an ISO time, a `|<epoch>`, "in N minutes", `retry-after-ms`,
+`retry-after` in seconds, "resets 3pm"; 15 minutes when it names none), unless that is more than `limitWaitMinutes`
+(default 300) away. The decision is logged in the run's output and recorded as `fallback` on the run.
+`bin/toli exec` and scheduled jobs never wait for a reset: they only switch model, and a scheduled job whose limit
+names a reset skips its due runs until then ([jobs.md](jobs.md#rate-and-usage-limits)).
 
 **Records:** each run records `harness`, `model`, `tier` and `modelSource` (`bin/toli runs`, `run status`, the
 outcome in the inbox), plus `usage` (tokens, cost) when the harness prints them (Codex's `tokens used`; omp and Claude

@@ -106,6 +106,12 @@ describe("limit fallback", () => {
         );
         expect(limitReset("rate limited, try again in 20 minutes", at)?.toISOString()).toBe("2026-11-07T10:20:00.000Z");
         expect(limitReset("429 retry-after: 90", at)?.toISOString()).toBe("2026-11-07T10:01:30.000Z");
+        expect(limitReset('{"retry-after": "90"}', at)?.toISOString()).toBe("2026-11-07T10:01:30.000Z");
+        // Anthropic's millisecond header, as a scheduled run captured it.
+        expect(limitReset("429 rate_limit_error ... retry-after-ms=147223000", at)?.toISOString()).toBe(
+            "2026-11-09T02:53:43.000Z",
+        );
+        expect(limitReset('"retry-after-ms": "1500"', at)?.toISOString()).toBe("2026-11-07T10:00:01.500Z");
         expect(limitReset("rate_limit_error", at)).toBeNull();
     });
 

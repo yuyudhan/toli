@@ -179,7 +179,10 @@ const CLEAN_EXIT_LIMIT = /rate_limit_error|usage limit reached|\b429\b/i;
 
 const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000 };
 
-/** The reset time the limit error names, or null: an ISO instant, Claude Code's `|<epoch>`, `in/after N units`, `retry-after: N`, or `resets 3pm`. */
+/**
+ * The reset time the limit error names, or null: an ISO instant, Claude Code's `|<epoch>`, `in/after N units`,
+ * `retry-after-ms: N` (milliseconds), `retry-after: N` (seconds), or `resets 3pm`.
+ */
 export function limitReset(output: string, at: Date): Date | null {
     const text = tailLines(output, LIMIT_TAIL_LINES).join("\n");
     const iso = /reset\w*\D{0,20}(\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d))/i.exec(text);
@@ -190,7 +193,9 @@ export function limitReset(output: string, at: Date): Date | null {
         /(?:try again|retry|resets?)\s+(?:in|after)\s+(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hours?)\b/i.exec(text);
     if (relative?.[1] !== undefined && relative[2] !== undefined)
         return new Date(at.getTime() + Number(relative[1]) * (UNIT_MS[relative[2][0]?.toLowerCase() ?? "s"] ?? 1000));
-    const header = /retry-after["']?\s*[:=]\s*(\d+)/i.exec(text);
+    const millis = /retry-after-ms["']?\s*[:=]\s*["']?(\d+)/i.exec(text);
+    if (millis?.[1] !== undefined) return new Date(at.getTime() + Number(millis[1]));
+    const header = /retry-after["']?\s*[:=]\s*["']?(\d+)/i.exec(text);
     if (header?.[1] !== undefined) return new Date(at.getTime() + Number(header[1]) * 1000);
     const clock = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d\d))?\s*(am|pm)\b/i.exec(text);
     if (clock?.[1] !== undefined && clock[3] !== undefined) {

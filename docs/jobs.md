@@ -57,6 +57,17 @@ status, run history, `job results`), but it is never unseen: it does not wake th
 and is not sent to the coordinator. `--quiet` applies only to an `ok` run: with `--status failed` the result posts as
 usual.
 
+## Rate and usage limits
+
+A headless run that stops on a provider's rate or usage limit retries once on another model when one is allowed
+([harnesses.md](harnesses.md)). When the limit names its reset (a reset time, `retry-after-ms`, `retry-after` in
+seconds), toli records it for that harness and model (the model name carries its provider or account) in
+`state/job-limits.json`. Until the reset, every job on that model skips its due runs, unless its retry model is free
+of a limit; each such job posts one inbox item, `job <name> paused until <time>`, and nothing else. After the reset
+the job runs once to catch up and carries on as usual; a run on the model that gets through lifts the pause early.
+`bin/toli job run <name>` always runs. The run that hit the limit still posts its failed result, and a limit that
+names no reset pauses nothing: the next due run tries again.
+
 ## Results reach you
 
 On the same minute, `bin/toli wake` picks up new job results and inbox items, and the harness brings them into the

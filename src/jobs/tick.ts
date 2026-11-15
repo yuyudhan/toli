@@ -11,8 +11,7 @@ import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
-import { harnessConfig } from "../harness/harness.ts";
-import { choiceText, hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
+import { choiceText } from "../harness/models.ts";
 import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
@@ -40,6 +39,7 @@ import {
     loadJobState,
     STALE_RUN_MS,
 } from "./jobs.ts";
+import { attemptWithinLimits, jobModel, limitPauseFor, noticePause, type Outcome } from "./limit-pause.ts";
 import { deliverOutbox } from "./outbox.ts";
 import { postWaitingAlerts } from "./outbox-admin.ts";
 import { pullFleet, pullText } from "./pull.ts";
@@ -110,16 +110,12 @@ async function keepExchanging(machine: Machine, work: Promise<void>): Promise<vo
     await finished;
 }
 
-/** The model a job runs on: its own tier, else its shape's work type, on this machine's omp tiers. */
-export function jobModel(job: Pick<JobConfig, "tier" | "shape">): ModelChoice {
-    return resolveModel("omp", { tier: job.tier ?? null, work: job.shape }, harnessConfig());
-}
-
 /**
  * Run a claimed job in headless omp on its tier's model, counted as load (a run record) while it runs. It has no
  * wall-clock limit: omp is stopped only when it shows no progress for capacity.stallMinutes (src/jawans/progress.ts).
  * A run stopped by a rate or usage limit retries once on a lower allowed tier (never waiting: the tick runs every
- * minute). If the agent never called `job finish`, record its captured output.
+ * minute); a limit that names a later reset also pauses the model's due jobs until then (limitPauseFor). If the agent
+ * never called `job finish`, record its captured output.
  */
 async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     const name = job.name;
@@ -134,14 +130,14 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     // The tick starts toli with PATH alone; omp needs the login profile's provider keys.
     adoptLoginEnv();
     const choice = jobModel(job);
-    let model = choice.model;
-    let fallback = "";
-    let result: { code: number; output: string };
+    let model: string | null;
+    let fallback: string;
+    let result: Outcome;
     const stall = stallMinutes(loadMachine());
     const sessionDir = paths.jobSessionDir(begun.runId);
     let stalled = false;
     try {
-        const attempt = async (chosen: string | null): Promise<{ code: number; output: string }> => {
+        const attempt = async (chosen: string | null): Promise<Outcome> => {
             let root: StopRoot | null = null;
             const stopping: Promise<number[]>[] = [];
             const stopWatch = watchStall(
@@ -170,21 +166,7 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
                 if (survivors.length > 0) warn(`job ${name}: pid ${survivors.join(", ")} outlived SIGKILL`);
             }
         };
-        result = await attempt(model);
-        if (hitLimit(result.output, result.code)) {
-            const at = now();
-            const plan = limitPlan(
-                { harness: "omp", model, tier: choice.tier, work: job.shape },
-                limitReset(result.output, at),
-                at,
-                harnessConfig(),
-            );
-            if (plan.kind === "switch") {
-                fallback = `; limit fallback ${model ?? "default"} -> ${plan.model} (${plan.reason})`;
-                model = plan.model;
-                result = await attempt(model);
-            } else fallback = `; hit a rate/usage limit, no retry (${plan.reason})`;
-        }
+        ({ result, model, fallback } = await attemptWithinLimits(job, choice, attempt));
     } finally {
         removeRun(begun.runId);
     }
@@ -248,10 +230,19 @@ function failStaleRuns(): string[] {
 
 /**
  * Claim and run every job due on this machine, each in its own headless omp, and wait for all of them.
- * Claiming goes through beginJob's lock, so a job another runner already claimed is skipped, never run twice.
+ * Claiming goes through beginJob's lock, so a job another runner already claimed is skipped, never run twice. A job
+ * whose model is paused by a rate/usage limit is skipped, its window kept for one run after the reset.
  */
 async function runDueJobs(origin: string): Promise<void> {
-    const runs = dueJobs(now(), loadMachine()).map(async (job) => {
+    const at = now();
+    const machine = loadMachine();
+    const runs = dueJobs(at, machine).map(async (job) => {
+        const pause = limitPauseFor(job, at);
+        if (pause !== null) {
+            const notice = noticePause(machine, job.name, pause);
+            if (notice !== null) log(notice);
+            return;
+        }
         let begun: BegunRun;
         try {
             begun = beginJob(job.name, "headless");
