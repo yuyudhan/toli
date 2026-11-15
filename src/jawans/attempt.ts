@@ -12,7 +12,7 @@ import { headlessCommand } from "../harness/harness.ts";
 import { watchBrowsers } from "./browsers.ts";
 import { stallText, watchStall } from "./progress.ts";
 import { loadRun, updateRun } from "./runs.ts";
-import { type Argv, type HarnessScoped, inJawanScope } from "./scope.ts";
+import { type Argv, inJawanScope, type MarkedScoped } from "./scope.ts";
 import { HARNESS_STOP_GRACE_MS, stopTree } from "./stop.ts";
 
 /** Grace after the harness's own time limit before the supervisor kills the process group. */
@@ -56,7 +56,7 @@ async function harnessOnce(
     env: NodeJS.ProcessEnv,
     logFd: number,
     minuteMs: number,
-    wrap: (argv: Argv) => HarnessScoped | null,
+    wrap: (argv: Argv) => MarkedScoped | null,
 ): Promise<{ result: Attempt; scope: string | null }> {
     const run = loadRun(id);
     const command = headlessCommand(run.harness, {

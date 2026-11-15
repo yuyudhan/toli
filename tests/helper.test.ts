@@ -177,7 +177,8 @@ describe("rendering (dry run)", () => {
         const env = { TOLI_SCHEDULER: "systemd", TOLI_SYSTEMD_USER_DIR: join(box.root, "units") };
         const output = box.ok(["helper", "install", "sweep"], { env });
         expect(output).toContain(`would write ${join(box.root, "units", "toli-helper-sweep.service")}`);
-        expect(output).toContain("Type=oneshot");
+        // What the helper's script leaves running (a spawned jawan's supervisor) outlives the oneshot's run.
+        expect(output).toContain("Type=oneshot\nKillMode=process\n");
         expect(output).toContain(`ExecStart=${join(box.root, "local", "scripts", "sweep")} --fast`);
         expect(output).toContain("Nice=10\nIOSchedulingClass=idle\nLimitNOFILE=65536");
         expect(output).toContain("OnActiveSec=900s\nOnUnitActiveSec=900s");
@@ -187,6 +188,7 @@ describe("rendering (dry run)", () => {
         expect(always).toContain("Type=simple");
         expect(always).toContain("Restart=always");
         expect(always).toContain("WantedBy=default.target");
+        expect(always).not.toContain("KillMode=");
         expect(always).not.toContain(".timer");
         expect(box.ok(["helper", "install", "nightly"], { env })).toContain(
             "OnCalendar=Mon,Tue,Wed,Thu,Fri *-*-* 2:30:00\nPersistent=true",

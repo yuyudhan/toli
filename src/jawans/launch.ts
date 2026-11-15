@@ -29,7 +29,7 @@ import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { deadlineSection } from "./limits.ts";
 import { type JawanRun, killRun, listRuns, loadRun, RUNNING, runMinuteMs, updateRun } from "./runs.ts";
-import { inSupervisorScope } from "./scope.ts";
+import { type Argv, awaitScope, inSupervisorScope } from "./scope.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
@@ -200,11 +200,13 @@ function launch(id: string): JawanRun {
         }
         const supervisorLog = openSync(join(run.runDir, "supervisor.log"), "a");
         let pid: number | undefined;
+        // On Linux the supervisor gets its own systemd scope, outside the caller's cgroup (the lead service, a helper
+        // or job unit) and apart from its harness's scope, so an OOM kill takes one jawan and its supervisor records
+        // it, and a caller unit that exits once spawn returns leaves it alone (src/jawans/scope.ts).
+        const argv: Argv = [process.execPath, TOLI_SCRIPT, "run", "supervise", id];
+        const scoped = inSupervisorScope(id, argv, join(run.runDir, "supervisor.started"));
         try {
-            // On Linux the supervisor gets its own systemd scope, outside the lead service's cgroup and apart from
-            // its harness's scope, so an OOM kill takes one jawan and its supervisor records it (src/jawans/scope.ts).
-            const scoped = inSupervisorScope(id, [process.execPath, TOLI_SCRIPT, "run", "supervise", id]);
-            const [command, ...args] = scoped.argv;
+            const [command, ...args] = scoped?.argv ?? argv;
             // The supervisor is not the headless lead turn that may have started it: its queued starts and resumes
             // must never inherit that turn's refusals.
             const { [LEAD_TURN_ENV]: _turn, ...env } = process.env;
@@ -212,7 +214,7 @@ function launch(id: string): JawanRun {
                 cwd: paths.root(),
                 detached: true,
                 stdio: ["ignore", supervisorLog, supervisorLog],
-                env: { ...env, ...scoped.env },
+                env: { ...env, ...scoped?.env },
             });
             supervisor.unref();
             pid = supervisor.pid;
@@ -221,9 +223,11 @@ function launch(id: string): JawanRun {
         }
         if (pid === undefined) throw new ToliError(`could not start the supervisor for ${id}`);
         const supervisorPid = pid;
-        return updateRun(id, (record) => {
+        updateRun(id, (record) => {
             record.supervisorPid = supervisorPid;
         });
+        if (scoped !== null) awaitScope(supervisorPid, scoped);
+        return loadRun(id);
     } catch (error) {
         updateRun(id, (record) => {
             record.status = "failed";

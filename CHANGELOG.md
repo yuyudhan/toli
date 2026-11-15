@@ -4,6 +4,21 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.26 - unreleased
+
+### Fixed
+
+- On Linux with systemd, a jawan started by `bin/toli spawn` from a systemd user unit (a helper, a scheduled job)
+  keeps running after that unit exits. `spawn` now returns only once systemd-run has moved the supervisor into its
+  own scope; before, a oneshot unit that finished right after `spawn` took the supervisor down with its cgroup and the
+  run failed at once without an outcome. A supervisor scope systemd-run cannot make now fails the spawn. `every` and
+  `cron` helpers' systemd services are written with `KillMode=process`, so what a helper script leaves running
+  outlives it.
+
+### Upgrading
+
+- Linux machines with systemd helpers: run `bin/toli helper install --all` once to rewrite their units.
+
 ## v0.5.25 - 2026-11-14
 
 ### Fixed

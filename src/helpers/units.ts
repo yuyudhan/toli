@@ -151,6 +151,10 @@ export function renderHelperSystemd(helper: Helper): SystemdUnits {
         "",
         "[Service]",
         `Type=${always ? "simple" : "oneshot"}`,
+        // A oneshot helper's run ends when its script exits; the default KillMode (control-group) would then kill what
+        // the script started and left running (a background job, a supervisor not yet in its own scope). An always
+        // helper keeps the default, so a restart never leaves the old daemon's children running beside the new one.
+        ...(always ? [] : ["KillMode=process"]),
         `WorkingDirectory=${systemdPath(paths.root())}`,
         ...Object.entries(helperEnv(helper)).map(([key, value]) => `Environment=${systemdEnv(key, value)}`),
         `ExecStart=${[helper.exec, ...helper.args].map(systemdWord).join(" ")}`,

@@ -245,7 +245,10 @@ On Linux each jawan runs in its own systemd scope, not in the lead service's cgr
 `systemd-run --user --scope`. So systemd-oomd or a restart of `toli-lead.service` takes the lead alone, and an OOM kill
 takes one jawan's harness, never the lead, the other jawans, or that jawan's supervisor, which records the outcome:
 `failed`, with the cause the journal names (`killed by systemd-oomd (SIGKILL, 86 processes): memory pressure for
-...`, `killed by the kernel OOM killer`) or else the signal (`killed by SIGKILL`), and the log tail. Without
+...`, `killed by the kernel OOM killer`) or else the signal (`killed by SIGKILL`), and the log tail. `bin/toli spawn`
+returns only once systemd-run has moved the supervisor into its scope, so a caller that is itself a systemd unit (a
+helper's oneshot, a scheduled job) can exit right away without systemd killing the supervisor with its cgroup; a
+supervisor scope systemd-run cannot make fails the spawn and the run is recorded failed. Without
 systemd-run or a user manager both start as before, in the lead service's cgroup, and a harness scope systemd-run cannot
 make (no user session bus over ssh) starts the harness without one; the unit is `KillMode=process`, so even then
 stopping or restarting it (`lead install`, `bin/toli upgrade`, the loop exiting for a newer runtime) ends only `lead

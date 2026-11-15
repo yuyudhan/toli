@@ -88,6 +88,10 @@ uses systemd when `systemctl --user show-environment` succeeds, else crontab.
 | Linux with a systemd user session | `~/.config/systemd/user/toli-helper-<name>.service` (+ `.timer`), `enable` + `restart`   |
 | Linux without systemd             | one crontab line ending in `# toli helper <name>`                                        |
 
+An `every` or `cron` helper's systemd service is a oneshot with `KillMode=process`: when its script exits, systemd ends
+only the script, so what it started and left running (a jawan from `bin/toli spawn`, a background job) keeps going.
+Reinstall (`helper install <name>`) a helper installed before v0.5.26 to get it.
+
 `TOLI_SCHEDULER=launchd|systemd|crontab` forces one (for the tick too), e.g. on a server whose systemd user session
 does not survive logout (or run `loginctl enable-linger $USER` so it does).
 

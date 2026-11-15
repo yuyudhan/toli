@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Sandbox } from "./helpers.ts";
-import { brief, coordinator, type Run, waitFor } from "./jawan-fixture.ts";
+import { brief, coordinator, type Run, runs, waitFor } from "./jawan-fixture.ts";
 
 setDefaultTimeout(30_000);
 
@@ -64,6 +64,54 @@ describe("each jawan in its own systemd scope", () => {
         const output = readFileSync(done.logPath, "utf8");
         expect(output).toContain(`systemd-run could not start toli-jawan-${started.id}.scope (exit 1)`);
         expect(output).toEndWith("in scope\n");
+    });
+
+    test("spawn returns only once the supervisor is in its scope, so a launcher unit exiting then cannot take it", async () => {
+        const { box, env, log } = linuxBox(true);
+        // systemd-run moves itself into the scope over D-Bus before it execs the command: model that round trip as a
+        // delay, then mark the pid as moved. A launcher unit that exits kills whatever is still in its cgroup.
+        const moved = join(box.root, ".moved");
+        box.stub(
+            "systemd-run",
+            [
+                `printf '%s\\n' "$*" >> "${log}"`,
+                'unit=""',
+                'while [ "$#" -gt 0 ]; do case "$1" in --unit=*) unit="$1"; shift ;; --*) shift ;; *) break ;; esac; done',
+                "sleep 1",
+                `printf '%s\\n' "$$ $unit" >> "${moved}"`,
+                'exec "$@"',
+            ].join("\n"),
+        );
+        const started = spawn(box, env);
+        const pid = started.supervisorPid ?? 0;
+        expect(pid).toBeGreaterThan(0);
+        const marker = `${pid} --unit=toli-supervisor-${started.id}.scope\n`;
+        const inScope = existsSync(moved) && readFileSync(moved, "utf8").includes(marker);
+        // The caller's unit exits the moment spawn returns: systemd kills what is left in its control group.
+        if (!inScope && pid > 0) process.kill(pid, "SIGKILL");
+        expect(inScope).toBe(true);
+        const done = await waitFor(box, started.id, (run) => run.status === "done" && run.inbox !== null);
+        expect(readFileSync(done.logPath, "utf8")).toBe("in scope\n");
+    });
+
+    test("a supervisor scope systemd-run cannot make: spawn fails and the run is recorded failed", () => {
+        const { box, env, log } = linuxBox(true);
+        box.stub(
+            "systemd-run",
+            [
+                `printf '%s\\n' "$*" >> "${log}"`,
+                'case "$*" in *toli-supervisor-*) echo "Failed to connect to bus" >&2; exit 1 ;; esac',
+                'while [ "$#" -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done',
+                'exec "$@"',
+            ].join("\n"),
+        );
+        const result = box.toli(["spawn", "--harness", "omp", "--brief", brief(box), "--cwd", box.root, "--json"], {
+            env,
+        });
+        expect(result.code).not.toBe(0);
+        expect(result.stderr).toContain("systemd-run could not start toli-supervisor-");
+        const [run] = runs(box);
+        expect(run?.status).toBe("failed");
     });
 
     test("without a user manager, or off Linux, it starts as before", async () => {
