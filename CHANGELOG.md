@@ -4,6 +4,12 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.27 - 2026-11-15
+
+### Fixed
+
+- forwarded delegated work keeps its link to the originator (acd3593)
+
 ## v0.5.26 - 2026-11-15
 
 ### Fixed
