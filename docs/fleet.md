@@ -196,6 +196,18 @@ whatever its number: a build that took slot 2 before `capacity.buildSlots` dropp
 until it ends, and counts in `builds <busy>/<total>`. Inside a slot
 already (`TOLI_BUILD_SLOT` set), it runs the command at once: a nested build never waits on its own slot.
 
+A slot's command may itself wait on a lock of its own: a project's recipe under `bin/toli build-slot` (or a gate's)
+that waits for the project's test-database lock, held by a plain `just test` elsewhere whose cargo, through the shim,
+waits for that slot. Neither would ever move. So the first waiter in line watches each busy slot's command (every
+process below the `build-slot` or gate process holding it; for a cargo the rustc wrapper holds a slot for, that cargo
+and everything below it) in the process table each time it looks, and a slot whose command ran (on a CPU, runnable or
+in disk I/O) in at most 5% of those looks over the last minute does not count: the waiter takes a slot numbered above
+`capacity.buildSlots` beside it and says so once, naming the slot, its holder's pid and directory:
+`heavy-build slot 1 (pid 4242 in /path) has run nothing for 60s, maybe waiting on a lock this build holds; building
+beside it`. A command that sleeps, waits on a socket or a lock is idle; one that compiles, links or runs tests is not.
+Once the idle command wakes, its own cargo still runs in its slot at once, so for a while the machine runs one build
+more than it has slots; that is the price of never deadlocking.
+
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
 (a `just` recipe, a hook that resets PATH), where the cargo shim below never sees it: a gate's runner
 (`bin/toli gate run`, `bin/toli push --gate`, [delivery.md](delivery.md#gates-long-checks-run-once-per-tree)) runs

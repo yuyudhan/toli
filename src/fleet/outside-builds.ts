@@ -20,6 +20,8 @@ import { procFile } from "./resources.ts";
 export type OutsideBuild = { pid: number; command: string; cwd: string | null; crates: string[] };
 
 type Proc = { pid: number; ppid: number; stat: string; argv: string[] };
+/** The machine's processes by pid (`processTable`). */
+export type ProcessTable = Map<number, Proc>;
 
 /** The compilers whose crate compilations make a build heavy (rustc, clippy's driver, rustdoc). */
 const COMPILERS: Readonly<Record<string, true>> = { rustc: true, "clippy-driver": true, rustdoc: true };
@@ -29,6 +31,8 @@ const CARGO = /^cargo(-[\w-]+)?$/;
 const PROBE_CRATE = "___";
 /** How many ancestors a walk follows at most, against a pid loop in a table read while processes come and go. */
 const MAX_DEPTH = 128;
+/** A process state that uses the CPU or waits on the disk: running or runnable (R), uninterruptible I/O (D; U on macOS). */
+const ACTIVE_STAT = /^[RDU]/;
 
 /** Where a cargo's slot holder says it holds the slot: `<holder pid> <slot>` (read by bin/shims/toli-rustc-wrapper). */
 export const heldFile = (cargoPid: number): string => join(paths.buildSlotsDir(), `cargo-${cargoPid}.held`);
@@ -60,11 +64,24 @@ export function heldCargoPids(): number[] {
     });
 }
 
+/** Every cargo held by a rustc-wrapper holder, by that holder's pid (the pid its slot's lock file records). */
+export function heldCargosByHolder(): Map<number, number> {
+    const byHolder = new Map<number, number>();
+    for (const cargo of heldCargoPids()) {
+        try {
+            byHolder.set(Number(readFileSync(heldFile(cargo), "utf8").split(" ")[0]), cargo);
+        } catch {
+            // Released since: its holder no longer holds a slot.
+        }
+    }
+    return byHolder;
+}
+
 /** The machine's processes, by pid: `ps -A` (every user's, a container's too on Linux), or `TOLI_PROCESS_TABLE`. */
-export function processTable(): Map<number, Proc> {
-    const file = process.env.TOLI_PROCESS_TABLE;
+export function processTable(): ProcessTable {
+    const file = process.env.TOLI_PROCESS_TABLE ?? "";
     let text = "";
-    if (file !== undefined) {
+    if (file !== "") {
         try {
             text = readFileSync(file, "utf8");
         } catch {
@@ -74,7 +91,7 @@ export function processTable(): Map<number, Proc> {
         const result = run(["ps", "-A", "-ww", "-o", "pid=,ppid=,stat=,args="], { timeoutMs: 5000 });
         text = result.code === 0 ? result.stdout : "";
     }
-    const table = new Map<number, Proc>();
+    const table: ProcessTable = new Map();
     for (const line of text.split("\n")) {
         const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
         if (match === null) continue;
@@ -103,7 +120,7 @@ function compiledCrate(proc: Proc): string | null {
 }
 
 /** `pid` and its ancestors, nearest first. */
-function lineage(table: Map<number, Proc>, pid: number): number[] {
+function lineage(table: ProcessTable, pid: number): number[] {
     const chain: number[] = [];
     let current = table.get(pid);
     while (current !== undefined && chain.length < MAX_DEPTH && !chain.includes(current.pid)) {
@@ -111,6 +128,18 @@ function lineage(table: Map<number, Proc>, pid: number): number[] {
         current = current.ppid > 1 ? table.get(current.ppid) : undefined;
     }
     return chain;
+}
+
+/**
+ * Whether a process below `pid` (or `pid` itself, with `withRoot`) runs now (`ACTIVE_STAT`). A command blocked on a
+ * lock, a socket, a pipe or a sleep does not; neither does one stopped (SIGSTOP).
+ */
+export function treeRunning(table: ProcessTable, pid: number, withRoot: boolean): boolean {
+    for (const proc of table.values()) {
+        if (!ACTIVE_STAT.test(proc.stat)) continue;
+        if (proc.pid === pid ? withRoot : lineage(table, proc.pid).slice(1).includes(pid)) return true;
+    }
+    return false;
 }
 
 /** Whether a process's cgroup is frozen (Linux: cgroup v2 `cgroup.events`, or v1's freezer), as `docker pause` does. */
@@ -146,8 +175,11 @@ function frozen(pid: number): boolean {
  * (slot holders and held cargos), and that are not `waiter`'s own ancestors (a build waiting for a slot from inside an
  * outside build, such as its build script's cargo, must never wait for the build it runs in).
  */
-export function outsideBuilds(inside: readonly number[], waiter: number | null = null): OutsideBuild[] {
-    const table = processTable();
+export function outsideBuilds(
+    inside: readonly number[],
+    waiter: number | null = null,
+    table: ProcessTable = processTable(),
+): OutsideBuild[] {
     const insideSet = new Set(inside);
     const waiterLine = new Set(waiter === null ? [] : lineage(table, waiter));
     const builds = new Map<number, OutsideBuild>();

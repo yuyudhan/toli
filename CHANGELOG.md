@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.35 - unreleased
+
+### Fixed
+
+- A build waiting for a heavy-build slot no longer deadlocks against a slot whose command waits on a lock the
+  waiting build holds (a recipe under `bin/toli build-slot` waiting for the project's test-database lock, held by a
+  plain `just test` whose cargo waits for the slot): a slot whose command has run nothing for a minute does not count,
+  and the waiter builds beside it, naming the slot's holder.
+
 ## v0.5.34 - 2026-11-16
 
 ### Fixed
