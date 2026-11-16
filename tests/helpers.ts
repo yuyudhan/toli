@@ -110,6 +110,8 @@ export function sandbox(): Sandbox {
         TOLI_BUILD_SCAN_ROOTS: "",
         // The Claude SessionStart hook appends the lead's build variables here: never to the host session's file.
         CLAUDE_ENV_FILE: "",
+        // A spawned jawan's own task (src/records/backlog.ts ownTask): never the host jawan's, when one runs the tests.
+        TOLI_TASK: "",
         ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),
         ...options.env,
     });

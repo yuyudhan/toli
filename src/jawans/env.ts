@@ -139,6 +139,8 @@ export function jawanEnv(
     delete env.CARGO_TARGET_DIR;
     delete env.TOLI_BUILD_SLOT;
     delete env.TOLI_BUILD_JOB;
+    // The run's own task is set by its supervisor (src/jawans/supervise.ts); an inherited one is never this run's.
+    delete env.TOLI_TASK;
     // A jawan the headless lead started is not that lead turn: it must never inherit its refusals.
     delete env[LEAD_TURN_ENV];
     Object.assign(env, slotShareEnv(base, cargoJobs));

@@ -23,6 +23,8 @@ import {
 import { pinTaskCommand } from "./pin.ts";
 import { briefPath } from "./stale.ts";
 import { isClosed, runTaskEnd } from "./task-end.ts";
+import { ownTask, requireOwnReport } from "./task-guard.ts";
+import { describeTask } from "./task-line.ts";
 import { parseShape } from "./task-shape.ts";
 
 /** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
@@ -124,22 +126,6 @@ export function updateTask(id: string, fn: (task: Task) => void): Task {
     return after;
 }
 
-function describe(task: Task): string {
-    const extras: string[] = [];
-    if (task.status === "held" && task.question) extras.push(`question: ${task.question}`);
-    if (task.agent) extras.push(`agent: ${task.agent}`);
-    if (task.waitingOn !== undefined) extras.push(`waiting on: ${task.waitingOn}`);
-    if (task.pinned !== undefined) extras.push(task.pinned === "" ? "pinned" : `pinned: ${task.pinned}`);
-    if (task.commit) extras.push(`commit: ${task.commit}`);
-    if (task.report) extras.push(`report: ${task.report}`);
-    if (task.delegatedBy)
-        extras.push(
-            `delegated by ${task.delegatedBy.machine}${task.delegatedBy.task ? `/${task.delegatedBy.task}` : ""}`,
-        );
-    if (task.delegatedTo?.length) extras.push(`delegated to ${task.delegatedTo.join(", ")}`);
-    return `${task.id}\t${task.status}\t${task.project}\t${task.shape}\t${task.title}${extras.length ? `\t(${extras.join("; ")})` : ""}`;
-}
-
 function add(argv: string[]): void {
     const args = new Args(argv, { values: ["shape", "note", "tier"] });
     args.maxPositional(2);
@@ -197,7 +183,7 @@ function list(argv: string[]): Promise<void> | undefined {
         out("no tasks");
         return;
     }
-    for (const task of tasks) out(describe(task));
+    for (const task of tasks) out(describeTask(task));
 }
 
 /**
@@ -227,7 +213,7 @@ function start(argv: string[]): void {
             run.task ??= task.id;
             run.project ??= task.project;
         });
-    out(describe(task));
+    out(describeTask(task));
 }
 
 /** `task wait <id> --on "<what>"`: the active task waits on `<what>` (no re-dispatch); see Task.waitingOn. */
@@ -243,7 +229,7 @@ function wait(argv: string[]): void {
         entry.startedAt ??= now().toISOString();
         entry.waitingOn = on;
     });
-    out(describe(task));
+    out(describeTask(task));
 }
 
 function done(argv: string[]): void {
@@ -252,14 +238,15 @@ function done(argv: string[]): void {
     const report = args.str("report");
     const commit = args.str("commit");
     const note = args.str("note");
-    const task = updateTask(args.pos(0, "id"), (entry) => {
+    const task = updateTask(ownTask(args.pos(0, "id")), (entry) => {
+        requireOwnReport(report, entry);
         entry.status = "done";
         entry.doneAt = now().toISOString();
         if (report !== undefined) entry.report = report;
         if (commit !== undefined) entry.commit = commit;
         if (note !== undefined) entry.notes.push(note);
     });
-    out(describe(task));
+    out(describeTask(task));
 }
 
 /**
@@ -301,7 +288,7 @@ function hold(argv: string[]): void {
                 `--reversible refused: the hold mentions "${topic}" (push, merge, main, MR, tag, release, destructive, security and money holds always wait for the user)`,
             );
     }
-    const task = updateTask(args.pos(0, "id"), (entry) => {
+    const task = updateTask(ownTask(args.pos(0, "id")), (entry) => {
         if (entry.status === "done" || entry.status === "dropped")
             throw new ToliError(`${entry.id} is ${entry.status}`);
         entry.status = "held";
@@ -320,7 +307,7 @@ function hold(argv: string[]): void {
         delete entry.waitingOn;
         delete entry.answer;
     });
-    out(describe(task));
+    out(describeTask(task));
 }
 
 /**
@@ -348,7 +335,7 @@ function answer(argv: string[]): void {
         heldFrom = entry.heldFrom;
         delete entry.heldFrom;
     });
-    out(describe(task));
+    out(describeTask(task));
     if (late) return;
     if (isValidName(task.project)) recordDecision(task, reply);
     const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
@@ -360,10 +347,10 @@ function answer(argv: string[]): void {
 function drop(argv: string[]): void {
     const args = new Args(argv);
     args.maxPositional(1);
-    const task = updateTask(args.pos(0, "id"), (entry) => {
+    const task = updateTask(ownTask(args.pos(0, "id")), (entry) => {
         entry.status = "dropped";
     });
-    out(describe(task));
+    out(describeTask(task));
 }
 
 /** Run one `task` subcommand; only `list --fleet` returns a promise (callers await it), so the rest throw synchronously. */

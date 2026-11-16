@@ -4,6 +4,16 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.34 - unreleased
+
+### Fixed
+
+- A delegated brief no longer names the delegator's task ids on the receiving machine, where the same `T<n>` is an
+  unrelated task: the receiver rewrites the `--for` task to the new task's id (its `task done`, its report path) and
+  every other bare id to the delegator's fleet id, and records the mapping in the task's notes. A jawan
+  `bin/toli spawn` started for a task (`TOLI_TASK`) is refused `task done`, `hold` and `drop` of any other id, and
+  `task done --report` refuses another task's `reports/T<n>.md`.
+
 ## v0.5.33 - 2026-11-16
 
 ### Added

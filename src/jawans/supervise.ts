@@ -239,6 +239,8 @@ export async function superviseRun(id: string): Promise<void> {
         capacityFor(machine, availableParallelism()).cargoJobs,
         isLiveStack(initial.project),
     );
+    // The one task this jawan may close, hold or drop (src/records/backlog.ts ownTask).
+    if (initial.task !== null) env.TOLI_TASK = initial.task;
     const logFd = openSync(initial.logPath, "a");
     const minuteMs = runMinuteMs();
     const outlive = outliveSignals(id);

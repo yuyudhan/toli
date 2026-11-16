@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import { loadMachine } from "../core/config.ts";
+import { loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isValidName, now, out, readStdin, requireName, ToliError, writeTextAtomic } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
@@ -130,6 +130,37 @@ function sameOpenWork(task: Task, delegation: Delegation, key: string): boolean 
 }
 
 /**
+ * A task id in a brief: `T<n>`, optionally after `<word>/` (a fleet id when the word names a machine, else a path such
+ * as `reports/T<n>.md`). `T<n>` inside a longer word (`T21x`, a timestamp's `16T10`) is not an id.
+ */
+const BRIEF_TASK_ID = /(?:\b([\w.-]+)\/)?\bT(\d+)\b/g;
+
+/**
+ * The delegator's brief with its task ids made safe here, where the same `T<n>` is another, unrelated task: the
+ * `--for` task becomes `localId` (the task this delegation made), every other bare id the delegator's fleet id
+ * `<from>/T<n>`, which no command on this machine changes. Ids already qualified by a machine stay. Returns the brief
+ * and each rewrite, `T<n> -> <id>`: the `--for` task's first, then the rest in order of first appearance.
+ */
+function rewriteBriefIds(
+    delegation: Pick<Delegation, "brief" | "from" | "fromTask">,
+    localId: string,
+    machines: ReadonlySet<string>,
+): { brief: string; rewrites: string[] } {
+    const mapping = new Map<string, string>();
+    const brief = delegation.brief.replace(BRIEF_TASK_ID, (match: string, prefix: string | undefined, n: string) => {
+        if (prefix !== undefined && machines.has(prefix)) return match;
+        const id = `T${n}`;
+        const to = id === delegation.fromTask ? localId : fleetId(delegation.from, id);
+        mapping.set(id, to);
+        return prefix === undefined ? to : `${prefix}/${to}`;
+    });
+    const own = [...mapping].filter(([, to]) => to === localId);
+    const rest = [...mapping].filter(([, to]) => to !== localId);
+    const rewrites = [...own, ...rest].map(([id, to]) => `${id} -> ${to}${to === localId ? " (this task)" : ""}`);
+    return { brief, rewrites };
+}
+
+/**
  * Record a delegation in this machine's backlog, once per delegation id, and once per open piece of work: the same
  * work (delegationKey) from the same delegator while an earlier copy is open (a copy queued for the tick and a retry
  * that went through, or the delegating lead running the command again) returns that task. Returns the task and whether
@@ -149,6 +180,7 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
         loadProjects().some((entry) => entry.name === project && entry.role === "verify-only");
     // A chain that comes back here holds this machine's own task, which needs no report from itself.
     const upstream = (delegation.upstream ?? []).filter((entry) => entry.machine !== self);
+    const machines = new Set([self, delegation.from, ...loadFleet().machines.map((machine) => machine.name)]);
     const result = updateBacklog((backlog) => {
         const existing =
             backlog.tasks.find((task) => task.delegatedBy?.id === delegation.id) ??
@@ -156,8 +188,10 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
         if (existing) return { task: { ...existing }, created: false };
         const at = now().toISOString();
         const by = delegation.fromTask === undefined ? delegation.from : `${delegation.from}/${delegation.fromTask}`;
+        const id = `T${backlog.nextId}`;
+        const { rewrites } = rewriteBriefIds(delegation, id, machines);
         const task: Task = {
-            id: `T${backlog.nextId}`,
+            id,
             project,
             title: delegation.title,
             shape: delegation.shape ?? "ship",
@@ -175,6 +209,9 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
                 ...(verifyOnly && delegation.force === true
                     ? [`${project} is verify-only here: ${delegation.from} sent this ship work with --force`]
                     : []),
+                ...(rewrites.length === 0
+                    ? []
+                    : [`brief ids from ${delegation.from} rewritten: ${rewrites.join(", ")}`]),
             ],
             delegatedBy: {
                 machine: delegation.from,
@@ -198,7 +235,8 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
     }
     const { task } = result;
     const briefFile = join(paths.projectBriefsDir(project), `${task.id}.md`);
-    if (!existsSync(briefFile)) writeTextAtomic(briefFile, `${delegation.brief.trimEnd()}\n`);
+    if (!existsSync(briefFile))
+        writeTextAtomic(briefFile, `${rewriteBriefIds(delegation, task.id, machines).brief.trimEnd()}\n`);
     addInboxItem(
         delegation.from,
         `delegated ${task.id} from ${delegation.from}: ${task.title}`,

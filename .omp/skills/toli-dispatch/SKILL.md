@@ -71,9 +71,10 @@ work goes, never CPU, load or memory; there is no locking between jawans.
   `bin/toli task add ...` (leave it queued) and tell the user why.
 
 Work also arrives from other Sardars: a `delegated T<n> from <machine>` wake is a task of ours; dispatch it like any
-other (its brief is already saved). Results and holds of tasks you delegated come back as wakes
-(`<machine>/T<n> done|held|dropped: ...`): relay them, and record the user's answer to a delegated hold with
-`bin/toli task answer <machine>/T<n> "<their words>"`, which goes to the owning machine.
+other (its brief is already saved, with the delegator's ids rewritten to ours: its own `--for` task is our `T<n>`,
+any other id `<machine>/T<n>`; never put the delegator's bare ids back into a brief). Results and holds of tasks you
+delegated come back as wakes (`<machine>/T<n> done|held|dropped: ...`): relay them, and record the user's answer to a
+delegated hold with `bin/toli task answer <machine>/T<n> "<their words>"`, which goes to the owning machine.
 
 ## 4. Record and brief
 

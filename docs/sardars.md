@@ -107,7 +107,11 @@ own name. The receiving machine:
 
 - adds the task to its own backlog as an ordinary task (its own next `T<n>`), owned by it, with
   `delegatedBy: { machine, task?, id, at }`, under the given project or, without `--project`, under `toli`; the brief
-  is saved as `data/projects/<p>/briefs/T<n>.md`;
+  is saved as `data/projects/<p>/briefs/T<n>.md` with the delegator's task ids rewritten, since the same `T<n>` here is
+  another, unrelated task: the `--for` task becomes the new `T<n>` (its `task done`, its report path
+  `reports/T<n>.md`), every other bare id the delegator's fleet id `<machine>/T<n>`, which no command here changes.
+  The task's notes record the mapping (`brief ids from <machine> rewritten: T117 -> T5 (this task), T89 ->
+<machine>/T89`). Ids already qualified by a machine name stay;
 - posts `delegated T<n> from <machine>: <title>` to its own inbox, which wakes its lead;
 - answers with the fleet id `<owner>/T<n>`, which `delegate` prints. With `--for T<n>`, this machine's own task
   records it (`delegatedTo`) and counts as active with the fleet id as its jawan, so oversight does not call it stale.

@@ -22,7 +22,9 @@ Of toli's own commands, a jawan runs only what its brief tells it to: `bin/toli 
 `bin/toli task done` / `bin/toli task hold` for the task ids its brief names, and writing to the toli `data/` files
 its brief names (its report in `data/projects/<project>/reports/`, notes or memory for a stow brief). Never run
 `bin/toli task add|start|answer|drop` or any command on a task the brief does not name, `bin/toli job`,
-`bin/toli delegate`, `bin/toli talk`, `bin/toli share`, or `bin/toli lead`.
+`bin/toli delegate`, `bin/toli talk`, `bin/toli share`, or `bin/toli lead`. A jawan `bin/toli spawn` started for a
+task (`TOLI_TASK`) is refused `done`, `hold` and `drop` of any other id, and `task done --report` refuses another
+task's `reports/T<n>.md`; a delegated brief already names this machine's ids (docs/sardars.md).
 
 Work to the brief's `## Goal`: plan, act, run its Validate command, and repeat until its Stop when holds or you are
 blocked; the report says which. Never delete, skip, or weaken a test or check to make Validate pass; stop and report

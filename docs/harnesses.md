@@ -61,7 +61,9 @@ Next block) and with `bin/toli wake`.
 
 `spawn` checks the brief starts with `TOLI_BRIEF v1` and the harness CLI is installed (a missing CLI fails at once
 with its install and login commands), then returns a run id. A detached supervisor runs the harness in the project
-clone (`--task` names the project and is marked active with the run id as its agent) with `TOLI_ROLE=jawan`, no
+clone (`--task` names the project and is marked active with the run id as its agent) with `TOLI_ROLE=jawan`,
+`TOLI_TASK` set to the `--task` id (the jawan's `bin/toli task done|hold|drop` of any other id is refused: only the
+lead changes it, so a brief naming a stale or another machine's id never closes an unrelated task here), no
 `CARGO_TARGET_DIR` (it builds in the clone's own build folder), toli's cargo shim first on PATH (heavy cargo commands
 wait for a heavy-build slot, [fleet.md](fleet.md#heavy-build-slots)) and `CARGO_BUILD_JOBS` set to the machine's
 `capacity.cargoJobs` (config/machine.json, default one build slot's share of the cores; ~/.cargo/config.toml
