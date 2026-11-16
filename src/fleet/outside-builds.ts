@@ -49,6 +49,18 @@ export function holderHolds(cargoPid: number): boolean {
     return pidAlive(Number(text.split(" ")[0]));
 }
 
+/** The slot `cargoPid`'s rustc-wrapper holder holds for it (counting from 1), or null when no live holder holds one. */
+export function heldCargoSlot(cargoPid: number): number | null {
+    let text: string;
+    try {
+        text = readFileSync(heldFile(cargoPid), "utf8");
+    } catch {
+        return null;
+    }
+    const [holder = 0, slot = 0] = text.trim().split(" ").map(Number);
+    return Number.isInteger(slot) && slot > 0 && pidAlive(holder) ? slot : null;
+}
+
 /** Every cargo whose rustc-wrapper holder holds a slot for it now (src/fleet/cargo-slot.ts). */
 export function heldCargoPids(): number[] {
     let names: string[];

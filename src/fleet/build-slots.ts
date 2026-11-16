@@ -29,6 +29,7 @@ import { checkBuildPlace } from "./build-place.ts";
 import { busyBuildSlots, slotHolder, slotWaiters, takeInTurn } from "./build-queue.ts";
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
+import { enclosingSlot } from "./enclosing-slot.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks, resumeDevStacks } from "./stack-pause.ts";
@@ -233,8 +234,9 @@ export function stackUserOf(cwd: string, command: string[]): string | null {
 /**
  * Run `body` in a heavy-build slot, waiting (never failing) in arrival order while every slot is busy; `body` gets
  * `slotShareEnv`, `nodeHeapEnv` and `TOLI_BUILD_SLOT` set to the slot's number, and the slot's scope. Inside a slot
- * already (`TOLI_BUILD_SLOT` set) it runs at once with nothing added, so a nested build never waits on its own slot;
- * with `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still at one slot's share.
+ * already (`enclosingSlot`) it runs at once with only `TOLI_BUILD_SLOT` set to that slot, so a nested build never
+ * waits on its own slot; with `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still
+ * at one slot's share.
  * Every live-stack project's stack auto-rebuild and every declared dev stack is paused while it runs
  * (`whileLiveStacksPaused`, `pauseDevStacks`), except the stack of `stackUser` (null: none), the project whose local
  * stack `body`'s command uses, which is kept running (`whileStackInUse`).
@@ -244,7 +246,8 @@ export async function withBuildSlot<T>(
     stackUser: string | null,
     body: (held: HeldSlot) => Promise<T>,
 ): Promise<T> {
-    if ((process.env.TOLI_BUILD_SLOT ?? "") !== "") return await body({ env: {}, scope: null });
+    const enclosing = enclosingSlot();
+    if (enclosing !== null) return await body({ env: { TOLI_BUILD_SLOT: String(enclosing) }, scope: null });
     // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());

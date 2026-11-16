@@ -9,8 +9,10 @@
 # slot for that cargo's whole run. Only the probe waits for a slot: cargo runs it before it takes its build folder's
 # lock, and every later rustc call runs under that lock, so one that waited for a slot whose build waits for that lock
 # would deadlock both. The probe of a cargo inside one that holds a slot (cargo-clippy's cargo check, a build script's
-# cargo, a test binary's) finds that holder through the process ancestry and goes straight on, as it does inside a slot
-# already (TOLI_BUILD_SLOT set).
+# cargo, a test binary's) finds that holder through the process ancestry and goes straight on; inside a slot a
+# `bin/toli build-slot` (or anything else) took, `build-slot --cargo` finds it (src/fleet/enclosing-slot.ts:
+# TOLI_BUILD_SLOT naming a busy slot, or the slot's holder among the cargo's ancestors) and returns
+# at once; a TOLI_BUILD_SLOT naming a slot nobody holds never skips the queue.
 #
 # Every crate compilation in a slot then takes one job of the slot's job pool (state/build-slots/jobs-<slot>, sized at
 # the slot's share of compile jobs, src/fleet/build-queue.ts `jobPoolDir`) and frees it when it ends, so the cargos in
@@ -78,7 +80,6 @@ if [ -n "${TOLI_BUILD_JOB:-}" ]; then
 fi
 
 if [ "$#" -eq 2 ] && [ "$2" = "-vV" ]; then
-    [ -n "${TOLI_BUILD_SLOT:-}" ] && run "$@"
     [ -n "$(holder_slot)" ] && run "$@"
     # Never fail a build over toli: on any error the build runs (build-slot says why on stderr).
     "$shims/../toli" build-slot --cargo "$PPID" || :

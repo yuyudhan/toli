@@ -12,6 +12,10 @@ one. See docs/releasing.md.
   waiting build holds (a recipe under `bin/toli build-slot` waiting for the project's test-database lock, held by a
   plain `just test` whose cargo waits for the slot): a slot whose command has run nothing for a minute does not count,
   and the waiter builds beside it, naming the slot's holder.
+- A build inside a heavy-build slot never queues for a second one: `bin/toli build-slot`, the cargo shim and the
+  rustc wrapper's probe run at once in the slot they are inside, also when a layer in between dropped
+  `TOLI_BUILD_SLOT` (a slot's holder among the process's ancestors counts), while a `TOLI_BUILD_SLOT` naming a slot
+  nobody holds no longer skips the line.
 
 ## v0.5.34 - 2026-11-16
 

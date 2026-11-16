@@ -19,6 +19,7 @@ import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
 import { buildsOutsideSlots, busyBuildSlots, POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
 import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
+import { enclosingSlot } from "./enclosing-slot.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
 import { heldFile, holderHolds } from "./outside-builds.ts";
 import { capacityFor } from "./resources.ts";
@@ -180,14 +181,16 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
 
 /**
  * `bin/toli build-slot --cargo <cargo pid>` (bin/shims/toli-rustc-wrapper, on a cargo's `rustc -vV` probe outside any
- * slot): when that cargo runs a heavy command outside a live-stack project's checkout, return only once a holder
- * (`holdForCargo`) holds a slot for its run (`heavyCargoRun`), starting one when none is waiting, and saying once that
- * it waits. Any other cargo returns at once. Never fails: a build runs even when toli cannot take a slot for it.
+ * held cargo's slot): when that cargo runs a heavy command outside a live-stack project's checkout and outside a slot
+ * (`enclosingSlot`), return only once a holder (`holdForCargo`) holds a slot for its run (`heavyCargoRun`), starting
+ * one when none is waiting, and saying once that it waits. Any other cargo returns at once. Never fails: a build runs
+ * even when toli cannot take a slot for it.
  */
 export async function slotForCargo(probingCargo: number): Promise<number> {
     const cargoPid = heavyCargoRun(probingCargo);
     if (cargoPid === null) return 0;
     if (liveStackProjectAt(process.cwd()) !== null) return 0;
+    if (enclosingSlot() !== null) return 0;
     const lock = flock();
     if (lock === null) return 0; // The shim's `build-slot` says so; every rustc call need not.
     mkdirSync(paths.buildSlotsDir(), { recursive: true });

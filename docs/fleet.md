@@ -193,8 +193,14 @@ that frees, so a later build never passes an earlier one. A slot is a lock on `s
 its slot or its place in line at once. The lock files stay once made, one per slot number ever used (a `2.lock` on a
 machine now at one slot is from when it had two); only the lock on a file says its slot is busy. A held slot counts
 whatever its number: a build that took slot 2 before `capacity.buildSlots` dropped to 1 keeps the next build waiting
-until it ends, and counts in `builds <busy>/<total>`. Inside a slot
-already (`TOLI_BUILD_SLOT` set), it runs the command at once: a nested build never waits on its own slot.
+until it ends, and counts in `builds <busy>/<total>`. Inside a slot already, it runs the command at once in that slot:
+a nested build never waits on its own slot, so `bin/toli build-slot -- sh -c 'bin/toli build-slot -- cargo check'`
+takes one slot, not two. A process is inside a slot when its `TOLI_BUILD_SLOT` names a busy slot (so a builder a
+test kit detached from the slot's process tree still counts), or when a busy slot's holder (the pid in its lock
+file, or a cargo holding one through the rustc wrapper below) is that process or one of its ancestors (so a layer
+that dropped the variable, such as `env -u` or a script that rebuilds its environment, changes nothing). The cargo
+shim and the rustc wrapper ask the same question through `build-slot`. A slot is busy only while its holder holds
+its lock, so a `TOLI_BUILD_SLOT` left by a holder that died, naming a slot nobody holds now, never skips the line.
 
 A slot's command may itself wait on a lock of its own: a project's recipe under `bin/toli build-slot` (or a gate's)
 that waits for the project's test-database lock, held by a plain `just test` elsewhere whose cargo, through the shim,
@@ -265,9 +271,10 @@ PATH order alone is not enough: a login profile, a harness's shell snapshot or g
 it for every rustc it runs, whichever cargo PATH found, starting with its `rustc -vV` probe. Cargo caches that probe
 in the build folder (`target/.rustc_info.json`), so a cargo with nothing left to compile (a `cargo test` that only
 runs its tests and doctests) would never call the wrapper at all; `CARGO_CACHE_RUSTC_INFO=0` turns the cache off, so
-the probe is every cargo's first act and the slot is taken before anything runs. Inside a slot it goes
-straight on. Otherwise, on the `rustc -vV` probe of a cargo running a heavy command, `bin/toli build-slot --cargo
-<pid>` starts a detached holder (`build-slot --hold <pid> --cwd <dir>`) that waits in line, takes a slot for that
+the probe is every cargo's first act and the slot is taken before anything runs. Inside a slot (its holder among the
+cargo's ancestors, as above) it goes straight on. Otherwise, on the `rustc -vV` probe of a cargo running a heavy
+command, `bin/toli build-slot --cargo <pid>` starts a detached holder (`build-slot --hold <pid> --cwd <dir>`) that
+waits in line, takes a slot for that
 cargo and writes `state/build-slots/cargo-<pid>.held`; the call waits (printing the same waiting line) until it
 holds. Only the probe
 ever waits: cargo runs it before it takes its build folder's lock, and every later rustc call runs under that lock, so
