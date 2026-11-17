@@ -104,7 +104,10 @@ digest opens with the same list, flags holds with no question, and re-surfaces a
 `needs.staleDays` days (`config/machine.json`, default 7) once. `hold --reversible` marks a hold whose recommended
 option is safe to undo, so an installation may apply it when the hold stays unanswered past its own timeout
 (recorded with `task answer`); it needs `--recommend` and is refused when the hold mentions push, merge, main,
-MR/PR, tag, release, a destructive step, security or money.
+MR/PR, tag, release, a destructive step, security or money. `hold` on a done or dropped task reopens it as held, with
+a note on the task saying it was reopened and by whom (its jawan, the lead, or a command outside any jawan run), so a
+question from a job still running after its task closed lands in `needs` instead of being lost; a jawan still holds
+only its own task.
 
 Task ids are unique across the fleet as `<machine>/T<n>`; a bare `T<n>` is this machine's. `task list --fleet` shows
 every machine's open tasks (refreshed over ssh, `--cached` reads the last copies). `task answer <machine>/T<n>` is

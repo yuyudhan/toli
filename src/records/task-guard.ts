@@ -15,6 +15,13 @@ export function ownTask(id: string): string {
     return id;
 }
 
+/** Who runs a `task hold`, for the note on a closed task it reopens. */
+export function holderName(): string {
+    const own = process.env.TOLI_TASK ?? "";
+    if (own !== "") return `${own.toUpperCase()}'s jawan`;
+    return process.env.TOLI_LEAD_TURN ? "the lead" : "a command outside any jawan run";
+}
+
 /** `reports/T<n>.md` at the end of a report path: the task whose report it is. */
 const REPORT_OF = /(?:^|[\\/])reports[\\/](T\d+)\.md$/i;
 

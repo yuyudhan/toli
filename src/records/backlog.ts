@@ -23,7 +23,7 @@ import {
 import { pinTaskCommand } from "./pin.ts";
 import { briefPath } from "./stale.ts";
 import { isClosed, runTaskEnd } from "./task-end.ts";
-import { ownTask, requireOwnReport } from "./task-guard.ts";
+import { holderName, ownTask, requireOwnReport } from "./task-guard.ts";
 import { describeTask } from "./task-line.ts";
 import { parseShape } from "./task-shape.ts";
 
@@ -251,8 +251,10 @@ function done(argv: string[]): void {
 
 /**
  * `task hold <id> --question "..." [--option "<choice> => <then>"]... [--recommend <n|choice|text>] [--blocks "..."]
- * [--reversible]`: put the task in the Needs-you queue. Re-holding replaces every hold field. `--reversible` needs a
- * recommendation and refuses holds about push, merge, main, MR, tag, release, destructive, security or money steps.
+ * [--reversible]`: put the task in the Needs-you queue. Re-holding replaces every hold field. A done or dropped task is
+ * reopened as held, with a note naming who reopened it, so a question from a job still running is never lost.
+ * `--reversible` needs a recommendation and refuses holds about push, merge, main, MR, tag, release, destructive,
+ * security or money steps.
  */
 function hold(argv: string[]): void {
     const args = new Args(argv, { values: ["question", "option", "recommend", "blocks"], booleans: ["reversible"] });
@@ -288,9 +290,13 @@ function hold(argv: string[]): void {
                 `--reversible refused: the hold mentions "${topic}" (push, merge, main, MR, tag, release, destructive, security and money holds always wait for the user)`,
             );
     }
+    let reopened: string | undefined;
     const task = updateTask(ownTask(args.pos(0, "id")), (entry) => {
-        if (entry.status === "done" || entry.status === "dropped")
-            throw new ToliError(`${entry.id} is ${entry.status}`);
+        if (entry.status === "done" || entry.status === "dropped") {
+            reopened = `reopened from ${entry.status} by ${holderName()} to hold on a question`;
+            entry.notes.push(reopened);
+            delete entry.doneAt;
+        }
         entry.status = "held";
         entry.question = question;
         entry.heldAt = now().toISOString();
@@ -308,6 +314,7 @@ function hold(argv: string[]): void {
         delete entry.answer;
     });
     out(describeTask(task));
+    if (reopened !== undefined) out(`${task.id}: ${reopened}; the question is in bin/toli needs`);
 }
 
 /**

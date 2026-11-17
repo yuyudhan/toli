@@ -58,18 +58,14 @@ describe("task lifecycle", () => {
         expect(task(box, "T1").answer).toBeUndefined();
     });
 
-    test("finished and dropped tasks cannot be started or held again", () => {
+    test("finished and dropped tasks cannot be started again", () => {
         const box = project();
         box.ok(["task", "add", "alpha", "a"]);
         box.ok(["task", "add", "alpha", "b"]);
         box.ok(["task", "done", "T1", "--commit", "abc123"]);
         box.ok(["task", "drop", "T2"]);
-        for (const args of [
-            ["task", "start", "T1"],
-            ["task", "hold", "T1", "--question", "q"],
-            ["task", "start", "T2"],
-        ]) {
-            const result = box.toli(args);
+        for (const id of ["T1", "T2"]) {
+            const result = box.toli(["task", "start", id]);
             expect(result.code).toBe(1);
             expect(result.stderr).toMatch(/T[12] is (done|dropped)/);
         }
@@ -185,7 +181,6 @@ describe("task commands in process", () => {
         for (const [argv, message] of refusals) expect(() => task(argv)).toThrow(message);
         task(["drop", "T1"]);
         expect(() => task(["start", "T1"])).toThrow("T1 is dropped");
-        expect(() => task(["hold", "T1", "--question", "q"])).toThrow("T1 is dropped");
         inProcess(box.root, () => expect(loadBacklog()).toMatchObject({ nextId: 2, tasks: [{ status: "dropped" }] }));
     });
 

@@ -16,6 +16,9 @@ one. See docs/releasing.md.
   rustc wrapper's probe run at once in the slot they are inside, also when a layer in between dropped
   `TOLI_BUILD_SLOT` (a slot's holder among the process's ancestors counts), while a `TOLI_BUILD_SLOT` naming a slot
   nobody holds no longer skips the line.
+- `bin/toli task hold` on a done or dropped task no longer refuses and loses the question (a long-running job asking
+  after its task closed carried on with nobody seeing it): the task is reopened as held, with a note naming who
+  reopened it, and the question shows in `bin/toli needs`. A jawan still holds only its own task.
 
 ## v0.5.34 - 2026-11-16
 

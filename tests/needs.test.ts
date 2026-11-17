@@ -141,6 +141,39 @@ describe("task hold with options", () => {
     });
 });
 
+describe("task hold on a closed task", () => {
+    test("a done or dropped task is reopened as held and its question shows in needs", () => {
+        const box = twoProjects();
+        box.ok(["task", "add", "alpha", "release"]);
+        box.ok(["task", "add", "beta", "cleanup"]);
+        box.ok(["task", "start", "T1"]);
+        box.ok(["task", "done", "T1", "--commit", "abc123"]);
+        box.ok(["task", "drop", "T2"]);
+        // A job still running for T1 (its jawan) asks after the task was closed.
+        const jawan = { TOLI_TASK: "T1", TOLI_LEAD_TURN: "" };
+        const said = box.ok(["task", "hold", "T1", "--question", "tag v2 now?", ...DB_OPTIONS], { env: jawan });
+        expect(said).toContain("T1: reopened from done by T1's jawan to hold on a question");
+        expect(said).toContain("bin/toli needs");
+        box.ok(["task", "hold", "T2", "--question", "delete the old bucket?"], { env: { TOLI_LEAD_TURN: "1" } });
+        // The jawan-scope rule still holds: a jawan for T1 cannot hold the closed T2.
+        const foreign = box.toli(["task", "hold", "T2", "--question", "x?"], { env: jawan });
+        expect(foreign.code).toBe(1);
+        expect(foreign.stderr).toContain("this jawan runs for T1");
+
+        const reopened = task(box, "T1");
+        expect(reopened).toMatchObject({ status: "held", question: "tag v2 now?" });
+        expect(reopened.notes).toContain("reopened from done by T1's jawan to hold on a question");
+        expect(task(box, "T2")).toMatchObject({ status: "held", question: "delete the old bucket?" });
+        expect(task(box, "T2").notes).toContain("reopened from dropped by the lead to hold on a question");
+        const items = needs(box).groups.flatMap((group) => group.items);
+        expect(items.map((item) => [item.id, item.question])).toEqual([
+            ["T1", "tag v2 now?"],
+            ["T2", "delete the old bucket?"],
+        ]);
+        expect(box.ok(["needs"], { now: NOW })).toContain("tag v2 now?");
+    });
+});
+
 describe("toli needs", () => {
     test("groups by project; blocking holds first, then oldest; json carries ages and reply hints", () => {
         const box = twoProjects();
