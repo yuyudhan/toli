@@ -179,9 +179,11 @@ Many cargo builds at once make every one of them slow, and slow builds hit time 
 all slots busy use about every core once. Setting either key in `config/machine.json` overrides its default.
 
 `bin/toli build-slot -- <command>` takes a free slot, runs the command with `CARGO_BUILD_JOBS` at one slot's share and
-`TOLI_BUILD_SLOT` set to the slot's number, and frees the slot when the command ends. The test harnesses get the same
-share: `RUST_TEST_THREADS`, `NEXTEST_TEST_THREADS`, `VITEST_MAX_WORKERS` (Vitest 4) and `VITEST_MAX_THREADS` /
-`VITEST_MAX_FORKS` (earlier Vitest) are set to it unless the caller already set them, so a `cargo test`,
+`TOLI_BUILD_SLOT` set to the slot's number, and frees the slot when the command ends. A lower `CARGO_BUILD_JOBS` the
+caller set stands (`CARGO_BUILD_JOBS=1` for a crate whose rustc jobs do not fit the slot's memory side by side); a
+higher one never raises the share. The test harnesses get the same share: `RUST_TEST_THREADS`,
+`NEXTEST_TEST_THREADS`, `VITEST_MAX_WORKERS` (Vitest 4) and `VITEST_MAX_THREADS` / `VITEST_MAX_FORKS` (earlier
+Vitest) are set to it unless the caller already set them, so a `cargo test`,
 `cargo nextest` or `vitest` in a slot (a pre-push hook's included) never runs a test worker per core. A count the
 caller or the project set (the variable, a Vitest config's `maxWorkers`, a `--test-threads` flag) still wins. Jest
 has no environment variable for its workers, so a Jest suite keeps its own `--maxWorkers`; `NODE_OPTIONS` gets only
@@ -225,12 +227,16 @@ still watches the recipe's own process tree for stalls. A live-stack project's c
 
 On Linux with a systemd user manager, each build also runs in its own user scope,
 `toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with
-`systemd-run --user --scope --collect -p MemoryHigh=<90% of cap> -p MemoryMax=<cap> -p MemorySwapMax=0`. The build
-cannot swap: without `MemorySwapMax=0` a build at its cap pushed the rest of its memory into swap, and once the
-machine's swap filled systemd-oomd killed the whole build anyway. An out-of-memory kill (the kernel at the cap, or
-systemd-oomd under memory pressure) then takes that one build, not the terminal, tmux server or lead session that
-started it. The cap is `capacity.buildMemoryMax` in MB; 0: no cap, still its own scope. Its default is each build's,
-not split over the slots (builds rarely peak together, and a link step needs most of a cap at once):
+`systemd-run --user --scope --collect -p MemoryMax=<cap> -p MemorySwapMax=0`. The build cannot swap: without
+`MemorySwapMax=0` a build at its cap pushed the rest of its memory into swap, and once the machine's swap filled
+systemd-oomd killed the whole build anyway. There is no `MemoryHigh` below the cap: with swap off, a build past it
+has only page cache to give back, and then the kernel throttles its allocations indefinitely instead of failing it
+(two 8.5 GB rustc jobs sat frozen for over 100 minutes at a 90% `MemoryHigh` while the machine had 7 GB free). At
+the cap the kernel reclaims the same cache and then kills, so a build runs at full speed up to its cap or fails at
+once. An out-of-memory kill (the kernel at the cap, or systemd-oomd under memory pressure) then takes that one build,
+not the terminal, tmux server or lead session that started it. The cap is `capacity.buildMemoryMax` in MB; 0: no
+cap, still its own scope. Its default is each build's, not split over the slots (builds rarely peak together, and a
+link step needs most of a cap at once):
 
     min(58% of RAM, max(RAM - 6144, RAM / 2))
 

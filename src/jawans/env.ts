@@ -74,15 +74,19 @@ const TEST_THREAD_VARS = [
 export type SlotShare = { CARGO_BUILD_JOBS: string } & Partial<Record<(typeof TEST_THREAD_VARS)[number], string>>;
 
 /**
- * One heavy-build slot's share of the cores over the environment `base`: `CARGO_BUILD_JOBS` at `cargoJobs` (always:
- * one setting per machine), and the test harnesses' worker variables (`TEST_THREAD_VARS`) at the same number where
- * `base` has not set them, so `cargo test` (its test binaries, and rustdoc, which compiles one doctest per test thread
- * with a rustc of its own), nextest and Vitest never run one per core. Cargo and the harnesses read them from the
- * environment however they were reached: the shim, a `just` recipe or a pre-push hook calling them directly.
+ * One heavy-build slot's share of the cores over the environment `base`: `CARGO_BUILD_JOBS` at `cargoJobs`, or at
+ * `base`'s own value where that is a lower positive integer (a script that runs one memory-hungry crate's build with
+ * `CARGO_BUILD_JOBS=1` keeps it; a higher or unusable value never raises the share), and the test harnesses' worker
+ * variables (`TEST_THREAD_VARS`) at the same number where `base` has not set them, so `cargo test` (its test binaries,
+ * and rustdoc, which compiles one doctest per test thread with a rustc of its own), nextest and Vitest never run one
+ * per core. Cargo and the harnesses read them from the environment however they were reached: the shim, a `just`
+ * recipe or a pre-push hook calling them directly.
  */
 export function slotShareEnv(base: Record<string, string | undefined>, cargoJobs: number): SlotShare {
-    const share: SlotShare = { CARGO_BUILD_JOBS: String(cargoJobs) };
-    for (const name of TEST_THREAD_VARS) if ((base[name] ?? "") === "") share[name] = String(cargoJobs);
+    const outer = /^\d+$/.test(base.CARGO_BUILD_JOBS ?? "") ? Number(base.CARGO_BUILD_JOBS) : 0;
+    const jobs = String(outer > 0 ? Math.min(outer, cargoJobs) : cargoJobs);
+    const share: SlotShare = { CARGO_BUILD_JOBS: jobs };
+    for (const name of TEST_THREAD_VARS) if ((base[name] ?? "") === "") share[name] = jobs;
     return share;
 }
 
@@ -119,7 +123,7 @@ export function leadBuildEnv(
  * commands queue for one of the machine's heavy-build slots (src/fleet/build-slots.ts) even when something puts
  * another cargo ahead of the shim on PATH, and every cargo run, a pre-push hook's of a plain `git push` included, gets
  * one slot's share of the cores (`slotShareEnv`): `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs`, the one
- * setting for this machine (an inherited value never overrides it), and the test-thread caps. An inherited
+ * setting for this machine (an inherited value only ever lowers it), and the test-thread caps. An inherited
  * `TOLI_BUILD_SLOT` (and a compile job, `TOLI_BUILD_JOB`) is dropped: a jawan's builds never ride on a slot it did not
  * take. A live-stack project's jawan (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim or the
  * wrapper, at the same share: the machine's one build is the running stack's, its own scoped test builds share the

@@ -16,10 +16,10 @@
 // supervisor.
 //
 // Heavy builds (`bin/toli build-slot`, src/fleet/build-slots.ts) start the same way, each in its own
-// `toli-build-<slot>-<pid>.scope` with a `MemoryMax`, a `MemoryHigh` below it and no swap, so an OOM kill takes the
-// build and not the session that ran it. Without `MemorySwapMax=0` a build at its cap pushes the rest of its memory
-// into swap instead; once the machine's swap fills, systemd-oomd kills the biggest swap user (the whole build) and
-// the cap never held anything (2026-11-13: MemoryMax set, the scope's 140 processes killed by oomd).
+// `toli-build-<slot>-<pid>.scope` with a `MemoryMax`, no swap and no `MemoryHigh` (`buildScopeArgv`), so an OOM kill
+// takes the build and not the session that ran it. Without `MemorySwapMax=0` a build at its cap pushes the rest of
+// its memory into swap instead; once the machine's swap fills, systemd-oomd kills the biggest swap user (the whole
+// build) and the cap never held anything (2026-11-13: MemoryMax set, the scope's 140 processes killed by oomd).
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { platform, run, ToliError } from "../core/util.ts";
@@ -183,27 +183,17 @@ function ownCgroup(): string {
     }
 }
 
-/** `MemoryHigh` as a share of `MemoryMax`: past it the kernel throttles and reclaims the build, before any OOM kill. */
-const MEMORY_HIGH_SHARE = 0.9;
-
 /**
  * `systemd-run` starting `argv` in scope `unit` with memory cap `memoryMaxMB` (0: no cap, still its own scope): its
- * `MemoryMax`, a `MemoryHigh` at `MEMORY_HIGH_SHARE` of it and `MemorySwapMax=0`, so the cap bounds the build's RAM
- * and swap together. `--` ends systemd-run's options, so a command whose arguments start with `-` reaches the command
- * unchanged.
+ * `MemoryMax` and `MemorySwapMax=0`, so the cap bounds the build's RAM and swap together. No `MemoryHigh`: with swap
+ * off, a build past it has only page cache to give back, and once that is gone the kernel throttles its allocations
+ * indefinitely instead of failing it (two 8.5 GB rustc jobs frozen 100+ minutes at a 90% `MemoryHigh` while the
+ * machine had 7 GB free). At `MemoryMax` the kernel reclaims the same cache and then OOM-kills inside the scope, so a
+ * build either runs at full speed up to its cap or fails at once. `--` ends systemd-run's options, so a command whose
+ * arguments start with `-` reaches the command unchanged.
  */
 export function buildScopeArgv(systemdRun: string, unit: string, memoryMaxMB: number, argv: Argv): Argv {
-    const limit =
-        memoryMaxMB > 0
-            ? [
-                  "-p",
-                  `MemoryHigh=${Math.max(1, Math.floor(memoryMaxMB * MEMORY_HIGH_SHARE))}M`,
-                  "-p",
-                  `MemoryMax=${memoryMaxMB}M`,
-                  "-p",
-                  "MemorySwapMax=0",
-              ]
-            : [];
+    const limit = memoryMaxMB > 0 ? ["-p", `MemoryMax=${memoryMaxMB}M`, "-p", "MemorySwapMax=0"] : [];
     return [systemdRun, "--user", "--scope", "--collect", "--quiet", `--unit=${unit}`, ...limit, "--", ...argv];
 }
 

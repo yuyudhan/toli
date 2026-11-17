@@ -5,7 +5,7 @@ import type { Machine } from "../src/core/config.ts";
 import { paths } from "../src/core/paths.ts";
 import { buildMemoryMaxMB } from "../src/fleet/build-slots.ts";
 import { capacityFor, type Resources } from "../src/fleet/resources.ts";
-import { jawanEnv } from "../src/jawans/env.ts";
+import { jawanEnv, slotShareEnv } from "../src/jawans/env.ts";
 import { buildScopeArgv, buildScopeUnit, inToliBuildCgroup } from "../src/jawans/scope.ts";
 import {
     CARGO_SHIM,
@@ -103,8 +103,21 @@ describe("jawan environment", () => {
         });
     });
 
-    test("the machine's cargo jobs replace an inherited build-jobs value", () => {
+    test("the machine's cargo jobs replace a higher inherited build-jobs value", () => {
         expect(jawanEnv({ CARGO_BUILD_JOBS: "18" }, "r1", 12).CARGO_BUILD_JOBS).toBe("12");
+        for (const unusable of ["", "0", "-2", "1.5", "4x"]) {
+            expect(slotShareEnv({ CARGO_BUILD_JOBS: unusable }, 8).CARGO_BUILD_JOBS).toBe("8");
+        }
+    });
+
+    test("a lower build-jobs value set outside stands, its test threads with it", () => {
+        // A script that runs `bin/toli build-slot -- ...` with CARGO_BUILD_JOBS=1 to fit a memory-hungry crate.
+        expect(slotShareEnv({ CARGO_BUILD_JOBS: "1" }, 8)).toMatchObject({
+            CARGO_BUILD_JOBS: "1",
+            RUST_TEST_THREADS: "1",
+            NEXTEST_TEST_THREADS: "1",
+        });
+        expect(jawanEnv({ CARGO_BUILD_JOBS: "2" }, "r1", 12).CARGO_BUILD_JOBS).toBe("2");
     });
 });
 
@@ -186,7 +199,7 @@ describe("build slots", () => {
 });
 
 describe("each heavy build in its own systemd scope", () => {
-    test("the scope argv: its unit, the memory cap (MemoryHigh below MemoryMax, no swap; none at 0), then the command", () => {
+    test("the scope argv: its unit, the memory cap (MemoryMax, no swap, no MemoryHigh; none at 0), then the command", () => {
         expect(buildScopeUnit(2, 4242)).toBe("toli-build-2-4242.scope");
         expect(buildScopeArgv("/usr/bin/systemd-run", "toli-build-2-4242.scope", 4096, ["/bin/cargo", "-v"])).toEqual([
             "/usr/bin/systemd-run",
@@ -195,8 +208,6 @@ describe("each heavy build in its own systemd scope", () => {
             "--collect",
             "--quiet",
             "--unit=toli-build-2-4242.scope",
-            "-p",
-            "MemoryHigh=3686M",
             "-p",
             "MemoryMax=4096M",
             "-p",
@@ -234,6 +245,20 @@ describe("each heavy build in its own systemd scope", () => {
             );
             expect(() => buildMemoryMaxMB(read as Machine, 65_536)).toThrow("non-negative integer");
         }
+    });
+
+    test("a slot's scope never throttles below its cap: two 8.5 GB rustc jobs fit a 31 GB, 12-core slot", () => {
+        // A build over MemoryHigh with swap off (MemorySwapMax=0) has no memory to reclaim: the kernel throttles its
+        // allocations indefinitely instead of failing it (rustc frozen 100+ minutes while the machine had 7 GB free).
+        const capacity = capacityFor(machine, 12);
+        expect(capacity).toMatchObject({ buildSlots: 2, cargoJobs: 6 });
+        const cap = buildMemoryMaxMB(machine, 31_744);
+        const argv = buildScopeArgv("systemd-run", "toli-build-1-1.scope", cap, ["cargo"]);
+        const limits = argv
+            .map((arg) => /^Memory(?:High|Max)=(\d+)M$/.exec(arg))
+            .flatMap((match) => (match === null ? [] : [Number(match[1])]));
+        expect(Math.min(...limits)).toBeGreaterThanOrEqual(2 * 8.5 * 1024);
+        expect(limits).toEqual([cap]);
     });
 
     test("a build in a slot caps Node's heap at half the slot's memory, unless the caller set a cap", async () => {
@@ -299,7 +324,7 @@ describe("each heavy build in its own systemd scope", () => {
         // the build.
         const marker = `/bin/sh -c : > "$0" && exec "$@" ${join(box.root, "state", "build-slots")}/scope-`;
         const prefix =
-            /^--user --scope --collect --quiet --unit=toli-build-1-(\d+)\.scope -p MemoryHigh=460M -p MemoryMax=512M -p MemorySwapMax=0 -- /;
+            /^--user --scope --collect --quiet --unit=toli-build-1-(\d+)\.scope -p MemoryMax=512M -p MemorySwapMax=0 -- /;
         // build-slot resolves `cargo` on PATH (the shim, first there); the shim passes the real cargo.
         for (const [line, build] of [
             [first, `${join(paths.buildShimsDir(), "cargo")} build`],
