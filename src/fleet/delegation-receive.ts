@@ -135,11 +135,80 @@ function sameOpenWork(task: Task, delegation: Delegation, key: string): boolean 
  */
 const BRIEF_TASK_ID = /(?:\b([\w.-]+)\/)?\bT(\d+)\b/g;
 
+/** The first line of a `git format-patch` mail. */
+const PATCH_MAIL = /^From [0-9a-f]{40} /;
+/** A hunk header; an omitted count is one line. */
+const HUNK_HEADER = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
+/** A git diff line outside its hunks: a file's extended headers, or the no-newline marker after a hunk's last line. */
+const DIFF_HEADER =
+    /^(?:diff --git |index |--- |\+\+\+ |(?:old|new|deleted file|new file) mode |(?:similarity|dissimilarity) index |(?:rename|copy) (?:from|to) |Binary files |\\ )/;
+/** A line of a `GIT binary patch` body: a `literal`/`delta` header, a base85 data line, or the blank line after one. */
+const BINARY_LINE = /^(?:(?:literal|delta) \d+|[A-Za-z][0-9A-Za-z!#$%&()*+;<=>?@^_`{|}~-]*|)$/;
+
+/**
+ * Which lines of a brief are patch text, which must reach the receiver byte for byte (`git am` and `git apply` check
+ * it against the patch's blob ids): a `## PATCH (begin)` .. `## PATCH (end)` section, and every inlined
+ * `git format-patch` mail or git diff. A mail runs from its `From <sha>` line through its diffs to the `-- ` signature
+ * and the version line after it; a diff runs from `diff --git` through its file headers and hunks, each hunk exactly as
+ * many lines as its header counts, so the first other line after a diff (a code fence, prose, even a `- ` list) ends it.
+ */
+function patchLines(lines: readonly string[]): boolean[] {
+    const patch: boolean[] = [];
+    let state: "prose" | "section" | "mail" | "diff" | "binary" | "signature" = "prose";
+    let oldLeft = 0;
+    let newLeft = 0;
+    for (const raw of lines) {
+        const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+        if (oldLeft > 0 || newLeft > 0) {
+            // A hunk line: context (an editor may strip a blank one to empty), removal, addition, or "\ No newline".
+            const mark = line[0] ?? " ";
+            if (mark === " " || mark === "-") oldLeft -= 1;
+            if (mark === " " || mark === "+") newLeft -= 1;
+            patch.push(true);
+            continue;
+        }
+        if (state === "section") {
+            if (/^#+ PATCH \(end\)/.test(line)) state = "prose";
+            patch.push(true);
+            continue;
+        }
+        if (state === "signature") {
+            // The git version line after `-- ` closes a format-patch mail.
+            state = "prose";
+            patch.push(true);
+            continue;
+        }
+        if (state === "binary" && BINARY_LINE.test(line)) {
+            patch.push(true);
+            continue;
+        }
+        const hunk = HUNK_HEADER.exec(line);
+        if (/^#+ PATCH \(begin\)/.test(line)) state = "section";
+        else if (PATCH_MAIL.test(line)) state = "mail";
+        else if (state === "prose") {
+            if (line.startsWith("diff --git ")) state = "diff";
+        } else if (line === "-- ") state = "signature";
+        else if (state === "mail") {
+            // The commit message and diffstat, up to the first diff.
+            if (line.startsWith("diff --git ")) state = "diff";
+        } else if (hunk !== null) {
+            state = "diff";
+            oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]);
+            newLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+        } else if (line === "GIT binary patch") state = "binary";
+        else if (DIFF_HEADER.test(line)) state = "diff";
+        else state = "prose";
+        patch.push(state !== "prose");
+    }
+    return patch;
+}
+
 /**
  * The delegator's brief with its task ids made safe here, where the same `T<n>` is another, unrelated task: the
  * `--for` task becomes `localId` (the task this delegation made), every other bare id the delegator's fleet id
- * `<from>/T<n>`, which no command on this machine changes. Ids already qualified by a machine stay. Returns the brief
- * and each rewrite, `T<n> -> <id>`: the `--for` task's first, then the rest in order of first appearance.
+ * `<from>/T<n>`, which no command on this machine changes. Ids already qualified by a machine stay, and so does patch
+ * text (patchLines), which must apply unchanged. Returns the brief and each rewrite, `T<n> -> <id>`: the `--for`
+ * task's first, then the rest in order of first appearance.
  */
 function rewriteBriefIds(
     delegation: Pick<Delegation, "brief" | "from" | "fromTask">,
@@ -147,13 +216,18 @@ function rewriteBriefIds(
     machines: ReadonlySet<string>,
 ): { brief: string; rewrites: string[] } {
     const mapping = new Map<string, string>();
-    const brief = delegation.brief.replace(BRIEF_TASK_ID, (match: string, prefix: string | undefined, n: string) => {
+    const rewrite = (match: string, prefix: string | undefined, n: string): string => {
         if (prefix !== undefined && machines.has(prefix)) return match;
         const id = `T${n}`;
         const to = id === delegation.fromTask ? localId : fleetId(delegation.from, id);
         mapping.set(id, to);
         return prefix === undefined ? to : `${prefix}/${to}`;
-    });
+    };
+    const lines = delegation.brief.split("\n");
+    const patch = patchLines(lines);
+    const brief = lines
+        .map((line, index) => (patch[index] === true ? line : line.replace(BRIEF_TASK_ID, rewrite)))
+        .join("\n");
     const own = [...mapping].filter(([, to]) => to === localId);
     const rest = [...mapping].filter(([, to]) => to !== localId);
     const rewrites = [...own, ...rest].map(([id, to]) => `${id} -> ${to}${to === localId ? " (this task)" : ""}`);
