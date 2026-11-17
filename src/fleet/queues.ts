@@ -182,9 +182,11 @@ function recordSent(sent: BalanceSent): void {
 
 /**
  * The delegate command for each of this machine's tasks waiting for a jawan that can go to `target`, with its brief
- * when it has one. A task bound to this machine stays out: pinned here (`task pin`), of a project `target` has no
- * clone of and whose git URL is not registered here (`target` could not clone it; the pick rule), or ship work of a
- * project `target` marked verify-only (verify work goes, with `--verify`). A scout task's command keeps its shape.
+ * when it has one. A task bound to this machine stays out: delegated here by another machine (work is never bounced
+ * or delegated on by the balancer; this covers verify work `target` itself delegated), pinned here (`task pin`), of a
+ * project `target` has no clone of and whose git URL is not registered here (`target` could not clone it; the pick
+ * rule), or ship work of a project `target` marked verify-only (verify work goes, with `--verify`). A scout task's
+ * command keeps its shape.
  */
 function delegateLines(target: FleetEntry): string[] {
     const cloned = new Set(target.resources?.projects ?? []);
@@ -192,6 +194,7 @@ function delegateLines(target: FleetEntry): string[] {
     return waitingTasks()
         .filter(
             (task) =>
+                task.delegatedBy === undefined &&
                 task.pinned === undefined &&
                 (task.project === "" || cloned.has(task.project) || clonable.has(task.project)) &&
                 !(

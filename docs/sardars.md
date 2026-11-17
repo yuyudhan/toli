@@ -249,7 +249,9 @@ back on arrival with the reason, and the originator's task is queued again. Deta
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer
 (`delegate queued work to <machine>`, listing only queued tasks no jawan works on, no other machine has, and that
-machine can take: not pinned here, and of a project it has a clone of or whose git URL is registered here); when
+machine can take: not delegated here by another machine (the balancer never bounces work or delegates it on, so
+verify work that machine delegated never goes back to it), not pinned here, and of a project it has a clone of or
+whose git URL is registered here); when no queued task can move, no offer is posted; when
 this machine's queue is empty and another's is at least the gap deep, it
 asks that machine's lead for work (a `talk` message naming its empty queue). Each offer or ask is sent once per
 period. Thresholds live in `config/machine.json`:
@@ -258,9 +260,10 @@ period. Thresholds live in `config/machine.json`:
 { "lead": { "balanceMinutes": 30, "balanceGap": 3 } }
 ```
 
-A task that must stay on this machine (it needs code or state only this clone has) is pinned:
-`bin/toli task pin T<n> [--reason "..."]` (`task unpin T<n>` releases it). A pinned task still counts toward the queue
-depth but is never listed in an offer; when every queued task is pinned, no offer is posted. `task list` and the
+A task that must stay on this machine (it needs code or state only this clone has, or works on this machine's own
+branch, such as merging main into it or pushing it) is pinned: `bin/toli task pin T<n> [--reason "..."]` (`task unpin
+T<n>` releases it). A pinned or delegated-in task still counts toward the queue depth but is never listed in an offer;
+when no queued task is left to offer, no offer is posted. `task list` and the
 digest show the pin.
 
 ## Jawans report to their own lead

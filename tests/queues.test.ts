@@ -27,6 +27,21 @@ function inboxSends(box: Sandbox): string[] {
         .filter((line) => line.includes("inbox add"));
 }
 
+/** T1 delegated here by m3 (ship work), T2 verify work delegated here by m2, the machine an offer would go to. */
+function delegatedHere(box: Sandbox): void {
+    editBacklog(box, (tasks) => {
+        for (const [id, machine, verify] of [
+            ["T1", "m3", false],
+            ["T2", "m2", true],
+        ] as const) {
+            const task = tasks.find((entry) => entry.id === id);
+            if (task === undefined) throw new Error(`no ${id}`);
+            task.delegatedBy = { machine, task: "T9", id: `${machine}-${T0}`, key: "key", at: T0 };
+            if (verify) task.verify = true;
+        }
+    });
+}
+
 describe("pick ranks by queue depth", () => {
     test("a loaded, low-memory machine with an empty queue is picked over this machine with a deeper queue", () => {
         const busy = queued(0, {
@@ -322,6 +337,27 @@ describe("balancePass", () => {
         expect(tasks.find((task) => task.id === "T1")?.pinned).toBe("");
         expect(await pass(box, "2026-11-10T10:00:00.000Z")).toBe("queue: offered work to m2 (m1 4, m2 0)");
         expect(queueItems(box).filter((item) => item.includes("T2: bin/toli delegate"))).toHaveLength(1);
+    });
+
+    test("offers only movable tasks: never one delegated here, verify work delegated by the target, or a pinned one", async () => {
+        const box = withTasks(queued(0), 4);
+        delegatedHere(box);
+        box.ok(["task", "pin", "T3", "--reason", "merges this machine's branch"]);
+        expect(await pass(box, T0)).toBe("queue: offered work to m2 (m1 4, m2 0)");
+        const [offer, ...more] = queueItems(box);
+        expect(more).toEqual([]);
+        expect(offer).toContain("T4: bin/toli delegate m2 'task 4' --brief <file> --project x");
+        for (const id of ["T1", "T2", "T3"]) expect(offer).not.toContain(`${id}:`);
+    });
+
+    test("posts no offer when no queued task can move", async () => {
+        const box = withTasks(queued(0), 4);
+        delegatedHere(box);
+        box.ok(["task", "pin", "T3"]);
+        box.ok(["task", "pin", "T4"]);
+        expect(await pass(box, T0)).toBeNull();
+        expect(queueItems(box)).toEqual([]);
+        expect(inboxSends(box)).toEqual([]);
     });
 
     test("is null without other fleet machines, and rejects bad lead settings", async () => {
