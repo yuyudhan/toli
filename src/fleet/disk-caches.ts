@@ -85,16 +85,25 @@ export function trimSccache(dryRun: boolean, say: (line: string) => void): void 
         say(`sccache: ${gib(stats.bytes)} is within its ${gib(stats.maxBytes)} cap`);
         return;
     }
-    const files = cacheFiles(stats.dir).sort((a, b) => a.mtimeMs - b.mtimeMs);
+    const { removed, total } = trimOldest(stats.dir, stats.maxBytes, dryRun);
+    say(
+        `${dryRun ? "would trim" : "trimmed"} sccache ${stats.dir}: ${removed} oldest entries, ${gib(stats.bytes)} -> ${gib(total)} (cap ${gib(stats.maxBytes)})`,
+    );
+}
+
+/**
+ * Delete the files under `dir`, oldest mtime first (the order sccache rebuilds its LRU from when its server starts),
+ * until the rest total at most `limitBytes`; a dry run only counts them. Returns how many went and the bytes left.
+ */
+export function trimOldest(dir: string, limitBytes: number, dryRun: boolean): { removed: number; total: number } {
+    const files = cacheFiles(dir).sort((a, b) => a.mtimeMs - b.mtimeMs);
     let total = files.reduce((sum, file) => sum + file.bytes, 0);
     let removed = 0;
     for (const file of files) {
-        if (total <= stats.maxBytes) break;
+        if (total <= limitBytes) break;
         if (!dryRun) rmSync(file.path, { force: true });
         total -= file.bytes;
         removed += 1;
     }
-    say(
-        `${dryRun ? "would trim" : "trimmed"} sccache ${stats.dir}: ${removed} oldest entries, ${gib(stats.bytes)} -> ${gib(total)} (cap ${gib(stats.maxBytes)})`,
-    );
+    return { removed, total };
 }

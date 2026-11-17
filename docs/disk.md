@@ -131,7 +131,8 @@ them (never sudo)`).
     A dry run reads that state and applies the same rules but never writes it.
 
 4. sccache: when its local cache is over its own cap, the oldest entries until it is back under the cap. A missing
-   entry is only a cache miss.
+   entry is only a cache miss. A cache at its cap is also handled on every tick, whatever the free disk (see "sccache
+   at its cap" below).
 5. Only under the emergency level (see 7): Docker volumes of idle build output, largest first (sizes from `docker
 system df -v`), until free space is over that level. A volume is build output only when its name says so (ends in
    `target`, as `demo_backend_target` or `app-target` do, or contains `cargo` or `node_modules`) or a container mounts
@@ -215,6 +216,22 @@ its working directory and `CARGO_TARGET_DIR` into the slot's lock file (`state/b
 the slot, and the keeper reads that only while the slot is held. A build in a slot is therefore seen even between two
 cargo runs, and a build whose target lies outside the checkout it works in (a shared `CARGO_TARGET_DIR`) is seen
 too. Over the emergency level such a target is kept at every step; under it, it goes last among the targets (step 7).
+
+### sccache at its cap
+
+An sccache server whose local cache sits at its cap evicts an entry for every one it stores, and a long-lived one can
+wedge there: its clients sleep on its socket, it starts no compiler, and builds freeze for an hour while it still
+answers `sccache --show-stats` (mozilla/sccache#629). `sccache --stop-server` frees them at once: the next compile
+starts a fresh server and a cargo already running goes on with it. So the minute tick, whatever the free disk, checks
+this user's running sccache server (src/fleet/sccache-keep.ts): when `--show-stats` reports its local cache at 95% of
+its cap or more, it deletes the oldest entries until the cache is at 80% of its cap, then, once the server runs no
+compiler (no child process), stops it with `sccache --stop-server`; a fresh server sizes its cache from the folder and
+starts with that headroom. A server running a compiler is never stopped; the tick asks again a minute later. It sends
+no signal, never touches another user's server, and asks nothing when no server of this user's runs, so it never
+starts one. `logs/tick.log` gets a line when it trims or stops (`sccache: 20.0 GiB at its 20.0 GiB cap: trimmed ...;
+stopped the sccache server (pid N), the next compile starts a fresh one`); a dry run (`TOLI_DRY_RUN=1`) only says
+what it would do. A server run by a service manager (a systemd user unit) exits on `--stop-server` like any other;
+the next compile starts one when the unit does not restart it.
 
 ## On a full disk
 

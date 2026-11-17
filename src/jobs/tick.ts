@@ -11,6 +11,7 @@ import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
+import { keepSccache } from "../fleet/sccache-keep.ts";
 import { choiceText } from "../harness/models.ts";
 import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { runHook } from "../helpers/local.ts";
@@ -40,6 +41,7 @@ import {
     STALE_RUN_MS,
 } from "./jobs.ts";
 import { attemptWithinLimits, jobModel, limitPauseFor, noticePause, type Outcome } from "./limit-pause.ts";
+import { dryRun as envDryRun } from "./os-scheduler.ts";
 import { deliverOutbox } from "./outbox.ts";
 import { postWaitingAlerts } from "./outbox-admin.ts";
 import { pullFleet, pullText } from "./pull.ts";
@@ -282,6 +284,13 @@ export async function tick(): Promise<void> {
     // on, so a keeper slowed by a starved disk never holds up a tick. The queue drain below leaves the disk to it.
     const disk = keepDiskBeforeWork("detached");
     if (disk) log(disk);
+    // sccache at its cap can wedge its server and freeze every build on it: trim it and restart an idle server.
+    try {
+        const sccache = keepSccache(envDryRun());
+        if (sccache) log(sccache);
+    } catch (error) {
+        log(`sccache check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     // A dev stack a killed build holder left paused (src/fleet/stack-pause.ts) is unpaused once no build holds a slot.
     try {
         resumeDevStacksWhenIdle();
