@@ -1,18 +1,11 @@
-// `bin/toli project set`: record the user's delivery, forge, workspace strategy, standing-grant, live-stack and role
-// answers.
+// `bin/toli project set`: record the user's delivery, forge, workspace strategy, standing-grant, live-stack, role and
+// release-priority answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, run, ToliError, withLock } from "../core/util.ts";
-import {
-    FORGES,
-    type Forge,
-    loadProjects,
-    overrideLabels,
-    type Project,
-    parseMode,
-    updateProjects,
-} from "./projects.ts";
+import { overrideLabels } from "./list.ts";
+import { FORGES, type Forge, loadProjects, type Project, parseMode, updateProjects } from "./projects.ts";
 import { parseWorkspace, perTask, type Workspace } from "./strategy.ts";
 import { cloneHolders, dirty, holdersText, refExists } from "./workspace.ts";
 
@@ -43,7 +36,7 @@ function parseForgeHost(value: string | undefined): string | null | undefined {
     return value.toLowerCase();
 }
 
-/** `--standing-push` / `--standing-pr` / `--live-stack`: yes or no. */
+/** `--standing-push` / `--standing-pr` / `--live-stack` / `--release-priority`: yes or no. */
 function parseYesNo(value: string | undefined, flag: string): boolean | undefined {
     if (value === undefined) return undefined;
     if (value !== "yes" && value !== "no") throw new ToliError(`${flag} must be yes or no, got "${value}"`);
@@ -119,6 +112,7 @@ function setAll(args: Args): void {
         "standing-pr",
         "live-stack",
         "role",
+        "release-priority",
     ].filter((flag) => args.str(flag) !== undefined);
     if (others.length > 0)
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
@@ -145,6 +139,7 @@ export function projectSetCommand(argv: string[]): void {
             "standing-pr",
             "live-stack",
             "role",
+            "release-priority",
         ],
     });
     args.maxPositional(1);
@@ -163,15 +158,16 @@ export function projectSetCommand(argv: string[]): void {
     const standingPr = parseYesNo(args.str("standing-pr"), "--standing-pr");
     const liveStack = parseYesNo(args.str("live-stack"), "--live-stack");
     const role = parseRole(args.str("role"));
+    const releasePriority = parseYesNo(args.str("release-priority"), "--release-priority");
     if (
-        [mode, branch, forge, forgeHost, workspace, standingPush, standingPr, liveStack, role].every(
+        [mode, branch, forge, forgeHost, workspace, standingPush, standingPr, liveStack, role, releasePriority].every(
             (value) => value === undefined,
         )
     )
         throw new ToliError(
             "nothing to set: pass --mode <m>, --branch <b>|none, --forge <f>|none, --forge-host <h>|none, " +
-                "--workspace <s>, --standing-push yes|no, --standing-pr yes|no, --live-stack yes|no " +
-                "or --role full|verify-only (or --all --workspace <s>)",
+                "--workspace <s>, --standing-push yes|no, --standing-pr yes|no, --live-stack yes|no, " +
+                "--role full|verify-only or --release-priority yes|no (or --all --workspace <s>)",
         );
     const at = now().toISOString();
     const { updated, note } = updateProjects((projects) => {
@@ -207,6 +203,8 @@ export function projectSetCommand(argv: string[]): void {
         else if (liveStack === false) delete project.liveStack;
         if (role === "verify-only") project.role = role;
         else if (role === "full") delete project.role;
+        if (releasePriority === true) project.releasePriority = true;
+        else if (releasePriority === false) delete project.releasePriority;
         return { updated: { ...project }, note: moved };
     });
     if (note !== null) out(note);

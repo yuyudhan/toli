@@ -15,9 +15,11 @@
 // containers that rebuild on save are paused or stopped while any slot is held (src/fleet/stack-pause.ts); every
 // live-stack project's stack, while any heavy build runs (src/fleet/live-stack-pause.ts); never the stack of the
 // project a command in a slot tests against (`stackUserOf`): a paused backend accepts a request and never answers it.
-import { closeSync, existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+// While a release-priority project's release run runs, other projects' builds wait for it before joining the line
+// (src/fleet/release-priority.ts).
+import { closeSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename, join } from "node:path";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
@@ -31,6 +33,7 @@ import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
+import { projectAt, realOrNull, within } from "./release-priority.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks, resumeDevStacks } from "./stack-pause.ts";
 
@@ -186,21 +189,6 @@ export async function runInSlot(
     return (await spawnForwarding(argv, env)).code;
 }
 
-/** `path` with its symlinks resolved, or null when it does not exist. */
-function realOrNull(path: string): string | null {
-    try {
-        return realpathSync(path);
-    } catch {
-        return null;
-    }
-}
-
-/** Whether `path` (resolved) is the folder `dir` or lies inside it. */
-function within(path: string, dir: string): boolean {
-    const real = realOrNull(dir);
-    return real !== null && (path === real || path.startsWith(`${real}${sep}`));
-}
-
 /**
  * The live-stack project (docs/projects.md "Live-stack mode") whose checkout `cwd` lies in, or null: the machine's
  * one build there is its running stack's, so a build started in it (a lead's native subagent's, through the shim)
@@ -221,14 +209,7 @@ export function liveStackProjectAt(cwd: string): string | null {
  * tests, a recipe running them) talk to its local stack, which must answer them (T1492).
  */
 export function stackUserOf(cwd: string, command: string[]): string | null {
-    if (/^cargo(-[\w-]+)?$/.test(basename(command[0] ?? ""))) return null;
-    const here = realOrNull(cwd);
-    if (here === null) return null;
-    const project = loadProjects().find(
-        (candidate) =>
-            within(here, paths.projectDir(candidate.name)) || within(here, paths.worktreesDir(candidate.name)),
-    );
-    return project?.name ?? null;
+    return /^cargo(-[\w-]+)?$/.test(basename(command[0] ?? "")) ? null : projectAt(cwd);
 }
 
 /**

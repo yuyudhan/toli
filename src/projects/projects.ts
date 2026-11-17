@@ -3,9 +3,10 @@ import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { git, gitOk, isGitRepo, unpushedBranches } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, printJson, readJson, requireName, run, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { now, out, readJson, requireName, run, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { ensureHooks } from "./hooks.ts";
-import { brokenLink, isLinked, projectLinkCommand } from "./link.ts";
+import { isLinked, projectLinkCommand } from "./link.ts";
+import { projectListCommand } from "./list.ts";
 import { projectSetCommand } from "./set.ts";
 import { projectSetupCommand } from "./setup.ts";
 import {
@@ -14,7 +15,6 @@ import {
     machineDefaultWorkspace,
     perTask,
     type Standing,
-    standingText,
     type Workspace,
 } from "./strategy.ts";
 
@@ -34,6 +34,8 @@ export type Forge = (typeof FORGES)[number];
  * shared checkout against the machine's running dev stack, which rebuilds on every save, instead of building
  * themselves.
  * `role`: `verify-only` when this machine takes no ship work for the project (docs/projects.md "Verify-only machines").
+ * `releasePriority`: while the project's `--work release` run runs, other projects' heavy builds on this machine wait
+ * for it (docs/fleet.md "Release priority", src/fleet/release-priority.ts).
  */
 export type Project = {
     name: string;
@@ -49,6 +51,7 @@ export type Project = {
     standing?: Standing;
     liveStack?: true;
     role?: "verify-only";
+    releasePriority?: true;
     /** Set for `project link`: the user's own checkout that projects/<name> is a symlink to (never deleted by toli). */
     linkedTo?: string;
 };
@@ -76,6 +79,7 @@ export function loadProjects(): Project[] {
             standing,
             liveStack,
             role,
+            releasePriority,
             linkedTo,
         }) => ({
             name,
@@ -91,6 +95,7 @@ export function loadProjects(): Project[] {
             ...(standing ? { standing: { push: standing.push === true, pr: standing.pr === true } } : {}),
             ...(liveStack === true ? { liveStack: true as const } : {}),
             ...(role === "verify-only" ? { role } : {}),
+            ...(releasePriority === true ? { releasePriority: true as const } : {}),
             ...(linkedTo ? { linkedTo } : {}),
         }),
     );
@@ -245,62 +250,6 @@ function ensure(argv: string[]): void {
     for (const line of ensureHooks(dir, `bin/toli project setup ${name}`)) out(line);
 }
 
-function list(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json"] });
-    args.maxPositional(0);
-    const projects = loadProjects();
-    if (args.bool("json")) {
-        printJson(
-            projects.map((entry) => ({
-                ...entry,
-                branch: entry.branch ?? null,
-                standing: entry.standing ?? { push: false, pr: false },
-                liveStack: entry.liveStack === true,
-                path: paths.projectDir(entry.name),
-                cloned: isGitRepo(paths.projectDir(entry.name)),
-                linkedTo: entry.linkedTo ?? null,
-                brokenLink: brokenLink(entry),
-            })),
-        );
-        return;
-    }
-    if (projects.length === 0) {
-        out("no projects");
-        return;
-    }
-    for (const entry of projects) {
-        const clone = brokenLink(entry)
-            ? "broken link"
-            : entry.linkedTo
-              ? `linked -> ${entry.linkedTo}`
-              : isGitRepo(paths.projectDir(entry.name))
-                ? "cloned"
-                : "not cloned";
-        out(
-            [
-                entry.name,
-                `mode=${entry.mode}`,
-                `workspace=${entry.workspace}`,
-                ...overrideLabels(entry),
-                clone,
-                entry.url,
-            ].join("\t"),
-        );
-    }
-}
-
-/** `branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=`, `role=` labels for the fields that are set. */
-export function overrideLabels(project: Project): string[] {
-    return [
-        ...(project.branch ? [`branch=${project.branch}`] : []),
-        ...(project.forge ? [`forge=${project.forge}`] : []),
-        ...(project.forgeHost ? [`forge-host=${project.forgeHost}`] : []),
-        ...(project.standing ? [`standing=${standingText(project.standing)}`] : []),
-        ...(project.liveStack ? ["live-stack=yes"] : []),
-        ...(project.role ? [`role=${project.role}`] : []),
-    ];
-}
-
 function path(argv: string[]): void {
     const args = new Args(argv);
     args.maxPositional(1);
@@ -384,7 +333,7 @@ const PROJECT_SUBCOMMANDS: Record<string, (argv: string[]) => void> = {
     add,
     ensure,
     link: projectLinkCommand,
-    list,
+    list: projectListCommand,
     path,
     set: projectSetCommand,
     setup: projectSetupCommand,

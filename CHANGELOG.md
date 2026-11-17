@@ -6,6 +6,14 @@ one. See docs/releasing.md.
 
 ## v0.5.35 - unreleased
 
+### Added
+
+- Release priority: `bin/toli project set <project> --release-priority yes` makes heavy builds for every other
+  project on this machine (`bin/toli build-slot`, the cargo shim, toli's rustc wrapper, gates and push checks) wait
+  while that project's `bin/toli spawn --work release` run runs, saying once which run they wait for, and go on by
+  themselves once it ends. The run's own builds and builds in the project's checkouts never wait, and a run whose
+  supervisor is gone holds nobody back (docs/fleet.md "Release priority").
+
 ### Fixed
 
 - A build waiting for a heavy-build slot no longer deadlocks against a slot whose command waits on a lock the

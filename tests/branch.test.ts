@@ -71,6 +71,7 @@ describe("fixed working branch", () => {
                 workspace: "branch-per-task",
                 standing: { push: false, pr: false },
                 liveStack: false,
+                releasePriority: false,
                 path: join(box.root, "projects", "old"),
                 cloned: false,
                 linkedTo: null,

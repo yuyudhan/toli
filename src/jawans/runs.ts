@@ -96,17 +96,22 @@ export function updateRun(id: string, change: (run: JawanRun) => void): JawanRun
     });
 }
 
-/**
- * Every spawned run, newest first. An active run whose supervisor died is recorded as failed, with the best cause
- * found (src/jawans/death.ts); the tick posts its outcome (src/jawans/adopt.ts).
- */
-export function listRuns(): JawanRun[] {
+/** Every run record as stored, unsorted and unchecked: a dead supervisor's active run still reads as active. */
+export function readRunRecords(): JawanRun[] {
     const dir = paths.jawansDir();
     if (!existsSync(dir)) return [];
     return readdirSync(dir)
         .filter((file) => file.endsWith(".json"))
         .map((file) => readJson<JawanRun>(join(dir, file), {} as JawanRun))
-        .filter((run) => typeof run.id === "string")
+        .filter((run) => typeof run.id === "string");
+}
+
+/**
+ * Every spawned run, newest first. An active run whose supervisor died is recorded as failed, with the best cause
+ * found (src/jawans/death.ts); the tick posts its outcome (src/jawans/adopt.ts).
+ */
+export function listRuns(): JawanRun[] {
+    return readRunRecords()
         .map((run) => {
             if (!ACTIVE.includes(run.status) || run.supervisorPid === null || pidAlive(run.supervisorPid)) return run;
             // Read outside the record's lock: the journal can take seconds.

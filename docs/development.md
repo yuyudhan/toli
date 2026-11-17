@@ -251,7 +251,7 @@ Tracked (shared by all machines):
     src/jawans/                  `bin/toli spawn` on any harness: spawn, supervise, runs
     src/harness/                 agent harnesses: headless commands, hooks, sync of generated files, lead guard,
                                  guidance, live session, CLI health for the extension
-    src/projects/                project registry, link, set, setup, workspace strategy and worktrees, safe commit
+    src/projects/                project registry, link, list, set, setup, workspace strategy and worktrees, safe commit
     src/forge/                   forges, push and PR/MR: GitHub/GitLab CLIs, Bitbucket API
     src/fleet/                   machines: fleet status, resources, pick, heavy-build slots
     src/helpers/                 helper registry, local helpers, OS units

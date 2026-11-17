@@ -35,6 +35,7 @@ branch, and makes `projects/<name>` a symlink to it). Dropping a linked project 
 | + no-mistakes gate (any of them)                         | same, but `--mode no-mistakes`                                  |
 | + standing grant (branch/worktree only, their word only) | `--standing-push yes --standing-pr yes` (or push only)          |
 | + live-stack mode (same-branch, stack rebuilds on save)  | `--live-stack yes` (docs/projects.md "Live-stack mode")         |
+| + release priority (its release run first on the cores)  | `--release-priority yes` (docs/fleet.md "Release priority")     |
 | same strategy for every project                          | `bin/toli project set --all --workspace <strategy>`             |
 
 The strategies in one line each: **same-branch** - every jawan works in the one clone on the project's branch;

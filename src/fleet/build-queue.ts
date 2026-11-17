@@ -8,7 +8,7 @@
 // Every slot number ever used counts while held (a build keeps its slot when `capacity.buildSlots` drops), and so does
 // each heavy build running outside the slots (src/fleet/outside-builds.ts): a waiter takes a slot only while all of
 // them together number fewer than `capacity.buildSlots`. A slot whose command has run nothing for a while (blocked on
-// a lock the waiter's build may hold) does not count, so a waiter never deadlocks against it (`idleSlots`).
+// a lock the waiter's build may hold) does not count, so a waiter never deadlocks against it (src/fleet/idle-slots.ts).
 import {
     closeSync,
     ftruncateSync,
@@ -24,31 +24,20 @@ import { join, resolve } from "node:path";
 import { paths } from "../core/paths.ts";
 import { ToliError, warn, writeTextAtomic } from "../core/util.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
+import { besideIdleText, type IdleWatch, idleSlots, idleWatch } from "./idle-slots.ts";
 import {
     heldCargoPids,
-    heldCargosByHolder,
     type OutsideBuild,
     outsideBuilds,
     outsideBuildText,
     type ProcessTable,
     processTable,
-    treeRunning,
 } from "./outside-builds.ts";
+import { giveWayToPriorityRelease, priorityReleaseAhead } from "./release-priority.ts";
 import type { Capacity } from "./resources.ts";
 
 /** How often a waiter looks again for a free slot, and a cargo's slot holder whether its cargo still runs. */
 export const POLL_MS = 500;
-/**
- * How long a slot's command must have run (next to) nothing before the first waiter in line builds beside it: a
- * command blocked on a lock the waiting build holds (a project's test-database lock) would otherwise wait forever
- * for it (T1660). `TOLI_SLOT_IDLE_MS` overrides it (tests).
- */
-const IDLE_MS = 60_000;
-/** The share of a slot's samples over that window its command may have been running in and still count as idle. */
-const IDLE_RUNNING_SHARE = 0.05;
-
-/** What a waiter has seen of each busy slot's command (by `<slot>:<holder pid>`): since when, and each sample since. */
-type IdleWatch = Map<string, { since: number; samples: { at: number; running: boolean }[] }>;
 
 const slotFile = (index: number): string => join(paths.buildSlotsDir(), `${index + 1}.lock`);
 const SLOT = /^(\d+)\.lock$/;
@@ -159,6 +148,9 @@ function leaveLine(ticket: Ticket, lock: Flock): void {
  * waited for). Gives up (null) once `wanted` says the slot is no longer needed. The slot taken gets one slot's share
  * of compile jobs (`capacity.cargoJobs`) in its job pool (`jobPoolDir`). A slot whose command has run nothing for the
  * idle window (`idleSlots`) does not count, so a build it waits on never waits for it; the waiter says so, naming it.
+ * A build that gives way to a release-priority run (src/fleet/release-priority.ts) waits for it outside the line, and
+ * leaves the line to wait again when one starts before its turn comes, so it never holds up the release's own builds
+ * behind its ticket.
  */
 export async function takeInTurn(
     capacity: Pick<Capacity, "buildSlots" | "cargoJobs">,
@@ -167,68 +159,55 @@ export async function takeInTurn(
     waiter: number,
     wanted: () => boolean = () => true,
 ): Promise<{ index: number; fd: number } | null> {
-    const override = Number(process.env.TOLI_SLOT_IDLE_MS);
-    const windowMs = Number.isInteger(override) && override > 0 ? override : IDLE_MS;
-    const watch: IdleWatch = new Map();
-    const ticket = takeTicket(lock);
-    try {
-        let told = false;
-        let toldOutside = false;
-        for (;;) {
-            if (!wanted()) return null;
-            const taken = firstInLine(ticket, lock)
-                ? tryTake(capacity.buildSlots, lock, holder, waiter, (table) => idleSlots(watch, table, windowMs))
-                : null;
-            if (taken !== null && "fd" in taken) {
-                for (const idle of taken.beside)
-                    warn(
-                        `toli: heavy-build slot ${idle.slot} (pid ${idle.pid} in ${idle.cwd}) has run nothing for ` +
-                            `${Math.round(windowMs / 1000)}s, maybe waiting on a lock this build holds; building beside it`,
-                    );
-                shareJobs(taken.index + 1, capacity.cargoJobs);
-                return { index: taken.index, fd: taken.fd };
-            }
-            if (!told) warn(`toli: waiting for a heavy-build slot (${capacity.buildSlots} busy)`);
-            told = true;
-            if (!toldOutside && taken !== null && taken.outside.length > 0) {
-                const builds = taken.outside.map(outsideBuildText).join("; ");
-                warn(`toli: counting heavy builds outside the slots as busy: ${builds}`);
-                toldOutside = true;
-            }
-            await Bun.sleep(POLL_MS);
+    const watch = idleWatch();
+    for (;;) {
+        if (!(await giveWayToPriorityRelease(holder.cwd, wanted))) return null;
+        const ticket = takeTicket(lock);
+        try {
+            const taken = await waitForTurn(capacity, lock, holder, waiter, wanted, ticket, watch);
+            if (taken !== "give way") return taken;
+        } finally {
+            leaveLine(ticket, lock);
         }
-    } finally {
-        leaveLine(ticket, lock);
     }
 }
 
 /**
- * The busy slots whose command has run nothing for `windowMs`: in at most `IDLE_RUNNING_SHARE` of this waiter's
- * samples since it first saw them, one taken now from `table` and kept in `watch`. A slot's command is every process
- * below its holder (the holder itself only waits on it), or a rustc-wrapper holder's cargo and everything below it.
+ * `takeInTurn` holding `ticket`: the slot taken, null once `wanted` says it is no longer needed, or "give way" when a
+ * release-priority run is ahead of the build once its ticket is first in line.
  */
-function idleSlots(watch: IdleWatch, table: ProcessTable, windowMs: number): BusySlot[] {
-    const now = Date.now();
-    const cargos = heldCargosByHolder();
-    const idle: BusySlot[] = [];
-    const seen = new Set<string>();
-    for (const busy of busySlots()) {
-        const key = `${busy.slot}:${busy.pid}`;
-        seen.add(key);
-        const cargo = cargos.get(busy.pid);
-        const running = cargo === undefined ? treeRunning(table, busy.pid, false) : treeRunning(table, cargo, true);
-        const seenBefore = watch.get(key);
-        const since = seenBefore?.since ?? now;
-        const samples = [
-            ...(seenBefore?.samples ?? []).filter((sample) => sample.at > now - windowMs),
-            { at: now, running },
-        ];
-        watch.set(key, { since, samples });
-        const runningShare = samples.filter((sample) => sample.running).length / samples.length;
-        if (now - since >= windowMs && runningShare <= IDLE_RUNNING_SHARE) idle.push(busy);
+async function waitForTurn(
+    capacity: Pick<Capacity, "buildSlots" | "cargoJobs">,
+    lock: Flock,
+    holder: SlotHolder,
+    waiter: number,
+    wanted: () => boolean,
+    ticket: Ticket,
+    watch: IdleWatch,
+): Promise<{ index: number; fd: number } | null | "give way"> {
+    let told = false;
+    let toldOutside = false;
+    for (;;) {
+        if (!wanted()) return null;
+        const first = firstInLine(ticket, lock);
+        if (first && priorityReleaseAhead(holder.cwd) !== null) return "give way";
+        const taken = first
+            ? tryTake(capacity.buildSlots, lock, holder, waiter, (table) => idleSlots(watch, busySlots(), table))
+            : null;
+        if (taken !== null && "fd" in taken) {
+            for (const idle of taken.beside) warn(besideIdleText(idle, watch));
+            shareJobs(taken.index + 1, capacity.cargoJobs);
+            return { index: taken.index, fd: taken.fd };
+        }
+        if (!told) warn(`toli: waiting for a heavy-build slot (${capacity.buildSlots} busy)`);
+        told = true;
+        if (!toldOutside && taken !== null && taken.outside.length > 0) {
+            const builds = taken.outside.map(outsideBuildText).join("; ");
+            warn(`toli: counting heavy builds outside the slots as busy: ${builds}`);
+            toldOutside = true;
+        }
+        await Bun.sleep(POLL_MS);
     }
-    for (const key of watch.keys()) if (!seen.has(key)) watch.delete(key);
-    return idle;
 }
 
 /** Size slot `slot`'s job pool at `jobs`; best effort, since a full disk never stops a build. */

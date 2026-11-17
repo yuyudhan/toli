@@ -388,6 +388,26 @@ handled per build instead: every heavy build on the machine, in a slot or in a l
 ([projects.md](projects.md#pausing-the-stack-during-a-build)), and the same freed slot and minute tick also resume
 it after a killed build.
 
+#### Release priority
+
+    bin/toli project set <project> --release-priority yes   # --release-priority no turns it off
+
+A release run competing with other projects' builds for the cores slows its gate. A project set
+`--release-priority yes` (on this machine only, in `data/projects.json`) goes first: while one of its `bin/toli spawn
+--work release` runs is running, a heavy build for any other project waits for that run to end before it joins the
+line for a slot, and says once whom it waits for:
+
+    toli: waiting for <project>'s release run <run id> to end (release priority) before a heavy build
+
+It covers every way into the slots: `bin/toli build-slot`, the cargo shim and toli's rustc wrapper (so a native
+subagent's plain `cargo` too), a gate's runner and `bin/toli push`. The run's own builds (their environment carries
+its `TOLI_RUN_ID`, as its cargo, gate and push inherit it) and every build in the project's clone or task worktrees go
+on as usual, as does a build already holding a slot when the run starts; a waiter still in line when one starts leaves
+the line and waits again. A waiting build holds neither a slot nor a place in line, so the release's builds never
+queue behind it and the wait adds no lock ordering. It ends on its own once the run is done, failed or killed, and a
+run whose supervisor is gone (a crash, a reboot) holds nobody back even before the tick records it as failed. A build
+in a live-stack checkout, which skips the slots, is not held back.
+
 ## Work on another machine
 
 No machine starts a jawan on another. Work for another machine goes to its lead, which dispatches its own jawans

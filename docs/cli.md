@@ -55,7 +55,7 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     project list [--json] | path <name>
     project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
                 [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no] [--standing-pr yes|no]
-                [--live-stack yes|no] [--role full|verify-only]
+                [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
     project set --all --workspace <strategy>
     project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
     project setup <name> [--json] | setup --all [--json]
@@ -67,7 +67,9 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
 - `set` records delivery, branch, forge, workspace strategy, and standing grants ([delivery.md](delivery.md),
   [projects.md](projects.md#workspace-strategy)). `--branch <b>` also switches a clean clone to `<b>`, or prints the
   `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)). `--live-stack yes`
-  puts the project in live-stack mode ([projects.md](projects.md#live-stack-mode)).
+  puts the project in live-stack mode ([projects.md](projects.md#live-stack-mode)). `--release-priority yes` makes
+  other projects' heavy builds on this machine wait while the project's `--work release` run runs
+  ([fleet.md](fleet.md#release-priority)).
 - `drop` keeps the clone and data unless asked; it refuses a dirty clone or unpushed commits.
 - `setup` is the per-project checklist ([projects.md](projects.md#setting-up-an-existing-project)); for one named
   project it first installs the repo's declared git hooks like `ensure` does.

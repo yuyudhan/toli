@@ -22,6 +22,7 @@ import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
 import { heldFile, holderHolds } from "./outside-builds.ts";
+import { priorityReleaseAhead, priorityReleaseText } from "./release-priority.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
 
@@ -183,8 +184,9 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
  * `bin/toli build-slot --cargo <cargo pid>` (bin/shims/toli-rustc-wrapper, on a cargo's `rustc -vV` probe outside any
  * held cargo's slot): when that cargo runs a heavy command outside a live-stack project's checkout and outside a slot
  * (`enclosingSlot`), return only once a holder (`holdForCargo`) holds a slot for its run (`heavyCargoRun`), starting
- * one when none is waiting, and saying once that it waits. Any other cargo returns at once. Never fails: a build runs
- * even when toli cannot take a slot for it.
+ * one when none is waiting, and saying once that it waits, and once which release-priority run it gives way to
+ * (src/fleet/release-priority.ts). Any other cargo returns at once. Never fails: a build runs even when toli cannot
+ * take a slot for it.
  */
 export async function slotForCargo(probingCargo: number): Promise<number> {
     const cargoPid = heavyCargoRun(probingCargo);
@@ -197,6 +199,7 @@ export async function slotForCargo(probingCargo: number): Promise<number> {
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const slots = capacityFor(machine, availableParallelism()).buildSlots;
     let told = false;
+    let toldRelease: string | null = null;
     while (pidAlive(cargoPid) && !holderHolds(cargoPid)) {
         if (!claimed(cargoPid, lock)) {
             const holder = spawnChild(
@@ -207,7 +210,13 @@ export async function slotForCargo(probingCargo: number): Promise<number> {
             holder.unref();
         }
         await Bun.sleep(HOLDER_POLL_MS);
-        if (!told && !holderHolds(cargoPid) && busyBuildSlots() + buildsOutsideSlots(cargoPid).length >= slots) {
+        if (holderHolds(cargoPid)) continue;
+        // The holder waits silently (its output goes nowhere): say here what it waits for.
+        const ahead = priorityReleaseAhead(process.cwd());
+        if (ahead !== null) {
+            if (ahead.id !== toldRelease) warn(priorityReleaseText(ahead));
+            toldRelease = ahead.id;
+        } else if (!told && busyBuildSlots() + buildsOutsideSlots(cargoPid).length >= slots) {
             warn(`toli: waiting for a heavy-build slot (${slots} busy)`);
             told = true;
         }
