@@ -173,12 +173,18 @@ below, nothing is locked or refused because a machine is busy.
 
     bin/toli fleet health [--json]            # every machine's CPUs, CPU use, load, RAM, swap, disk, with a TOTAL row
     bin/toli fleet work [--json]              # what every machine is doing: lead, jawans, open tasks, unpushed commits
+    bin/toli fleet push [--json]              # every clone: branch, unpushed commits, ages, dirty files, blocked pushes
+    bin/toli fleet questions [--json]         # every open question across the fleet, one numbered list
+    bin/toli fleet releases <project>@<machine>... [--health <project>=<url>]...   # where each project's releases stand
+    bin/toli fleet say "<text>" [--key <key>] [--os <uname>] [--to <m,...>] [--wait <s>]   # type into other leads
+    bin/toli fleet start [--session <s>] [--window <w>] [--message "<text>"] [--attach "<cmd>"] [--listener] [--os <uname>]
 
-Both read every machine at once, this one in its toli root and every other over ssh in its own, with one POSIX `sh`
+These read every machine at once, this one in its toli root and every other over ssh in its own, with one POSIX `sh`
 script of plain tools (`sysctl`, `vm_stat` and `top` on macOS; `/proc`, `nproc` on Linux; `df`, `git`, `tmux`) and
 the `bin/toli` commands every release has (`lead status`, `task list --json`, `runs --json --active`), so a machine on
-an older toli answers in full. Each machine has 25 seconds; one that does not answer, or takes no inbound ssh, is
-shown as unreachable with the reason, and the rest still show.
+an older toli answers in full. Each machine has 20 seconds (`say` and `start` add the time they wait); one that does
+not answer, or takes no inbound ssh, is shown as unreachable with the reason, and the rest still show. Only
+`fleet say` and `fleet start` change anything.
 
 `fleet health` prints one row per machine: CPUs; CPU used (the busy share over a one-second sample); the 1-minute
 load and its share of the CPUs; RAM, swap and the disk holding the toli checkout as used / total GB. The TOTAL row
@@ -186,12 +192,42 @@ sums each column over the machines that report it (CPU used is weighted by CPUs)
 answers its status over HTTPS (a paired peer, [peers.md](peers.md)) shows what that status has: CPUs, load, RAM and
 free disk, with `?` for the rest.
 
-`fleet work` prints a block per machine: its lead (the tmux pane running a harness in the toli root, the last line of
-that harness's status, the interactive session's pid and the lead service), the jawans running now with task id, project and
-title (spawn runs, and native subagents whose harness still reports them), and per project the queued, held and
-active tasks plus the clone's branch: commits not on origin's branch of the same name (else its upstream), when this
-clone last pushed it and the age of that branch's tip on origin. Projects with no open task and nothing unpushed are
-left out. Neither command changes anything.
+`fleet work` prints a block per machine: its lead (the tmux pane running a harness in the toli root, the last line
+of that harness's status, the interactive session's pid and the lead service), the jawans running now with task id,
+project and title (spawn runs, and native subagents whose harness still reports them), and per project the queued,
+held and active tasks plus the clone's branch: commits not on origin's branch of the same name (else its upstream),
+when this clone last pushed it and the age of that branch's tip on origin. Projects with no open task and nothing
+unpushed are left out.
+
+`fleet push` lists every clone under `projects/` on every machine: branch, commits not on origin, the age of origin's
+tip and of the oldest unpushed commit, uncommitted files, and `yes` under Blocked when the project's newest jawan
+report (`data/projects/<p>/reports/`) has a line saying its push is blocked; those lines follow the table.
+
+`fleet questions` lists every machine's held tasks (each one's Needs-you item: question, numbered options, the
+recommendation and what waits on it, with the `task answer` line that answers it) and this machine's unread inbox
+items that ask something, numbered in one list, this machine first. A question held on two machines (a delegated
+task and its delegator) is listed once, naming the other.
+
+`fleet releases <project>@<machine>` reads the project's clone on the machine that cuts its releases: the newest tag
+and its age, commits on `origin/<main>` since it, origin branches with `nightly` in their name holding commits main
+lacks (pushed, not merged), a cut in progress (a `release/*` branch not merged into main, or a running
+`--work release` jawan), and, with `--health <project>=<url>`, the version the deployed app's health endpoint
+reports (the first `version` field of its JSON). Nothing is fetched: origin's refs are as of that clone's last fetch,
+whose age is shown.
+
+`fleet say "<text>"` types the text into every other machine's lead pane (a harness in the toli root inside tmux) and
+submits it with `--key` (a tmux key name, default `Enter`; use the key the harness is bound to submit on). It waits up
+to `--wait` seconds (default 300) for a lead whose harness has drawn its status bar, and reports per machine whether
+the pane then shows the text or changed. `--os Linux` (or `Darwin`) limits it to machines whose `uname -s` matches,
+`--to <machine,...>` to the machines named.
+
+`fleet start` brings the leads back after a reboot: on every other machine with no lead pane it opens a tmux session
+(`--session`, default `toli`; a new `--window`, default `lead`, when the session exists) in the toli root, runs
+`--attach` there first when given (a shell command that opens a terminal attached to the session, such as a terminal
+emulator on a desktop workspace), starts the harness (`--harness`, default omp), waits for its status bar and types
+`--message` with `--key`. A machine whose lead already runs is never touched. `--listener` also starts the HTTPS peer
+listener on Linux as a systemd user unit, `toli-peer-serve`, where none runs; a listener lock whose pid now belongs to
+a process that is not toli (a pid reused after the reboot) is moved aside first.
 
 ### Heavy-build slots
 

@@ -1,6 +1,6 @@
-// Fleet reads that must work whatever toli release each machine runs (`fleet health`, `fleet work`): one POSIX sh
-// script, run in this machine's toli root and over ssh in every other fleet machine's, printing `@@<name> [arg]`
-// headed sections that this machine parses. Every machine is read in parallel under one cap per machine.
+// Fleet commands that must work whatever toli release each machine runs (`fleet health|work|push|questions|say|
+// start`): one POSIX sh script, run in this machine's toli root and over ssh in every other fleet machine's, printing
+// `@@<name> [arg]` headed sections that this machine parses. Every machine runs it at once, under one cap per machine.
 import { resolve } from "node:path";
 import {
     type FleetMachine,
@@ -8,17 +8,18 @@ import {
     loadMachine,
     otherFleetMachines,
     remoteShellCommand,
-    sshArgs,
+    sshArgsAsync,
 } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { runAsync } from "../core/util.ts";
+import { runAsync, shellQuote, ToliError } from "../core/util.ts";
+import { SPECS } from "../harness/harness.ts";
 import { httpPeer } from "../peer/transport.ts";
 import { parseResources } from "./pick.ts";
 import type { Resources } from "./resources.ts";
 
 const CONNECT_SECONDS = 8;
 /** One machine's whole read: the commands stay under 30 s together. */
-export const MACHINE_CAP_MS = 25_000;
+export const MACHINE_CAP_MS = 20_000;
 
 /** This CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
@@ -65,20 +66,26 @@ function firstLine(text: string): string {
     );
 }
 
+/**
+ * How long each machine may take (default 20 s), whether this machine runs the script too (default yes), and, when
+ * given, the only other machines it runs on.
+ */
+export type FleetRunOptions = { capMs?: number; withSelf?: boolean; only?: readonly string[] };
+
 /** Run `script` in this machine's toli root, with `$TOLI` naming this CLI. */
-async function runLocal(machine: string, script: string): Promise<ScriptOutcome> {
+async function runLocal(machine: string, script: string, capMs: number): Promise<ScriptOutcome> {
     const result = await runAsync(["sh", "-s"], {
         cwd: paths.root(),
         stdin: script,
         env: { TOLI: TOLI_SCRIPT },
-        timeoutMs: MACHINE_CAP_MS,
+        timeoutMs: capMs,
     });
     if (result.timedOut) return { machine, local: true, ok: false, reason: "timed out", fleet: null };
     return { machine, local: true, ok: true, sections: parseSections(result.stdout) };
 }
 
 /** Run `script` over ssh in `machine`'s toli root, with `$TOLI` naming its CLI; never throws. */
-async function runRemote(machine: FleetMachine, script: string): Promise<ScriptOutcome> {
+async function runRemote(machine: FleetMachine, script: string, capMs: number): Promise<ScriptOutcome> {
     const failed = (reason: string): ScriptOutcome => ({
         machine: machine.name,
         local: false,
@@ -89,15 +96,16 @@ async function runRemote(machine: FleetMachine, script: string): Promise<ScriptO
     if (inboundOff(machine)) return failed("takes no inbound ssh");
     let args: string[];
     try {
-        args = sshArgs(machine.ssh, CONNECT_SECONDS);
+        // The async form, so the connection checks for every host run at once instead of one after another.
+        args = await sshArgsAsync(machine.ssh, CONNECT_SECONDS);
     } catch (error) {
         return failed(error instanceof Error ? error.message : String(error));
     }
     const result = await runAsync([...args, remoteShellCommand(machine.root, "TOLI=bin/toli sh -s")], {
         stdin: script,
-        timeoutMs: MACHINE_CAP_MS,
+        timeoutMs: capMs,
     });
-    if (result.timedOut) return failed(`no answer from ${machine.ssh} within ${MACHINE_CAP_MS / 1000}s`);
+    if (result.timedOut) return failed(`no answer from ${machine.ssh} within ${capMs / 1000}s`);
     // The script itself never fails; a non-zero exit with no section is ssh's own (unreachable, refused, no root).
     const sections = parseSections(result.stdout);
     if (sections.length === 0)
@@ -106,13 +114,60 @@ async function runRemote(machine: FleetMachine, script: string): Promise<ScriptO
 }
 
 /** Run `script` on this machine and every other fleet machine at once, this machine first. */
-export async function runOnFleet(script: string): Promise<ScriptOutcome[]> {
-    const self = loadMachine().name;
-    return await Promise.all([
-        runLocal(self, script),
-        ...otherFleetMachines().map((machine) => runRemote(machine, script)),
-    ]);
+export async function runOnFleet(script: string, options: FleetRunOptions = {}): Promise<ScriptOutcome[]> {
+    const capMs = options.capMs ?? MACHINE_CAP_MS;
+    const only = options.only;
+    if (only !== undefined) {
+        const unknown = only.filter((name) => !otherFleetMachines().some((machine) => machine.name === name));
+        if (unknown.length > 0) throw new ToliError(`not another machine in config/fleet.json: ${unknown.join(", ")}`);
+    }
+    const others = otherFleetMachines()
+        .filter((machine) => only === undefined || only.includes(machine.name))
+        .map((machine) => runRemote(machine, script, capMs));
+    if (options.withSelf === false) return await Promise.all(others);
+    return await Promise.all([runLocal(loadMachine().name, script, capMs), ...others]);
 }
+
+/** Run `script` on one fleet machine (this one in its own root), under `capMs`. */
+export async function runOnMachine(
+    name: string,
+    script: string,
+    capMs: number = MACHINE_CAP_MS,
+): Promise<ScriptOutcome> {
+    if (name === loadMachine().name) return await runLocal(name, script, capMs);
+    const machine = otherFleetMachines().find((entry) => entry.name === name);
+    if (machine === undefined) throw new ToliError(`machine "${name}" is not in config/fleet.json`);
+    return await runRemote(machine, script, capMs);
+}
+
+/**
+ * Shell function `lead_panes`: one `<pane id>|<session>:<window>|<harness>` line per tmux pane that runs a harness in
+ * the toli root, the way a lead runs in tmux: the pane's command is the harness's CLI, or a runtime (`bun`, `node`)
+ * whose process, a child of the pane's shell, runs that CLI's script.
+ */
+export const LEAD_PANES_SH = `
+lead_panes() {
+  here=$(pwd -P)
+  bins=${shellQuote(
+      Object.values(SPECS)
+          .map((spec) => spec.binary)
+          .join(" "),
+  )}
+  tmux list-panes -a -F '#{pane_id}|#{session_name}:#{window_name}|#{pane_current_command}|#{pane_current_path}|#{pane_pid}' 2>/dev/null |
+  while IFS='|' read -r id name cmd path shell; do
+    [ "$path" = "$here" ] || [ "$path" = "$PWD" ] || continue
+    harness=
+    case " $bins " in *" $cmd "*) harness=$cmd ;; esac
+    if [ -z "$harness" ] && { [ "$cmd" = bun ] || [ "$cmd" = node ]; }; then
+      args=$(ps -A -o ppid=,args= | awk -v p="$shell" '$1 == p { $1 = ""; print }')
+      for b in $bins; do
+        case "$args" in *"/$b "*|*"/$b") harness=$b; break ;; esac
+      done
+    fi
+    [ -n "$harness" ] && echo "$id|$name|$harness"
+  done
+}
+`;
 
 /**
  * The machine's `resources --json` over HTTPS when it is a paired peer that allows this one `status`: the fallback

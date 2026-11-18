@@ -6,6 +6,7 @@ import { Args } from "../core/args.ts";
 import { out, printJson, ToliError } from "../core/util.ts";
 import { runOnFleet, type ScriptOutcome, type Section, section, statusOverHttps } from "./machine-script.ts";
 import { parseLoadavg, parseVmStat, type Resources } from "./resources.ts";
+import { renderTable } from "./table.ts";
 
 /** One machine's numbers; null where the source could not tell. */
 export type Health = {
@@ -174,6 +175,9 @@ export function healthFromResources(resources: Resources): Health {
     };
 }
 
+/** How long the HTTPS status fallback may take after a machine's script failed. */
+const HTTPS_FALLBACK_MS = 5_000;
+
 /** One machine's row: its script's output, else its status over HTTPS, else why neither worked. */
 async function healthRow(outcome: ScriptOutcome): Promise<HealthRow> {
     const base = { machine: outcome.machine, local: outcome.local };
@@ -183,7 +187,10 @@ async function healthRow(outcome: ScriptOutcome): Promise<HealthRow> {
             ? { ...base, via: null, health: null, reason: health }
             : { ...base, via: outcome.local ? "local" : "ssh", health };
     }
-    const status = await statusOverHttps(outcome.machine);
+    // Bounded, so a machine that failed at the ssh cap still leaves the whole command under 30 s.
+    const { promise: expired, resolve: expire } = Promise.withResolvers<string>();
+    const timer = setTimeout(() => expire(`HTTPS: no answer within ${HTTPS_FALLBACK_MS / 1000}s`), HTTPS_FALLBACK_MS);
+    const status = await Promise.race([statusOverHttps(outcome.machine), expired]).finally(() => clearTimeout(timer));
     if (status !== null && typeof status !== "string")
         return { ...base, via: "https", health: healthFromResources(status) };
     return {
@@ -249,21 +256,6 @@ function cells(name: string, health: Health): string[] {
             ? `? (${health.diskFreeGB} GB free)`
             : useText(health.diskUsedGB, health.diskTotalGB, 1),
     ];
-}
-
-/** Left-align the first column, right-align the rest, two spaces apart. */
-export function renderTable(header: string[], rows: string[][]): string[] {
-    const widths = header.map((cell, column) =>
-        Math.max(cell.length, ...rows.map((row) => (row[column] ?? "").length)),
-    );
-    const line = (row: string[]): string =>
-        row
-            .map((cell, column) =>
-                column === 0 ? cell.padEnd(widths[column] ?? 0) : cell.padStart(widths[column] ?? 0),
-            )
-            .join("  ")
-            .trimEnd();
-    return [line(header), line(widths.map((width) => "-".repeat(width))), ...rows.map(line)];
 }
 
 /** The table, its TOTAL row and a note per machine that was not (fully) read. */

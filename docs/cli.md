@@ -19,6 +19,8 @@ jawans use for bookkeeping. You rarely need the CLI yourself; saying what you wa
 | `/sync-toli [--all]`                         | Update toli on this machine, or every machine ([fleet.md](fleet.md))                    |
 | `/fleet-health`                              | Every machine's CPUs, CPU used, RAM, swap and disk, with totals ([fleet.md](fleet.md))  |
 | `/fleet-work`                                | What every machine's lead and jawans are doing; open tasks, unpushed commits            |
+| `/fleet-push`                                | Every machine's clones: unpushed commits, push ages, dirty files, blocked pushes        |
+| `/fleet-questions`                           | Every open question across the fleet as one numbered list                               |
 
 They exist in every harness that supports project commands; `bin/toli harness sync` links them
 ([harnesses.md](harnesses.md)).
@@ -255,6 +257,12 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     fleet queues [--json]
     fleet health [--json]
     fleet work [--json]
+    fleet push [--json]
+    fleet questions [--json]
+    fleet releases <project>@<machine>... [--health <project>=<url>]... [--main <branch>] [--json]
+    fleet say "<text>" [--key <key>] [--os <uname>] [--to <machine,...>] [--wait <seconds>] [--json]
+    fleet start [--session <s>] [--window <w>] [--harness <h>] [--key <key>] [--message "<text>"]
+          [--attach "<command>"] [--listener] [--os <uname>] [--json]
     fleet export | sync
     fleet check [--json] [--wake] [--local]
     pick [--project <name>] [--shape ship|scout] [--json]
@@ -268,6 +276,11 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   row, and what every machine is doing (its lead, the jawans running with their task, open tasks and unpushed
   commits per project); both read each machine with plain tools over ssh, whatever toli release it runs
   ([fleet.md](fleet.md#fleet-health-and-work)).
+- `fleet push`, `fleet questions`, `fleet releases`: every clone's branch, unpushed commits, ages, dirty files and a
+  push its newest report says is blocked; every open question across the fleet as one numbered list; where each
+  project's releases stand on the machine that cuts them. `fleet say` types one message into every other machine's
+  lead in tmux and confirms it arrived; `fleet start` starts the lead in tmux (and optionally the peer listener) on
+  every other machine where none runs ([fleet.md](fleet.md#fleet-health-and-work)).
 - `fleet check`: idle machines (no active run) with queued work for a project cloned there, and active tasks no
   live run works on, on every reachable machine; `--wake` posts the findings as one inbox item; `--local` reports
   this machine's own backlog (what the coordinator reads over ssh). The coordinator's tick runs it every

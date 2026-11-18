@@ -38,8 +38,13 @@ import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.t
 import { fleetListCommand } from "./fleet-sync.ts";
 import { healthCommand } from "./health.ts";
 import { availabilityLine, fleetStatus } from "./pick.ts";
+import { pushCommand } from "./push.ts";
+import { questionsCommand } from "./questions.ts";
 import { queuesCommand } from "./queues.ts";
+import { releasesCommand } from "./releases.ts";
 import type { FleetEntry } from "./resources.ts";
+import { sayCommand } from "./say.ts";
+import { startCommand } from "./start.ts";
 import { workCommand } from "./work.ts";
 
 export const DEFAULT_FLEET_CHECK_MINUTES = 60;
@@ -333,22 +338,29 @@ async function checkCommand(argv: string[]): Promise<void> {
     }
 }
 
-/**
- * `toli fleet status [--json]` | `queues [--json]` | `health [--json]` | `work [--json]` |
- * `check [--json] [--wake] [--local]` | `export` | `sync`.
- */
-export async function fleetCommand(argv: string[]): Promise<void> {
-    const [sub, ...rest] = argv;
-    if (sub === "check") return await checkCommand(rest);
-    if (sub === "queues") return await queuesCommand(rest);
-    if (sub === "health") return await healthCommand(rest);
-    if (sub === "work") return await workCommand(rest);
-    if (sub === "export" || sub === "sync") return fleetListCommand(sub, rest);
-    if (sub !== "status")
-        throw new ToliError(
-            "usage: toli fleet status [--json] | queues [--json] | health [--json] | work [--json] | check [--json] [--wake] [--local] | export | sync",
-        );
-    const args = new Args(rest, { booleans: ["json"] });
+const FLEET_USAGE = [
+    "usage: toli fleet status [--json] | queues [--json] | health [--json] | work [--json] | push [--json]",
+    "  | questions [--json] | releases <project>@<machine>... [--health <project>=<url>]... [--main <branch>] [--json]",
+    '  | say "<text>" [--key <key>] [--os <uname>] [--to <machine,...>] [--wait <seconds>] [--json]',
+    '  | start [--session <s>] [--window <w>] [--harness <h>] [--key <key>] [--message "<text>"] [--attach "<command>"]',
+    "    [--listener] [--os <uname>] [--json]",
+    "  | check [--json] [--wake] [--local] | export | sync",
+].join("\n");
+
+/** The `fleet` subcommands that print their report and exit 0. */
+const FLEET_REPORTS: Record<string, (argv: string[]) => Promise<void>> = {
+    check: checkCommand,
+    queues: queuesCommand,
+    health: healthCommand,
+    work: workCommand,
+    push: pushCommand,
+    questions: questionsCommand,
+    releases: releasesCommand,
+    status: statusCommand,
+};
+
+async function statusCommand(argv: string[]): Promise<void> {
+    const args = new Args(argv, { booleans: ["json"] });
     args.maxPositional(0);
     const entries = await fleetStatus();
     if (args.bool("json")) printJson(entries);
@@ -356,4 +368,19 @@ export async function fleetCommand(argv: string[]): Promise<void> {
         for (const entry of entries) out(availabilityLine(entry));
         for (const line of waitingLines()) out(`waiting to send: ${line}`);
     }
+}
+
+/** `toli fleet <subcommand>` (FLEET_USAGE); resolves to the exit code. */
+export async function fleetCommand(argv: string[]): Promise<number> {
+    const [sub = "", ...rest] = argv;
+    if (sub === "say") return await sayCommand(rest);
+    if (sub === "start") return await startCommand(rest);
+    if (sub === "export" || sub === "sync") {
+        fleetListCommand(sub, rest);
+        return 0;
+    }
+    const report = Object.hasOwn(FLEET_REPORTS, sub) ? FLEET_REPORTS[sub] : undefined;
+    if (report === undefined) throw new ToliError(FLEET_USAGE);
+    await report(rest);
+    return 0;
 }

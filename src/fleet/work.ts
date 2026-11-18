@@ -1,46 +1,37 @@
 // `bin/toli fleet work [--json]`: what every fleet machine is doing now. Per machine: its lead (the interactive
 // session in tmux and what its status line says, the lead service), the jawans running with their task, each
-// project's queued, held and active tasks, and each clone's branch: commits ahead of its upstream and when this
-// clone last pushed it. Read with plain tools and the `bin/toli` commands every release has (src/fleet/machine-script.ts).
+// project's queued, held and active tasks, and each clone's branch: commits not pushed and when this clone last pushed
+// it. Read with plain tools and the `bin/toli` commands every release has (src/fleet/machine-script.ts).
 import { Args } from "../core/args.ts";
 import { isJsonObject, now, out, printJson, waited } from "../core/util.ts";
-import { HARNESSES } from "../harness/harness.ts";
 import type { JawanRun } from "../jawans/runs.ts";
 import { AGENT_REPORT_TIMEOUT_MS } from "../records/agents.ts";
 import type { Task } from "../records/backlog.ts";
 import { liveDelegations } from "../records/delegation-report.ts";
 import { DEFAULT_STALE_TASK_MINUTES } from "../records/stale.ts";
-import { runOnFleet, type ScriptOutcome, type Section, section } from "./machine-script.ts";
+import { type Clone, clonesScript, parseClones } from "./clones.ts";
+import { LEAD_PANES_SH, runOnFleet, type ScriptOutcome, type Section, section } from "./machine-script.ts";
 
-/** The script every machine runs from its toli root; `$TOLI` is its CLI. */
-export const WORK_SCRIPT = `
-echo "@@lead"; "$TOLI" lead status 2>&1
-here=$(pwd -P)
-tmux list-panes -a -F '#{pane_id}|#{session_name}:#{window_name}|#{pane_current_command}|#{pane_current_path}' 2>/dev/null |
-while IFS='|' read -r id name cmd path; do
-  [ "$path" = "$here" ] || [ "$path" = "$PWD" ] || continue
+/**
+ * The script every machine runs from its toli root; `$TOLI` is its CLI. Its three `bin/toli` reads run at once in the
+ * background (the clones' `wait` waits for them too) and are printed at the end.
+ */
+export const WORK_SCRIPT = `${LEAD_PANES_SH}
+out=$(mktemp -d)
+"$TOLI" lead status > "$out/lead" 2>&1 &
+"$TOLI" task list --json > "$out/tasks" 2>/dev/null &
+"$TOLI" runs --json --active > "$out/runs" 2>/dev/null &
+lead_panes | while IFS='|' read -r id name cmd; do
   echo "@@pane $name $cmd"
   tmux capture-pane -p -t "$id" 2>/dev/null | tail -n 40 | sed 's/^@@/ @@/'
 done
-echo "@@tasks"; "$TOLI" task list --json 2>/dev/null
-echo "@@runs"; "$TOLI" runs --json --active 2>/dev/null
 echo "@@agents"
 awk 'FNR == 1 { if (NR > 1) print ""; n = FILENAME; sub(/.*\\//, "", n); sub(/\\.json$/, "", n); printf "%s\\t", n } { printf "%s", $0 } END { if (NR > 0) print "" }' state/agents/*.json 2>/dev/null
-echo "@@git"
-# One background job per clone (a busy machine has dozens); each prints its one line in a single write.
-for d in projects/*/; do
-  d=\${d%/}; [ -e "$d/.git" ] || continue
-  (
-    b=$(git -C "$d" symbolic-ref --quiet --short HEAD) || exit 0
-    up="refs/remotes/origin/$b"
-    git -C "$d" rev-parse --quiet --verify "$up" >/dev/null || up='@{u}'
-    ahead=$(git -C "$d" rev-list --count "$up..HEAD" 2>/dev/null) || ahead=
-    pushed=$(git -C "$d" log -g -n 200 --format='%ct %gs' "refs/remotes/origin/$b" 2>/dev/null | grep -m 1 'update by push' | cut -d' ' -f1)
-    tip=$(git -C "$d" log -1 --format=%ct "$up" 2>/dev/null)
-    printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "\${d#projects/}" "$b" "$ahead" "$pushed" "$tip"
-  ) &
-done
-wait
+${clonesScript(false)}
+echo "@@lead"; cat "$out/lead"
+echo "@@tasks"; cat "$out/tasks"
+echo "@@runs"; cat "$out/runs"
+rm -rf "$out"
 `;
 
 /** The lead: its interactive session (pid from `lead status`, tmux pane and status line) and its service. */
@@ -216,7 +207,7 @@ export function runningJawans(tasks: Task[], runs: unknown[], reports: Map<strin
 }
 
 /** Each project with open tasks or unpushed commits, by name. */
-export function projectWork(tasks: Task[], gitText: string): ProjectWork[] {
+export function projectWork(tasks: Task[], clones: Clone[]): ProjectWork[] {
     const projects = new Map<string, ProjectWork>();
     const entry = (project: string): ProjectWork => {
         const known = projects.get(project);
@@ -237,24 +228,21 @@ export function projectWork(tasks: Task[], gitText: string): ProjectWork[] {
     for (const task of tasks)
         if (task.status === "queued" || task.status === "held" || task.status === "active")
             entry(task.project)[task.status] += 1;
-    const epoch = (text: string | undefined): string | null =>
-        text === undefined || !/^\d+$/.test(text) ? null : new Date(Number(text) * 1000).toISOString();
-    for (const line of gitText.split("\n")) {
-        const [project, branch, ahead, pushed, tip] = line.split("\t");
-        if (project === undefined || project === "" || branch === undefined) continue;
-        const count = ahead === undefined || !/^\d+$/.test(ahead) ? null : Number(ahead);
-        if (!projects.has(project) && (count ?? 0) === 0) continue;
-        Object.assign(entry(project), { branch, ahead: count, pushedAt: epoch(pushed), upstreamAt: epoch(tip) });
+    for (const clone of clones) {
+        if (clone.branch === null || (!projects.has(clone.project) && (clone.ahead ?? 0) === 0)) continue;
+        Object.assign(entry(clone.project), {
+            branch: clone.branch,
+            ahead: clone.ahead,
+            pushedAt: clone.pushedAt,
+            upstreamAt: clone.upstreamAt,
+        });
     }
     return [...projects.values()].sort((a, b) => a.project.localeCompare(b.project));
 }
 
 /** One machine's work from the sections WORK_SCRIPT printed; `at` is now on this machine (clocks are synced). */
 export function parseWork(machine: string, local: boolean, sections: Section[], at: number): MachineWork {
-    const panes = sections.filter(
-        (entry) =>
-            entry.name === "pane" && (HARNESSES as readonly string[]).includes(entry.arg.split(" ").at(-1) ?? ""),
-    );
+    const panes = sections.filter((entry) => entry.name === "pane");
     const lead: Lead = {
         ...parseLeadStatus(section(sections, "lead") ?? ""),
         panes: panes.map((entry) => entry.arg),
@@ -270,7 +258,7 @@ export function parseWork(machine: string, local: boolean, sections: Section[], 
         lead,
         jawans: runningJawans(tasks ?? [], runs, reports, at),
         ...(tasks === null ? { tasksError: "task list --json gave no list" } : {}),
-        projects: projectWork(tasks ?? [], section(sections, "git") ?? ""),
+        projects: projectWork(tasks ?? [], parseClones(section(sections, "clones") ?? "")),
     };
 }
 

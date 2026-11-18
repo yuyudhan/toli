@@ -119,6 +119,12 @@ const USAGE = `usage: bin/toli <command> [args]
   fleet queues [--json]
   fleet health [--json]
   fleet work [--json]
+  fleet push [--json]
+  fleet questions [--json]
+  fleet releases <project>@<machine>... [--health <project>=<url>]... [--main <branch>] [--json]
+  fleet say "<text>" [--key <key>] [--os <uname>] [--to <machine,...>] [--wait <seconds>] [--json]
+  fleet start [--session <s>] [--window <w>] [--harness <h>] [--key <key>] [--message "<text>"]
+        [--attach "<command>"] [--listener] [--os <uname>] [--json]
   fleet export | sync
   fleet check [--json] [--wake] [--local]
   pick [--project <name>] [--shape ship|scout] [--json]
@@ -252,10 +258,7 @@ const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = {
         diskCommand(argv);
         return 0;
     },
-    fleet: async (argv) => {
-        await fleetCommand(argv);
-        return 0;
-    },
+    fleet: fleetCommand,
     pick: pickCommand,
     exec: execCommand,
     remote: remoteCommand,

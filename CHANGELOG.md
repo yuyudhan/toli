@@ -14,6 +14,19 @@ one. See docs/releasing.md.
   task id and title, open tasks per project and each clone's unpushed commits and last push. Both read every machine
   over ssh with plain system tools and the commands every toli release has, so a machine on an older release answers
   in full; an unreachable one is shown as such (docs/fleet.md "Fleet health and work").
+- `bin/toli fleet push`: every project clone on every machine with its branch, commits not pushed, the age of
+  origin's tip and of the oldest unpushed commit, uncommitted files, and the line of the project's newest jawan report
+  that says its push is blocked.
+- `bin/toli fleet questions`: every open question across the fleet as one numbered list (each machine's held tasks
+  with options, recommendation, what waits on them and the line that answers them, plus this machine's unread inbox
+  items that ask something); a question held on two machines is listed once.
+- `bin/toli fleet releases <project>@<machine>...`: the newest tag, commits on main since it, nightly branches pushed
+  but not merged, a cut in progress and, with `--health <project>=<url>`, the deployed version, read from the clone
+  on the machine that cuts the project's releases without fetching.
+- `bin/toli fleet say "<text>"` types one message into every other machine's lead running in tmux, submits it with
+  `--key`, and confirms per machine that it arrived; `bin/toli fleet start` starts the lead in tmux after a reboot on
+  every machine where none runs (optionally with an attached terminal and the HTTPS peer listener, moving aside a
+  listener lock whose pid now belongs to another program), never touching a running one.
 
 ## v0.5.35 - 2026-11-18
 

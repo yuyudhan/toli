@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { parseClones } from "../src/fleet/clones.ts";
 import {
     type HealthRow,
     healthText,
@@ -13,71 +12,7 @@ import {
 import { parseSections } from "../src/fleet/machine-script.ts";
 import { paneActivity, parseTasks, projectWork, runningJawans, workText } from "../src/fleet/work.ts";
 import { ENV, fleet, remoteSnapshot } from "./fleet-fixture.ts";
-import { type Sandbox, SSH_STUB_ARGS } from "./helpers.ts";
-
-const LINUX_HEALTH = `@@ncpu
-12
-@@loadavg
-3.35 4.91 6.31 6/3516 605204
-@@meminfo
-MemTotal:       32768000 kB
-MemFree:        12472776 kB
-MemAvailable:   24576000 kB
-SwapTotal:       8192000 kB
-SwapFree:        6144000 kB
-@@stat
-cpu  1000 0 1000 7000 1000 0 0 0 0 0
-cpu  1300 0 1300 7300 1100 0 0 0 0 0
-@@df
-Filesystem     1024-blocks      Used Available Capacity Mounted on
-/dev/nvme0n1p2   524288000 131072000 393216000      25% /`;
-
-const WORK = `@@lead
-service: systemd installed, not running (/home/u/.config/systemd/user/toli-lead.service)
-interactive: pid 9638
-@@pane paltan:toli omp
-  some earlier output
-  ├─ agent line
-  \u{f12b7} Waiting for 2 background jobs: A, B          \u{f1218} Session: Greet
- \u{ec19} Opus · ~/code/toli ─────────────────────────────── 16%
-╰─
-@@tasks
-[
-  {"id": "T5", "project": "alpha", "title": "Build the thing", "status": "active", "agent": "BuildT5",
-   "createdAt": "2026-03-04T08:00:00.000Z", "dispatchedAt": "2026-03-04T08:30:00.000Z"},
-  {"id": "T6", "project": "alpha", "title": "Next thing", "status": "queued", "createdAt": "2026-03-04T08:00:00.000Z"},
-  {"id": "T7", "project": "beta", "title": "Asks", "status": "held", "createdAt": "2026-03-04T08:00:00.000Z"},
-  {"id": "T8", "project": "beta", "title": "Old", "status": "done", "createdAt": "2026-03-04T08:00:00.000Z"},
-  {"id": "T9", "project": "beta", "title": "Ended agent", "status": "active", "agent": "GoneT9",
-   "createdAt": "2026-03-04T07:00:00.000Z"}
-]
-@@runs
-[{"id": "j-1", "task": "T10", "project": "gamma", "status": "running", "startedAt": "2026-03-04T08:50:00.000Z"}]
-@@agents
-BuildT5\t{"pid": 1, "at": "2026-03-04T08:59:00.000Z"}
-GoneT9\t{"pid": 1, "at": "2026-03-04T07:30:00.000Z", "endedAt": "2026-03-04T07:30:00.000Z"}
-@@git
-alpha\tnightly\t3\t1772611200\t1772611200
-delta\tmain\t0\t\t1772611200
-epsilon\tmain\t2\t\t`;
-
-const AT = "2026-03-04T09:00:00.000Z";
-
-/** m2 answers the health and work scripts from these texts; m3 is unreachable. */
-function stubFleetScripts(box: Sandbox): void {
-    writeFileSync(join(box.root, ".m2-health"), LINUX_HEALTH);
-    writeFileSync(join(box.root, ".m2-work"), WORK);
-    box.stub(
-        "ssh",
-        [
-            SSH_STUB_ARGS,
-            'case "$host" in',
-            `  host2) script=$(cat); case "$script" in *"@@ncpu"*) cat "${join(box.root, ".m2-health")}" ;; *"@@tasks"*) cat "${join(box.root, ".m2-work")}" ;; *) exit 1 ;; esac ;;`,
-            "  *) cat >/dev/null; echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
-            "esac",
-        ].join("\n"),
-    );
-}
+import { AT, LINUX_HEALTH, stubFleetScripts, WORK } from "./fleet-scripts-fixture.ts";
 
 describe("fleet health", () => {
     test("parses Linux /proc, df and a one-second CPU sample", () => {
@@ -221,10 +156,7 @@ describe("fleet work", () => {
             ["spawn", "j-1", "T10"],
             ["subagent", "BuildT5", "T5"],
         ]);
-        const projects = projectWork(
-            tasks,
-            "alpha\tnightly\t3\t1772611200\t1772611200\ndelta\tmain\t0\t\t1\nepsilon\tmain\t2\t\t",
-        );
+        const projects = projectWork(tasks, parseClones(sections.find((entry) => entry.name === "clones")?.body ?? ""));
         expect(
             projects.map((project) => [project.project, project.queued, project.held, project.active, project.ahead]),
         ).toEqual([
