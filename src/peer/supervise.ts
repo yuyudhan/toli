@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../core/paths.ts";
+import { toliHolds } from "../core/pid-lock.ts";
 import { pidAlive, readJson } from "../core/util.ts";
 import { activeRuntime, runtimeSuperseded } from "../release/runtime.ts";
 import { hasIdentity } from "./identity.ts";
@@ -14,10 +15,13 @@ import { peerSettings } from "./store.ts";
 /** How long the lead waits for a listener on a replaced runtime to exit once asked to stop. */
 const HANDOVER_MS = 5_000;
 
-/** The running listener's record, or null when none runs. */
+/**
+ * The running listener's record, or null when none runs: a record whose pid a reboot handed to another program
+ * (src/core/pid-lock.ts toliHolds) names no listener.
+ */
 export function liveListener(): ListenerRecord | null {
     const record = readListener();
-    return record !== null && pidAlive(record.pid) ? record : null;
+    return record !== null && toliHolds(record.pid, paths.peerListener()) ? record : null;
 }
 
 /**

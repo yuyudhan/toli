@@ -17,6 +17,9 @@ one. See docs/releasing.md.
   everything left in its cgroup (`KillMode=control-group`), so a stopped lead never wakes again to start jawans;
   jawans run in scopes of their own and survive a restart. `lead install` run inside the lead's own headless turn
   reloads the unit without restarting the service under itself.
+- A pid lock or record that survived a reboot (`state/peer-listener.lock`, `state/peer/listener.json`, the tick's
+  locks) no longer blocks `peer serve` once its pid belongs to another program or to a process started after the
+  file was written: only the toli process that wrote it holds it.
 
 ## v0.5.36 - 2026-11-18
 

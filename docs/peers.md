@@ -60,7 +60,10 @@ the checkout's `config/machine.json` is gone; after `upgrade` restarts the lead 
 for that rescan: it asks a listener still running the replaced runtime to stop over the control socket and starts
 the new one at once. `bin/toli doctor` warns (`peer-listener`) and the coordinator's hourly `fleet check` names a
 machine when `peer.listen` is on and no listener runs, or one is stuck on a replaced runtime. A machine whose lead
-runs from crontab has no listener unless `peer serve` is run, and pulls from its peers instead. Settings live in
+runs from crontab has no listener unless `peer serve` is run, and pulls from its peers instead. One listener runs per
+checkout (`state/peer-listener.lock`, and its record `state/peer/listener.json`); a lock or record that survived a
+reboot names no listener once its pid belongs to another program or to a process started after the file was written,
+so `peer serve` and the lead take over instead of refusing. Settings live in
 `config/machine.json` `peer`:
 
 | Setting       | Default   | Meaning                                                                                                                                        |
