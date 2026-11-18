@@ -98,6 +98,8 @@ export const paths = {
     updateCheckLog: () => join(repoRoot(), "logs", "update-check.log"),
     /** Which stale active tasks the tick already posted, per ended run (src/records/stale.ts). */
     staleTasksState: () => join(repoRoot(), "state", "stale-tasks.json"),
+    /** The tasks the tick re-dispatched once after their jawan died (src/records/redispatch.ts). */
+    redispatchState: () => join(repoRoot(), "state", "redispatched.json"),
     /** When the tick last started `bin/toli fleet check --wake` (src/fleet/oversight.ts). */
     fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
     fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),

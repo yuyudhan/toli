@@ -504,6 +504,17 @@ answer` posts no wake of its own; only an answer forwarded from another machine'
   (`task start --agent`, `spawn --task`) clears it. A task is live while the run it names, or the latest run of that
   run's resume or replace chain, is queued or running, even when that run carries no task id (`task start --agent`
   also records the task on a run spawned without `--task`).
+- **Jawans that died are re-dispatched once.** Before posting, the tick re-dispatches a stale task whose jawan died
+  rather than ended: a `bin/toli spawn` run whose harness was killed by a signal toli did not send (a reboot, an OOM
+  killer) or whose supervisor died with its harness (`the supervisor exited without recording an outcome`), or a
+  native subagent that died with its lead session. A spawn run is continued with the same brief (its omp session
+  resumed, else a fresh run with a RESUME section), a subagent's task gets a spawn run of its brief
+  (`data/projects/<p>/briefs/T<n>.md` or `T<n>-*.md`; without one it stays with the lead) with a `RE-DISPATCHED`
+  section; either way the answers recorded since are added. That is done once per task (`state/redispatched.json`):
+  when the re-dispatched jawan dies too, or the re-dispatch cannot start, the task is held with a question in
+  `bin/toli needs`. A run that ended on its own (done, failed on its harness, `run kill`), a subagent that stopped
+  reporting, a machine marked full (`lead full`) and `lead.dispatch` "subagents" are left to the lead as before. The
+  tick logs each one (`T<n>: re-dispatched as <run> (queued)`, `T<n>: held, its re-dispatched jawan died too`).
 - **Tasks that wait.** `bin/toli task wait T<n> --on "<what>"` marks an active task as deliberately waiting (a
   deferred spawn, a push, another task). Next names it as `waiting on <what>` after the stale tasks, never as a
   re-dispatch; the tick and `fleet check` leave it out, and `task list` (`--fleet` too) shows `(waiting on: <what>)`

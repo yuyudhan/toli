@@ -31,8 +31,10 @@ export type ContinueOptions = {
     reason: string;
     /** How it stopped, in words: `stalled: no progress for 30 minutes (...)`. */
     stopped: string;
-    /** capacity.autoResume for automatic continuations; null when the lead asked (`bin/toli resume`). */
+    /** capacity.autoResume for automatic continuations; null when the lead asked (`bin/toli resume`) or `startedBy`. */
     cap: number | null;
+    /** Who started it, when neither capacity.autoResume nor the lead (src/records/redispatch.ts). */
+    startedBy?: string | undefined;
     /** Start even when every jawan slot is busy. */
     now: boolean;
     /** The lead's words added to the resume prompt. */
@@ -51,6 +53,7 @@ export function continueRun(run: JawanRun, options: ContinueOptions): JawanRun {
     const facts: ResumeFacts = {
         number,
         cap: options.cap,
+        startedBy: options.startedBy,
         previousRun: run.id,
         stopped: options.stopped,
         cwd: run.cwd,
@@ -84,7 +87,10 @@ export function continueRun(run: JawanRun, options: ContinueOptions): JawanRun {
         record.resumedBy = next.id;
     });
     const how = session === null ? "as a fresh run" : "in the same session";
-    const place = options.cap === null ? "by the lead" : `automatically, ${number} of at most ${options.cap}`;
+    const place =
+        options.cap !== null
+            ? `automatically, ${number} of at most ${options.cap}`
+            : `by ${options.startedBy ?? "the lead"}`;
     noteOnTask(run, `run ${run.id} ${options.stopped}; resumed ${how} as ${next.id} (${place})`);
     return next;
 }

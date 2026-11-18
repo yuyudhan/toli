@@ -23,6 +23,9 @@ one. See docs/releasing.md.
 - A peer that receives a second copy of one signed request (a sender trying its next address after the first stopped
   answering, as happens around reboots) answers it as a `duplicate` when it was applied, else asks the sender to
   send it again; it never refuses it as a replayed nonce, so the sender keeps the message instead of cancelling it.
+- An active task whose jawan died (a reboot, an OOM kill, a dead lead session) no longer waits on the lead: the tick
+  re-dispatches it once with the same brief and the answers recorded since (a spawn run resumed, a subagent's task
+  spawned from its brief), and holds it with a question when that dies too (docs/fleet.md "Oversight").
 
 ## v0.5.36 - 2026-11-18
 

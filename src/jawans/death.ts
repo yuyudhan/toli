@@ -119,6 +119,10 @@ export type OrphanRun = {
     supervisorSignal?: { signal: string; at: string };
 };
 
+/** How every orphaned run's error starts (orphanCause), and how it says the harness outlived its supervisor. */
+const ORPHAN_ERROR = "the supervisor exited without recording an outcome";
+const UNSUPERVISED = "is still running unsupervised";
+
 /**
  * The error recorded for a run whose supervisor is gone without recording an outcome: the supervisor's death, then
  * every cause found, then whether its harness is still running unsupervised.
@@ -138,8 +142,19 @@ export function orphanCause(record: OrphanRun): string {
         record.pid === null
             ? "its harness never started"
             : pidAlive(record.pid)
-              ? `its harness (pid ${record.pid}) is still running unsupervised`
+              ? `its harness (pid ${record.pid}) ${UNSUPERVISED}`
               : `its harness (pid ${record.pid}) is gone too`;
     const cause = causes.length === 0 ? "no cause found in the journal or the logs" : causes.join("; ");
-    return `the supervisor exited without recording an outcome: ${cause}; ${harness}`;
+    return `${ORPHAN_ERROR}: ${cause}; ${harness}`;
+}
+
+/**
+ * Whether a failed run's recorded `error` says its jawan died rather than gave up: its harness was killed by a signal
+ * toli did not send (a reboot, an OOM killer, someone's kill: signalDeathText), or its supervisor died without
+ * recording an outcome and its harness is gone too (orphanCause). A harness still running unsupervised is alive.
+ */
+export function diedWithoutOutcome(error: string | null): boolean {
+    if (error === null) return false;
+    if (error.startsWith("killed by ")) return true;
+    return error.startsWith(ORPHAN_ERROR) && !error.includes(UNSUPERVISED);
 }

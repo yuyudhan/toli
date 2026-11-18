@@ -27,6 +27,7 @@ import { peerSettings } from "../peer/store.ts";
 import { pullLine } from "../peer/transport-command.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { loadRetention, weeklyPruneReport } from "../records/prune.ts";
+import { redispatchDeadRuns } from "../records/redispatch.ts";
 import { surfaceStaleTasks } from "../records/stale.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
 import {
@@ -309,8 +310,12 @@ export async function tick(): Promise<void> {
     } catch (error) {
         log(`unreported jawan runs not posted: ${error instanceof Error ? error.message : String(error)}`);
     }
-    // Oversight never pauses (away mode included): active tasks no live run works on are posted once per ended run,
-    // and the coordinator's fleet check names idle machines with waiting work (src/records/stale.ts, fleet/oversight.ts).
+    // Oversight never pauses: dead jawans re-dispatched once (records/redispatch.ts), stale tasks posted, fleet check.
+    try {
+        for (const note of redispatchDeadRuns(loadBacklog().tasks)) log(note);
+    } catch (error) {
+        log(`dead runs not re-dispatched: ${error instanceof Error ? error.message : String(error)}`);
+    }
     try {
         const stale = surfaceStaleTasks(loadBacklog().tasks);
         if (stale) log(stale);

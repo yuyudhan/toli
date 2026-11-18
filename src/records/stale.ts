@@ -1,8 +1,9 @@
 // Active tasks no live run works on: the run recorded on the task ended (a `bin/toli spawn` run, or a `bin/toli
 // remote` run whose record names the task) some minutes ago, its native harness subagent ended, stopped reporting or
-// never reported running (src/records/agents.ts), or no jawan was ever recorded. Nothing else re-dispatches such a
-// task, so the digest's Next block lists it first, the tick posts it to the inbox once per ended run (a `[toli wake]`
-// for the lead), and `bin/toli fleet check` names it with the fleet's idle machines.
+// never reported running (src/records/agents.ts), or no jawan was ever recorded. Only a jawan that died (a reboot, a
+// dead lead session) is re-dispatched by the tick itself, once (src/records/redispatch.ts); for the rest the digest's
+// Next block lists the task first, the tick posts it to the inbox once per ended run (a `[toli wake]` for the lead),
+// and `bin/toli fleet check` names it with the fleet's idle machines.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { hasMachine, loadMachine, machineSettings } from "../core/config.ts";
@@ -158,7 +159,7 @@ export type StaleInput = { at: Date; minutes: number; runs: JawanRun[]; records:
  * The run that carries on `run`: follow its continuations (`resumedBy`) and replacements (`replacedBy`) to the latest
  * one, so a task naming an earlier run of a resumed or restarted chain is judged by the run working now.
  */
-function latestOfChain(run: JawanRun, runs: JawanRun[]): JawanRun {
+export function latestOfChain(run: JawanRun, runs: JawanRun[]): JawanRun {
     const seen = new Set<string>([run.id]);
     let latest = run;
     for (;;) {

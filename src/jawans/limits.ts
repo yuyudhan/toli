@@ -77,6 +77,8 @@ export type ResumeFacts = {
     number: number;
     /** Most automatic continuations a chain may get (config/machine.json capacity.autoResume); null for the lead's. */
     cap: number | null;
+    /** Who started a continuation outside capacity.autoResume when not the lead (`cap` null): `toli, once, ...`. */
+    startedBy?: string | undefined;
     previousRun: string;
     /** How the previous run stopped: `hit its 180-minute time limit`, `stalled: no progress for 30 minutes (...)`. */
     stopped: string;
@@ -85,9 +87,14 @@ export type ResumeFacts = {
 };
 
 function placeText(facts: ResumeFacts): string {
-    return facts.cap === null
-        ? `This continuation ${facts.number} was started by the lead.`
-        : `This is automatic continuation ${facts.number} of at most ${facts.cap}.`;
+    if (facts.cap !== null) return `This is automatic continuation ${facts.number} of at most ${facts.cap}.`;
+    return `This continuation ${facts.number} was started by ${facts.startedBy ?? "the lead"}.`;
+}
+
+/** The resumed session's RESUME label: `auto` within capacity.autoResume, `lead` for `bin/toli resume`, else `toli`. */
+function starterLabel(facts: ResumeFacts): string {
+    if (facts.cap !== null) return "auto";
+    return facts.startedBy === undefined ? "lead" : "toli";
 }
 
 /** The section a fresh continuation's brief gets after the original brief (harnesses whose session is not resumed). */
@@ -111,7 +118,7 @@ export function resumeSection(facts: ResumeFacts): string {
 export function continuePrompt(facts: ResumeFacts, note?: string): string {
     return [
         "TOLI_BRIEF v1",
-        `## RESUME (${facts.cap === null ? "lead" : "auto"}, ${facts.number})`,
+        `## RESUME (${starterLabel(facts)}, ${facts.number})`,
         "",
         `Your run ${facts.previousRun} ${facts.stopped} before you wrote your report. ${placeText(facts)} This is the same session: everything above is still your work.`,
         `- Continue from where you stopped; do not redo finished work (\`git status\` and \`git diff\` in ${facts.cwd} show what is uncommitted).`,

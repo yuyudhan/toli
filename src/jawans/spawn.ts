@@ -56,6 +56,8 @@ export type SpawnOptions = {
     now?: boolean | undefined;
     /** Supersede the task's live run (stopped as `run kill` does) instead of refusing (`--replace`). */
     replace?: boolean | undefined;
+    /** A section added after the brief (and its Workspace block): toli's re-dispatch of a dead run's task. */
+    extra?: string | undefined;
 };
 
 function readBrief(path: string): string {
@@ -172,7 +174,7 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
             cwd: resolved.cwd,
             maxMinutes: options.maxMinutes ?? null,
             baseBrief: resolved.brief,
-            extra: "",
+            extra: options.extra ?? "",
             ...(replaced.length === 0 ? {} : { replaces: replaced }),
         },
         { now: options.now === true },
