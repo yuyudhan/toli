@@ -117,6 +117,8 @@ const USAGE = `usage: bin/toli <command> [args]
   disk alert
   fleet status [--json]
   fleet queues [--json]
+  fleet health [--json]
+  fleet work [--json]
   fleet export | sync
   fleet check [--json] [--wake] [--local]
   pick [--project <name>] [--shape ship|scout] [--json]

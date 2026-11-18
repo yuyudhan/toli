@@ -169,6 +169,30 @@ used an explicit `--max-time` without a report is resumed in the same session
 ([harnesses.md](harnesses.md#jawans-on-any-harness-bintoli-spawn)). Apart from that spawn queue and the build slots
 below, nothing is locked or refused because a machine is busy.
 
+### Fleet health and work
+
+    bin/toli fleet health [--json]            # every machine's CPUs, CPU use, load, RAM, swap, disk, with a TOTAL row
+    bin/toli fleet work [--json]              # what every machine is doing: lead, jawans, open tasks, unpushed commits
+
+Both read every machine at once, this one in its toli root and every other over ssh in its own, with one POSIX `sh`
+script of plain tools (`sysctl`, `vm_stat` and `top` on macOS; `/proc`, `nproc` on Linux; `df`, `git`, `tmux`) and
+the `bin/toli` commands every release has (`lead status`, `task list --json`, `runs --json --active`), so a machine on
+an older toli answers in full. Each machine has 25 seconds; one that does not answer, or takes no inbound ssh, is
+shown as unreachable with the reason, and the rest still show.
+
+`fleet health` prints one row per machine: CPUs; CPU used (the busy share over a one-second sample); the 1-minute
+load and its share of the CPUs; RAM, swap and the disk holding the toli checkout as used / total GB. The TOTAL row
+sums each column over the machines that report it (CPU used is weighted by CPUs). A machine ssh cannot read but that
+answers its status over HTTPS (a paired peer, [peers.md](peers.md)) shows what that status has: CPUs, load, RAM and
+free disk, with `?` for the rest.
+
+`fleet work` prints a block per machine: its lead (the tmux pane running a harness in the toli root, the last line of
+that harness's status, the interactive session's pid and the lead service), the jawans running now with task id, project and
+title (spawn runs, and native subagents whose harness still reports them), and per project the queued, held and
+active tasks plus the clone's branch: commits not on origin's branch of the same name (else its upstream), when this
+clone last pushed it and the age of that branch's tip on origin. Projects with no open task and nothing unpushed are
+left out. Neither command changes anything.
+
 ### Heavy-build slots
 
     bin/toli build-slot -- <command...>       # run a heavy build in one of this machine's build slots

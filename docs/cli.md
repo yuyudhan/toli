@@ -17,6 +17,8 @@ jawans use for bookkeeping. You rarely need the CLI yourself; saying what you wa
 | `/afk [off]`                                 | You are away: keep working the queue, one report on return                              |
 | `/quiet [off]`                               | You are here: only outcomes, failures, and decisions                                    |
 | `/sync-toli [--all]`                         | Update toli on this machine, or every machine ([fleet.md](fleet.md))                    |
+| `/fleet-health`                              | Every machine's CPUs, CPU used, RAM, swap and disk, with totals ([fleet.md](fleet.md))  |
+| `/fleet-work`                                | What every machine's lead and jawans are doing; open tasks, unpushed commits            |
 
 They exist in every harness that supports project commands; `bin/toli harness sync` links them
 ([harnesses.md](harnesses.md)).
@@ -251,6 +253,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     disk alert
     fleet status [--json]
     fleet queues [--json]
+    fleet health [--json]
+    fleet work [--json]
     fleet export | sync
     fleet check [--json] [--wake] [--local]
     pick [--project <name>] [--shape ship|scout] [--json]
@@ -260,6 +264,10 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 - `resources`, `fleet status`: capacity and queue of this machine and of all machines. `fleet queues`, `pick`:
   machines ranked by queue depth, shortest first, and the one for a task
   ([fleet.md](fleet.md#capacity-and-picking-a-machine)).
+- `fleet health`, `fleet work`: one table of every machine's CPUs, CPU use, load, RAM, swap and disk with a TOTAL
+  row, and what every machine is doing (its lead, the jawans running with their task, open tasks and unpushed
+  commits per project); both read each machine with plain tools over ssh, whatever toli release it runs
+  ([fleet.md](fleet.md#fleet-health-and-work)).
 - `fleet check`: idle machines (no active run) with queued work for a project cloned there, and active tasks no
   live run works on, on every reachable machine; `--wake` posts the findings as one inbox item; `--local` reports
   this machine's own backlog (what the coordinator reads over ssh). The coordinator's tick runs it every

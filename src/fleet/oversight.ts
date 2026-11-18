@@ -36,9 +36,11 @@ import { loadBacklog, type Task } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
 import { fleetListCommand } from "./fleet-sync.ts";
+import { healthCommand } from "./health.ts";
 import { availabilityLine, fleetStatus } from "./pick.ts";
 import { queuesCommand } from "./queues.ts";
 import type { FleetEntry } from "./resources.ts";
+import { workCommand } from "./work.ts";
 
 export const DEFAULT_FLEET_CHECK_MINUTES = 60;
 const REMOTE_CONNECT_SECONDS = 10;
@@ -332,16 +334,19 @@ async function checkCommand(argv: string[]): Promise<void> {
 }
 
 /**
- * `toli fleet status [--json]` | `queues [--json]` | `check [--json] [--wake] [--local]` | `export` | `sync`.
+ * `toli fleet status [--json]` | `queues [--json]` | `health [--json]` | `work [--json]` |
+ * `check [--json] [--wake] [--local]` | `export` | `sync`.
  */
 export async function fleetCommand(argv: string[]): Promise<void> {
     const [sub, ...rest] = argv;
     if (sub === "check") return await checkCommand(rest);
     if (sub === "queues") return await queuesCommand(rest);
+    if (sub === "health") return await healthCommand(rest);
+    if (sub === "work") return await workCommand(rest);
     if (sub === "export" || sub === "sync") return fleetListCommand(sub, rest);
     if (sub !== "status")
         throw new ToliError(
-            "usage: toli fleet status [--json] | queues [--json] | check [--json] [--wake] [--local] | export | sync",
+            "usage: toli fleet status [--json] | queues [--json] | health [--json] | work [--json] | check [--json] [--wake] [--local] | export | sync",
         );
     const args = new Args(rest, { booleans: ["json"] });
     args.maxPositional(0);

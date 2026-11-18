@@ -239,11 +239,16 @@ function sshArgv(host: string, connectTimeoutSeconds: number, sharing: string[])
 // runs (git, gh, omp) need them on PATH too.
 const REMOTE_PATH = 'PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"';
 
+/** Remote shell command that runs `command` (already shell-quoted) from `root`, with Homebrew and Bun on PATH. */
+export function remoteShellCommand(root: string, command: string): string {
+    return `export ${REMOTE_PATH} && cd ${shellQuote(root)} && ${command}`;
+}
+
 /**
  * Remote shell command that runs `bin/toli <command>` from `root`, with `env` set for it; `command` must already be
  * shell-quoted.
  */
 export function remoteToliCommand(root: string, command: string, env: Record<string, string> = {}): string {
     const assignments = Object.entries(env).map(([name, value]) => `${name}=${shellQuote(value)} `);
-    return `export ${REMOTE_PATH} && cd ${shellQuote(root)} && ${assignments.join("")}bin/toli ${command}`;
+    return remoteShellCommand(root, `${assignments.join("")}bin/toli ${command}`);
 }

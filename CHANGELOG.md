@@ -4,6 +4,17 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.36 - unreleased
+
+### Added
+
+- `bin/toli fleet health [--json]`: one table of every machine's CPUs, CPU use (a one-second sample), load, RAM,
+  swap and the disk holding its toli checkout, with a TOTAL row; `bin/toli fleet work [--json]`: what every machine
+  is doing, namely its lead (tmux pane and status line, interactive session, lead service), the jawans running with
+  task id and title, open tasks per project and each clone's unpushed commits and last push. Both read every machine
+  over ssh with plain system tools and the commands every toli release has, so a machine on an older release answers
+  in full; an unreachable one is shown as such (docs/fleet.md "Fleet health and work").
+
 ## v0.5.35 - 2026-11-18
 
 ### Added
