@@ -184,6 +184,27 @@ describe("task commands in process", () => {
         inProcess(box.root, () => expect(loadBacklog()).toMatchObject({ nextId: 2, tasks: [{ status: "dropped" }] }));
     });
 
+    // T1905: a follow-up on a done task had no way to make it active again.
+    test("start --reopen makes a done or dropped task active again, noted; plain start names the flag", () => {
+        const box = project();
+        const task = commandIn(box.root, taskCommand);
+        task(["add", "alpha", "One"]);
+        task(["start", "T1"]);
+        task(["done", "T1"]);
+        expect(() => task(["start", "T1"])).toThrow(
+            "T1 is done; a follow-up reopens it: bin/toli task start T1 --reopen",
+        );
+        expect(task(["start", "T1", "--reopen"])).toMatch(/\nT1: reopened from done by .+ for a follow-up$/);
+        inProcess(box.root, () => {
+            const [reopened] = loadBacklog().tasks;
+            expect(reopened?.status).toBe("active");
+            expect(reopened?.doneAt).toBeUndefined();
+            expect(reopened?.notes.at(-1)).toMatch(/^reopened from done by .+ for a follow-up$/);
+        });
+        // An open task starts as before; --reopen changes nothing there.
+        expect(task(["start", "T1", "--reopen"])).not.toContain("reopened");
+    });
+
     test("a free-text recommendation stands when the hold offers no options", () => {
         const box = project();
         const task = commandIn(box.root, taskCommand);

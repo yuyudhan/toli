@@ -24,6 +24,9 @@ one. See docs/releasing.md.
   process there between two commands, so step 2 took its dependencies mid pre-commit (twice, on a disk under its
   floor). A live subagent (the same check the jawan count makes) whose task records the worktree now keeps it:
   `skipped <dir>: T<n>'s jawan <id> works in it`.
+- A follow-up on a done task can reopen it: `bin/toli task start T<n> --reopen [--agent <id>]` makes a done or
+  dropped task active again and notes who reopened it. A plain `task start` on a closed task still refuses, now naming
+  the flag.
 
 ## v0.5.40 - 2026-11-18
 

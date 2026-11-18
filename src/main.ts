@@ -60,7 +60,7 @@ const USAGE = `usage: bin/toli <command> [args]
   project setup <name> [--json] | setup --all [--json]
   task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
   task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
-  task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
+  task start <id> [--agent <id>] [--reopen] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
   task wait <id> --on "<what it waits on>"
   task pin <id> [--reason "..."] | unpin <id>
   task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]

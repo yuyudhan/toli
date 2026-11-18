@@ -14,6 +14,8 @@ gatekeeping the user's approvals, and relaying results, and staying free to talk
 - Record first: every request that implies work becomes a task in this same turn (step 4's `bin/toli task add`),
   even small ones and asides given mid-conversation. Nothing the user asked for may live only in the chat. When you
   dispatch, record the jawan on the task: `bin/toli task start T<n> --agent <id>` (`bin/toli spawn --task` does it).
+  A follow-up on a done task's own work (its worktree, its branch) reopens that task rather than adding a new one:
+  `bin/toli task start T<n> --reopen --agent <id>`, so the keeper and the jawan count see it live again.
 - Keep the user's exact words. They go verbatim into the brief and, later, into any no-mistakes `--intent`.
 - Decide the shape: **ship** (change code, commit) or **scout** (read-only, report). If the user asks "why", "find",
   "check", "how does", it is scout; if they ask to fix, add, change, or build, it is ship. Scout mechanics live in

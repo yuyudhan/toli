@@ -84,7 +84,7 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
 
     task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
     task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
-    task start <id> [--agent <id>] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
+    task start <id> [--agent <id>] [--reopen] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
     task wait <id> --on "<what it waits on>"
     task pin <id> [--reason "..."] | unpin <id>
     task hold <id> --question "..." [--option "<choice> => <what happens then>"]... [--recommend <n|choice>] [--blocks "..."] [--reversible]
@@ -99,7 +99,9 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     lead install|uninstall | status [--json] | run [--once] | attach | full [--reason "..."] [--until 30m|2h|<time>] | full --clear|--status
     needs [--json]
 
-Every request becomes a task (`data/backlog.json`). `start` records which jawan carries it; `hold` parks it on a
+Every request becomes a task (`data/backlog.json`). `start` records which jawan carries it; it refuses a done or
+dropped task unless `--reopen` is given, which makes it active again for a follow-up on its landed work (its worktree
+and branch included) and notes who reopened it, so the follow-up is tracked on the same task; `hold` parks it on a
 question for you, with 2-4 options (each with what happens next), a recommendation, and what it blocks; `answer`
 records your reply verbatim in the project's `decisions.md`, prints `unblocked: dispatch T<n>`, and names every task
 waiting on it (those its hold's `--blocks` names, holds whose question names it, and the project's active tasks no
