@@ -193,20 +193,77 @@ function cloneOfLiveTask(project: Project, task: Task, clone: string): TaskWorks
     return { strategy: "branch-per-task", path: clone, branch: head, base: baseBranch(project, clone) };
 }
 
+/** Commits reachable from `head` but from neither the local nor the origin `base` branch; null without either ref. */
+export function unmergedCount(clone: string, head: string, base: string): number | null {
+    const bases = [`refs/heads/${base}`, `refs/remotes/origin/${base}`].filter((ref) => refExists(clone, ref));
+    if (bases.length === 0) return null;
+    const counted = git(clone, ["rev-list", "--count", head, "--not", ...bases]);
+    return counted.code === 0 ? Number(counted.stdout.trim()) : null;
+}
+
+/**
+ * The task's own work in its recorded workspace that a reset would leave behind, or null when there is none: commits
+ * on its task branch that its base lacks, or uncommitted files in its task branch or worktree. A same-branch record
+ * has no branch of its own and the reset never touches the clone, so it holds none.
+ */
+function recordedWork(clone: string, recorded: TaskWorkspace): string | null {
+    if (!perTask(recorded.strategy) || recorded.branch === null) return null;
+    if (refExists(clone, `refs/heads/${recorded.branch}`)) {
+        const commits =
+            recorded.base === null ? null : unmergedCount(clone, `refs/heads/${recorded.branch}`, recorded.base);
+        if (commits === null)
+            return `${recorded.branch} has no ${recorded.base ?? "recorded base"} ref to compare with`;
+        if (commits > 0)
+            return `${commits} commit${commits === 1 ? "" : "s"} on ${recorded.branch} not on ${recorded.base}`;
+    }
+    const onBranch = existsSync(recorded.path) && currentBranch(recorded.path) === recorded.branch;
+    if (onBranch && dirty(recorded.path) !== "") return `uncommitted changes in ${recorded.path}`;
+    return null;
+}
+
+/** Under the project's workspace lock: forget the task's recorded workspace once nothing of its own is left there. */
+function resetRecorded(project: Project, task: Task, clone: string): void {
+    const recorded = task.workspace;
+    if (recorded === undefined) return;
+    if (recorded.strategy === project.workspace)
+        throw new ToliError(`nothing to reset: ${task.id}'s workspace is already ${recorded.strategy}`);
+    const work = recordedWork(clone, recorded);
+    if (work !== null)
+        throw new ToliError(
+            `refusing to reset ${task.id}'s ${recorded.strategy} workspace: ${work}. Land that work from there ` +
+                `(bin/toli commit|push ${project.name} --task ${task.id}) or ask ${persona().user}.`,
+        );
+    if (recorded.strategy === "worktree-per-task" && existsSync(recorded.path)) {
+        // No --force: git refuses a worktree that gained files since the check.
+        const removed = git(clone, ["worktree", "remove", recorded.path]);
+        if (removed.code !== 0)
+            throw new ToliError(
+                `git worktree remove ${recorded.path} failed: ${(removed.stderr || removed.stdout).trim()}`,
+            );
+    }
+    updateTask(task.id, (entry) => {
+        delete entry.workspace;
+    });
+    delete task.workspace;
+}
+
 /**
  * Prepare (idempotently) and record the workspace of a task per its project's strategy; returns where its jawans
- * work. Serialized per project so two spawns cannot both switch the shared clone. A live task prepared under another
- * strategy keeps the workspace it has (its work, maybe uncommitted, is there): switching a project's strategy
- * applies to tasks prepared afterwards.
+ * work. Serialized per project, with `project set --workspace` too (src/projects/set.ts), so a strategy switch never
+ * lands in the middle of a prepare and two spawns cannot both switch the shared clone. A live task prepared under
+ * another strategy keeps the workspace it has (its work, maybe uncommitted, is there): switching a project's strategy
+ * applies to tasks prepared afterwards. `reset` re-derives it from the current strategy instead, refused while the
+ * recorded workspace holds the task's own commits or uncommitted changes.
  */
-export function prepareWorkspace(taskId: string): TaskWorkspace {
+export function prepareWorkspace(taskId: string, options: { reset?: boolean } = {}): TaskWorkspace {
     const id = taskId.toUpperCase();
     const found = loadBacklog().tasks.find((entry) => entry.id === id);
     if (!found) throw new ToliError(`unknown task "${taskId}" (see \`bin/toli task list\`)`);
-    const project = findProject(found.project);
-    const clone = projectCloneDir(project.name);
-    return withLock(paths.lock(`workspace-${project.name}`), () => {
+    const clone = projectCloneDir(found.project);
+    return withLock(workspaceLock(found.project), () => {
+        const project = findProject(found.project);
         const task = loadBacklog().tasks.find((entry) => entry.id === id) ?? found;
+        if (options.reset === true) resetRecorded(project, task, clone);
         const recorded = task.workspace;
         if (
             recorded !== undefined &&
@@ -232,6 +289,11 @@ export function prepareWorkspace(taskId: string): TaskWorkspace {
         });
         return workspace;
     });
+}
+
+/** The lock serializing everything that prepares or switches the project's workspaces. */
+export function workspaceLock(project: string): string {
+    return paths.lock(`workspace-${project}`);
 }
 
 /** Markdown block spawn appends to a brief so the jawan works where the workspace was prepared. */
@@ -295,7 +357,7 @@ export function workDir(
 /** Record the clone as the workspace of live task `id` when cloneOfLiveTask says its work is there; null otherwise. */
 function adoptClone(project: Project, id: string): TaskWorkspace | null {
     const clone = projectCloneDir(project.name);
-    return withLock(paths.lock(`workspace-${project.name}`), () => {
+    return withLock(workspaceLock(project.name), () => {
         const task = loadBacklog().tasks.find((entry) => entry.id === id);
         if (task === undefined) return null;
         if (task.workspace !== undefined) return task.workspace;

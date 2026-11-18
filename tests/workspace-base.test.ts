@@ -1,6 +1,6 @@
 // Where a task branch starts (fresh from origin's base) and what switching a project's strategy leaves alone (T1779).
 import { describe, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
@@ -61,4 +61,46 @@ describe("task workspaces across machines", () => {
         box.ok(["task", "start", "T2"]);
         expect(box.ok(["workspace", "prepare", "T2"])).toContain("worktree-per-task: ");
     });
+});
+
+// T1804: a task prepared while its project was briefly toggled to another strategy keeps that record; `--reset`
+// re-derives it from the current strategy when the recorded workspace holds none of the task's own work.
+describe("workspace prepare --reset", () => {
+    test("re-derives a record made under a toggled strategy", () => {
+        const { box, clone } = project("worktree-per-task", "Build API");
+        box.ok(["task", "start", "T1"]);
+        box.ok(["project", "set", "app", "--workspace", "same-branch"]);
+        expect(box.ok(["workspace", "prepare", "T1"])).toContain(`same-branch: ${clone}`);
+        box.ok(["project", "set", "app", "--workspace", "worktree-per-task"]);
+        expect(box.ok(["workspace", "prepare", "T1"])).toContain(`same-branch: ${clone}`);
+        const worktree = join(box.root, "projects", ".worktrees", "app", "T1");
+        expect(box.ok(["workspace", "prepare", "T1", "--reset"])).toBe(
+            `worktree-per-task: ${worktree} on toli/m1/T1-build-api from main`,
+        );
+        expect(box.git(clone, ["branch", "--show-current"])).toBe("main");
+    });
+
+    test("refuses while the recorded workspace holds the task's commits, and keeps the record", () => {
+        const { box, clone } = project("branch-per-task", "Build API");
+        box.ok(["task", "start", "T1"]);
+        box.ok(["workspace", "prepare", "T1"]);
+        writeFileSync(join(clone, "api.txt"), "api\n");
+        box.git(clone, ["add", "api.txt"]);
+        box.git(clone, ["commit", "-m", "api"]);
+        box.ok(["project", "set", "app", "--workspace", "worktree-per-task"]);
+        const refused = box.toli(["workspace", "prepare", "T1", "--reset"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("1 commit on toli/m1/T1-build-api not on main");
+        expect(box.ok(["workspace", "prepare", "T1"])).toContain(`branch-per-task: ${clone} on toli/m1/T1-build-api`);
+    });
+
+    test("a strategy switch waits for a prepare in progress (the workspace lock)", () => {
+        const { box } = project("worktree-per-task", "Build API");
+        mkdirSync(join(box.root, "state"), { recursive: true });
+        writeFileSync(join(box.root, "state", "workspace-app.lock"), String(process.pid));
+        const blocked = box.toli(["project", "set", "app", "--workspace", "same-branch"]);
+        expect(blocked.code).toBe(1);
+        expect(blocked.stderr).toContain("timed out waiting for lock");
+        expect(box.ok(["project", "list"])).toContain("worktree-per-task");
+    }, 30_000);
 });

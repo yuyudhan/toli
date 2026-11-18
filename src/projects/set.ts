@@ -7,7 +7,7 @@ import { now, out, run, ToliError, withLock } from "../core/util.ts";
 import { overrideLabels } from "./list.ts";
 import { FORGES, type Forge, loadProjects, type Project, parseMode, updateProjects } from "./projects.ts";
 import { parseTaskBranchPattern, parseWorkspace, type Workspace } from "./strategy.ts";
-import { cloneHolders, dirty, holdersText, refExists } from "./workspace.ts";
+import { cloneHolders, dirty, holdersText, refExists, workspaceLock } from "./workspace.ts";
 
 /** `--forge`: one of FORGES, or `none` (null) to clear the override. */
 function parseForge(value: string | undefined): Forge | null | undefined {
@@ -64,6 +64,15 @@ function applyWorkspace(project: Project, workspace: Workspace, at: string): voi
 }
 
 /**
+ * Run `fn` holding the workspace lock of each project in `names` (the lock `workspace prepare` takes), so a strategy
+ * never changes while a task's workspace is being prepared from the old one.
+ */
+function underWorkspaceLocks<T>(names: string[], fn: () => T): T {
+    const [first, ...rest] = names;
+    return first === undefined ? fn() : withLock(workspaceLock(first), () => underWorkspaceLocks(rest, fn));
+}
+
+/**
  * After `--branch <b>`: switch the clone (or linked checkout) to <b> when it is clean and no live task holds it,
  * creating a local branch tracking origin/<b> when only origin has it. Otherwise it stays where it is and the note
  * names the command that switches it; the branch is recorded either way. Never fetches, stashes or creates <b>.
@@ -72,7 +81,7 @@ function applyWorkspace(project: Project, workspace: Workspace, at: string): voi
 function switchClone(name: string, branch: string): string | null {
     const dir = paths.projectDir(name);
     if (!isGitRepo(dir)) return null;
-    return withLock(paths.lock(`workspace-${name}`), () => {
+    return withLock(workspaceLock(name), () => {
         const from = currentBranch(dir);
         if (from === branch) return null;
         const on = from ?? "a detached HEAD";
@@ -115,9 +124,13 @@ function setAll(args: Args): void {
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
     const workspace = parseWorkspace(value);
     const at = now().toISOString();
-    updateProjects((projects) => {
-        for (const project of projects) applyWorkspace(project, workspace, at);
-    });
+    underWorkspaceLocks(
+        loadProjects().map((project) => project.name),
+        () =>
+            updateProjects((projects) => {
+                for (const project of projects) applyWorkspace(project, workspace, at);
+            }),
+    );
     const total = loadProjects().length;
     out(`${total} project${total === 1 ? "" : "s"}: workspace=${workspace}`);
 }
@@ -178,40 +191,42 @@ export function projectSetCommand(argv: string[]): void {
                 "--live-stack yes|no, --role full|verify-only or --release-priority yes|no (or --all --workspace <s>)",
         );
     const at = now().toISOString();
-    const updated = updateProjects((projects) => {
-        const project = projects.find((entry) => entry.name === name);
-        if (!project) throw new ToliError(`unknown project "${name}"`);
-        if (mode !== undefined) project.mode = mode;
-        if (branch === null) delete project.branch;
-        else if (branch !== undefined) project.branch = branch;
-        if (mode !== undefined || branch !== undefined) project.deliverySetAt = at;
-        if (taskBranch === null) delete project.taskBranch;
-        else if (taskBranch !== undefined) project.taskBranch = taskBranch;
-        if (forge === null) delete project.forge;
-        else if (forge !== undefined) project.forge = forge;
-        if (forgeHost === null) delete project.forgeHost;
-        else if (forgeHost !== undefined) project.forgeHost = forgeHost;
-        if (workspace !== undefined) applyWorkspace(project, workspace, at);
-        if (standingPush !== undefined || standingPr !== undefined) {
-            const standing = {
-                push: standingPush ?? project.standing?.push ?? false,
-                pr: standingPr ?? project.standing?.pr ?? false,
-            };
-            if (standing.pr && !standing.push)
-                throw new ToliError(
-                    "a standing PR/MR grant needs a standing push grant too (the branch must be pushed to open one)",
-                );
-            if (standing.push || standing.pr) project.standing = standing;
-            else delete project.standing;
-        }
-        if (liveStack === true) project.liveStack = true;
-        else if (liveStack === false) delete project.liveStack;
-        if (role === "verify-only") project.role = role;
-        else if (role === "full") delete project.role;
-        if (releasePriority === true) project.releasePriority = true;
-        else if (releasePriority === false) delete project.releasePriority;
-        return { ...project };
-    });
+    const updated = underWorkspaceLocks(workspace === undefined ? [] : [name], () =>
+        updateProjects((projects) => {
+            const project = projects.find((entry) => entry.name === name);
+            if (!project) throw new ToliError(`unknown project "${name}"`);
+            if (mode !== undefined) project.mode = mode;
+            if (branch === null) delete project.branch;
+            else if (branch !== undefined) project.branch = branch;
+            if (mode !== undefined || branch !== undefined) project.deliverySetAt = at;
+            if (taskBranch === null) delete project.taskBranch;
+            else if (taskBranch !== undefined) project.taskBranch = taskBranch;
+            if (forge === null) delete project.forge;
+            else if (forge !== undefined) project.forge = forge;
+            if (forgeHost === null) delete project.forgeHost;
+            else if (forgeHost !== undefined) project.forgeHost = forgeHost;
+            if (workspace !== undefined) applyWorkspace(project, workspace, at);
+            if (standingPush !== undefined || standingPr !== undefined) {
+                const standing = {
+                    push: standingPush ?? project.standing?.push ?? false,
+                    pr: standingPr ?? project.standing?.pr ?? false,
+                };
+                if (standing.pr && !standing.push)
+                    throw new ToliError(
+                        "a standing PR/MR grant needs a standing push grant too (the branch must be pushed to open one)",
+                    );
+                if (standing.push || standing.pr) project.standing = standing;
+                else delete project.standing;
+            }
+            if (liveStack === true) project.liveStack = true;
+            else if (liveStack === false) delete project.liveStack;
+            if (role === "verify-only") project.role = role;
+            else if (role === "full") delete project.role;
+            if (releasePriority === true) project.releasePriority = true;
+            else if (releasePriority === false) delete project.releasePriority;
+            return { ...project };
+        }),
+    );
     out(
         [`${updated.name}: mode=${updated.mode}`, `workspace=${updated.workspace}`, ...overrideLabels(updated)].join(
             " ",

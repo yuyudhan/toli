@@ -8,7 +8,7 @@ import { paths } from "../core/paths.ts";
 import { out, printJson, run, ToliError } from "../core/util.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { findProject, loadProjects } from "./projects.ts";
-import { gitWorktrees, prepareWorkspace, refExists } from "./workspace.ts";
+import { gitWorktrees, prepareWorkspace, unmergedCount } from "./workspace.ts";
 
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -26,14 +26,6 @@ export type WorktreeEntry = {
     /** Changed and untracked, non-ignored files (`git status --porcelain --untracked-files=all` entries). */
     dirtyFiles: number;
 };
-
-/** Commits reachable from `head` but from neither the local nor the origin `base` branch; null without either ref. */
-function unmergedCount(clone: string, head: string, base: string): number | null {
-    const bases = [`refs/heads/${base}`, `refs/remotes/origin/${base}`].filter((ref) => refExists(clone, ref));
-    if (bases.length === 0) return null;
-    const counted = git(clone, ["rev-list", "--count", head, "--not", ...bases]);
-    return counted.code === 0 ? Number(counted.stdout.trim()) : null;
-}
 
 /** Changed and untracked, non-ignored files in a worktree; -1 when git cannot read it (treated as unlanded). */
 function dirtyFileCount(worktree: string): number {
@@ -180,9 +172,9 @@ function pruneCommand(argv: string[]): void {
 }
 
 function prepareCommand(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json"] });
+    const args = new Args(argv, { booleans: ["json", "reset"] });
     args.maxPositional(1);
-    const workspace = prepareWorkspace(args.pos(0, "task id"));
+    const workspace = prepareWorkspace(args.pos(0, "task id"), { reset: args.bool("reset") });
     if (args.bool("json")) printJson(workspace);
     else
         out(
@@ -190,11 +182,14 @@ function prepareCommand(argv: string[]): void {
         );
 }
 
-/** `toli workspace prepare <T-id> [--json]` | `list [--project p] [--json]` | `prune [--project p] [--json]`. */
+/** `toli workspace prepare <T-id> [--reset] [--json]` | `list [--project p] [--json]` | `prune [--project p] [--json]`. */
 export function workspaceCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
     if (sub === "prepare") prepareCommand(rest);
     else if (sub === "list") listCommand(rest);
     else if (sub === "prune") pruneCommand(rest);
-    else throw new ToliError("usage: toli workspace prepare <T-id> | list [--project p] | prune [--project p]");
+    else
+        throw new ToliError(
+            "usage: toli workspace prepare <T-id> [--reset] | list [--project p] | prune [--project p]",
+        );
 }

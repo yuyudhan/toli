@@ -75,6 +75,13 @@ toli itself never uses worktrees.
   no recorded workspace (dispatched before the switch) whose clone is checked out on a branch naming it (`T375` in
   `shop/m1/T375-e2e-proof`) keeps the clone: `workspace prepare`, `commit --task` and `push --task` record it
   as its workspace on that branch, unless another live task records the clone.
+  Never toggle a project's strategy to land such a task: nothing needs it, and a task prepared while the toggle is on
+  records the toggled strategy. `project set --workspace` waits for a `workspace prepare` in progress (they share the
+  project's workspace lock), so a prepare never mixes the old strategy and the new one.
+  `bin/toli workspace prepare T<n> --reset` re-derives a live task's workspace from the project's current strategy
+  when it was recorded under another one; it refuses while the recorded task branch holds commits its base lacks or
+  uncommitted changes, leaves the clone's files as they are, and removes a recorded worktree only when git finds it
+  clean.
 - `branch-per-task` refuses to switch the clone while another active or held task of the project uses it on a
   different branch, or while the clone has uncommitted changes; use `same-branch` for parallel tasks.
 - On macOS, preparing a worktree excludes `projects/.worktrees/<project>/` from Spotlight (a `.metadata_never_index`

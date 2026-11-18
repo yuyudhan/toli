@@ -132,7 +132,7 @@ the interactive Sardar's subagents.
     commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
       (--resolved -- <conflicted paths> [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers)
     branch <project> <branch>
-    workspace prepare T<n> [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
+    workspace prepare T<n> [--reset] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
     push <project> [--task T<n>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]

@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.39 - unreleased
+
+### Fixed
+
+- A task whose workspace was recorded under another strategy (prepared while its project was briefly toggled) can
+  be re-derived: `bin/toli workspace prepare T<n> --reset`, refused while the recorded task branch holds commits or
+  uncommitted changes. `project set --workspace` now waits for a prepare in progress, and the toggle is never needed:
+  a live task on a branch naming it keeps the clone.
+
 ## v0.5.38 - 2026-11-18
 
 ### Fixed
