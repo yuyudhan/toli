@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.38 - unreleased
+
+### Fixed
+
+- The disk keeper's target wipe no longer leaves `<target>.toli-wipe-<ms>` folders behind or in sight: the checkout's
+  git excludes get `*.toli-wipe-*` first, so `git status` and dirty-tree checks never list one; files a container
+  wrote as root go through the same throwaway container as a no-mistakes run (never sudo), and a renamed tree that
+  still stays is reported and deleted first by the next keeper run (step 0), as is one a killed keeper left behind.
+
 ## v0.5.37 - 2026-11-18
 
 ### Fixed

@@ -3,11 +3,26 @@
 // releases its locks before it runs the test binaries, so a test binary, a process working in the workspace, or a
 // build tool there counts as using it; so does any open file under it), rename it aside under the locks, release them,
 // then delete the renamed tree. A cargo that starts meanwhile waits on the lock, then builds into a fresh, empty target.
+// The renamed tree (`<target>.toli-wipe-<ms>`) is in the checkout's git excludes, so git (`git status`, a dirty-tree
+// check) never lists it; root-owned files in it go through a throwaway container (remove-tree.ts), and a tree that
+// still stays is reported and deleted by the next keeper run.
 import { dlopen, FFIType } from "bun:ffi";
-import { closeSync, type Dirent, openSync, readdirSync, renameSync, rmSync } from "node:fs";
+import {
+    appendFileSync,
+    closeSync,
+    type Dirent,
+    existsSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
-import { openBelow } from "./disk-scan.ts";
+import { run } from "../core/util.ts";
+import { openBelow, WIPE_ASIDE } from "./disk-scan.ts";
 import { liveBuildUse } from "./live-builds.ts";
+import { removeTree } from "./remove-tree.ts";
 import { cargoRunsIn, LIVE_PROBES, targetUse, type UseProbes } from "./target-use.ts";
 
 /** The lock files cargo holds while it compiles; only a whole-target wipe under them ever removes one. */
@@ -186,10 +201,15 @@ export function wipeTargetBetweenBuilds(
                     // Renaming can need a directory block that a full disk lacks: then delete in place, still under
                     // the locks, so the space comes back either way.
                     const aside = renameAside(target);
-                    if (aside === null) rmSync(target, { recursive: true, force: true });
+                    const stays = aside === null ? removeTree(target) : null;
                     release(held, lock);
                     held.length = 0;
-                    if (aside !== null) rmSync(aside, { recursive: true, force: true });
+                    if (stays !== null) return { wiped: false, reason: stays };
+                    // Builds already have a fresh target; a renamed tree that stays is said, and the next keeper
+                    // run tries it again (disk.ts step 0), never left silently.
+                    const left = aside === null ? null : removeTree(aside);
+                    if (left !== null)
+                        return { wiped: false, reason: `renamed aside to ${aside}, which stays: ${left}` };
                     return { wiped: true };
                 }
             } finally {
@@ -201,13 +221,34 @@ export function wipeTargetBetweenBuilds(
     }
 }
 
-/** Rename `target` to a sibling `<target>.toli-wipe-<ms>`; null when the rename fails. */
-function renameAside(target: string): string | null {
-    const aside = `${target}.toli-wipe-${Date.now()}`;
+/**
+ * Rename `target` to a sibling `<target>.toli-wipe-<ms>`; null when the rename fails. The checkout's git excludes
+ * (`info/exclude`) get `*.toli-wipe-*` first, so `git status` and a dirty-tree check never list the renamed tree,
+ * which `target`'s own ignore pattern no longer matches, even when it holds root-owned files that cannot go at once.
+ */
+export function renameAside(target: string): string | null {
+    excludeAsides(dirname(target));
+    const aside = `${target}${WIPE_ASIDE}${Date.now()}`;
     try {
         renameSync(target, aside);
         return aside;
     } catch {
         return null;
+    }
+}
+
+/** Add `*.toli-wipe-*` to the excludes of the git checkout holding `dir`, once; nothing outside a checkout. */
+function excludeAsides(dir: string): void {
+    const common = run(["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    if (common.code !== 0) return;
+    const file = join(common.stdout.trim(), "info", "exclude");
+    const line = `*${WIPE_ASIDE}*`;
+    try {
+        const current = existsSync(file) ? readFileSync(file, "utf8") : "";
+        if (current.split("\n").includes(line)) return;
+        mkdirSync(dirname(file), { recursive: true });
+        appendFileSync(file, `${current === "" || current.endsWith("\n") ? "" : "\n"}${line}\n`);
+    } catch {
+        // A full disk may refuse even this line: the leftover is still swept by name (disk.ts step 0).
     }
 }

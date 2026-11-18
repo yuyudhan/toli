@@ -2,6 +2,7 @@
 // (capacity.diskKeepGB in config/machine.json, default 60, capped at 15% of the volume's size so a small disk is never
 // emptied), it deletes rebuildable output only, cheapest to rebuild first and oldest first within each step, until
 // free space is back at the floor:
+//   0. a `<target>.toli-wipe-<ms>` folder a killed keeper renamed aside and never deleted (cargo-lock.ts), whole;
 //   1. build output finished no-mistakes runs left in their worktrees (no-mistakes-runs.ts), then whole `target/`
 //      folders of project checkouts nothing uses (no running jawan, no process working there, no live build compiling
 //      into it: a cargo or rustc, or a held heavy-build slot, live-builds.ts);
@@ -47,6 +48,7 @@ import {
     openBelow,
     projectCheckouts,
     sizeGB,
+    wipeLeftovers,
     within,
 } from "./disk-scan.ts";
 import {
@@ -67,6 +69,7 @@ import { pruneDocker } from "./docker-prune.ts";
 import { freeBuildVolumes } from "./docker-volumes.ts";
 import { liveBuilds, liveBuildUse } from "./live-builds.ts";
 import { freeRunWorktrees } from "./no-mistakes-runs.ts";
+import { removeTree } from "./remove-tree.ts";
 import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
 import { fallbackSweep } from "./stale-sweep.ts";
 
@@ -239,6 +242,11 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             log.open();
             say(`deleted ${path}, freed ${gb(Math.max(0, free() - before))} (${step})`);
         };
+        // 0: a target a killed keeper renamed aside and never deleted: nothing builds into it, so it goes first, whole.
+        for (const leftover of checkouts.flatMap(wipeLeftovers))
+            remove(leftover, "step 0: leftover of an interrupted target wipe", (dry) =>
+                dry ? null : removeTree(leftover),
+            );
         const idleTier = (
             step: number,
             kinds: BuildDir["kind"][],
@@ -269,8 +277,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         idleTier(2, ["node_modules", "dist"], (dir, dry) => {
             const open = openBelow(dir.path);
             if (open.length > 0) return `open files, e.g. ${open.join(", ")}`;
-            if (!dry) rmSync(dir.path, { recursive: true, force: true });
-            return null;
+            return dry ? null : removeTree(dir.path);
         });
         // 3 and 4: machine-wide caches.
         if (!enough()) {
@@ -323,7 +330,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 const why = build ?? kept.get(path)?.reason;
                 const cut = build === null ? "" : "; that build fails and must run again";
                 if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway${cut}`);
-                remove(path, "step 7: last resort", (dry) => forceDelete(path, dry));
+                remove(path, "step 7: last resort", (dry) => (dry ? null : removeTree(path)));
             };
             const left = (dir: BuildDir): boolean =>
                 !done.has(dir.path) && ![...done].some((gone) => within(dir.path, gone)) && existsSync(dir.path);
@@ -354,17 +361,6 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         if (unwritten !== null) warn(`disk keeper: ${unwritten}`);
     }
     return report;
-}
-
-/** Delete `path` whatever uses it; the reason when it could not (a build may keep writing into it meanwhile). */
-function forceDelete(path: string, dryRun: boolean): string | null {
-    if (dryRun) return null;
-    try {
-        rmSync(path, { recursive: true, force: true, maxRetries: 3 });
-        return null;
-    } catch (error) {
-        return `could not delete it: ${describe(error)}`;
-    }
 }
 
 /**

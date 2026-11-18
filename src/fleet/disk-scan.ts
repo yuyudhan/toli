@@ -79,6 +79,24 @@ export function ignoredDirs(checkout: Checkout): string[] {
         .map((entry) => join(checkout.path, entry.slice(0, -1)));
 }
 
+/** What a target wipe adds to the folder it renames aside before deleting it (src/fleet/cargo-lock.ts renameAside). */
+export const WIPE_ASIDE = ".toli-wipe-";
+const WIPE_ASIDE_NAME = /\.toli-wipe-\d+$/;
+
+/**
+ * Folders a target wipe renamed aside and never finished deleting (a kill between the rename and the delete, or
+ * root-owned files nothing could remove): every wholly untracked folder of the checkout named
+ * `<name>.toli-wipe-<ms>`, whether git excludes it (the wipe adds `*.toli-wipe-*` to the checkout's excludes) or not.
+ */
+export function wipeLeftovers(checkout: Checkout): string[] {
+    const listed = git(checkout.path, ["ls-files", "-z", "--others", "--directory"]);
+    if (listed.code !== 0) return [];
+    return listed.stdout
+        .split("\0")
+        .filter((entry) => entry.endsWith("/") && WIPE_ASIDE_NAME.test(entry.slice(0, -1)))
+        .map((entry) => join(checkout.path, entry.slice(0, -1)));
+}
+
 /** Add `path` as a build folder of `kind` when it is a real folder (not a symlink) still there. */
 export function pushBuildDir(dirs: BuildDir[], kind: BuildKind, path: string, checkout: Checkout): void {
     try {

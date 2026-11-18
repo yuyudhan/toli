@@ -84,6 +84,11 @@ not. Steps 5 to 7 run only under the emergency level and stop as soon as free sp
 use goes only when nothing idle is left. Each item freed is logged with its size and its step (`deleted <path>, freed
 X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0 GB (step 5: idle build volume)`).
 
+0. Leftovers of an interrupted target wipe (see 6): every untracked `<name>.toli-wipe-<ms>` folder of a checkout, which
+   nothing builds into any more, is deleted whole before anything else, root-owned files through a throwaway container
+   as in step 1 (`deleted <path>, freed X GB (step 0: leftover of an interrupted target wipe)`, or `kept <path>: ...`
+   with the reason).
+
 1. Build output finished no-mistakes runs left in their worktrees, then whole `target/` folders of project checkouts
    that nothing uses. A checkout is all registered projects' clones plus their git worktrees. Nothing uses it when no
    running jawan works in it (or, for a main clone, on its project) and no process has its working directory inside
@@ -175,9 +180,14 @@ stopped container <c> mounts it and its image postgres:16 keeps data`, `... it a
    `/proc/<pid>/mountinfo` mounts from the host, so another project's target, which no mount shows, stays free. On
    Linux every one of these checks, and the working directories and open files of steps 1 and 2, reads `/proc`
    (`/proc/<pid>/cwd`, `exe`, `maps`, `fd/*`, `comm`), so they hold where `lsof` is not installed. Each skip is
-   logged with its reason. Only then does it rename the folder aside under the locks, release them, and delete
-   the renamed tree (where the rename fails, as it can on a full disk, it deletes the folder in place under the locks).
-   A cargo that starts meanwhile waits on the lock, then builds into an empty target.
+   logged with its reason. Only then does it rename the folder aside under the locks (`<target>.toli-wipe-<ms>`; the
+   checkout's `.git/info/exclude` gets `*.toli-wipe-*` first, so `git status` and any dirty-tree check never list it),
+   release them, and delete the renamed tree (where the rename fails, as it can on a full disk, it deletes the folder
+   in place under the locks). A cargo that starts meanwhile waits on the lock, then builds into an empty target.
+   Files a container wrote as root (a `target/` or `node_modules/` a compose stack built into) go through the same
+   throwaway container as a no-mistakes run's (step 1), never sudo; a tree that still stays is logged
+   (`kept <target>: renamed aside to <path>, which stays: <why>`) and deleted first by the next keeper run (step 0
+   above), as is one a killed keeper left behind.
 
     A target that is in use right now (jawans building it back to back hold its lock all the time) is kept whole:
     the keeper never deletes part of a target under a live build. Cargo links up-to-date artifacts it compiled hours

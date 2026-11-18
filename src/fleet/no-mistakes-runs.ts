@@ -9,10 +9,9 @@
 // terminal, a database that cannot be read) counts as in use. Files a container wrote as root are removed by a
 // throwaway container (`docker run --rm`), never with sudo.
 import { Database } from "bun:sqlite";
-import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
-import { run } from "../core/util.ts";
+import { basename, isAbsolute, join } from "node:path";
 import { whileIdle } from "./cargo-lock.ts";
 import {
     BUILD_KINDS,
@@ -27,7 +26,7 @@ import {
     real,
 } from "./disk-scan.ts";
 import { describe, pauseHold } from "./disk-state.ts";
-import { firstLine } from "./docker-volumes.ts";
+import { removeTree } from "./remove-tree.ts";
 
 /** no-mistakes run statuses after which the run never works in its worktree again (its types.RunStatus.Terminal). */
 const TERMINAL: Readonly<Record<string, true>> = {
@@ -39,10 +38,6 @@ const TERMINAL: Readonly<Record<string, true>> = {
     ci_monitor_interrupted: true,
 };
 
-/** The image of the throwaway container that removes root-owned build output: a few MB, with `rm` on board. */
-const REMOVER_IMAGE = "busybox:latest";
-/** Removing a 20 GB target can take minutes on a slow disk. */
-const REMOVER_TIMEOUT_MS = 900_000;
 /** Below an ignored folder that is not build output itself, how many levels deep `runBuildDirs` looks. */
 const NESTED_DEPTH = 4;
 
@@ -231,52 +226,4 @@ export function freeRunOutput(dir: BuildDir, dryRun: boolean): string | null {
     }
     const outcome = whileIdle(dir.path, removed);
     return outcome.ran ? outcome.value : outcome.reason;
-}
-
-/** Delete `path`; files this account may not delete (a container wrote them as root) go through `removeAsRoot`. */
-function removeTree(path: string): string | null {
-    try {
-        rmSync(path, { recursive: true, force: true });
-        return null;
-    } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "EACCES" || code === "EPERM") return removeAsRoot(path);
-        return `could not delete it: ${describe(error)}`;
-    }
-}
-
-/**
- * Remove `path`, which holds files a container wrote as root, from a throwaway container that binds its parent folder
- * (`docker run --rm`, no network, as root inside it); never sudo. The reason when it could not.
- */
-export function removeAsRoot(path: string): string | null {
-    const why = "it holds root-owned files";
-    const info = run(["docker", "info", "--format", "{{.ServerVersion}}"], { timeoutMs: 20_000 });
-    if (info.code !== 0)
-        return `${why}, and docker is ${info.code === 127 ? "not installed" : "not reachable"} to remove them (never sudo)`;
-    const parent = dirname(path);
-    // --mount takes comma-separated fields, so a path with a comma cannot be bound safely.
-    if (parent.includes(",")) return `${why}, and its folder's path has a comma docker --mount cannot bind`;
-    const removed = run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--network",
-            "none",
-            "--user",
-            "0:0",
-            "--mount",
-            `type=bind,source=${parent},target=/toli-parent`,
-            "--entrypoint",
-            "rm",
-            REMOVER_IMAGE,
-            "-rf",
-            `/toli-parent/${basename(path)}`,
-        ],
-        { timeoutMs: REMOVER_TIMEOUT_MS },
-    );
-    if (removed.code !== 0)
-        return `${why}, and the throwaway container could not remove them: ${firstLine(removed.stderr || removed.stdout)}`;
-    return existsSync(path) ? `${why}, still there after the throwaway container removed them` : null;
 }
