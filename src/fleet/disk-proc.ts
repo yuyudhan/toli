@@ -89,12 +89,16 @@ export function procCargoCwds(): { pid: string; cwd: string }[] {
     });
 }
 
-/** A running cargo or rustc: its pid, `comm`, working directory and the CARGO_TARGET_DIR in its environment. */
-export type ProcBuild = { pid: string; name: string; cwd: string | null; targetDir: string | null };
+/**
+ * A running cargo or rustc: its pid, `comm`, working directory, the CARGO_TARGET_DIR in its environment and its
+ * command-line arguments (empty when they cannot be read).
+ */
+export type ProcBuild = { pid: string; name: string; cwd: string | null; targetDir: string | null; args: string[] };
 
 /**
  * Every running cargo (`cargo`, `cargo-clippy`, ...) and rustc this account can inspect, with where it builds: its
- * working directory and its environment's CARGO_TARGET_DIR (/proc/<pid>/environ, as it started).
+ * working directory, its environment's CARGO_TARGET_DIR (/proc/<pid>/environ, as it started) and its arguments
+ * (/proc/<pid>/cmdline: `--target-dir`, `--manifest-path`, rustc's `--out-dir`).
  */
 export function procBuilds(): ProcBuild[] {
     const builds: ProcBuild[] = [];
@@ -110,9 +114,23 @@ export function procBuilds(): ProcBuild[] {
         }
         const entry = environ.split("\0").find((pair) => pair.startsWith("CARGO_TARGET_DIR="));
         const targetDir = entry === undefined ? "" : entry.slice("CARGO_TARGET_DIR=".length);
-        builds.push({ pid, name, cwd: procLink(pid, "cwd"), targetDir: targetDir === "" ? null : targetDir });
+        const args = readArgs(pid);
+        const cwd = procLink(pid, "cwd");
+        builds.push({ pid, name, cwd, targetDir: targetDir === "" ? null : targetDir, args });
     }
     return builds;
+}
+
+/** A process's arguments from /proc/<pid>/cmdline, without the program; empty when it cannot be read. */
+function readArgs(pid: string): string[] {
+    try {
+        return readFileSync(procFile(`${pid}/cmdline`), "utf8")
+            .split("\0")
+            .slice(1)
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
 }
 
 /** One mount a process sees: the folder it shows at `at`, as this host's own view names it (`host`). */

@@ -5,7 +5,7 @@
 //   0. a `<target>.toli-wipe-<ms>` folder a killed keeper renamed aside and never deleted (cargo-lock.ts), whole;
 //   1. build output finished no-mistakes runs left in their worktrees (no-mistakes-runs.ts), then whole `target/`
 //      folders of project checkouts nothing uses (no running jawan, no process working there, no live build compiling
-//      into it: a cargo or rustc, or a held heavy-build slot, live-builds.ts);
+//      into it: a cargo or rustc, a held heavy-build slot or a running gate, live-builds.ts);
 //   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/` (builds run
 //      there between jobs and cannot reinstall dependencies themselves; cargo rebuilds a wiped `target/` on its own);
 //   3. Docker build cache and unused images, not while a pull or build runs and not every minute (docker-prune.ts);
@@ -17,10 +17,9 @@
 //   6. `target/` folders of busy checkouts, between build steps: under cargo's own locks, with no cargo running in
 //      its workspace, no live build compiling into it and no file in it open. A target that stays in use is kept
 //      whole: never a partial delete under a live build, whose up-to-date artifacts can sit unwritten for hours;
-//   7. last resort: the `target/` folders left, in use or not (those no live build uses first, each build cut off
-//      named in the log), then `node_modules/` (but a main clone's), `dist/` and Playwright's browser cache. All of
-//      it rebuilds itself; a build cut off fails once and compiles again.
-// Over the emergency level build output in use is never touched, not even a sweep of its old artifacts.
+//   7. last resort: the `target/` folders left that no live build uses, then `node_modules/` (but a main clone's),
+//      `dist/` and Playwright's browser cache. All of it rebuilds itself. A target a live build compiles into
+//      (live-builds.ts) is never deleted at any step; a run still under the floor names each one it left.
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. A folder a live Docker container mounts (a bind, a volume's mountpoint, a mount hung on it inside a bind)
 // is never deleted at any step, the last resort included (container-mounts.ts). Every action goes to logs/disk.log.
@@ -67,7 +66,7 @@ import {
 } from "./disk-state.ts";
 import { pruneDocker } from "./docker-prune.ts";
 import { freeBuildVolumes } from "./docker-volumes.ts";
-import { liveBuilds, liveBuildUse } from "./live-builds.ts";
+import { liveBuilds, liveBuildUse, targetsInUse } from "./live-builds.ts";
 import { freeRunWorktrees } from "./no-mistakes-runs.ts";
 import { removeTree } from "./remove-tree.ts";
 import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
@@ -99,8 +98,10 @@ export type KeepReport = {
     ran: boolean;
     /** The live pid in state/disk-keep.pause that held the keeper off, if one did. */
     pausedBy?: number;
-    /** True when the last resort ran: under the emergency level, so build output in use went too (step 7). */
+    /** True when the last resort ran: under the emergency level, so build output of busy checkouts went too (step 7). */
     lastResort: boolean;
+    /** Targets a live build used that stayed, with why, when the run ended still under the floor; else empty. */
+    inUseLeft: { path: string; reason: string }[];
     /** False when capacity.diskKeep is false (or invalid): toli deletes nothing on its own, only this run by hand. */
     automatic: boolean;
     lines: string[];
@@ -139,6 +140,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         dryRun,
         ran: false,
         lastResort: false,
+        inUseLeft: [],
         automatic: diskKeepSetting(machine) === true,
         lines: [],
     };
@@ -315,31 +317,32 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 remove(dir.path, "step 6: in use, between build steps", (dry) => wipeNow(dir.path, dry, pauseHold));
             }
         }
-        // 7: the last resort, under the emergency level after 1 to 6: the targets left go now, in use or not, those no
-        // live build compiles into first (the build a deletion cuts off is named), then node_modules (never a main
-        // clone's, see 2), dist and Playwright's browsers, each only while free disk is under the emergency level.
-        // Docker's build cache already went in 3, its idle build volumes in 5. Only what buildDirs listed.
+        // 7: the last resort, under the emergency level after 1 to 6: the targets left that no live build compiles
+        // into go now, then node_modules (never a main clone's, see 2), dist and Playwright's browsers, each only
+        // while free disk is under the emergency level. A target a live build uses stays even here: losing a push
+        // gate's hours of build costs more than the space. Docker's build cache already went in 3, its idle build
+        // volumes in 5. Only what buildDirs listed.
         if (!over()) {
             report.lastResort = true;
             const level = `the emergency level ${gb(report.emergencyGB)}`;
             say(
-                `free ${gb(free())} is under ${level}: deleting every build folder left, in use or not, until free space is over that level`,
+                `free ${gb(free())} is under ${level}: deleting every build folder left that no live build uses, until free space is over that level`,
             );
-            const force = (path: string, build: string | null = null): void => {
+            const force = (path: string): void => {
                 if (mounted(path)) return;
-                const why = build ?? kept.get(path)?.reason;
-                const cut = build === null ? "" : "; that build fails and must run again";
-                if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway${cut}`);
+                const why = kept.get(path)?.reason;
+                if (why !== undefined) say(`${path} is in use (${why}): deleting it anyway`);
                 remove(path, "step 7: last resort", (dry) => (dry ? null : removeTree(path)));
             };
             const left = (dir: BuildDir): boolean =>
                 !done.has(dir.path) && ![...done].some((gone) => within(dir.path, gone)) && existsSync(dir.path);
             const live = liveBuilds();
-            const targets = dirs.flatMap((dir) =>
-                dir.kind === "target" && left(dir) ? [{ dir, build: liveBuildUse(dir.path, live) }] : [],
-            );
-            targets.sort((a, b) => Number(a.build !== null) - Number(b.build !== null));
-            for (const { dir, build } of targets) if (!over() && left(dir)) force(dir.path, build);
+            for (const dir of dirs) {
+                if (dir.kind !== "target" || over() || !left(dir)) continue;
+                const build = liveBuildUse(dir.path, live);
+                if (build === null) force(dir.path);
+                else say(`kept ${dir.path}: in use (${build}); a target a live build uses is never deleted`);
+            }
             const mainDeps = (dir: BuildDir): boolean => dir.kind === "node_modules" && dir.checkout.main;
             for (const dir of dirs)
                 if (dir.kind !== "target" && !mainDeps(dir) && !over() && left(dir)) force(dir.path);
@@ -350,10 +353,14 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             }
         }
         report.freeAfterGB = free();
+        const targets = dirs.flatMap((dir) => (dir.kind === "target" && !done.has(dir.path) ? [dir.path] : []));
+        if (report.freeAfterGB < floorGB) report.inUseLeft = targetsInUse(targets);
+        const inUse = report.inUseLeft.map((left) => `${left.path} (${left.reason})`).join(", ");
+        const leftText = inUse === "" ? "" : `; left in use: ${inUse}`;
         say(
             report.freeAfterGB >= floorGB
                 ? `done: free ${gb(freeBeforeGB)} -> ${gb(report.freeAfterGB)}`
-                : `done, still under the floor: free ${gb(freeBeforeGB)} -> ${gb(report.freeAfterGB)}; nothing more is rebuildable and free right now`,
+                : `done, still under the floor: free ${gb(freeBeforeGB)} -> ${gb(report.freeAfterGB)}; nothing more is rebuildable and free right now${leftText}`,
         );
     } finally {
         if (claim.kind === "claimed") releaseKeeper();

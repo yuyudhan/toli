@@ -290,8 +290,9 @@ dispatch here; otherwise `bin/toli delegate <machine> ...` to its Sardar (a proj
 that Sardar's jawan). `bin/toli remote` and `remote auto` refuse: no machine starts jawans on another. Low disk is never a
 reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
 every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). A full disk means delete the
-`target/` folders, in use or not, without asking: cargo rebuilds them. When free space is still under the floor, the
-keeper does that itself; on any machine, run `bin/toli disk keep` the moment a disk is full. Where
+`target/` folders no live build uses (a cargo or rustc, a held build slot, a running gate) without asking: cargo
+rebuilds them. When free space is still under the floor, the keeper does that itself and names the targets in use it
+left; on any machine, run `bin/toli disk keep` the moment a disk is full. Where
 `capacity.diskKeep` is `false` the keeper deletes nothing on its own and low disk only posts an inbox alert naming the
 biggest build folders: there the lead decides what goes. Never write a disk floor into a brief.
 

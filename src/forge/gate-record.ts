@@ -10,6 +10,7 @@ import {
     linkSync,
     lstatSync,
     mkdirSync,
+    readdirSync,
     readFileSync,
     unlinkSync,
     writeFileSync,
@@ -140,6 +141,34 @@ export function reconcile(file: string): GateRecord | null {
         writeJsonAtomic(file, current);
         return current;
     });
+}
+
+/**
+ * Every gate running on this machine now (`gate run`, `push --gate`, the pre-push hook): a `running` record of any
+ * project whose runner is alive. Read-only; an unreadable store or record reads as none.
+ */
+export function runningGates(): GateRecord[] {
+    const root = paths.gatesDir("");
+    const running: GateRecord[] = [];
+    let projects: string[];
+    try {
+        projects = readdirSync(root);
+    } catch {
+        return running;
+    }
+    for (const project of projects) {
+        let files: string[];
+        try {
+            files = readdirSync(join(root, project)).filter((name) => name.endsWith(".json"));
+        } catch {
+            continue; // Not a project's folder.
+        }
+        for (const file of files) {
+            const record = readJson<GateRecord | null>(join(root, project, file), null);
+            if (record?.status === "running" && record.pid !== null && pidAlive(record.pid)) running.push(record);
+        }
+    }
+    return running;
 }
 
 export function short(sha: string): string {

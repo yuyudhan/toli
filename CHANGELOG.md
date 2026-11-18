@@ -16,6 +16,11 @@ one. See docs/releasing.md.
   be re-derived: `bin/toli workspace prepare T<n> --reset`, refused while the recorded task branch holds commits or
   uncommitted changes. `project set --workspace` now waits for a prepare in progress, and the toggle is never needed:
   a live task on a branch naming it keeps the clone.
+- The disk keeper never deletes a `target/` a live build uses, not even at its last resort: a held build slot, a
+  running gate in that clone (`gate run`, `push --gate`, the pre-push hook) or a cargo or rustc working there or
+  naming a path in it keeps the target, and the keeper frees everything else first. A run still under the floor names
+  each target it left in use (`left in use: ...`, `--json`: `inUseLeft`). A push gate on a full disk lost its target
+  mid-build before.
 
 ## v0.5.38 - 2026-11-18
 

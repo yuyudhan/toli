@@ -1,6 +1,6 @@
-// The disk keeper and live builds (src/fleet/live-builds.ts): over the emergency level a target a running cargo or a
-// held heavy-build slot compiles into is never deleted; under it, such a target goes only after every other one, and
-// the build it cuts off is named.
+// The disk keeper and live builds (src/fleet/live-builds.ts): a target a running cargo or rustc, a held heavy-build
+// slot or a running gate compiles into is never deleted, not even under the emergency level; a keeper still under the
+// floor names each one it left.
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -65,7 +65,7 @@ describe("a live build's target", () => {
         const target = join(backend, "target");
         mkdirSync(target, { recursive: true });
         const cargo = (cwd: string | null, targetDir: string | null = null): LiveBuild[] => [
-            { label: "cargo (pid 7)", cwd, targetDir },
+            { label: "cargo (pid 7)", cwd, targetDir, args: [] },
         ];
         expect(liveBuildUse(target, cargo(join(backend, "src")))).toBe(
             `cargo (pid 7) builds in ${join(backend, "src")}`,
@@ -157,17 +157,74 @@ describe("the disk keeper beside live builds", () => {
     );
 
     test(
-        "under the emergency level it still deletes a target a live build compiles into when nothing else frees enough, naming the build",
+        "under the emergency level it never deletes a target a live build compiles into, and names it when still under the floor",
         () => {
             const { alpha, gamma, result } = emergency(true);
             const target = join(alpha, "target");
-            const cut = `${target} is in use (cargo (pid 4301) builds into it (CARGO_TARGET_DIR ${target})): deleting it anyway; that build fails and must run again`;
+            const why = `cargo (pid 4301) builds into it (CARGO_TARGET_DIR ${target})`;
             expect(result.report.lastResort).toBe(true);
-            expect(result.lines).toContain(cut);
-            const deleted = (clone: string): number => result.lines.indexOf(`deleted ${join(clone, "target")}, freed `);
-            expect(deleted(gamma)).toBeGreaterThan(-1);
-            expect(deleted(alpha)).toBeGreaterThan(deleted(gamma));
-            expect(existsSync(target)).toBe(false);
+            expect(result.lines).toContain(
+                `kept ${target}: in use (${why}); a target a live build uses is never deleted`,
+            );
+            expect(result.lines).toContain(`deleted ${join(gamma, "target")}, freed `);
+            expect(result.lines).not.toContain(`${target} is in use`);
+            expect(result.lines).toContain(`left in use: ${target} (${why})`);
+            expect(result.report.inUseLeft).toEqual([{ path: target, reason: why }]);
+            expect(existsSync(rlib(alpha))).toBe(true);
+        },
+        KEEPER_MS,
+    );
+
+    test(
+        "under the emergency level a held build slot, a running gate or a rustc naming the target keeps that clone's target (T1811)",
+        async () => {
+            const { box, log } = slotBox(1, 2);
+            const [alpha = "", beta = "", gamma = "", delta = ""] = clones(box, {
+                alpha: 600,
+                beta: 500,
+                gamma: 400,
+                delta: 300,
+            });
+            const targets = [alpha, beta, gamma, delta].map((clone) => join(clone, "target"));
+            // 1 GB free whatever goes: under the emergency level (6) to the end.
+            freeOnceGone(box, targets, 100);
+            // A push gate running in beta: its runner (this test) is alive.
+            const gates = join(box.root, "state", "gates", "beta");
+            mkdirSync(gates, { recursive: true });
+            const record = { project: "beta", sha: "a".repeat(40), tree: "b".repeat(40), recipe: "just test" };
+            const running = { ...record, dir: beta, status: "running", pid: process.pid, startedAt: "", endedAt: null };
+            writeFileSync(join(gates, `${"b".repeat(40)}-0123456789abcdef.json`), JSON.stringify(running));
+            // A rustc working elsewhere whose arguments write into delta's target.
+            const proc = tempDir("proc");
+            const deps = join(delta, "target", "debug", "deps");
+            mkdirSync(join(proc, "4302"));
+            writeFileSync(join(proc, "4302", "comm"), "rustc\n");
+            writeFileSync(join(proc, "4302", "environ"), "HOME=/home/x\0");
+            writeFileSync(join(proc, "4302", "cmdline"), `rustc\0--crate-name\0x\0--out-dir=${deps}\0`);
+            writeFileSync(join(proc, "4302", "maps"), "");
+            symlinkSync(realpathSync(tempDir("elsewhere")), join(proc, "4302", "cwd"));
+            const holder = start(box, toliArgs("build-slot", "--", "cargo", "build"), { STUB_SLEEP: "300" }, alpha);
+            try {
+                await until("the slot's build running", () => existsSync(log), KEEPER_MS);
+                const { report, lines } = keep(box, proc);
+                expect(report.lastResort).toBe(true);
+                expect(lines).toContain(`deleted ${join(gamma, "target")}, freed `);
+                expect(lines).not.toContain("deleting it anyway");
+                for (const clone of [alpha, beta, delta]) expect(existsSync(rlib(clone))).toBe(true);
+                expect(report.inUseLeft).toEqual([
+                    {
+                        path: join(alpha, "target"),
+                        reason: `heavy-build slot 1 (pid ${holder.proc.pid}) builds in ${alpha}`,
+                    },
+                    { path: join(beta, "target"), reason: `gate of beta (pid ${process.pid}) builds in ${beta}` },
+                    { path: join(delta, "target"), reason: `rustc (pid 4302) builds with ${deps}` },
+                ]);
+                expect(lines).toContain("done, still under the floor");
+                expect(lines).toContain(`left in use: ${join(alpha, "target")} (heavy-build slot 1`);
+            } finally {
+                writeFileSync(`${log}.done-x`, "");
+                await holder.done;
+            }
         },
         KEEPER_MS,
     );

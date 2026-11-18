@@ -290,9 +290,10 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   refuses a build outside the registered clones, toli's task worktrees and toli's checkout unless
   `TOLI_BUILD_PLACE_OVERRIDE="<why>"` is set, which is logged ([disk.md](disk.md#builds-outside-the-clones)).
 - `disk keep`: free rebuildable build output, oldest first, when the disk is under its floor (`capacity.diskKeepGB`,
-  capped at 15% of the disk) and until it is back there; still under it after the normal steps, every `target/` goes,
-  in use or not. It also runs before every jawan start, and every tick starts it detached (the tick never waits on
-  it), so low disk never stops work; a live pid in
+  capped at 15% of the disk) and until it is back there; still under it after the normal steps, every `target/` goes
+  that no live build (cargo or rustc, held build slot, running gate) uses, and a run still under the floor names the
+  ones it left (`left in use:`). It also runs before every jawan start, and every tick starts it detached (the tick
+  never waits on it), so low disk never stops work; a live pid in
   `state/disk-keep.pause` pauses it for up to 2 hours after the file was last written ([disk.md](disk.md)). With
   `capacity.diskKeep: false` it runs only by hand: before jawan starts and in the tick toli deletes nothing and only
   alerts the inbox, once per 6 hours, when free disk is under 10 GB (or the emergency level). It also flags, never
