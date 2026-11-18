@@ -1,12 +1,12 @@
-// `bin/toli project set`: record the user's delivery, forge, workspace strategy, standing-grant, live-stack, role and
-// release-priority answers.
+// `bin/toli project set`: record the user's delivery, forge, workspace strategy, task-branch pattern, standing-grant,
+// live-stack, role and release-priority answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, run, ToliError, withLock } from "../core/util.ts";
 import { overrideLabels } from "./list.ts";
 import { FORGES, type Forge, loadProjects, type Project, parseMode, updateProjects } from "./projects.ts";
-import { parseWorkspace, perTask, type Workspace } from "./strategy.ts";
+import { parseTaskBranchPattern, parseWorkspace, type Workspace } from "./strategy.ts";
 import { cloneHolders, dirty, holdersText, refExists } from "./workspace.ts";
 
 /** `--forge`: one of FORGES, or `none` (null) to clear the override. */
@@ -55,16 +55,12 @@ function parseRole(value: string | undefined): (typeof ROLES)[number] | undefine
 }
 
 /**
- * Apply a strategy to one entry. A per-task strategy lands through PR/MRs, so a `commit`-mode project moves to `pr`
- * (an explicit `--mode commit` in the same call is refused before this runs). Returns a note for what moved.
+ * Apply a strategy to one entry. The mode stays as it is: a per-task strategy lands each task branch through a PR/MR
+ * under `pr` / `no-mistakes`, and under `commit` the branch is pushed for the machine that cuts releases to merge.
  */
-function applyWorkspace(project: Project, workspace: Workspace, at: string): string | null {
+function applyWorkspace(project: Project, workspace: Workspace, at: string): void {
     project.workspace = workspace;
     project.workspaceSetAt = at;
-    if (!perTask(workspace) || project.mode !== "commit") return null;
-    project.mode = "pr";
-    project.deliverySetAt = at;
-    return `${project.name}: mode commit -> pr (${workspace} lands each task through a PR/MR)`;
 }
 
 /**
@@ -106,6 +102,7 @@ function setAll(args: Args): void {
     const others = [
         "mode",
         "branch",
+        "task-branch",
         "forge",
         "forge-host",
         "standing-push",
@@ -118,10 +115,9 @@ function setAll(args: Args): void {
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
     const workspace = parseWorkspace(value);
     const at = now().toISOString();
-    const notes = updateProjects((projects) =>
-        projects.map((project) => applyWorkspace(project, workspace, at)).filter((note) => note !== null),
-    );
-    for (const note of notes) out(note);
+    updateProjects((projects) => {
+        for (const project of projects) applyWorkspace(project, workspace, at);
+    });
     const total = loadProjects().length;
     out(`${total} project${total === 1 ? "" : "s"}: workspace=${workspace}`);
 }
@@ -132,6 +128,7 @@ export function projectSetCommand(argv: string[]): void {
         values: [
             "mode",
             "branch",
+            "task-branch",
             "forge",
             "forge-host",
             "workspace",
@@ -150,6 +147,7 @@ export function projectSetCommand(argv: string[]): void {
     const name = args.pos(0, "name");
     const mode = parseMode(args.str("mode"));
     const branch = parseBranch(args.str("branch"));
+    const taskBranch = parseTaskBranchPattern(args.str("task-branch"));
     const forge = parseForge(args.str("forge"));
     const forgeHost = parseForgeHost(args.str("forge-host"));
     const workspaceValue = args.str("workspace");
@@ -160,33 +158,40 @@ export function projectSetCommand(argv: string[]): void {
     const role = parseRole(args.str("role"));
     const releasePriority = parseYesNo(args.str("release-priority"), "--release-priority");
     if (
-        [mode, branch, forge, forgeHost, workspace, standingPush, standingPr, liveStack, role, releasePriority].every(
-            (value) => value === undefined,
-        )
+        [
+            mode,
+            branch,
+            taskBranch,
+            forge,
+            forgeHost,
+            workspace,
+            standingPush,
+            standingPr,
+            liveStack,
+            role,
+            releasePriority,
+        ].every((value) => value === undefined)
     )
         throw new ToliError(
-            "nothing to set: pass --mode <m>, --branch <b>|none, --forge <f>|none, --forge-host <h>|none, " +
-                "--workspace <s>, --standing-push yes|no, --standing-pr yes|no, --live-stack yes|no, " +
-                "--role full|verify-only or --release-priority yes|no (or --all --workspace <s>)",
+            "nothing to set: pass --mode <m>, --branch <b>|none, --task-branch <pattern>|none, --forge <f>|none, " +
+                "--forge-host <h>|none, --workspace <s>, --standing-push yes|no, --standing-pr yes|no, " +
+                "--live-stack yes|no, --role full|verify-only or --release-priority yes|no (or --all --workspace <s>)",
         );
     const at = now().toISOString();
-    const { updated, note } = updateProjects((projects) => {
+    const updated = updateProjects((projects) => {
         const project = projects.find((entry) => entry.name === name);
         if (!project) throw new ToliError(`unknown project "${name}"`);
-        if (mode === "commit" && perTask(workspace ?? project.workspace))
-            throw new ToliError(
-                `${workspace ?? project.workspace} lands each task through a PR/MR, so mode commit does not fit; ` +
-                    `pick --mode pr|no-mistakes, or --workspace same-branch`,
-            );
         if (mode !== undefined) project.mode = mode;
         if (branch === null) delete project.branch;
         else if (branch !== undefined) project.branch = branch;
         if (mode !== undefined || branch !== undefined) project.deliverySetAt = at;
+        if (taskBranch === null) delete project.taskBranch;
+        else if (taskBranch !== undefined) project.taskBranch = taskBranch;
         if (forge === null) delete project.forge;
         else if (forge !== undefined) project.forge = forge;
         if (forgeHost === null) delete project.forgeHost;
         else if (forgeHost !== undefined) project.forgeHost = forgeHost;
-        const moved = workspace === undefined ? null : applyWorkspace(project, workspace, at);
+        if (workspace !== undefined) applyWorkspace(project, workspace, at);
         if (standingPush !== undefined || standingPr !== undefined) {
             const standing = {
                 push: standingPush ?? project.standing?.push ?? false,
@@ -205,9 +210,8 @@ export function projectSetCommand(argv: string[]): void {
         else if (role === "full") delete project.role;
         if (releasePriority === true) project.releasePriority = true;
         else if (releasePriority === false) delete project.releasePriority;
-        return { updated: { ...project }, note: moved };
+        return { ...project };
     });
-    if (note !== null) out(note);
     out(
         [`${updated.name}: mode=${updated.mode}`, `workspace=${updated.workspace}`, ...overrideLabels(updated)].join(
             " ",

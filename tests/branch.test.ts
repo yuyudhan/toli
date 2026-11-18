@@ -68,6 +68,7 @@ describe("fixed working branch", () => {
             {
                 ...legacy,
                 branch: null,
+                taskBranch: null,
                 workspace: "branch-per-task",
                 standing: { push: false, pr: false },
                 liveStack: false,
@@ -156,9 +157,9 @@ describe("project set --branch switches the clone", () => {
         box.ok(["workspace", "prepare", "T1"]);
         box.ok(["task", "start", "T1"]);
         const output = box.ok(["project", "set", "app", "--branch", "main"]);
-        expect(output).toContain("projects/app is still on toli/T1-login-page: T1 (active) is using it");
+        expect(output).toContain("projects/app is still on toli/m1/T1-login-page: T1 (active) is using it");
         expect(output).toContain(`git -C ${dir} switch main`);
-        expect(head(box, dir)).toBe("toli/T1-login-page");
+        expect(head(box, dir)).toBe("toli/m1/T1-login-page");
     });
 
     test("the switch waits for the workspace lock that task preparation holds", () => {

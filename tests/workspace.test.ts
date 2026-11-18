@@ -8,6 +8,7 @@ type ProjectJson = {
     mode: string;
     workspace: string;
     workspaceSetAt?: string;
+    taskBranch: string | null;
     standing: { push: boolean; pr: boolean };
     liveStack: boolean;
     linkedTo: string | null;
@@ -66,11 +67,21 @@ describe("workspace config", () => {
             "sets only --workspace",
         );
 
+        // A per-task strategy keeps the mode: under `commit` the task branch is pushed for the release machine to merge.
         expect(box.ok(["project", "set", "app", "--workspace", "worktree-per-task", "--standing-push", "yes"])).toBe(
-            "app: mode commit -> pr (worktree-per-task lands each task through a PR/MR)\n" +
-                "app: mode=pr workspace=worktree-per-task standing=push",
+            "app: mode=commit workspace=worktree-per-task standing=push",
         );
-        refused(box, ["project", "set", "app", "--mode", "commit"], "mode commit does not fit");
+        expect(box.ok(["project", "set", "app", "--mode", "pr"])).toContain("mode=pr workspace=worktree-per-task");
+        expect(box.ok(["project", "set", "app", "--mode", "commit"])).toContain(
+            "mode=commit workspace=worktree-per-task",
+        );
+        refused(box, ["project", "set", "app", "--task-branch", "app/<machine>"], "must contain <id>");
+        refused(box, ["project", "set", "app", "--task-branch", "app/<host>/<id>"], "not <host>");
+        expect(box.ok(["project", "set", "app", "--task-branch", "<project>/<machine>/<id>-<slug>"])).toContain(
+            "task-branch=<project>/<machine>/<id>-<slug>",
+        );
+        expect(projects(box)[0]?.taskBranch).toBe("<project>/<machine>/<id>-<slug>");
+        expect(box.ok(["project", "set", "app", "--task-branch", "none"])).not.toContain("task-branch=");
         expect(box.ok(["project", "set", "app", "--standing-pr", "yes"])).toContain("standing=push+pr");
         expect(projects(box)[0]).toMatchObject({
             workspace: "worktree-per-task",
@@ -86,7 +97,7 @@ describe("workspace config", () => {
             "2 projects: workspace=same-branch",
         );
         expect(projects(box).map((entry) => [entry.workspace, entry.mode])).toEqual([
-            ["same-branch", "pr"],
+            ["same-branch", "commit"],
             ["same-branch", "commit"],
         ]);
         expect(box.ok(["project", "list"])).toContain("workspace=same-branch");
@@ -174,23 +185,23 @@ describe("branch-per-task", () => {
         const box = coordinator();
         const dir = project(box, "branch-per-task", "Add login page", "Fix footer");
         expect(box.ok(["workspace", "prepare", "T1"])).toBe(
-            `branch-per-task: ${dir} on toli/T1-add-login-page from main`,
+            `branch-per-task: ${dir} on toli/m1/T1-add-login-page from main`,
         );
-        expect(box.git(dir, ["branch", "--show-current"])).toBe("toli/T1-add-login-page");
+        expect(box.git(dir, ["branch", "--show-current"])).toBe("toli/m1/T1-add-login-page");
         box.ok(["task", "start", "T1"]);
         expect(task(box, "T1").workspace).toEqual({
             strategy: "branch-per-task",
             path: dir,
-            branch: "toli/T1-add-login-page",
+            branch: "toli/m1/T1-add-login-page",
             base: "main",
         });
-        expect(box.ok(["workspace", "prepare", "T1"])).toContain("toli/T1-add-login-page");
+        expect(box.ok(["workspace", "prepare", "T1"])).toContain("toli/m1/T1-add-login-page");
 
         const conflict = box.toli(["workspace", "prepare", "T2"]);
         expect(conflict.code).toBe(1);
-        expect(conflict.stderr).toContain("T1 (active) is using it on toli/T1-add-login-page");
+        expect(conflict.stderr).toContain("T1 (active) is using it on toli/m1/T1-add-login-page");
         expect(conflict.stderr).toContain("--workspace same-branch");
-        expect(box.git(dir, ["branch", "--show-current"])).toBe("toli/T1-add-login-page");
+        expect(box.git(dir, ["branch", "--show-current"])).toBe("toli/m1/T1-add-login-page");
 
         writeFileSync(join(dir, "login.txt"), "login\n");
         refused(box, ["commit", "app", "-m", "add login", "--", "login.txt"], "pass --task <T-id>");
@@ -201,7 +212,7 @@ describe("branch-per-task", () => {
         refused(box, ["workspace", "prepare", "T2"], "the clone has uncommitted changes");
         box.git(dir, ["add", "stray.txt"]);
         box.git(dir, ["commit", "-m", "stray"]);
-        expect(box.ok(["workspace", "prepare", "T2"])).toContain("toli/T2-fix-footer from main");
+        expect(box.ok(["workspace", "prepare", "T2"])).toContain("toli/m1/T2-fix-footer from main");
         expect(existsSync(join(dir, "login.txt"))).toBe(false);
     });
 });
@@ -212,9 +223,9 @@ describe("worktree-per-task", () => {
         const clone = project(box, "worktree-per-task", "Build API", "Draft docs", "Spike cache");
         const worktree = join(box.root, "projects", ".worktrees", "app", "T1");
         expect(box.ok(["workspace", "prepare", "T1"])).toBe(
-            `worktree-per-task: ${worktree} on toli/T1-build-api from main`,
+            `worktree-per-task: ${worktree} on toli/m1/T1-build-api from main`,
         );
-        expect(box.git(worktree, ["branch", "--show-current"])).toBe("toli/T1-build-api");
+        expect(box.git(worktree, ["branch", "--show-current"])).toBe("toli/m1/T1-build-api");
         expect(box.git(clone, ["branch", "--show-current"])).toBe("main");
         box.ok(["workspace", "prepare", "T2"]);
         box.ok(["workspace", "prepare", "T3"]);
@@ -241,10 +252,10 @@ describe("worktree-per-task", () => {
         box.ok(["task", "drop", "T3"]);
         const list = box.ok(["workspace", "list"]);
         expect(list).toContain(
-            "app/T1\tdone\ttoli/T1-build-api\tbase main\tunmerged 2\tclean\tprojects/.worktrees/app/T1",
+            "app/T1\tdone\ttoli/m1/T1-build-api\tbase main\tunmerged 2\tclean\tprojects/.worktrees/app/T1",
         );
-        expect(list).toContain("app/T2\tqueued\ttoli/T2-draft-docs\tbase main\tmerged\tclean");
-        expect(list).toContain("app/T3\tdropped\ttoli/T3-spike-cache\tbase main\tmerged\tdirty");
+        expect(list).toContain("app/T2\tqueued\ttoli/m1/T2-draft-docs\tbase main\tmerged\tclean");
+        expect(list).toContain("app/T3\tdropped\ttoli/m1/T3-spike-cache\tbase main\tmerged\tdirty");
 
         const first = box.ok(["workspace", "prune"]);
         expect(first).toContain("kept: projects/.worktrees/app/T1: 2 unlanded commits / 0 dirty files");
@@ -252,11 +263,11 @@ describe("worktree-per-task", () => {
         expect(first).toContain("kept: projects/.worktrees/app/T3: 0 unlanded commits / 1 dirty file");
         expect(existsSync(worktree)).toBe(true);
 
-        box.git(clone, ["merge", "--no-ff", "-m", "merge T1", "toli/T1-build-api"]);
+        box.git(clone, ["merge", "--no-ff", "-m", "merge T1", "toli/m1/T1-build-api"]);
         const second = box.ok(["workspace", "prune", "--project", "app"]);
-        expect(second).toContain("removed\tapp/T1\tbranch toli/T1-build-api deleted");
+        expect(second).toContain("removed\tapp/T1\tbranch toli/m1/T1-build-api deleted");
         expect(existsSync(worktree)).toBe(false);
-        expect(box.git(clone, ["branch", "--list", "toli/T1-build-api"])).toBe("");
+        expect(box.git(clone, ["branch", "--list", "toli/m1/T1-build-api"])).toBe("");
         expect(existsSync(join(box.root, "projects", ".worktrees", "app", "T3", "wip.txt"))).toBe(true);
         expect(box.ok(["workspace", "prune"])).toContain(
             "kept: projects/.worktrees/app/T3: 0 unlanded commits / 1 dirty file",
@@ -319,7 +330,7 @@ describe("briefs carry the workspace", () => {
         expect(sent).toContain("## Workspace (prepared by bin/toli spawn)");
         expect(sent).toContain("- Strategy: worktree-per-task");
         expect(sent).toContain(`- Path: ${worktree}`);
-        expect(sent).toContain("- Branch: toli/T1-build-api, from main");
+        expect(sent).toContain("- Branch: toli/m1/T1-build-api, from main");
         expect(sent).toContain("bin/toli commit app --task T1");
     });
 });

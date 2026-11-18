@@ -41,11 +41,21 @@ Each project records where its jawans work (`workspace` in `bin/toli project lis
 `/setup-project`; new projects start on the machine default, `defaults.workspace` in `config/machine.json`, which is
 `same-branch` when unset):
 
-| Strategy            | Where jawans work                                                                  | Landing                    |
-| ------------------- | ---------------------------------------------------------------------------------- | -------------------------- |
-| `same-branch`       | the one clone, on the project's (fixed or checked-out) branch                      | per the delivery mode      |
-| `branch-per-task`   | the one clone, switched to `toli/<T-id>-<slug>` before the jawan starts            | task branch pushed + PR/MR |
-| `worktree-per-task` | `projects/.worktrees/<project>/<T-id>`, a worktree on its own `toli/<T-id>-<slug>` | task branch pushed + PR/MR |
+| Strategy            | Where jawans work                                                         | Landing                    |
+| ------------------- | ------------------------------------------------------------------------- | -------------------------- |
+| `same-branch`       | the one clone, on the project's (fixed or checked-out) branch             | per the delivery mode      |
+| `branch-per-task`   | the one clone, switched to the task branch before the jawan starts        | task branch pushed + PR/MR |
+| `worktree-per-task` | `projects/.worktrees/<project>/<T-id>`, a worktree on its own task branch | task branch pushed + PR/MR |
+
+A task branch is `toli/<machine>/<T-id>-<slug>` by default: task ids are numbered per machine, so two machines
+working one project each have a `T12`, and the machine part keeps their branches apart on the shared origin.
+`bin/toli project set <name> --task-branch "<pattern>"` names them another way, from `<project>`, `<machine>`, `<id>`
+(required) and `<slug>` around literal text (for example `shop/<machine>/<id>-<slug>`); `--task-branch none` goes
+back to the default. A task keeps the branch it was prepared on.
+
+Under `--mode pr` or `no-mistakes` a per-task strategy lands each task branch through a PR/MR. Under `--mode commit`
+the task branch is committed and pushed (on the user's word or a standing push grant) for the machine that cuts the
+project's releases to merge, with no PR/MR; setting a strategy never changes the mode.
 
 `same-branch` is the recommended default: many jawans work in one clone at once, each `bin/toli commit` builds its
 commit from the branch tip in a private index with only its own paths, and refuses when the branch moved twice, a
@@ -57,7 +67,11 @@ toli itself never uses worktrees.
 
 - `bin/toli spawn --task T<n>` prepares the workspace (or `bin/toli workspace prepare T<n>` for native subagents)
   and records it on the task; the brief carries the strategy, path, and branch, and the verifier reuses it.
-  Task branches start from the base branch: the project's `--branch`, else origin's default branch.
+  Task branches start from the base branch: the project's `--branch`, else origin's default branch, as origin has
+  it: `git fetch origin <base>` runs first and the branch starts from `origin/<base>` with no upstream, so a clone
+  whose own base is behind never seeds a stale task (without that ref on origin it starts from the local base, with
+  a warning). A live task prepared under an earlier strategy keeps its recorded workspace when the project switches
+  strategy; the new one applies to tasks prepared afterwards, and switching never touches the clone.
 - `branch-per-task` refuses to switch the clone while another active or held task of the project uses it on a
   different branch, or while the clone has uncommitted changes; use `same-branch` for parallel tasks.
 - On macOS, preparing a worktree excludes `projects/.worktrees/<project>/` from Spotlight (a `.metadata_never_index`
@@ -75,8 +89,7 @@ toli itself never uses worktrees.
   flag to override it: such a worktree prints `kept: <path>: N unlanded commits / M dirty files` and goes at a later
   prune once it is landed and clean. Squash-merged branches count as unlanded; land or remove them by hand, on the
   user's word.
-- `bin/toli project set --all --workspace <s>` applies one strategy to every project. A per-task strategy moves a
-  `commit`-mode project to `pr`.
+- `bin/toli project set --all --workspace <s>` applies one strategy to every project; each keeps its mode.
 - Pre-strategy projects keep their behaviour: `bin/toli migrate` records `branch-per-task` for `pr` and branchless
   `no-mistakes` projects, `same-branch` for the rest.
 

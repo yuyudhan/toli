@@ -57,9 +57,9 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     project ensure <name> <git-url> [--mode commit|pr|no-mistakes]
     project link <name> <path> [--mode commit|pr|no-mistakes]
     project list [--json] | path <name>
-    project set <name> [--mode <m>] [--branch <b>|none] [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none]
-                [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no] [--standing-pr yes|no]
-                [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
+    project set <name> [--mode <m>] [--branch <b>|none] [--task-branch <pattern>|none] [--forge github|gitlab|bitbucket|none]
+                [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
+                [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
     project set --all --workspace <strategy>
     project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
     project setup <name> [--json] | setup --all [--json]

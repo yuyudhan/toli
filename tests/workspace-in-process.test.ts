@@ -67,11 +67,9 @@ describe("project set in process", () => {
         ];
         for (const [argv, message] of refusals) expect(() => set(argv)).toThrow(message);
 
-        expect(set(["app", "--workspace", "branch-per-task"]).split("\n")).toEqual([
-            "app: mode commit -> pr (branch-per-task lands each task through a PR/MR)",
-            "app: mode=pr workspace=branch-per-task",
-        ]);
-        expect(() => set(["app", "--mode", "commit"])).toThrow("mode commit does not fit");
+        // A per-task strategy keeps the mode: `commit` lands the task branch for the release machine to merge.
+        expect(set(["app", "--workspace", "branch-per-task"])).toBe("app: mode=commit workspace=branch-per-task");
+        expect(set(["app", "--mode", "pr"])).toBe("app: mode=pr workspace=branch-per-task");
         expect(set(["--all", "--workspace", "branch-per-task"])).toBe("1 project: workspace=branch-per-task");
 
         // A live task holding the clone on its branch keeps the clone where it is.
@@ -79,28 +77,37 @@ describe("project set in process", () => {
         inProcess(box.root, () => prepareWorkspace("T1"));
         task(["start", "T1"]);
         expect(set(["app", "--branch", "main"])).toContain(
-            "projects/app is still on toli/T1-login-page: T1 (active) is using it on toli/T1-login-page; " +
+            "projects/app is still on toli/m1/T1-login-page: T1 (active) is using it on toli/m1/T1-login-page; " +
                 `switch it when that is settled: git -C ${dir} switch main`,
         );
         task(["done", "T1"]);
         writeFileSync(join(dir, "stray.txt"), "stray\n");
         expect(set(["app", "--branch", "main"])).toContain(
-            "is still on toli/T1-login-page: it has uncommitted changes",
+            "is still on toli/m1/T1-login-page: it has uncommitted changes",
         );
         rmSync(join(dir, "stray.txt"));
         expect(set(["app", "--branch", "nowhere"])).toContain(
-            `or create it from toli/T1-login-page: git -C ${dir} switch -c nowhere`,
+            `or create it from toli/m1/T1-login-page: git -C ${dir} switch -c nowhere`,
         );
-        expect(set(["app", "--branch", "main"])).toContain("projects/app: switched from toli/T1-login-page to main");
+        expect(set(["app", "--branch", "main"])).toContain("projects/app: switched from toli/m1/T1-login-page to main");
         expect(box.git(dir, ["branch", "--show-current"])).toBe("main");
     });
 });
 
 describe("workspace in process", () => {
-    test("task branches are derived from the id and a slug of the title", () => {
-        expect(taskBranch({ id: "T3", title: "Fix: the Login page!" })).toBe("toli/T3-fix-the-login-page");
-        expect(taskBranch({ id: "T9", title: " *** " })).toBe("toli/T9-task");
-        expect(taskBranch({ id: "T4", title: "a".repeat(60) })).toBe(`toli/T4-${"a".repeat(40)}`);
+    test("task branches carry the machine by default, or follow the project's pattern", () => {
+        const box = coordinator();
+        inProcess(box.root, () => {
+            const app = { name: "app" };
+            expect(taskBranch({ id: "T3", title: "Fix: the Login page!" }, app)).toBe("toli/m1/T3-fix-the-login-page");
+            expect(taskBranch({ id: "T9", title: " *** " }, app)).toBe("toli/m1/T9-task");
+            expect(taskBranch({ id: "T4", title: "a".repeat(60) }, app)).toBe(`toli/m1/T4-${"a".repeat(40)}`);
+            const pattern = { name: "shop", taskBranch: "<project>/<machine>/<id>-<slug>" };
+            expect(taskBranch({ id: "T12", title: "Cart" }, pattern)).toBe("shop/m1/T12-cart");
+            expect(() => taskBranch({ id: "T1", title: "x" }, { name: "a", taskBranch: "bad..<id>" })).toThrow(
+                "cannot derive a valid branch name",
+            );
+        });
     });
 
     test("prepares, finds, lists and prunes task worktrees", () => {
@@ -117,22 +124,22 @@ describe("workspace in process", () => {
         const prepared: TaskWorkspace = {
             strategy: "worktree-per-task",
             path: worktree,
-            branch: "toli/T1-build-api",
+            branch: "toli/m1/T1-build-api",
             base: "main",
         };
         expect(JSON.parse(workspace(["prepare", "T1", "--json"]))).toEqual(prepared);
         expect(workspace(["prepare", "T2"])).toBe(
-            `worktree-per-task: ${join(box.root, "projects", ".worktrees", "app", "T2")} on toli/T2-draft-docs from main`,
+            `worktree-per-task: ${join(box.root, "projects", ".worktrees", "app", "T2")} on toli/m1/T2-draft-docs from main`,
         );
         inProcess(box.root, () => {
             expect(prepareWorkspace("t1")).toEqual(prepared);
             expect(baseBranch(findProject("app"), clone)).toBe("main");
             expect(gitWorktrees(clone).map((entry) => entry.branch)).toEqual([
                 "main",
-                "toli/T1-build-api",
-                "toli/T2-draft-docs",
+                "toli/m1/T1-build-api",
+                "toli/m1/T2-draft-docs",
             ]);
-            expect(workDir("app", "T1")).toMatchObject({ dir: worktree, branch: "toli/T1-build-api" });
+            expect(workDir("app", "T1")).toMatchObject({ dir: worktree, branch: "toli/m1/T1-build-api" });
             expect(workDir("app", undefined, worktree).task?.id).toBe("T1");
             expect(workDir("app", undefined, box.root)).toEqual({ dir: clone, task: null, branch: null });
             expect(() => workDir("app", "T9")).toThrow('unknown task "T9"');
@@ -145,10 +152,10 @@ describe("workspace in process", () => {
         task(["done", "T1"]);
         expect(JSON.parse(workspace(["list", "--json"]))).toHaveLength(2);
         expect(workspace(["list", "--project", "app"])).toContain(
-            "app/T2\tqueued\ttoli/T2-draft-docs\tbase main\tmerged\tclean\tprojects/.worktrees/app/T2",
+            "app/T2\tqueued\ttoli/m1/T2-draft-docs\tbase main\tmerged\tclean\tprojects/.worktrees/app/T2",
         );
         const pruned = workspace(["prune"]);
-        expect(pruned).toContain("removed\tapp/T1\tbranch toli/T1-build-api deleted");
+        expect(pruned).toContain("removed\tapp/T1\tbranch toli/m1/T1-build-api deleted");
         expect(pruned).toContain("kept\tapp/T2\ttask is queued");
         expect(existsSync(worktree)).toBe(false);
         expect(() => workspace(["prepare", "T9"])).toThrow('unknown task "T9"');

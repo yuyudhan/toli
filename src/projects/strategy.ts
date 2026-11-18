@@ -4,8 +4,9 @@ import { ToliError } from "../core/util.ts";
 import type { Mode } from "./projects.ts";
 /**
  * Where jawans work (R16). `same-branch`: the one clone, on the project's branch. `branch-per-task`: the one clone,
- * switched to a `toli/<T-id>-<slug>` branch per task. `worktree-per-task`: a git worktree per task under
- * projects/.worktrees/<project>/<T-id> on its own task branch. Both per-task strategies land through a PR/MR.
+ * switched to a task branch per task. `worktree-per-task`: a git worktree per task under
+ * projects/.worktrees/<project>/<T-id> on its own task branch. Per-task strategies land the task branch: through a
+ * PR/MR (`pr`, `no-mistakes`), or pushed for the machine that cuts releases to merge (`commit`).
  */
 export const WORKSPACES = ["same-branch", "branch-per-task", "worktree-per-task"] as const;
 export type Workspace = (typeof WORKSPACES)[number];
@@ -22,9 +23,35 @@ export function parseWorkspace(value: string, flag = "--workspace"): Workspace {
     return value;
 }
 
-/** Whether tasks get their own branch (and land through a PR/MR). */
+/** Whether tasks get their own branch. */
 export function perTask(workspace: Workspace): boolean {
     return workspace !== "same-branch";
+}
+
+/**
+ * The default task branch: task ids are numbered per machine, so two machines working one project each have a
+ * `T12`; the machine part keeps their branches apart on the shared origin.
+ */
+export const DEFAULT_TASK_BRANCH = "toli/<machine>/<id>-<slug>";
+const TASK_BRANCH_PARTS = ["project", "machine", "id", "slug"] as const;
+
+/**
+ * `project set --task-branch`: a pattern of `<project>`, `<machine>`, `<id>` (required: it keeps one task's branch
+ * apart from another's) and `<slug>` around literal text; `none` (null) goes back to DEFAULT_TASK_BRANCH.
+ */
+export function parseTaskBranchPattern(value: string | undefined): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === "none") return null;
+    const unknown = [...value.matchAll(/<([^>]*)>/g)]
+        .map((match) => match[1] ?? "")
+        .filter((part) => !(TASK_BRANCH_PARTS as readonly string[]).includes(part));
+    if (unknown.length > 0)
+        throw new ToliError(
+            `--task-branch knows <${TASK_BRANCH_PARTS.join(">, <")}>, not <${unknown.join(">, <")}> (got "${value}")`,
+        );
+    if (!value.includes("<id>"))
+        throw new ToliError(`--task-branch must contain <id>, so each task gets its own branch (got "${value}")`);
+    return value;
 }
 
 /** The strategy a pre-R16 project already followed: a work branch per change in `pr` / branchless gate mode. */

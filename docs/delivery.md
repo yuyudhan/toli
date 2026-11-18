@@ -39,8 +39,9 @@ strips AI co-author trailers, and refuses on the wrong branch.
 - The mode chooses the path; it is never permission. Pushing, opening a PR, merging, and releasing still need your
   word for each change, except under a standing grant.
 - With a per-task [workspace strategy](projects.md#workspace-strategy) (`branch-per-task`, `worktree-per-task`) each
-  task has its own `toli/<T-id>-<slug>` branch, and landing means pushing that branch and opening its PR/MR. A
-  per-task strategy moves a `commit`-mode project to `pr`.
+  task has its own task branch (`toli/<machine>/<T-id>-<slug>`, or the project's `--task-branch` pattern). Under
+  `pr` or `no-mistakes` landing means pushing that branch and opening its PR/MR; under `commit` it means pushing the
+  branch for the machine that cuts releases to merge. A strategy never changes the mode.
 
 ## Standing grants
 

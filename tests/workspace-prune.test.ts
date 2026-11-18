@@ -40,13 +40,13 @@ describe("workspace prune", () => {
         const pruned = box.ok(["workspace", "prune"]);
         expect(pruned).toContain("kept: projects/.worktrees/app/T1: 1 unlanded commit / 0 dirty files");
         expect(pruned).toContain("kept: projects/.worktrees/app/T2: 0 unlanded commits / 1 dirty file");
-        expect(pruned).toMatch(/removed\tapp\/T3\tbranch toli\/T3-landed deleted \(was [0-9a-f]{12}\)/);
+        expect(pruned).toMatch(/removed\tapp\/T3\tbranch toli\/m1\/T3-landed deleted \(was [0-9a-f]{12}\)/);
         expect(pruned).toContain("kept\tapp/T4\ttask is active");
         expect(existsSync(join(holder, "T1", "idea.txt"))).toBe(true);
         expect(existsSync(join(holder, "T2", "scratch.txt"))).toBe(true);
         expect(existsSync(join(holder, "T3"))).toBe(false);
-        expect(box.git(clone, ["branch", "--list", "toli/T1-try-idea"])).toContain("toli/T1-try-idea");
-        expect(box.git(clone, ["branch", "--list", "toli/T3-landed"])).toBe("");
+        expect(box.git(clone, ["branch", "--list", "toli/m1/T1-try-idea"])).toContain("toli/m1/T1-try-idea");
+        expect(box.git(clone, ["branch", "--list", "toli/m1/T3-landed"])).toBe("");
         expect(JSON.parse(box.ok(["workspace", "prune", "--json"]))).toContainEqual([
             "kept",
             "app/T1",

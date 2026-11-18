@@ -1,36 +1,45 @@
 // Per-project workspace strategy (R16): where a task's jawans work, prepared before the jawan starts.
 //
 //   same-branch        the project clone, on the project's branch (no git changes)
-//   branch-per-task    the project clone, switched to `toli/<T-id>-<slug>`; refused while another active task of
-//                      the project holds the clone on a different branch
-//   worktree-per-task  `git worktree add projects/.worktrees/<project>/<T-id> -b toli/<T-id>-<slug> <base>`
+//   branch-per-task    the project clone, switched to the task branch (`toli/<machine>/<T-id>-<slug>` unless the
+//                      project sets its own `--task-branch` pattern); refused while another active task of the
+//                      project holds the clone on a different branch
+//   worktree-per-task  `git worktree add projects/.worktrees/<project>/<T-id> -b <task branch> <base>`
 //
 // The prepared workspace is recorded on the task (`workspace` in data/backlog.json), so the verifier, `bin/toli
 // commit|push|pr --task` and `bin/toli workspace list|prune` (src/projects/workspace-command.ts) find it again.
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
+import { loadMachine } from "../core/config.ts";
 import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
-import { run, ToliError, withLock } from "../core/util.ts";
+import { run, ToliError, warn, withLock } from "../core/util.ts";
 import { loadBacklog, type Task, type TaskWorkspace, updateTask } from "../records/backlog.ts";
 import { excludeFromIndexing } from "./indexing.ts";
 import { findProject, type Project, projectCloneDir } from "./projects.ts";
-import { perTask } from "./strategy.ts";
+import { DEFAULT_TASK_BRANCH, perTask } from "./strategy.ts";
 
 const SLUG_MAX = 40;
 /** Statuses whose jawans may still be using the workspace. */
 const LIVE: readonly Task["status"][] = ["active", "held"];
 
-/** `toli/<T-id>-<slug of the title>`, a valid branch name. */
-export function taskBranch(task: Pick<Task, "id" | "title">): string {
+/**
+ * A task's branch: the project's `taskBranch` pattern (DEFAULT_TASK_BRANCH when unset) with `<project>`,
+ * `<machine>` (this machine's name), `<id>` and `<slug>` (of the title) filled in; a valid branch name.
+ */
+export function taskBranch(task: Pick<Task, "id" | "title">, project: Pick<Project, "name" | "taskBranch">): string {
     const slug =
         task.title
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
             .slice(0, SLUG_MAX)
             .replace(/^-+|-+$/g, "") || "task";
-    const branch = `toli/${task.id}-${slug}`;
+    const parts: Record<string, string> = { project: project.name, machine: loadMachine().name, id: task.id, slug };
+    const branch = (project.taskBranch ?? DEFAULT_TASK_BRANCH).replace(
+        /<(project|machine|id|slug)>/g,
+        (_match, part: string) => parts[part] ?? "",
+    );
     if (run(["git", "check-ref-format", "--branch", branch]).code !== 0)
         throw new ToliError(`cannot derive a valid branch name for ${task.id} (got "${branch}")`);
     return branch;
@@ -52,10 +61,22 @@ export function baseBranch(project: Project, clone: string): string {
     );
 }
 
-/** Start point for a new task branch: the local base branch when present, else origin's. */
+/**
+ * Start point for a new task branch: origin's base branch, fetched first, so a task starts from what the fleet has
+ * pushed even when this clone's own base branch is behind; the local base branch only when origin has none (no
+ * remote, offline before its first fetch).
+ */
 function baseRef(clone: string, base: string): string {
-    if (refExists(clone, `refs/heads/${base}`)) return `refs/heads/${base}`;
+    const fetched = git(clone, ["fetch", "--quiet", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`]);
+    if (fetched.code !== 0)
+        warn(
+            `warning: git fetch origin ${base} failed in ${clone} (${(fetched.stderr || fetched.stdout).trim()}); the task branch starts from the last fetched base`,
+        );
     if (refExists(clone, `refs/remotes/origin/${base}`)) return `refs/remotes/origin/${base}`;
+    if (refExists(clone, `refs/heads/${base}`)) {
+        warn(`warning: origin has no ${base} in ${clone}; the task branch starts from the local ${base}`);
+        return `refs/heads/${base}`;
+    }
     throw new ToliError(`base branch ${base} exists neither locally nor on origin in ${clone}`);
 }
 
@@ -101,7 +122,7 @@ export function holdersText(holders: Task[]): string {
 
 function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspace {
     const base = task.workspace?.base ?? baseBranch(project, clone);
-    const branch = task.workspace?.branch ?? taskBranch(task);
+    const branch = task.workspace?.branch ?? taskBranch(task, project);
     const workspace: TaskWorkspace = { strategy: "branch-per-task", path: clone, branch, base };
     const head = currentBranch(clone);
     if (head === branch) return workspace;
@@ -120,7 +141,7 @@ function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspa
         );
     const result = refExists(clone, `refs/heads/${branch}`)
         ? git(clone, ["switch", branch])
-        : git(clone, ["switch", "-c", branch, baseRef(clone, base)]);
+        : git(clone, ["switch", "--no-track", "-c", branch, baseRef(clone, base)]);
     if (result.code !== 0)
         throw new ToliError(`git switch ${branch} failed in ${clone}: ${(result.stderr || result.stdout).trim()}`);
     return workspace;
@@ -128,7 +149,7 @@ function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspa
 
 function prepareWorktree(project: Project, task: Task, clone: string): TaskWorkspace {
     const base = task.workspace?.base ?? baseBranch(project, clone);
-    const branch = task.workspace?.branch ?? taskBranch(task);
+    const branch = task.workspace?.branch ?? taskBranch(task, project);
     const path = paths.taskWorktree(project.name, task.id);
     const workspace: TaskWorkspace = { strategy: "worktree-per-task", path, branch, base };
     if (existsSync(path)) {
@@ -148,7 +169,7 @@ function prepareWorktree(project: Project, task: Task, clone: string): TaskWorks
     excludeFromIndexing(dirname(path));
     const result = refExists(clone, `refs/heads/${branch}`)
         ? git(clone, ["worktree", "add", path, branch])
-        : git(clone, ["worktree", "add", "-b", branch, path, baseRef(clone, base)]);
+        : git(clone, ["worktree", "add", "--no-track", "-b", branch, path, baseRef(clone, base)]);
     if (result.code !== 0)
         throw new ToliError(`git worktree add ${path} failed: ${(result.stderr || result.stdout).trim()}`);
     return workspace;
@@ -156,7 +177,9 @@ function prepareWorktree(project: Project, task: Task, clone: string): TaskWorks
 
 /**
  * Prepare (idempotently) and record the workspace of a task per its project's strategy; returns where its jawans
- * work. Serialized per project so two spawns cannot both switch the shared clone.
+ * work. Serialized per project so two spawns cannot both switch the shared clone. A live task prepared under another
+ * strategy keeps the workspace it has (its work, maybe uncommitted, is there): switching a project's strategy
+ * applies to tasks prepared afterwards.
  */
 export function prepareWorkspace(taskId: string): TaskWorkspace {
     const id = taskId.toUpperCase();
@@ -166,6 +189,14 @@ export function prepareWorkspace(taskId: string): TaskWorkspace {
     const clone = projectCloneDir(project.name);
     return withLock(paths.lock(`workspace-${project.name}`), () => {
         const task = loadBacklog().tasks.find((entry) => entry.id === id) ?? found;
+        const recorded = task.workspace;
+        if (
+            recorded !== undefined &&
+            recorded.strategy !== project.workspace &&
+            LIVE.includes(task.status) &&
+            existsSync(recorded.path)
+        )
+            return recorded;
         const workspace: TaskWorkspace =
             project.workspace === "branch-per-task"
                 ? prepareBranch(project, task, clone)

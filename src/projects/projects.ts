@@ -29,7 +29,8 @@ export type Forge = (typeof FORGES)[number];
  * `branch`: the fixed working branch `toli commit` requires. `forge`/`forgeHost`: override origin-based detection.
  * `deliverySetAt`: when the user's delivery choice (mode/branch) was recorded; absent means mode is a default.
  * `workspace`: the branching/worktree strategy; `workspaceSetAt` stamps the user's choice (absent: defaulted).
- * With a per-task strategy, `branch` is the base branch task branches start from and PR/MRs target.
+ * With a per-task strategy, `branch` is the base branch task branches start from and PR/MRs target, and
+ * `taskBranch` the pattern a task's branch is named by (DEFAULT_TASK_BRANCH, src/projects/strategy.ts, when unset).
  * `liveStack`: the project runs in live-stack mode (docs/projects.md "Live-stack mode"): its jawans code in the one
  * shared checkout against the machine's running dev stack, which rebuilds on every save, instead of building
  * themselves.
@@ -49,6 +50,7 @@ export type Project = {
     workspace: Workspace;
     workspaceSetAt?: string;
     standing?: Standing;
+    taskBranch?: string;
     liveStack?: true;
     role?: "verify-only";
     releasePriority?: true;
@@ -77,6 +79,7 @@ export function loadProjects(): Project[] {
             workspace,
             workspaceSetAt,
             standing,
+            taskBranch,
             liveStack,
             role,
             releasePriority,
@@ -93,6 +96,7 @@ export function loadProjects(): Project[] {
             workspace: isWorkspace(workspace) ? workspace : legacyWorkspace({ mode, branch }),
             ...(workspaceSetAt ? { workspaceSetAt } : {}),
             ...(standing ? { standing: { push: standing.push === true, pr: standing.pr === true } } : {}),
+            ...(taskBranch ? { taskBranch } : {}),
             ...(liveStack === true ? { liveStack: true as const } : {}),
             ...(role === "verify-only" ? { role } : {}),
             ...(releasePriority === true ? { releasePriority: true as const } : {}),
