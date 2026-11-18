@@ -138,13 +138,15 @@ describe("native subagent jawans share capacity.maxRuns with spawn runs", () => 
     });
 });
 
-describe("a native subagent counts as a running jawan only while it reports running (T1419)", () => {
+describe("a native subagent counts as a running jawan until it reports its end or its session dies (T1419, T1820)", () => {
     // T1419: one interactive lead session lives for days; every task one of its finished subagents was recorded on
-    // counted as running while that session was alive (68 native subagents while 1-3 ran).
+    // counted as running while that session was alive (68 native subagents while 1-3 ran): a finished one is ended
+    // by its report. T1820: a subagent whose report lapsed or never came (a harness that cannot report it) was posted
+    // as "no live run" every 15 minutes while it worked; it stays live until it ends or its session dies.
     const START = "2026-03-04T08:00:00.000Z";
     const NOW = "2026-03-04T09:00:00.000Z";
 
-    test("in one live session, only the subagent reporting now counts; finished and silent ones need a re-dispatch", async () => {
+    test("in one live session, a finished subagent needs a re-dispatch; a reporting, lapsed or unreported one counts until the session dies", async () => {
         const box = twoSlots(3);
         const session = Bun.spawn(["sleep", "60"]);
         reportingSession(box, session.pid);
@@ -159,24 +161,23 @@ describe("a native subagent counts as a running jawan only while it reports runn
                 at: "2026-03-04T08:20:00.000Z",
                 endedAt: "2026-03-04T08:20:00.000Z",
             });
-            expect(queueAt(box, NOW)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+            expect(queueAt(box, NOW)).toMatchObject({ jawansRunning: 2, subagents: 2 });
             const digest = box.ok(["digest"], { now: NOW });
             expect(digest).not.toContain("T1 (x) is active");
-            expect(digest).toContain(
-                "T2 (x) is active but its agent T12Sub never reported running (dispatched 60m ago); no answer recorded since",
-            );
+            expect(digest).not.toContain("T2 (x) is active");
             expect(digest).toContain(
                 "T3 (x) is active but its run T13Sub ended 40m ago (state/agents/T13Sub.json); no answer recorded since",
             );
-            // A subagent that stops reporting stops counting at once and needs a re-dispatch after the grace minutes.
-            expect(queueAt(box, "2026-03-04T09:10:00.000Z")).toMatchObject({ subagents: 0 });
-            expect(box.ok(["digest"], { now: "2026-03-04T09:19:30.000Z" })).toContain(
-                "T1 (x) is active but its agent T11Sub has not reported running since 20m ago",
-            );
+            // T11Sub's report lapses: its session is alive and it reported no end, so it still counts.
+            expect(queueAt(box, "2026-03-04T09:20:00.000Z")).toMatchObject({ subagents: 2 });
+            expect(box.ok(["digest"], { now: "2026-03-04T09:20:00.000Z" })).not.toContain("T1 (x) is active");
         } finally {
             session.kill();
             await session.exited;
         }
+        const digest = box.ok(["digest"], { now: "2026-03-04T09:20:00.000Z" });
+        expect(digest).toContain(`T1 (x) is active but its agent T11Sub died with its session ${session.pid}`);
+        expect(digest).toContain(`T2 (x) is active but its agent T12Sub died with its session ${session.pid}`);
     });
 
     test("an agent no harness reports (a label, a Claude Code subagent) counts only for the grace minutes after dispatch", () => {
@@ -229,20 +230,24 @@ describe("a lead session started before agent reports existed keeps its subagent
         );
     });
 
-    test("a reporting session's agent with a stale report is still flagged", async () => {
+    test("a reporting session's agent with a lapsed report is never posted as no live run while the session lives (T1820)", async () => {
         const box = twoSlots(1);
         const lead = await leadSession(box, ["task", "start", "T1", "--agent", "T11Sub"], START);
         try {
             reportingSession(box, lead.pid);
             agentReport(box, "T11Sub", { pid: lead.pid, at: "2026-03-04T08:01:00.000Z" });
-            expect(queueAt(box, LATER)).toMatchObject({ subagents: 0 });
-            expect(box.ok(["digest"], { now: LATER })).toContain(
-                "T1 (x) is active but its agent T11Sub has not reported running since 19m ago (state/agents/T11Sub.json)",
-            );
+            expect(queueAt(box, LATER)).toMatchObject({ subagents: 1 });
+            expect(box.ok(["digest"], { now: LATER })).not.toContain("T1 (x) is active");
+            box.ok(["job", "tick"], { now: LATER });
+            const inbox = JSON.parse(box.ok(["inbox", "list", "--json"])) as { title: string }[];
+            expect(inbox.map((item) => item.title).filter((title) => title.includes("no live run"))).toEqual([]);
         } finally {
             lead.kill();
             await lead.exited;
         }
+        expect(box.ok(["digest"], { now: LATER })).toContain(
+            `T1 (x) is active but its agent T11Sub died with its session ${lead.pid}`,
+        );
     });
 });
 

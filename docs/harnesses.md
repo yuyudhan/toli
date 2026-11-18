@@ -87,15 +87,14 @@ An agent no harness reports (a label naming who works on it) counts only for
 `oversight.staleTaskMinutes` after it was recorded; a `bin/toli remote` run (`remote:<machine>:...`) is the target's
 jawan, never one here, and so is a label naming another fleet machine (the task waits on that machine,
 docs/fleet.md). `task start --agent` also records the lead session that runs it (the extension-registered
-session, the `lead attach` omp or a headless turn's omp, whichever is an ancestor of the command); once its pid is
-gone, its subagents died with it. Each omp whose extension watches its subagents marks itself in
-`state/agent-sessions/<pid>.json` (`watches: true`); a live lead session without that mark started before an upgrade
-brought the watch, so its subagents are never reported and count as running while it runs (the earlier rule), until
-it restarts.
-The digest's Next block lists a task whose subagent died with its session (`its
-agent <id> died with its session <pid>`), reported its end (`its run <id> ended ... (state/agents/<id>.json)`),
-stopped reporting (`has not reported running since ...`) or never reported (`never reported running`) for a
-re-dispatch, after the grace minutes. `spawn` with every slot busy
+session, the `lead attach` omp or a headless turn's omp, whichever is an ancestor of the command). A subagent recorded
+from a live lead session runs until its report says it ended or that session's pid is gone (its subagents died with
+it): a report that lapsed, or never came (a harness whose subagents this machine cannot see), never makes it stale,
+so the stale-task check and the jawan count read the same state. A finished subagent the watch saw end is ended,
+whatever its session does. The digest's Next block lists a task whose subagent died with its session (`its
+agent <id> died with its session <pid>`), reported its end (`its run <id> ended ... (state/agents/<id>.json)`), or,
+recorded outside a lead session, stopped reporting (`has not reported running since ...`) or never reported (`never
+reported running`) for a re-dispatch, after the grace minutes. `spawn` with every slot busy
 records the run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free,
 from the supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run
 regardless, for the lead's explicit use. `run kill` on a queued run cancels it; a task naming that run as its jawan

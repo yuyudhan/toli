@@ -1,17 +1,16 @@
-// Whether a native harness subagent recorded on a task (`task start T<n> --agent <id>`) is running. A live lead
-// session is no evidence: one interactive omp lives for days while the subagents it started finish within the hour,
-// so the session being alive says nothing about any one of them (T1419). The evidence is the agent's report,
-// state/agents/<id>.json, which its harness writes while it runs:
+// Whether a native harness subagent recorded on a task (`task start T<n> --agent <id>`) is running. One interactive
+// omp lives for days while the subagents it started finish within the hour (T1419), so a subagent ends when its report
+// says so, state/agents/<id>.json, which its harness writes while it runs:
 // - omp: the extension in the session that started the subagent reads that session's async jobs every minute
 //   (SubagentWatch) and reports each running `task` subagent with its omp pid, then its end once it stops running.
 //   The subagent's own session is no reporter: an interactive omp does not always load extensions there (T1541).
 // - Claude Code: its hooks (`bin/toli hook claude-agent`) report the subagent at SubagentStart, after each of its tool
 //   calls and at SubagentStop. Such a report names no pid and counts while it is fresher than the grace minutes.
-// An agent no harness reports (a label such as `fleet talk`) counts as running only for the grace minutes after it
-// was recorded. A label naming another fleet machine (`<machine> coordinates (talk ...)`) is no agent here: that
-// machine holds the work (T1427). A lead omp whose extension does not watch its subagents (its
-// state/agent-sessions/<pid>.json is missing or predates `watches`) keeps the earlier rule until it restarts: its
-// subagents run while it does (T1429).
+// A subagent recorded from a live lead session (`agentSession`) runs until it reports its end or that session is gone:
+// a lapsed report, or none (a harness this machine cannot see report it), never makes it stale (T1429, T1820). An
+// agent recorded outside one, with no report (a label such as `fleet talk`), counts as running only for the grace
+// minutes after it was recorded. A label naming another fleet machine (`<machine> coordinates (talk ...)`) is no agent
+// here: that machine holds the work (T1427).
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { hasMachine, loadFleet, loadMachine } from "../core/config.ts";
@@ -55,12 +54,6 @@ export function markWatchingSession(root: string, pid: number, at: Date): void {
         startedAt: at.toISOString(),
         watches: true,
     } satisfies WatchingSession);
-}
-
-/** Whether lead session `pid` runs an extension that watches its subagents (false: it predates the watch). */
-function sessionWatches(pid: number): boolean {
-    const mark = readJson<unknown>(join(paths.root(), SESSIONS_DIR, `${pid}.json`), null);
-    return isJsonObject(mark) && mark.watches === true;
 }
 
 /** The agent's report, relative to the toli root; null for an id that cannot name a file. */
@@ -180,12 +173,13 @@ export function agentSessionGone(task: Pick<Task, "agent" | "agentSession">): bo
 }
 
 /**
- * A native subagent's state. `live`: it reported running within AGENT_REPORT_TIMEOUT_MS from a running omp, or within
- * `graceMinutes` on its own activity (a report naming no pid), or, with no report since it was recorded, it was
- * recorded less than `graceMinutes` ago, or the lead session that recorded it is alive and does not watch its
- * subagents (T1429). `session`: the lead session that recorded it is gone. `ended`: it reported its end after it was
- * recorded. `silent`: it stopped reporting at `since` (`evidence`: its report), or never reported and was recorded at
- * `since`, the grace minutes ago or more.
+ * A native subagent's state. `session`: the lead session that recorded it is gone. `ended`: it reported its end after
+ * it was recorded. `live`: the lead session that recorded it is alive and it reported no end (T1820: a lapsed report,
+ * or none, says nothing about a subagent whose harness cannot be seen reporting it); with no recorded session, it
+ * reported running within AGENT_REPORT_TIMEOUT_MS from a running omp, or within `graceMinutes` on its own activity (a
+ * report naming no pid), or, with no report since it was recorded, it was recorded less than `graceMinutes` ago.
+ * `silent`, with no recorded session: it stopped reporting at `since` (`evidence`: its report), or never reported
+ * and was recorded at `since`, the grace minutes ago or more.
  */
 export type AgentState =
     | { state: "live" }
@@ -196,22 +190,21 @@ export type AgentState =
 export function agentState(task: Task & { agent: string }, at: Date, graceMinutes: number): AgentState {
     const session = task.agentSession;
     if (session !== undefined && agentSessionGone(task)) return { state: "session", pid: session.pid };
-    // A lead omp whose extension does not watch its subagents writes no report for them: they run while it does.
-    if (session !== undefined && session.agent === task.agent && !sessionWatches(session.pid)) return { state: "live" };
     const recorded = task.dispatchedAt ?? task.startedAt ?? task.createdAt;
     const file = agentReportFile(task.agent);
     const report = file === null ? null : readJson<AgentReport | null>(join(paths.root(), file), null);
-    if (file !== null && report !== null) {
+    // A report from before the task was recorded is an earlier run of the same agent id: it says nothing here.
+    if (file !== null && report?.endedAt !== undefined && Date.parse(report.endedAt) >= Date.parse(recorded))
+        return { state: "ended", at: report.endedAt, evidence: file };
+    // The lead session that recorded it is alive and no end was reported: it runs while that session does.
+    if (session !== undefined && session.agent === task.agent) return { state: "live" };
+    if (file !== null && report !== null && report.endedAt === undefined) {
         const fresh =
             report.pid === undefined
                 ? at.getTime() - Date.parse(report.at) < graceMinutes * 60_000
                 : pidAlive(report.pid) && at.getTime() - Date.parse(report.at) <= AGENT_REPORT_TIMEOUT_MS;
-        if (report.endedAt === undefined && fresh) return { state: "live" };
-        // A report from before the task was recorded is an earlier run of the same agent id: it says nothing here.
-        if (report.endedAt !== undefined && Date.parse(report.endedAt) >= Date.parse(recorded))
-            return { state: "ended", at: report.endedAt, evidence: file };
-        if (report.endedAt === undefined && Date.parse(report.at) >= Date.parse(recorded))
-            return { state: "silent", since: report.at, evidence: file };
+        if (fresh) return { state: "live" };
+        if (Date.parse(report.at) >= Date.parse(recorded)) return { state: "silent", since: report.at, evidence: file };
     }
     if (at.getTime() - Date.parse(recorded) < graceMinutes * 60_000) return { state: "live" };
     return { state: "silent", since: recorded, evidence: null };

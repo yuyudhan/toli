@@ -46,11 +46,12 @@ export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun
 
 /**
  * The native harness subagents working on this machine's tasks, one per distinct agent id: active tasks whose jawan
- * was recorded with `task start --agent <id>` (a native agent, src/records/agents.ts) and that is running now: it
- * reports running, or was recorded less than the grace minutes ago and has not reported since. A live lead session
- * is no evidence: one interactive session outlives the many subagents it started. Left out: a task a live run works
- * on (counted as that run), one waiting on something (`task wait`), and one whose subagent ended, stopped reporting
- * or died with its session (oversight lists it for a re-dispatch, src/records/stale.ts).
+ * was recorded with `task start --agent <id>` (a native agent, src/records/agents.ts) and that is running now: the
+ * live lead session that recorded it has not seen it end, or, recorded outside a session, it reports running or was
+ * recorded less than the grace minutes ago. Left out: a task a live run works on (counted as that run), one waiting
+ * on something (`task wait`), and one whose subagent ended, died with its session or, outside a session, stopped
+ * reporting (oversight lists it for a re-dispatch, src/records/stale.ts). This is the same agentState the stale-task
+ * check reads, so the two never disagree.
  */
 export function subagentJawans(
     tasks: Task[],

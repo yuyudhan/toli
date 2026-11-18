@@ -494,8 +494,9 @@ Nothing may sit idle silently, away mode (`/afk`) included. Two checks run from 
   (default 15) is stale: a `bin/toli spawn` run no longer queued or running, a run started by `bin/toli remote
 --task` before the cutover whose saved output says it finished after the task's jawan was recorded, or no jawan
   recorded at all. A task delegated with `--for` counts as active with the fleet id as its jawan. A native harness
-  subagent is stale once its harness reported its end, stopped reporting it running, never reported it running, or
-  it died with its lead session (docs/harnesses.md "Jawan slots"); a live lead session alone never keeps it live. The
+  subagent is stale once its harness reported its end or it died with its lead session; one recorded outside a
+  lead session is stale too once it stopped reporting it running or never reported it running (docs/harnesses.md
+  "Jawan slots"). A lapsed report from a live lead session never makes it stale (T1820). The
   digest's Next block lists stale tasks first, with the run's last report line and any answer recorded since; every
   tick posts newly stale ones to the inbox once per ended run, so the lead gets a `[toli wake]` naming them. A task
   answered less than the grace minutes ago is not stale: its lead dispatches it in the turn that recorded the answer

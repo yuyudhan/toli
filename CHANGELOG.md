@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.40 - unreleased
+
+### Fixed
+
+- The stale-task check no longer posts "active task has no live run" every 15 minutes for a jawan running as an
+  in-session subagent (`task start --agent <id>`) whose harness report lapsed or never came: a subagent recorded from
+  a live lead session counts as running, in the stale check and the jawan count alike, until its report says it
+  ended or that session is gone.
+
 ## v0.5.39 - 2026-11-18
 
 ### Fixed
