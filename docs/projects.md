@@ -71,7 +71,10 @@ toli itself never uses worktrees.
   it: `git fetch origin <base>` runs first and the branch starts from `origin/<base>` with no upstream, so a clone
   whose own base is behind never seeds a stale task (without that ref on origin it starts from the local base, with
   a warning). A live task prepared under an earlier strategy keeps its recorded workspace when the project switches
-  strategy; the new one applies to tasks prepared afterwards, and switching never touches the clone.
+  strategy; the new one applies to tasks prepared afterwards, and switching never touches the clone. A live task with
+  no recorded workspace (dispatched before the switch) whose clone is checked out on a branch naming it (`T375` in
+  `shop/m1/T375-e2e-proof`) keeps the clone: `workspace prepare`, `commit --task` and `push --task` record it
+  as its workspace on that branch, unless another live task records the clone.
 - `branch-per-task` refuses to switch the clone while another active or held task of the project uses it on a
   different branch, or while the clone has uncommitted changes; use `same-branch` for parallel tasks.
 - On macOS, preparing a worktree excludes `projects/.worktrees/<project>/` from Spotlight (a `.metadata_never_index`

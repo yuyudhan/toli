@@ -45,4 +45,20 @@ describe("task workspaces across machines", () => {
         expect(existsSync(join(clone, "wip.txt"))).toBe(true);
         expect(box.ok(["workspace", "prepare", "T2"])).toContain("worktree-per-task: ");
     });
+
+    test("a live task dispatched before the switch, its clone on its branch, commits from the clone", () => {
+        const { box, clone } = project("same-branch", "End to end proof", "Draft docs");
+        // Dispatched before any workspace was recorded: the jawan made its branch in the clone itself.
+        box.ok(["task", "start", "T1"]);
+        box.git(clone, ["switch", "--quiet", "-c", "app/m1/T1-e2e-proof"]);
+        writeFileSync(join(clone, "proof.txt"), "proof\n");
+        box.ok(["project", "set", "app", "--workspace", "worktree-per-task"]);
+        box.ok(["commit", "app", "--task", "T1", "-m", "add proof", "--", "proof.txt"]);
+        expect(box.git(clone, ["log", "-1", "--format=%s", "app/m1/T1-e2e-proof"])).toBe("add proof");
+        expect(existsSync(join(box.root, "projects", ".worktrees", "app", "T1"))).toBe(false);
+        expect(box.ok(["workspace", "prepare", "T1"])).toContain(`branch-per-task: ${clone} on app/m1/T1-e2e-proof`);
+        // A task the branch does not name gets its own worktree, never the clone.
+        box.ok(["task", "start", "T2"]);
+        expect(box.ok(["workspace", "prepare", "T2"])).toContain("worktree-per-task: ");
+    });
 });

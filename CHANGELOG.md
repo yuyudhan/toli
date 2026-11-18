@@ -12,6 +12,9 @@ one. See docs/releasing.md.
   git excludes get `*.toli-wipe-*` first, so `git status` and dirty-tree checks never list one; files a container
   wrote as root go through the same throwaway container as a no-mistakes run (never sudo), and a renamed tree that
   still stays is reported and deleted first by the next keeper run (step 0), as is one a killed keeper left behind.
+- A live task dispatched before its project moved to a per-task workspace, whose clone is checked out on a branch
+  naming it, keeps the clone: `workspace prepare`, `commit --task` and `push --task` record the clone on that branch
+  as its workspace instead of refusing or preparing a new worktree.
 
 ## v0.5.37 - 2026-11-18
 

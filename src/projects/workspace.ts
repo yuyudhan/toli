@@ -175,6 +175,24 @@ function prepareWorktree(project: Project, task: Task, clone: string): TaskWorks
     return workspace;
 }
 
+/** Whether `branch` names task `id` as a whole token (`shop/m1/T375-e2e`, `t375`, never `T3750`). */
+function namesTask(branch: string, id: string): boolean {
+    return new RegExp(`(^|[^a-z0-9])${id}($|[^0-9])`, "i").test(branch);
+}
+
+/**
+ * The clone as the workspace of a live task that has none recorded (dispatched before its project moved to a per-task
+ * strategy) while the clone is checked out on a branch naming the task and no other live task records the clone: its
+ * work is there, so it lands from there. Null otherwise.
+ */
+function cloneOfLiveTask(project: Project, task: Task, clone: string): TaskWorkspace | null {
+    if (task.workspace !== undefined || !LIVE.includes(task.status) || !perTask(project.workspace)) return null;
+    const head = currentBranch(clone);
+    if (head === null || !namesTask(head, task.id)) return null;
+    if (cloneHolders(project.name, clone, head, task.id).length > 0) return null;
+    return { strategy: "branch-per-task", path: clone, branch: head, base: baseBranch(project, clone) };
+}
+
 /**
  * Prepare (idempotently) and record the workspace of a task per its project's strategy; returns where its jawans
  * work. Serialized per project so two spawns cannot both switch the shared clone. A live task prepared under another
@@ -198,7 +216,8 @@ export function prepareWorkspace(taskId: string): TaskWorkspace {
         )
             return recorded;
         const workspace: TaskWorkspace =
-            project.workspace === "branch-per-task"
+            cloneOfLiveTask(project, task, clone) ??
+            (project.workspace === "branch-per-task"
                 ? prepareBranch(project, task, clone)
                 : project.workspace === "worktree-per-task"
                   ? prepareWorktree(project, task, clone)
@@ -207,7 +226,7 @@ export function prepareWorkspace(taskId: string): TaskWorkspace {
                         path: clone,
                         branch: project.branch ?? currentBranch(clone),
                         base: null,
-                    };
+                    });
         updateTask(id, (entry) => {
             entry.workspace = workspace;
         });
@@ -257,7 +276,11 @@ export function workDir(
     if (!task) throw new ToliError(`unknown task "${id}" (see \`bin/toli task list\`)`);
     if (task.project !== project.name)
         throw new ToliError(`${task.id} belongs to project ${task.project}, not ${project.name}`);
-    if (task.workspace === undefined) return { dir: projectCloneDir(project.name), task, branch: null };
+    if (task.workspace === undefined) {
+        const adopted = adoptClone(project, task.id);
+        if (adopted === null) return { dir: projectCloneDir(project.name), task, branch: null };
+        return { dir: adopted.path, task, branch: perTask(adopted.strategy) ? adopted.branch : null };
+    }
     if (!isGitRepo(task.workspace.path))
         throw new ToliError(
             `${task.id}'s workspace ${task.workspace.path} is gone (bin/toli workspace prepare ${task.id})`,
@@ -267,4 +290,20 @@ export function workDir(
         task,
         branch: perTask(task.workspace.strategy) ? task.workspace.branch : null,
     };
+}
+
+/** Record the clone as the workspace of live task `id` when cloneOfLiveTask says its work is there; null otherwise. */
+function adoptClone(project: Project, id: string): TaskWorkspace | null {
+    const clone = projectCloneDir(project.name);
+    return withLock(paths.lock(`workspace-${project.name}`), () => {
+        const task = loadBacklog().tasks.find((entry) => entry.id === id);
+        if (task === undefined) return null;
+        if (task.workspace !== undefined) return task.workspace;
+        const adopted = cloneOfLiveTask(project, task, clone);
+        if (adopted !== null)
+            updateTask(id, (entry) => {
+                entry.workspace = adopted;
+            });
+        return adopted;
+    });
 }
