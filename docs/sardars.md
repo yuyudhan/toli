@@ -162,6 +162,31 @@ security, a destructive step, his taste) goes to him: `bin/toli task escalate <o
 with `<owner>/T<n> asks: <question>` and its options, so it sits in this machine's Needs-you queue; his `task answer
 T<n> "<words>"` there is recorded here and forwarded to the owner too.
 
+### Questions for the user
+
+A question that asks for the user's word never waits in the inbox alone: the receiving lead's toli puts it in its
+Needs-you queue (`bin/toli needs`) on arrival. It asks for his word when it says so (`<name>'s word`, `question for
+<name>`, `needs his word`, `word needed`, `Reply <option>` with a quoted option, a number or yes/no), or, in a peer
+message, when it is in toli's own hold format (a `## Question` section, a `task hold ... --question` line).
+
+- A delegated task's held question that asks for his word is escalated at once, as `task escalate` would: the `--for`
+  task is held with `<owner>/T<n> asks: <question>` and its options. When there is no `--for` task (or it is done,
+  dropped, or held for something else), a new held task in its project (else the owner's, see below) carries the
+  question; either way his `task answer` goes to the owner too.
+- A peer message (`talk`, any message another machine sends to the inbox) becomes a new held task in the sender's
+  project: the first registered project the words name (four characters or more), else the project of the newest
+  task here delegated to or by that machine, else the only project here. The question is the message's words (its
+  `## Question` section when it has one); options are parsed when present (`--option "a => b"`, `1. a => b` lines,
+  `(1) ... (2) ...`, `Reply X to Y`, `yes/no`), with the sender's pick (`Recommended: x`, `my pick`) and what it
+  blocks (`Blocks: x`, `(blocks x)`, `blocking x`). After his answer, reply with `bin/toli talk <sender> "<answer>"`
+  (the task's note says so). With no project to put it in, the message stays in the inbox and the delivery says so.
+
+Each sender's question is held once (`state/word-holds.json`, kept 60 days): a reminder repeating it, or the same
+question after his `task answer`, holds nothing new. The minute tick also reads the last day's `message from
+<machine>` items it has not read yet and holds those that ask for his word, except one this machine already
+answered with a `talk` reply to that machine quoting it (the first 60 characters of its question; sent talks are
+kept in `state/talk-sent.jsonl`).
+
 A delegation made without `--for` is attached later with `bin/toli task link T<n> <owner>/T<n>`: the owner's task
 then names this task as its delegator and sends its current state back at once. The owner refuses a link from any
 machine other than the one that delegated its task (`T<n> was delegated by <machine>, not <sender>`).

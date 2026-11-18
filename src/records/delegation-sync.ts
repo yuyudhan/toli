@@ -3,7 +3,8 @@
 // notes are copied, the task's state is recorded under `delegates`, and once every delegation is done (or dropped)
 // the `--for` task is too, with the commit and report. A slice (a delegation made while the `--for` task's own jawan
 // works on it) only adds its notes, commit and report. A question stays with this machine's lead, who answers it
-// (`task answer <owner>/T<n>`) or, when only the user can decide, `task escalate`s it into the Needs-you queue.
+// (`task answer <owner>/T<n>`) or, when only the user can decide, `task escalate`s it into the Needs-you queue; one
+// that asks for the user's word in so many words is held there on arrival (delegated-word.ts).
 // `task link` attaches a delegation made without `--for`. Repeats are skipped by the owner's `updatedAt`. Work a
 // delegated task forwards on (its own `delegatedTo`, sent as `forwardedTo`) joins the `--for` task's delegations, so
 // the originator follows the live owner, which reports here directly through its `upstream` chain.
@@ -23,6 +24,7 @@ import {
 } from "../core/util.ts";
 import { fullText, HANDBACK_FULL_MINUTES, setFull } from "../fleet/full.ts";
 import { loadBacklog, type Task, updateTask } from "./backlog.ts";
+import { escalateHold, holdDelegatedWord } from "./delegated-word.ts";
 import { linkTaskCommand } from "./delegation-link.ts";
 import {
     type DelegateState,
@@ -169,12 +171,15 @@ export function applyUpdate(update: DelegationUpdate): string {
     const id = fleetId(update.owner, update.id);
     const local = localTaskFor(update, id);
     const applied = local !== undefined && mirror(local, id, update);
+    const word = holdDelegatedWord(update, id, local);
     if (claimWake(id, update)) {
         const after = local === undefined ? undefined : loadBacklog().tasks.find((task) => task.id === local.id);
         const yours = after === undefined ? [] : ["", `Your task ${after.id} is ${after.status} (bin/toli task list).`];
-        addInboxItem(update.owner, update.message.title, [update.message.body, ...yours].join("\n"));
+        const held = word === null ? [] : ["", word];
+        addInboxItem(update.owner, update.message.title, [update.message.body, ...yours, ...held].join("\n"));
     }
-    return `delegation-updated ${id}${local === undefined ? "" : ` ${local.id}${applied ? "" : " (already recorded)"}`}`;
+    const line = `delegation-updated ${id}${local === undefined ? "" : ` ${local.id}${applied ? "" : " (already recorded)"}`}`;
+    return word === null ? line : `${line}\n${word}`;
 }
 
 /**
@@ -229,23 +234,9 @@ function escalate(argv: string[]): void {
     if (machine === null) throw new ToliError("task escalate needs a delegated task's fleet id: <machine>/T<n>");
     const fid = fleetId(machine, id);
     const local = loadBacklog().tasks.find((task) => task.delegates?.[fid] !== undefined);
-    const state = local?.delegates?.[fid];
-    if (local === undefined || state?.status !== "held")
+    if (local === undefined || local.delegates?.[fid]?.status !== "held")
         throw new ToliError(`${fid} has no open question here (bin/toli task list --fleet)`);
-    const task = updateTask(local.id, (entry) => {
-        entry.status = "held";
-        entry.question = `${fid} asks: ${state.question ?? ""}`;
-        if (state.options?.length) entry.options = state.options;
-        else delete entry.options;
-        if (state.recommend !== undefined) entry.recommend = state.recommend;
-        else delete entry.recommend;
-        if (state.blocks !== undefined) entry.blocks = state.blocks;
-        else delete entry.blocks;
-        entry.heldAt = now().toISOString();
-        entry.heldFrom = fid;
-        delete entry.answer;
-        delete entry.staleSurfacedAt;
-    });
+    const task = escalateHold(local.id, fid);
     out(`${task.id}\theld\t${task.title}\t(question: ${task.question})`);
     out(
         `in the Needs-you queue; the user's answer (bin/toli task answer ${task.id} "<answer>") goes to ${machine} too`,

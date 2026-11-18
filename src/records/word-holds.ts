@@ -1,0 +1,341 @@
+// Questions only the user can answer, asked by another machine (docs/sardars.md "Questions for the user"): a peer
+// message (`talk`, any `inbox add` from another machine) or a delegated task's held update that asks for the user's
+// word ("<name>'s word", "question for <name>", "needs his word", "Reply <option>", or toli's own hold format: a
+// `## Question` section, `task hold --question`) goes into this machine's Needs-you queue on arrival, not only the
+// inbox. A delegated question holds the `--for` task (src/records/delegation-sync.ts); anything else becomes a new
+// held task in the sender's project, with the question, and the options, recommendation and what it blocks when the
+// message names them. Each sender's question is held once (state/word-holds.json): a reminder repeating it, or one
+// already answered (`task answer`), never holds again, and the tick's look over the last day's inbox skips a message
+// this machine already answered with a `talk` reply quoting it (state/talk-sent.jsonl).
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { loadMachine } from "../core/config.ts";
+import { paths } from "../core/paths.ts";
+import { persona } from "../core/persona.ts";
+import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
+import { loadProjects } from "../projects/projects.ts";
+import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
+import { HOLD_OPTIONS_MAX, HOLD_OPTIONS_MIN, type HoldOption } from "./hold-options.ts";
+import { listInbox } from "./inbox.ts";
+
+/** A question for the user's word, as parsed from a message. */
+export type WordQuestion = { question: string; options: HoldOption[]; recommend?: string; blocks?: string };
+
+/** One held question: the task holding it and where it came from. */
+type HeldWord = { task: string; at: string; source: string };
+
+/** state/word-holds.json: held questions by sender and question; inbox items the tick already read, by file. */
+type Registry = { holds: Record<string, HeldWord>; read: Record<string, string> };
+
+/** A held question is remembered this long, so a reminder weeks later still does not hold it twice. */
+const HELD_KEEP_MS = 60 * 86_400_000;
+/** The tick looks this far back in the inbox. */
+const SCAN_MS = 86_400_000;
+/** At most this many sent `talk` lines are kept. */
+const TALK_KEEP = 500;
+/** A held question longer than this is cut, with the whole message in the task's notes. */
+const QUESTION_MAX = 600;
+/** A reply quotes a message when it holds this much of its question (or all of a shorter one). */
+const QUOTE_CHARS = 60;
+/** A project name shorter than this is never matched in a message's words. */
+const NAMED_MIN = 4;
+
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Phrases that ask for the user's word, the installation's own user name included. */
+function wordPhrases(): RegExp[] {
+    const user = escapeRegex(persona().user);
+    return [
+        new RegExp(`\\b${user}'s word\\b`, "i"),
+        /\b[A-Z][\w-]*'s word\b/,
+        /\bthe user's word\b/i,
+        new RegExp(`\\bquestions? for (?:${user}|the user)\\b`, "i"),
+        /\bquestions? for [A-Z][\w-]*\b/,
+        /\bneeds? (?:his|her|their|your) word\b/i,
+        /\bword needed\b/i,
+        /(?:^|[.!?:;]\s+)Reply\s+(?:[`"'][^`"'\n]+[`"']|\(?\d\)?(?!\w)|yes\b|no\b)/m,
+    ];
+}
+
+/** toli's own hold format: a `## Question` section, or a `task hold ... --question` command line. */
+const HOLD_FORMAT = [/^##\s*Question\s*$/m, /--question\s+["']/];
+
+/** Whether `text` asks for the user's word; `format` counts toli's hold format too (a peer message, not an update). */
+export function asksForWord(text: string, format: boolean): boolean {
+    if (wordPhrases().some((phrase) => phrase.test(text))) return true;
+    return format && HOLD_FORMAT.some((pattern) => pattern.test(text));
+}
+
+const collapse = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** A sender's question compared without case, spacing or a trailing reminder. */
+export function questionKey(from: string, question: string): string {
+    return `${from}\n${collapse(question).toLowerCase().slice(0, 400)}`;
+}
+
+/** 2 to 4 options, or none. */
+function clampOptions(options: HoldOption[]): HoldOption[] {
+    return options.length < HOLD_OPTIONS_MIN ? [] : options.slice(0, HOLD_OPTIONS_MAX);
+}
+
+/** An option written as free text: its choice is the text up to the first comma, colon or bracket. */
+function freeOption(text: string): HoldOption | null {
+    const outcome = collapse(text).replace(/[;.,]+$/, "");
+    const choice = outcome.split(/[,:(]/, 1)[0]?.trim().slice(0, 80) ?? "";
+    return choice === "" ? null : { choice, outcome };
+}
+
+/** The options a message offers: `--option "a => b"`, `N. a => b` lines, `(1) ... (2) ...`, `Reply X to Y`, yes/no. */
+function parseOptions(text: string): HoldOption[] {
+    const pairs = (pattern: RegExp): HoldOption[] =>
+        [...text.matchAll(pattern)].flatMap((match) => {
+            const choice = collapse(match[1] ?? "");
+            const outcome = collapse(match[2] ?? "");
+            return choice === "" || outcome === "" ? [] : [{ choice, outcome }];
+        });
+    const flagged = pairs(/--option\s+["']([^"'\n]+?)\s*=>\s*([^"'\n]+)["']/g);
+    if (flagged.length > 0) return clampOptions(flagged);
+    const listed = pairs(/^\s*(?:\d+[.)]|-)\s*(.+?)\s*=>\s*(.+)$/gm);
+    if (listed.length > 0) return clampOptions(listed);
+    const numbered = [...text.matchAll(/\((\d)\)\s*([\s\S]+?)(?=\s*\(\d\)|\n\n|$)/g)].flatMap((match) => {
+        const option = freeOption(match[2] ?? "");
+        return option === null ? [] : [option];
+    });
+    if (numbered.length > 0) return clampOptions(numbered);
+    const replies = pairs(/Reply\s+[`"']?([^`"'\n]+?)[`"']?\s+(?:to|=>|for)\s+([^;.\n]+)/g);
+    if (replies.length > 0) return clampOptions(replies);
+    if (/\byes\s*\/\s*no\b/i.test(text))
+        return [
+            { choice: "yes", outcome: "go ahead as asked" },
+            { choice: "no", outcome: "leave it as it is" },
+        ];
+    return [];
+}
+
+/** The option the sender recommends: `Recommended: x`, or the one it marks as its pick. */
+function parseRecommend(text: string, options: HoldOption[]): string | undefined {
+    const line = /^\s*Recommended:\s*(.+)$/m.exec(text)?.[1]?.trim();
+    if (line !== undefined && line !== "") return line;
+    return options.find((option) => /\b(?:my pick|recommend(?:ed)?)\b/i.test(option.outcome))?.choice;
+}
+
+/** What waits on the answer: `Blocks: x`, `(blocks x)` or `blocking x`. */
+function parseBlocks(text: string): string | undefined {
+    const found =
+        /^\s*Blocks:\s*(.+)$/m.exec(text)?.[1] ??
+        /\(blocks\s+([^)]+)\)/i.exec(text)?.[1] ??
+        /\bblocking\s+([^.;()]+)/i.exec(text)?.[1];
+    return found === undefined ? undefined : collapse(found);
+}
+
+/**
+ * The question in a message's words: its `## Question` section when it has one, else the words themselves (cut at
+ * QUESTION_MAX), with the options, recommendation and what it blocks when the message names them.
+ */
+export function parseWordQuestion(words: string): WordQuestion {
+    const section = /^##\s*Question\s*$([\s\S]*?)(?=^##\s|$(?![\s\S]))/m.exec(words)?.[1];
+    const text = section ?? words;
+    const prose = section === undefined ? words : (section.split(/\n\s*\n/).find((part) => part.trim() !== "") ?? "");
+    const full = collapse(prose.replace(/^\s*(?:\d+[.)]\s*.+=>.+|Recommended:.+|Blocks:.+)$/gm, ""));
+    const question = full.length > QUESTION_MAX ? `${full.slice(0, QUESTION_MAX - 1)}…` : full;
+    const options = parseOptions(text);
+    const recommend = parseRecommend(text, options);
+    const blocks = parseBlocks(text);
+    return {
+        question,
+        options,
+        ...(recommend === undefined ? {} : { recommend }),
+        ...(blocks === undefined ? {} : { blocks }),
+    };
+}
+
+/** The words of a stored inbox item or a `talk` body: without the inbox header and talk's own footer lines. */
+export function messageWords(body: string): string {
+    return body
+        .split("\n")
+        .filter((line) => !/^#\s|^- (?:from|via|received|reply): /.test(line))
+        .join("\n")
+        .trim();
+}
+
+function loadRegistry(): Registry {
+    const raw = readJson<Partial<Registry>>(paths.wordHolds(), {});
+    return { holds: raw.holds ?? {}, read: raw.read ?? {} };
+}
+
+/** Drop held questions past HELD_KEEP_MS and read marks past the scan window. */
+function prune(registry: Registry): void {
+    const at = now().getTime();
+    for (const [key, held] of Object.entries(registry.holds))
+        if (at - Date.parse(held.at) > HELD_KEEP_MS) delete registry.holds[key];
+    for (const [file, read] of Object.entries(registry.read))
+        if (at - Date.parse(read) > 2 * SCAN_MS) delete registry.read[file];
+}
+
+/**
+ * Hold `from`'s question once: `hold` runs (and names the task it held) only when this sender's question was never
+ * held here; null when it was (a reminder, or one already answered).
+ */
+export function holdOnce(from: string, question: string, source: string, hold: () => Task): Task | null {
+    return withLock(paths.lock("word-holds"), () => {
+        const registry = loadRegistry();
+        const key = questionKey(from, question);
+        if (registry.holds[key] !== undefined) return null;
+        const task = hold();
+        prune(registry);
+        registry.holds[key] = { task: task.id, at: now().toISOString(), source };
+        writeJsonAtomic(paths.wordHolds(), registry);
+        return task;
+    });
+}
+
+/**
+ * The project a message from `from` belongs to: the first one it names (a name of at least NAMED_MIN characters, so
+ * a short one like `pls` is never read out of plain words), else the newest task here linked to that machine, else
+ * the only project here.
+ */
+export function senderProject(from: string, text: string, tasks: Task[]): string | null {
+    const names = loadProjects().map((project) => project.name);
+    let named: { name: string; at: number } | null = null;
+    for (const name of names) {
+        if (name.length < NAMED_MIN) continue;
+        const at = text.search(new RegExp(`(?<![\\w-])${escapeRegex(name)}(?![\\w-])`, "i"));
+        if (at !== -1 && (named === null || at < named.at)) named = { name, at };
+    }
+    if (named !== null) return named.name;
+    const linked = tasks
+        .filter(
+            (task) =>
+                task.delegatedBy?.machine === from ||
+                (task.delegatedTo ?? []).some((fid) => fid.startsWith(`${from}/`)) ||
+                (task.slices ?? []).some((fid) => fid.startsWith(`${from}/`)),
+        )
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const project = linked.find((task) => names.includes(task.project))?.project;
+    if (project !== undefined) return project;
+    return names.length === 1 ? (names[0] ?? null) : null;
+}
+
+/** A new task here, held with `word`, in `project`. `heldFrom` makes its answer go to that delegated task too. */
+export function heldTask(project: string, title: string, word: WordQuestion, note: string, heldFrom?: string): Task {
+    return updateBacklog((backlog) => {
+        const at = now().toISOString();
+        const task: Task = {
+            id: `T${backlog.nextId}`,
+            project,
+            title,
+            shape: "ship",
+            status: "held",
+            notes: [note],
+            question: word.question,
+            ...(word.options.length > 0 ? { options: word.options } : {}),
+            ...(word.recommend === undefined ? {} : { recommend: word.recommend }),
+            ...(word.blocks === undefined ? {} : { blocks: word.blocks }),
+            heldAt: at,
+            ...(heldFrom === undefined ? {} : { heldFrom }),
+            createdAt: at,
+            updatedAt: at,
+        };
+        backlog.nextId += 1;
+        backlog.tasks.push(task);
+        return { ...task };
+    });
+}
+
+/**
+ * A peer message from `from` (its words as sent, `source` its inbox file): when it asks for the user's word, hold it
+ * as a new task in the sender's project. Returns what happened, or null when it asks nothing of the user.
+ */
+export function holdPeerMessage(from: string, body: string, source: string): string | null {
+    const words = messageWords(body);
+    if (words === "" || !asksForWord(words, true)) return null;
+    const word = parseWordQuestion(words);
+    if (word.question === "") return null;
+    const project = senderProject(from, words, loadBacklog().tasks);
+    if (project === null)
+        return `${from} asks for the user's word, but no project here matches it: answer from the inbox (${source})`;
+    const title = `${from} asks for the user's word: ${word.question.slice(0, 80)}`;
+    const note = `held from ${from}'s message ${source}; answer it here, then reply: bin/toli talk ${from} "<answer>"`;
+    const task = holdOnce(from, word.question, source, () => heldTask(project, title, word, note));
+    return task === null
+        ? `${from}'s question is already held (a reminder, or answered)`
+        : `${task.id} held: ${from} asks for the user's word (bin/toli needs)`;
+}
+
+/** Record a `talk` this machine sent, so the tick knows a message it quotes is answered. */
+export function noteTalkSent(to: string, words: string): void {
+    const file = paths.talkSent();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify({ to, at: now().toISOString(), words })}\n`);
+    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+    if (lines.length > TALK_KEEP) writeFileSync(file, `${lines.slice(-TALK_KEEP).join("\n")}\n`);
+}
+
+type SentTalk = { to: string; at: string; words: string };
+
+function sentTalks(): SentTalk[] {
+    if (!existsSync(paths.talkSent())) return [];
+    return readFileSync(paths.talkSent(), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .flatMap((line) => {
+            try {
+                return [JSON.parse(line) as SentTalk];
+            } catch {
+                return [];
+            }
+        });
+}
+
+/** Whether a `talk` to `from` sent after `receivedAt` quotes `question`. */
+export function answeredByTalk(from: string, receivedAt: string, question: string, talks: SentTalk[]): boolean {
+    const quote = collapse(question).toLowerCase().slice(0, QUOTE_CHARS);
+    return talks.some(
+        (talk) => talk.to === from && talk.at > receivedAt && collapse(talk.words).toLowerCase().includes(quote),
+    );
+}
+
+/**
+ * The tick's look over the last day's inbox: every message another machine's lead sent with `talk` (`message from
+ * <machine>`), not read before, that asks for the user's word and was not answered with a quoting `talk` reply is
+ * held (holdPeerMessage). Other items (a delegated task's report, a delegation's brief) are not messages to read
+ * that way: `delegation update` holds a delegated question on arrival. Returns one line per hold.
+ */
+export function holdInboxWords(): string[] {
+    const self = loadMachine().name;
+    const since = now().getTime() - SCAN_MS;
+    const fresh = listInbox().filter(
+        (item) =>
+            item.from !== self &&
+            item.title === `message from ${item.from}` &&
+            Date.parse(stampTime(item.stamp)) >= since,
+    );
+    if (fresh.length === 0) return [];
+    const read = loadRegistry().read;
+    const talks = sentTalks();
+    const lines: string[] = [];
+    const marked: string[] = [];
+    for (const item of fresh) {
+        if (read[item.file] !== undefined) continue;
+        marked.push(item.file);
+        const body = readFileSync(item.path, "utf8");
+        const words = messageWords(body);
+        const received = /^- received: (\S+)$/m.exec(body)?.[1] ?? stampTime(item.stamp);
+        if (!asksForWord(words, true)) continue;
+        if (answeredByTalk(item.from, received, parseWordQuestion(words).question, talks)) continue;
+        const held = holdPeerMessage(item.from, body, item.path);
+        if (held !== null) lines.push(held);
+    }
+    withLock(paths.lock("word-holds"), () => {
+        const registry = loadRegistry();
+        for (const file of marked) registry.read[file] = now().toISOString();
+        prune(registry);
+        writeJsonAtomic(paths.wordHolds(), registry);
+    });
+    return lines;
+}
+
+/** An inbox stamp (`2026-11-18T17-40-28-840Z`) as an ISO time. */
+function stampTime(stamp: string): string {
+    return stamp.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z$/, "T$1:$2:$3.$4Z");
+}

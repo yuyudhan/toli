@@ -6,6 +6,7 @@ import { fleetMachine, inboundOff, inboundOffText, loadMachine, remoteToliComman
 import { out, requireName, stamp, ToliError, warn } from "../core/util.ts";
 import { queuedText, sendToMachine } from "../jobs/outbox.ts";
 import { addInboxItem } from "../records/inbox.ts";
+import { noteTalkSent } from "../records/word-holds.ts";
 import { attachLead } from "./lead.ts";
 
 /** The message a lead gets for `words` from `from`, with how to answer. */
@@ -35,6 +36,7 @@ export async function talkCommand(argv: string[]): Promise<number> {
             return 0;
         }
         const sent = sendToMachine(self, fleetMachine(machineName), title, body, `talk-${self}-${stamp()}`);
+        noteTalkSent(machineName, words);
         if (sent.delivered) out(`sent to ${machineName}'s lead; its reply arrives here as a wake`);
         else {
             if (!sent.pulled) warn(sent.error);

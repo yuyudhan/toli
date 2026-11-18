@@ -29,6 +29,7 @@ import { loadBacklog } from "../records/backlog.ts";
 import { loadRetention, weeklyPruneReport } from "../records/prune.ts";
 import { redispatchDeadRuns } from "../records/redispatch.ts";
 import { surfaceStaleTasks } from "../records/stale.ts";
+import { holdInboxWords } from "../records/word-holds.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
 import {
     type BegunRun,
@@ -51,6 +52,16 @@ import { Reach } from "./reach.ts";
 function log(line: string): void {
     mkdirSync(paths.logsDir(), { recursive: true });
     appendFileSync(paths.tickLog(), `${now().toISOString()} ${line}\n`);
+}
+
+/** One step of the tick: its notes go to the log; a failure is logged as `<failed>: <error>`, never stopping it. */
+function logStep(failed: string, run: () => readonly string[] | string | null | undefined): void {
+    try {
+        const notes = run();
+        for (const note of typeof notes === "string" ? [notes] : (notes ?? [])) if (note) log(note);
+    } catch (error) {
+        log(`${failed}: ${error instanceof Error ? error.message : String(error)}`);
+    }
 }
 
 /** While the tick waits on its job runs, it moves the fleet's messages this often (see keepExchanging). */
@@ -299,29 +310,14 @@ export async function tick(): Promise<void> {
         log(`dev stacks not resumed: ${error instanceof Error ? error.message : String(error)}`);
     }
     // Queued jawan runs start as slots free; the finishing run's supervisor does this too, this catches the rest.
-    try {
-        for (const note of drainQueue({ diskKept: true })) log(note);
-    } catch (error) {
-        log(`queued jawan runs not started: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    logStep("queued jawan runs not started", () => drainQueue({ diskKept: true }));
     // Every jawan reports to this machine's lead: a run that ended without posting its outcome is posted now.
-    try {
-        for (const note of reportUnpostedRuns()) log(note);
-    } catch (error) {
-        log(`unreported jawan runs not posted: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    logStep("unreported jawan runs not posted", reportUnpostedRuns);
     // Oversight never pauses: dead jawans re-dispatched once (records/redispatch.ts), stale tasks posted, fleet check.
-    try {
-        for (const note of redispatchDeadRuns(loadBacklog().tasks)) log(note);
-    } catch (error) {
-        log(`dead runs not re-dispatched: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    try {
-        const stale = surfaceStaleTasks(loadBacklog().tasks);
-        if (stale) log(stale);
-    } catch (error) {
-        log(`stale task check failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    logStep("dead runs not re-dispatched", () => redispatchDeadRuns(loadBacklog().tasks));
+    logStep("stale task check failed", () => surfaceStaleTasks(loadBacklog().tasks));
+    // A question another machine asked for the user's word goes into the Needs-you queue (records/word-holds.ts).
+    logStep("questions for the user's word not held", holdInboxWords);
     try {
         const fleet = await runDueFleetCheck();
         if (fleet) log(fleet);

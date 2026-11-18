@@ -1,9 +1,11 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
+import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, printJson, readStdin, requireName, stamp, ToliError, writeTextAtomic } from "../core/util.ts";
+import { now, out, printJson, readStdin, requireName, stamp, ToliError, warn, writeTextAtomic } from "../core/util.ts";
 import { ackedThrough, acknowledge, markShown } from "./acks.ts";
+import { holdPeerMessage } from "./word-holds.ts";
 
 export type InboxItem = { file: string; path: string; stamp: string; from: string; title: string; unseen: boolean };
 
@@ -63,7 +65,16 @@ function add(argv: string[]): void {
         throw new ToliError("inbox add: --via is one short line");
     const body = readStdin();
     if (body.trim() === "") throw new ToliError("inbox add needs the message body on stdin");
-    out(addInboxItem(from, title, body, via));
+    const path = addInboxItem(from, title, body, via);
+    out(path);
+    // A question for the user's word goes into the Needs-you queue too; a failure there never refuses the message.
+    try {
+        if (from === loadMachine().name) return;
+        const held = holdPeerMessage(from, body, path);
+        if (held !== null) out(held);
+    } catch (error) {
+        warn(`not held for the user's word: ${error instanceof Error ? error.message : String(error)}`);
+    }
 }
 
 function list(argv: string[]): void {

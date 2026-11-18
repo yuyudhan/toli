@@ -21,6 +21,12 @@ one. See docs/releasing.md.
   naming a path in it keeps the target, and the keeper frees everything else first. A run still under the floor names
   each target it left in use (`left in use: ...`, `--json`: `inUseLeft`). A push gate on a full disk lost its target
   mid-build before.
+- A question another machine asks for the user's word reaches the Needs-you queue on arrival instead of waiting in
+  the inbox for hours: a delegated task's held question that says so (`<name>'s word`, `question for <name>`, `needs
+his word`, `Reply <option>`) holds the `--for` task as `task escalate` would (or a new held task without one), and
+  a peer message that asks for it, or is in toli's hold format, becomes a held task in the sender's project with its
+  options, pick and what it blocks. Each sender's question is held once; the tick also holds the last day's unread
+  ones, except a message already answered with a `talk` reply quoting it (docs/sardars.md "Questions for the user").
 
 ## v0.5.38 - 2026-11-18
 
