@@ -123,6 +123,9 @@ export type OrphanRun = {
 const ORPHAN_ERROR = "the supervisor exited without recording an outcome";
 const UNSUPERVISED = "is still running unsupervised";
 
+/** The error of a run whose harness stopped on a provider's rate or usage limit (src/jawans/supervise.ts). */
+export const LIMIT_STOP = "stopped on a rate/usage limit";
+
 /**
  * The error recorded for a run whose supervisor is gone without recording an outcome: the supervisor's death, then
  * every cause found, then whether its harness is still running unsupervised.

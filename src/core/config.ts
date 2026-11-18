@@ -98,9 +98,11 @@ export type Machine = {
     /**
      * Oversight of work nobody is doing (src/records/stale.ts): an active task whose recorded run ended
      * `staleTaskMinutes` ago (default 15) is raised to the lead; the coordinator's tick runs `bin/toli fleet check
-     * --wake` every `fleetCheckMinutes` (default 60) to name idle machines and such tasks, away mode included.
+     * --wake` every `fleetCheckMinutes` (default 60) to name idle machines and such tasks, away mode included. A
+     * machine with waiting work and no agent activity for `idleMachineMinutes` (default 30) has its stopped jawans
+     * re-dispatched and, with no live lead session, alerts the coordinator (src/records/idle-machine.ts).
      */
-    oversight?: { staleTaskMinutes?: number; fleetCheckMinutes?: number };
+    oversight?: { staleTaskMinutes?: number; fleetCheckMinutes?: number; idleMachineMinutes?: number };
     /**
      * This machine's lead service (src/fleet/lead.ts, docs/sardars.md): every `balanceMinutes` (default 30) it compares
      * queue depths across the fleet and offers or asks for work when the gap is at least `balanceGap` (default 3).

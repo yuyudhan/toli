@@ -15,6 +15,11 @@ one. See docs/releasing.md.
 - A live task dispatched before its project moved to a per-task workspace, whose clone is checked out on a branch
   naming it, keeps the clone: `workspace prepare`, `commit --task` and `push --task` record the clone on that branch
   as its workspace instead of refusing or preparing a new worktree.
+- A machine with waiting work and no agent activity for `oversight.idleMachineMinutes` (default 30) no longer sits
+  idle: the tick re-dispatches its subagents that stopped reporting and, with no live lead session, alerts the
+  coordinator and the delegating machines once per idle spell, never touching a live omp. A run stopped on a
+  rate/usage limit is resumed after a back-off (30 minutes, doubling per limit stop in a row, at most 4 hours)
+  instead of staying dead (docs/fleet.md "Oversight").
 
 ## v0.5.37 - 2026-11-18
 

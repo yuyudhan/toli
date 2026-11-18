@@ -515,6 +515,17 @@ answer` posts no wake of its own; only an answer forwarded from another machine'
   `bin/toli needs`. A run that ended on its own (done, failed on its harness, `run kill`), a subagent that stopped
   reporting, a machine marked full (`lead full`) and `lead.dispatch` "subagents" are left to the lead as before. The
   tick logs each one (`T<n>: re-dispatched as <run> (queued)`, `T<n>: held, its re-dispatched jawan died too`).
+- **A machine that stopped working.** With queued or active work (not waiting on something) and no agent activity
+  for `oversight.idleMachineMinutes` (default 30; activity is a jawan run running, started or ended, a subagent's
+  report or a lead turn), the tick also takes a subagent that stopped reporting as dead and re-dispatches it as above.
+  When no lead session lives there either (no interactive session, no headless turn), it alerts once per idle spell:
+  an inbox item, forwarded to the coordinator on a worker, and the same message to every machine that delegated
+  waiting work (`m1: no agent activity for 31 min with 2 tasks waiting, and no live lead session`). toli never kills
+  or signals a live omp; starting the lead stays with `bin/toli fleet start` or `bin/toli lead attach`.
+- **Rate and usage limits back off.** A spawn run stopped on a rate/usage limit (after its one retry on a fallback
+  model) is resumed by the tick after a back-off: 30 minutes after it stopped, doubling for each limit stop in a row up
+  to 4 hours, as often as it takes and never held (`T<n>: resumed as <run> (queued) after a 30-minute back-off from a
+rate/usage limit`).
 - **Tasks that wait.** `bin/toli task wait T<n> --on "<what>"` marks an active task as deliberately waiting (a
   deferred spawn, a push, another task). Next names it as `waiting on <what>` after the stale tasks, never as a
   re-dispatch; the tick and `fleet check` leave it out, and `task list` (`--fleet` too) shows `(waiting on: <what>)`
@@ -538,7 +549,7 @@ answer` posts no wake of its own; only an answer forwarded from another machine'
 Both intervals live in `config/machine.json` (defaults shown):
 
 ```json
-{ "oversight": { "staleTaskMinutes": 15, "fleetCheckMinutes": 60 } }
+{ "oversight": { "staleTaskMinutes": 15, "fleetCheckMinutes": 60, "idleMachineMinutes": 30 } }
 ```
 
 ## Keeping machines in sync

@@ -23,7 +23,7 @@ import { addInboxItem } from "../records/inbox.ts";
 import { runTaskEnd } from "../records/task-end.ts";
 import { type Attempt, type ChildExit, KILL_GRACE_MINUTES, outliveSignals, runAttempt } from "./attempt.ts";
 import { autoResume } from "./continue.ts";
-import { signalDeathText } from "./death.ts";
+import { LIMIT_STOP, signalDeathText } from "./death.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
 import { deadlineSection, hasReport, onlyHarnessErrors, usedTimeLimit } from "./limits.ts";
@@ -292,8 +292,7 @@ export async function superviseRun(id: string): Promise<void> {
             if (result.error !== null) run.error = result.error;
             else if (timedOut) run.error = `timed out after ${(run.maxMinutes ?? 0) + KILL_GRACE_MINUTES} minutes`;
             else if (signalled !== null) run.error = signalled;
-            else if (run.status === "failed" && hitLimit(last.output, result.code))
-                run.error = "stopped on a rate/usage limit";
+            else if (run.status === "failed" && hitLimit(last.output, result.code)) run.error = LIMIT_STOP;
             else if (errorOnly) run.error = "the harness printed only errors, no report";
         });
         const stopped =

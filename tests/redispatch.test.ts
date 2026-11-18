@@ -182,3 +182,35 @@ describe("the tick re-dispatches a task whose jawan died, once", () => {
         expect(task(box, "T1")).toMatchObject({ status: "active", agent: DEAD });
     });
 });
+
+describe("the tick backs off a run stopped on a rate/usage limit, then resumes it", () => {
+    test("30 minutes after the stop, doubling per limit stop in a row, never held", () => {
+        const box = machine();
+        deadTask(box, { error: "stopped on a rate/usage limit", exitCode: 1 });
+        const resumed = (): RunRecord[] => runs(box).filter((run) => run.resumeReason === "rate/usage limit");
+        // Ended 08:10: stale at 08:25, but the back-off holds it until 08:40.
+        box.ok(["job", "tick"], { now: "2026-03-04T08:35:00.000Z" });
+        expect(resumed()).toHaveLength(0);
+        box.ok(["job", "tick"], { now: "2026-03-04T08:41:00.000Z" });
+        expect(resumed()).toHaveLength(1);
+        const first = resumed()[0];
+        expect(first).toMatchObject({ resumeOf: DEAD, status: "queued" });
+        expect(readFileSync(first?.briefPath ?? "", "utf8")).toContain(
+            "was started by toli after a 30-minute back-off",
+        );
+        // The continuation hits the limit too: 60 minutes this time.
+        const record = join(box.root, "state", "jawans", `${first?.id}.json`);
+        const stopped = {
+            status: "failed",
+            error: "stopped on a rate/usage limit",
+            endedAt: "2026-03-04T09:00:00.000Z",
+        };
+        writeFileSync(record, JSON.stringify({ ...JSON.parse(readFileSync(record, "utf8")), ...stopped }));
+        box.ok(["job", "tick"], { now: "2026-03-04T09:45:00.000Z" });
+        expect(resumed()).toHaveLength(1);
+        box.ok(["job", "tick"], { now: "2026-03-04T10:01:00.000Z" });
+        expect(resumed()).toHaveLength(2);
+        expect(resumed().find((run) => run.resumeOf === first?.id)).toBeDefined();
+        expect(task(box, "T1").status).toBe("active");
+    });
+});
