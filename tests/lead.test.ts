@@ -54,16 +54,29 @@ describe("lead install", () => {
         expect(systemd.calls()).toContain("--user disable --now toli-lead.service");
     });
 
-    test("systemd: the unit ends only `lead run` when stopped, and is loaded before the restart that stops the old one", () => {
+    test("systemd: stopping the unit ends `lead run` and everything in its cgroup, and the unit is loaded before the restart", () => {
         const box = sandbox();
         const systemd = withSystemd(box);
         box.ok(["lead", "install"], { env: systemd.env });
-        // A restart, a crash or the loop exiting for a newer runtime must not kill the jawan supervisors and the turn
-        // left in the unit's cgroup.
-        expect(readFileSync(join(systemd.units, "toli-lead.service"), "utf8")).toContain("KillMode=process\n");
+        // A stopped lead must never wake again: `KillMode=process` left a `lead run` in the cgroup after a stop.
+        const unit = readFileSync(join(systemd.units, "toli-lead.service"), "utf8");
+        expect(unit).toContain("KillMode=control-group\n");
+        expect(unit).not.toContain("KillMode=process");
         const calls = systemd.calls();
         expect(calls.indexOf("--user daemon-reload")).toBeGreaterThan(-1);
         expect(calls.indexOf("--user daemon-reload")).toBeLessThan(calls.indexOf("--user restart toli-lead.service"));
+    });
+
+    test("systemd: `lead install` inside a headless lead turn reloads the unit but never restarts its own service", () => {
+        const box = sandbox();
+        const systemd = withSystemd(box);
+        const output = box.ok(["lead", "install"], { env: { ...systemd.env, TOLI_LEAD_TURN: "headless" } });
+        expect(output).toContain("never restarts its own service");
+        expect(readFileSync(join(systemd.units, "toli-lead.service"), "utf8")).toContain("KillMode=control-group\n");
+        const calls = systemd.calls();
+        expect(calls).toContain("--user daemon-reload");
+        expect(calls).toContain("--user enable toli-lead.service");
+        expect(calls).not.toContain("--user restart toli-lead.service");
     });
 
     test("crontab fallback: one tagged per-minute `lead run --once` line, kept once across reinstalls", () => {

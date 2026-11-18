@@ -13,6 +13,10 @@ one. See docs/releasing.md.
   branch, fetched first, with no upstream, so a clone whose base is behind never seeds a stale task. A per-task
   strategy no longer moves a `commit`-mode project to `pr`: the task branch is pushed for the machine that cuts
   releases to merge. A live task keeps its workspace when its project switches strategy.
+- Stopping the Linux lead service (`systemctl --user stop toli-lead.service`, `lead uninstall`) ends `lead run` and
+  everything left in its cgroup (`KillMode=control-group`), so a stopped lead never wakes again to start jawans;
+  jawans run in scopes of their own and survive a restart. `lead install` run inside the lead's own headless turn
+  reloads the unit without restarting the service under itself.
 
 ## v0.5.36 - 2026-11-18
 

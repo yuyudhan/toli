@@ -31,6 +31,7 @@ import {
     systemdWord,
     writeCrontab,
 } from "../jobs/os-scheduler.ts";
+import { LEAD_TURN_ENV } from "./full.ts";
 import { interactiveLeadPid, readLeadState, turnPid } from "./lead-state.ts";
 
 export const LEAD_LABEL = "com.toli.lead";
@@ -66,11 +67,11 @@ export function renderLeadPlist(): string {
 }
 
 /**
- * The systemd user service: a long-running `lead run`, restarted whenever it exits. `KillMode=process`: stopping or
- * restarting the unit (`lead install`, `bin/toli upgrade`, the loop exiting for a newer runtime, a crash) ends only
- * `lead run`. The default (`control-group`) would also kill everything left in the unit's cgroup: a headless turn's
- * omp and every jawan supervisor started without its own scope (no systemd-run or user manager, or a machine whose
- * lead was installed before jawans got scopes), taking running work down with the service.
+ * The systemd user service: a long-running `lead run`, restarted whenever it exits. `KillMode=control-group`:
+ * stopping the unit ends `lead run` and everything left in its cgroup (a headless turn's omp and what that started,
+ * the peer listener), so a stopped lead never wakes again to start work (T1763: under `KillMode=process` a
+ * `lead run` left in the cgroup outlived `systemctl --user stop` and spawned jawans). Jawans run in scopes of
+ * their own (src/jawans/scope.ts), outside this cgroup, so a stop or restart leaves them running.
  */
 export function renderLeadUnit(): string {
     const log = systemdPath(paths.leadLog());
@@ -84,7 +85,7 @@ export function renderLeadUnit(): string {
         `Environment=${systemdEnv("PATH", schedulePath())}`,
         `ExecStart=${serviceProgram().map(systemdWord).join(" ")}`,
         "Restart=always",
-        "KillMode=process",
+        "KillMode=control-group",
         "RestartSec=10",
         `StandardOutput=append:${log}`,
         `StandardError=append:${log}`,
@@ -147,6 +148,15 @@ export function installLeadService(): void {
         writeTextAtomic(target, unit);
         mustRun(systemctl("daemon-reload"));
         mustRun(systemctl("enable", LEAD_UNIT));
+        if (process.env[LEAD_TURN_ENV] === "headless") {
+            // This command runs inside the unit's own headless turn: a restart would kill the turn and this command
+            // with it. The loop exits after the turn once a newer runtime is installed (`upgrade`), and systemd starts
+            // it again on the reloaded unit.
+            out(
+                `installed ${target}: the lead service runs it from its next restart (a headless turn never restarts its own service)`,
+            );
+            return;
+        }
         // restart, not start: a reinstall must pick up the rewritten unit.
         mustRun(systemctl("restart", LEAD_UNIT));
         out(`installed and started ${target}: the lead service runs now and at every login`);

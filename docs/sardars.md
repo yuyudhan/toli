@@ -285,10 +285,13 @@ returns only once systemd-run has moved the supervisor into its scope, so a call
 helper's oneshot, a scheduled job) can exit right away without systemd killing the supervisor with its cgroup; a
 supervisor scope systemd-run cannot make fails the spawn and the run is recorded failed. Without
 systemd-run or a user manager both start as before, in the lead service's cgroup, and a harness scope systemd-run cannot
-make (no user session bus over ssh) starts the harness without one; the unit is `KillMode=process`, so even then
-stopping or restarting it (`lead install`, `bin/toli upgrade`, the loop exiting for a newer runtime) ends only `lead
-run`, never the supervisors, jawans and headless turn left running. A machine whose unit predates `KillMode=process`
-gets it from the next `lead install` (the new unit is loaded before that restart stops the old process). On macOS the
+make (no user session bus over ssh) starts the harness without one. The unit is `KillMode=control-group`: stopping it
+(`systemctl --user stop toli-lead.service`, `lead uninstall`) ends `lead run` and everything left in its cgroup (a
+headless turn's omp and what it started, the peer listener), so a stopped lead never wakes again to start work.
+A restart (`lead install`, the loop exiting for a newer runtime) ends the same; a turn it ends leaves its wake in
+`state/lead/pending.md` for the next pass. `lead install` run inside a headless turn (`bin/toli upgrade` from the
+lead) only reloads the unit and never restarts its own service; the loop exits after that turn on the newer runtime,
+and systemd starts it on the new unit. On macOS the
 supervisor and the harness each run in their own session and process group, which launchd leaves alone when it stops
 or restarts the lead's job; a signal to the harness's group never reaches the supervisor.
 

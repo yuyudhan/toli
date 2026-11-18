@@ -1,8 +1,8 @@
 // What `bin/toli upgrade` does for the OS services (docs/install.md "Upgrading"): once the checkout has moved, each
 // service this machine already has installed, the lead service and the tick, is installed again by the new code, so
 // its unit is current and it is enabled and running. Only what was installed is touched, and nothing is stopped for
-// good. The lead unit stops only its own process (`KillMode=process`, src/fleet/lead-service.ts), so that restart
-// leaves every running supervisor and jawan alone.
+// good. Jawans run in their own systemd scopes, outside the lead unit's cgroup, so that restart leaves them alone; an
+// upgrade run inside a headless lead turn only reloads the lead unit (src/fleet/lead-service.ts).
 import { existsSync } from "node:fs";
 import { leadServiceStatus, leadUnitPath } from "../fleet/lead-service.ts";
 import { osScheduler } from "../jobs/os-scheduler.ts";
