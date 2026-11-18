@@ -97,8 +97,11 @@ X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0
 
 1. Build output finished no-mistakes runs left in their worktrees, then whole `target/` folders of project checkouts
    that nothing uses. A checkout is all registered projects' clones plus their git worktrees. Nothing uses it when no
-   running jawan works in it (or, for a main clone, on its project) and no process has its working directory inside
-   it. The wipe still takes cargo's locks and checks that no process and no live build uses the target (see 6 and
+   running jawan works in it (or, for a main clone, on its project), no live native subagent's task records it as its
+   workspace (whatever the task's status: a follow-up in a done task's worktree runs no process there between two
+   commands; `skipped <dir>: T<n>'s jawan <id> works in it`), and no process has its working directory inside it. The
+   same check holds `node_modules/` and `dist/` in step 2. The wipe still takes cargo's locks and checks that no
+   process and no live build uses the target (see 6 and
    "Live builds"), so a build or test started from elsewhere is never cut off: the target is kept
    (`kept <target>: cargo (pid N) builds into it (CARGO_TARGET_DIR <dir>)`) and the keeper moves on to the next
    folder.

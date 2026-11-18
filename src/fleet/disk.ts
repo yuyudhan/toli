@@ -4,8 +4,8 @@
 // free space is back at the floor:
 //   0. a `<target>.toli-wipe-<ms>` folder a killed keeper renamed aside and never deleted (cargo-lock.ts), whole;
 //   1. build output finished no-mistakes runs left in their worktrees (no-mistakes-runs.ts), then whole `target/`
-//      folders of project checkouts nothing uses (no running jawan, no process working there, no live build compiling
-//      into it: a cargo or rustc, a held heavy-build slot or a running gate, live-builds.ts);
+//      folders of checkouts nothing uses (no running jawan or live subagent in it, no process working there, no live
+//      build compiling into it: a cargo or rustc, a held heavy-build slot or a running gate, live-builds.ts);
 //   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/` (builds run
 //      there between jobs and cannot reinstall dependencies themselves; cargo rebuilds a wiped `target/` on its own);
 //   3. Docker build cache and unused images, not while a pull or build runs and not every minute (docker-prune.ts);

@@ -19,6 +19,11 @@ one. See docs/releasing.md.
   while a live task still works in its per-task workspace counts as a toggle, `project set` says so, and prepare
   refuses new tasks until the project switches back, naming the command. A switch meant to stay takes
   `project set <p> --workspace same-branch --keep`.
+- The disk keeper no longer deletes `node_modules/`, `dist/` or `target/` in a task worktree while the task's native
+  subagent is live there, whatever the task's status: a jawan doing a follow-up in a done task's worktree runs no
+  process there between two commands, so step 2 took its dependencies mid pre-commit (twice, on a disk under its
+  floor). A live subagent (the same check the jawan count makes) whose task records the worktree now keeps it:
+  `skipped <dir>: T<n>'s jawan <id> works in it`.
 
 ## v0.5.40 - 2026-11-18
 

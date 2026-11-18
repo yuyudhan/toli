@@ -1,13 +1,17 @@
 // What the disk keeper (src/fleet/disk.ts) may delete, and what holds it: the checkouts of registered projects, their
-// git-ignored build output folders, the runs and processes using each checkout, and the files processes hold open.
+// git-ignored build output folders, the runs, native jawans and processes using each checkout, and the files processes
+// hold open.
 import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { platform, run } from "../core/util.ts";
+import { now, platform, run } from "../core/util.ts";
 import { listRuns, RUNNING } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { gitWorktrees } from "../projects/workspace.ts";
+import { agentState, nativeAgent } from "../records/agents.ts";
+import { loadBacklog } from "../records/backlog.ts";
+import { staleTaskMinutes } from "../records/stale.ts";
 import { procCwds, procOpenFiles } from "./disk-proc.ts";
 
 /** One working tree of a registered project: its main clone or one of the clone's git worktrees. */
@@ -124,14 +128,36 @@ function newestChildMtime(dir: string, own: number): number {
     return newest;
 }
 
-/** What uses checkouts right now: running jawans' directories and projects, and every process's working directory. */
-export type Holders = { runs: { cwd: string; project: string | null; id: string }[]; cwds: Map<string, string> };
+/**
+ * What uses checkouts right now: running jawans' directories and projects, the task worktrees live native subagents
+ * work in, and every process's working directory.
+ */
+export type Holders = {
+    runs: { cwd: string; project: string | null; id: string }[];
+    tasks: { path: string; why: string }[];
+    cwds: Map<string, string>;
+};
 
 export function currentHolders(): Holders {
     const runs = listRuns()
         .filter((entry) => RUNNING.includes(entry.status))
         .map((entry) => ({ cwd: real(entry.cwd), project: entry.project, id: entry.id }));
-    return { runs, cwds: processCwds() };
+    return { runs, tasks: subagentWorkspaces(), cwds: processCwds() };
+}
+
+/**
+ * The recorded workspace of every task whose native subagent is live (agentState, as the jawan count reads it),
+ * whatever the task's status: a jawan doing a follow-up in a done task's worktree runs no process there between two
+ * commands, and the run records cover only `bin/toli spawn` jawans (T1905).
+ */
+function subagentWorkspaces(): Holders["tasks"] {
+    const at = now();
+    const grace = staleTaskMinutes();
+    return loadBacklog().tasks.flatMap((task) =>
+        task.workspace !== undefined && nativeAgent(task) && agentState(task, at, grace).state === "live"
+            ? [{ path: real(task.workspace.path), why: `${task.id}'s jawan ${task.agent} works in it` }]
+            : [],
+    );
 }
 
 /** Working directory of every process of this user, keyed by path, valued by one pid (`lsof -d cwd`, Linux /proc). */
@@ -154,7 +180,9 @@ function processCwds(): Map<string, string> {
 
 /**
  * Why `checkout` is in use, or null when nothing uses it: a running jawan whose directory is inside it (or, for the
- * main clone, a running jawan of its project working elsewhere), or a process whose working directory is inside it.
+ * main clone, a running jawan of its project working elsewhere), a live native subagent whose task's recorded
+ * workspace is this worktree (never the main clone, whose build output has rules of its own), or a process whose
+ * working directory is inside it.
  */
 export function checkoutUse(checkout: Checkout, holders: Holders, all: Checkout[]): string | null {
     for (const entry of holders.runs) {
@@ -163,6 +191,8 @@ export function checkoutUse(checkout: Checkout, holders: Holders, all: Checkout[
         if (checkout.main && entry.project === checkout.project && !inOwnCheckout)
             return `jawan ${entry.id} works on ${checkout.project}`;
     }
+    const task = checkout.main ? undefined : holders.tasks.find((entry) => within(entry.path, checkout.path));
+    if (task !== undefined) return task.why;
     for (const [cwd, pid] of holders.cwds) {
         if (within(cwd, checkout.path)) return `process ${pid} runs in ${cwd}`;
     }

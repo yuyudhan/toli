@@ -92,6 +92,48 @@ describe("disk keeper", () => {
         },
     );
 
+    // T1905: a done task's worktree lost its node_modules to step 2 while its in-session subagent did a follow-up there.
+    keeperTest(
+        "keeps the build output of a task worktree whose native jawan is live, even after the task is done",
+        () => {
+            const box = keeperBox();
+            box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+            const clone = realpathSync(withProject(box, "alpha"));
+            buildOutput(box, clone);
+            box.ok(["task", "add", "alpha", "Home approvals"]);
+            const copy = join(box.root, "projects", ".worktrees", "alpha", "T1");
+            box.git(clone, ["worktree", "add", "--detach", copy]);
+            const tree = realpathSync(copy);
+            mkdirSync(join(tree, "web", "node_modules", "pkg"), { recursive: true });
+            writeFileSync(join(tree, "web", "node_modules", "pkg", "index.js"), "1\n");
+            const backlogFile = join(box.root, "data", "backlog.json");
+            const backlog = JSON.parse(readFileSync(backlogFile, "utf8")) as { tasks: Record<string, unknown>[] };
+            Object.assign(backlog.tasks[0] ?? {}, {
+                status: "done",
+                agent: "T1Follow",
+                agentSession: { agent: "T1Follow", pid: process.pid },
+                dispatchedAt: new Date().toISOString(),
+                workspace: { strategy: "worktree-per-task", path: copy, branch: null, base: "main" },
+            });
+            writeFileSync(backlogFile, JSON.stringify(backlog));
+            box.stub("docker", "exit 1");
+            box.stub("sccache", "exit 2");
+            const keep = (): string =>
+                (
+                    JSON.parse(box.ok(["disk", "keep", "--dry-run", "--floor", "1000000000", "--json"])) as KeepReport
+                ).lines.join("\n");
+            const lines = keep();
+            expect(lines).toContain(`skipped ${join(tree, "web", "node_modules")}: T1's jawan T1Follow works in it`);
+            expect(lines).not.toContain(`would delete ${join(tree, "web", "node_modules")}`);
+            // Once its subagent's session is gone, the worktree is idle output again.
+            Object.assign(backlog.tasks[0] ?? {}, {
+                agentSession: { agent: "T1Follow", pid: Bun.spawnSync(["true"]).pid },
+            });
+            writeFileSync(backlogFile, JSON.stringify(backlog));
+            expect(keep()).toContain(`would delete ${join(tree, "web", "node_modules")} (`);
+        },
+    );
+
     /** Idle `alpha` and `beta`, held by a jawan and a cargo lock, on a 200 GB disk (emergency level 6 GB): 1 GB free
      * while alpha's target exists, `afterGB` once it is gone. */
     function heldTree(box: Sandbox, afterGB = 100): { idle: string; busy: string; release: () => void } {
