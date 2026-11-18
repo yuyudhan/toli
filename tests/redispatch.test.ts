@@ -1,7 +1,7 @@
 // T1783: an active task whose jawan died (a reboot, a dead lead session) is re-dispatched by the tick once, with the
 // same brief and the answers recorded since; a second death holds it.
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { editBacklog, ROOMY } from "./fleet-fixture.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
@@ -83,9 +83,10 @@ function task(box: Sandbox, id: string): TaskRecord {
     return found;
 }
 
+/** Every inbox item; none when nothing was posted (a busy machine's fleet check posts nothing). */
 function inbox(box: Sandbox): string[] {
     const dir = join(box.root, "data", "inbox");
-    return readdirSync(dir).map((file) => readFileSync(join(dir, file), "utf8"));
+    return existsSync(dir) ? readdirSync(dir).map((file) => readFileSync(join(dir, file), "utf8")) : [];
 }
 
 /** T1 on alpha, worked by run DEAD (recorded with `fields`), and T2's answer recorded after it ended. */

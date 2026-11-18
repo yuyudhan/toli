@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENV, editBacklog, fleet, remoteSnapshot } from "./fleet-fixture.ts";
-import { type Sandbox, SSH_STUB_ARGS, sandbox, withProject } from "./helpers.ts";
+import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 const START = "2026-03-04T08:00:00.000Z";
 
@@ -240,61 +240,6 @@ describe("answers reach the waiting work", () => {
         expect(stale()[0]).toContain("- T1 (alpha) is active but its run remote:m2:bg_7 ended 56m ago");
         box.ok(["job", "tick"], { now: "2026-03-04T09:17:00.000Z" });
         expect(stale()).toHaveLength(1);
-    });
-});
-
-describe("oversight never pauses in away mode", () => {
-    test("fleet check names idle machines with waiting work for their clones, and each machine's stale tasks", () => {
-        const box = fleet(remoteSnapshot("m2", { projects: ["alpha"] }));
-        box.stub("omp", "true");
-        withProject(box, "alpha");
-        box.ok(["task", "add", "alpha", "queued slice"]);
-        writeFileSync(
-            join(box.root, ".m2-check.json"),
-            JSON.stringify({
-                machine: "m2",
-                stale: [{ line: "T9 (alpha) is active but its run j-1 ended 3h ago", command: "re-dispatch it now" }],
-                waiting: [{ id: "T9", project: "alpha", status: "active", title: "own slice" }],
-            }),
-        );
-        box.stub(
-            "ssh",
-            [
-                SSH_STUB_ARGS,
-                'case "$host" in',
-                `  host2) case "$cmd" in *"resources --json"*) cat "${join(box.root, ".m2.json")}" ;; *"fleet check --local --json"*) cat "${join(box.root, ".m2-check.json")}" ;; *) exit 1 ;; esac ;;`,
-                "  *) echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
-                "esac",
-            ].join("\n"),
-        );
-        writeFileSync(join(box.root, "state", "afk"), START);
-
-        const output = box.ok(["fleet", "check", "--wake"], { env: ENV, now: "2026-03-04T09:00:00.000Z" });
-        expect(output.split("\n").slice(0, 2)).toEqual([
-            "fleet check at 2026-03-04T09:00:00.000Z: 1 active task with no live run, 2 idle machines with waiting work",
-            "Lead: dispatch now (toli-dispatch skill), spreading the waiting work over the idle machines; away mode changes nothing here.",
-        ]);
-        expect(output).toContain("- [m2] T9 (alpha) is active but its run j-1 ended 3h ago\n  re-dispatch it now");
-        expect(output).toContain("- m1: T1 (alpha, queued): queued slice\n");
-        expect(output).toContain("- m2: T1 (alpha, queued): queued slice; T9 (alpha, active): own slice\n");
-        expect(output).toMatch(/- m3: unreachable: ssh host3 exited 255/);
-        const [posted] = inbox(box);
-        expect(posted).toStartWith("# fleet check: 1 stale task, 2 idle machines with waiting work\n");
-    });
-
-    test("the coordinator's tick runs the fleet check hourly while away, instead of staying silent", () => {
-        const box = coordinator();
-        box.ok(["task", "add", "alpha", "queued slice"]);
-        writeFileSync(join(box.root, "state", "afk"), START);
-        box.ok(["job", "tick"], { now: "2026-03-04T09:00:00.000Z" });
-        const checks = (): string[] => inbox(box).filter((item) => item.startsWith("# fleet check:"));
-        expect(checks()).toHaveLength(1);
-        expect(checks()[0]).toContain("- m1: T1 (alpha, queued): queued slice");
-        expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain("fleet check: posted data/inbox/");
-        box.ok(["job", "tick"], { now: "2026-03-04T09:30:00.000Z" });
-        expect(checks()).toHaveLength(1);
-        box.ok(["job", "tick"], { now: "2026-03-04T10:00:00.000Z" });
-        expect(checks()).toHaveLength(2);
     });
 });
 

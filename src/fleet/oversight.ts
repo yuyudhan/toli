@@ -1,9 +1,9 @@
 // `bin/toli fleet status|queues|check` (queues: src/fleet/queues.ts). The check is oversight that never pauses, away
-// mode included: every reachable machine with no active run while queued work (or an active task no live run works
-// on) exists for a project cloned there is an idle machine, every active task with no live run on this machine or
-// any reachable one is named, and so is every machine whose configured peer listener is down. `--wake` posts the
-// findings as one inbox item (a `[toli wake]` for the lead); the coordinator's tick starts `fleet check --wake` every
-// `oversight.fleetCheckMinutes` (default 60), so no job prompt can skip it.
+// mode included: every reachable machine with no running jawan (no spawn run and no native subagent) while queued
+// work (or an active task no live run works on) exists for a project cloned there is an idle machine, every active
+// task with no live run on this machine or any reachable one is named, and so is every machine whose configured peer
+// listener is down. `--wake` posts the findings as one inbox item (a `[toli wake]` for the lead); the coordinator's
+// tick starts `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no job prompt can skip it.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { relative, resolve } from "node:path";
@@ -134,7 +134,7 @@ export function parseLocalOversight(text: string): LocalOversight {
 }
 
 /**
- * The findings: idle machines (reachable, no active run) with waiting work for a project cloned there, from this
+ * The findings: idle machines (reachable, no running jawan) with waiting work for a project cloned there, from this
  * machine's backlog and the machine's own, every stale active task, and every configured peer listener that is down.
  * `reports` maps a machine to its own backlog's report, or the reason it could not be read.
  */
@@ -164,7 +164,9 @@ export function checkFleet(
         const mine = typeof report === "object" ? report : undefined;
         for (const stale of mine?.stale ?? []) check.stale.push({ machine: entry.machine, ...stale });
         if (mine?.listener) check.listeners.push({ machine: entry.machine, problem: mine.listener });
-        if (entry.resources.activeRuns > 0) continue;
+        // Busy when any jawan runs: spawn runs and the native subagents a lead starts in its session (the queue's
+        // jawansRunning, as `fleet queues` shows it); `activeRuns` alone misses the subagents.
+        if (entry.resources.activeRuns > 0 || (entry.resources.queue?.jawansRunning ?? 0) > 0) continue;
         const clones = new Set(entry.resources.projects);
         const seen = new Set<string>();
         const waiting = [...shared, ...(entry.machine === self ? [] : (mine?.waiting ?? []))].filter((work) => {
@@ -203,7 +205,7 @@ export function fleetCheckText(check: FleetCheck): string {
         for (const entry of check.stale) lines.push(`- [${entry.machine}] ${entry.line}`, `  ${entry.command}`);
     }
     if (check.idle.length > 0) {
-        lines.push("", "Idle machines (no active run) with waiting work for their clones:");
+        lines.push("", "Idle machines (no running jawan) with waiting work for their clones:");
         for (const entry of check.idle)
             lines.push(
                 `- ${entry.machine}: ${entry.waiting.map((work) => `${work.id} (${work.project}, ${work.status}): ${work.title}`).join("; ")}`,

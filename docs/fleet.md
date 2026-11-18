@@ -539,9 +539,10 @@ rate/usage limit`).
   (`waiting on <machine> (agent: <label>)`): the label is no jawan here. `task wait T<n> --on "<machine>"` records
   any other work another machine holds.
 - **Idle machines.** `fleet check` probes every machine (as `fleet status` does) and reads each reachable one's own
-  backlog (`fleet check --local --json` over ssh). A reachable machine with no active run while queued work, or a
-  stale active task, exists for a project cloned there is idle; every machine's stale tasks are named too, and so is
-  every machine whose peer listener is configured (`peer.listen`) but down or stuck on a replaced runtime
+  backlog (`fleet check --local --json` over ssh). A reachable machine with no running jawan (no `bin/toli spawn` run
+  and no native subagent, as `fleet queues` counts them) while queued work, or a stale active task, exists for a
+  project cloned there is idle; every machine's stale tasks are named too, and so is every machine whose peer
+  listener is configured (`peer.listen`) but down or stuck on a replaced runtime
   ([peers.md](peers.md#the-listener)). `--wake` posts the findings as one batched inbox item, only when there is
   something to act on. The coordinator's tick runs `fleet check --wake` every `oversight.fleetCheckMinutes` (default
   60), detached when other machines must be reached over ssh, in-process on a lone machine.

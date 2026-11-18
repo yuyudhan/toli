@@ -281,10 +281,10 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   project's releases stand on the machine that cuts them. `fleet say` types one message into every other machine's
   lead in tmux and confirms it arrived; `fleet start` starts the lead in tmux (and optionally the peer listener) on
   every other machine where none runs ([fleet.md](fleet.md#fleet-health-and-work)).
-- `fleet check`: idle machines (no active run) with queued work for a project cloned there, and active tasks no
-  live run works on, on every reachable machine; `--wake` posts the findings as one inbox item; `--local` reports
-  this machine's own backlog (what the coordinator reads over ssh). The coordinator's tick runs it every
-  `oversight.fleetCheckMinutes` (default 60), away mode included ([fleet.md](fleet.md#oversight)).
+- `fleet check`: idle machines (no running jawan, spawn run or native subagent) with queued work for a project
+  cloned there, and active tasks no live run works on, on every reachable machine; `--wake` posts the findings as one
+  inbox item; `--local` reports this machine's own backlog (what the coordinator reads over ssh). The coordinator's
+  tick runs it every `oversight.fleetCheckMinutes` (default 60), away mode included ([fleet.md](fleet.md#oversight)).
 - `build-slot -- <command...>`: run a heavy build in one of this machine's heavy-build slots (`capacity.buildSlots`),
   waiting while all are busy; jawans' cargo goes through it on its own ([fleet.md](fleet.md#heavy-build-slots)). It
   refuses a build outside the registered clones, toli's task worktrees and toli's checkout unless

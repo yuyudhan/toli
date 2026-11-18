@@ -8,6 +8,10 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli fleet check` no longer reports busy machines as idle: a machine whose lead runs its jawans as in-session
+  native subagents (omp's `task` tool) has no `bin/toli spawn` run, so the check took it for idle while
+  `fleet queues` showed its jawans running. A machine is now idle only with no running jawan, spawn run or native
+  subagent, as its queue counts them; one with queued work and truly no jawan is still named.
 - A task whose workspace was recorded under another strategy (prepared while its project was briefly toggled) can
   be re-derived: `bin/toli workspace prepare T<n> --reset`, refused while the recorded task branch holds commits or
   uncommitted changes. `project set --workspace` now waits for a prepare in progress, and the toggle is never needed:
