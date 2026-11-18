@@ -291,7 +291,8 @@ that Sardar's jawan). `bin/toli remote` and `remote auto` refuse: no machine sta
 reason to stop or queue work: the disk keeper (`bin/toli disk keep`, docs/disk.md) runs before every jawan start and
 every tick and frees rebuildable build output below `capacity.diskKeepGB` (default 60). A full disk means delete the
 `target/` folders no live build uses (a cargo or rustc, a held build slot, a running gate) without asking: cargo
-rebuilds them. When free space is still under the floor, the keeper does that itself and names the targets in use it
+rebuilds them, through `bin/toli disk keep` only, never `rm -rf` by hand or by a subagent (only the keeper sees those
+builds). When free space is still under the floor, the keeper does that itself and names the targets in use it
 left; on any machine, run `bin/toli disk keep` the moment a disk is full. Where
 `capacity.diskKeep` is `false` the keeper deletes nothing on its own and low disk only posts an inbox alert naming the
 biggest build folders: there the lead decides what goes. Never write a disk floor into a brief.

@@ -206,6 +206,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             say(`cannot write ${paths.lock(KEEPER_LOCK)} (${claim.reason}): freeing without the keeper lock`);
         const checkouts = projectCheckouts();
         const dirs = checkouts.flatMap(buildDirs).sort((a, b) => a.mtimeMs - b.mtimeMs);
+        const backBefore = enough(); // Listing build folders takes minutes under load; space may come back (T1901).
         /** Folders deleted (or, in a dry run, counted as deleted), and why each other one was kept: in use, or tried. */
         const done = new Set<string>();
         const kept = new Map<string, { reason: string; tried: boolean }>();
@@ -357,9 +358,10 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         if (report.freeAfterGB < floorGB) report.inUseLeft = targetsInUse(targets);
         const inUse = report.inUseLeft.map((left) => `${left.path} (${left.reason})`).join(", ");
         const leftText = inUse === "" ? "" : `; left in use: ${inUse}`;
+        const notMine = backBefore && done.size === 0 ? ", freed by another process meanwhile, not the keeper" : "";
         say(
             report.freeAfterGB >= floorGB
-                ? `done: free ${gb(freeBeforeGB)} -> ${gb(report.freeAfterGB)}`
+                ? `done: free ${gb(freeBeforeGB)} -> ${gb(report.freeAfterGB)}${notMine}`
                 : `done, still under the floor: free ${gb(freeBeforeGB)} -> ${gb(report.freeAfterGB)}; nothing more is rebuildable and free right now${leftText}`,
         );
     } finally {

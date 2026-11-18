@@ -20,7 +20,11 @@ rustc working there or naming it, a held heavy-build slot, a running gate in tha
 never deleted at any step, the last resort included: the keeper frees the other rebuildable folders instead, says
 which it kept (`kept <target>: in use (...)`), and a run that ends still under the floor names each one it left
 (`done, still under the floor: ...; left in use: <target> (<why>), ...`; `--json`: `inUseLeft`). A Sardar or jawan on
-any machine that finds its disk full runs `bin/toli disk keep` and never asks first.
+any machine that finds its disk full runs `bin/toli disk keep` and never asks first, and never deletes a `target/` with
+`rm -rf` itself: only the keeper sees a cargo in a build slot, a running gate and cargo's own locks (T1901: a subagent's
+hand `rm -rf` of a target broke a `bin/toli build-slot -- cargo check` compiling into it). When free space comes back
+over the floor while the keeper lists build folders, it deletes nothing and says who freed it:
+`done: free A -> B, freed by another process meanwhile, not the keeper`.
 
     bin/toli disk keep [--dry-run] [--floor <GB>] [--json]
 

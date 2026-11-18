@@ -69,6 +69,21 @@ describe("the disk keeper's floor", () => {
         expect(existsSync(join(alpha, "web", "dist", "app.js"))).toBe(true);
         expect(report.freeAfterGB).toBe(30);
     });
+
+    keeperTest("space another process frees while it lists build folders is not put down to the keeper (T1901)", () => {
+        const box = keeperBox();
+        const [alpha = ""] = clones(box, ["alpha"]);
+        ageOutput(alpha, 300);
+        // 10 GB free when the keeper starts, 34 GB at every later look: something else freed space meanwhile.
+        const calls = join(box.root, "df-calls");
+        const count = `n=$(cat "${calls}" 2>/dev/null || echo 0); echo $((n + 1)) > "${calls}"`;
+        const kb = `if [ "$n" -eq 0 ]; then kb=$((10 * 1048576)); else kb=$((34 * 1048576)); fi`;
+        box.stub("df", `${count}; ${kb}\n${dfLine(1000)}`);
+        const lines = keep(box, ["--floor", "25"]).lines.join("\n");
+        expect(lines).toContain("done: free 10.0 GB -> 34.0 GB, freed by another process meanwhile, not the keeper");
+        expect(lines).not.toContain(`deleted ${join(alpha, "target")}`);
+        expect(existsSync(join(alpha, "target", "debug", "deps", "libx.rlib"))).toBe(true);
+    });
 });
 
 describe("the disk keeper on Linux, without lsof", () => {

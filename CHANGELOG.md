@@ -4,6 +4,17 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.41 - unreleased
+
+### Fixed
+
+- The disk keeper no longer takes credit for space it did not free: when free space comes back over the floor while
+  it lists build folders (minutes on a loaded machine), it deletes nothing and ends
+  `done: free A -> B, freed by another process meanwhile, not the keeper`. A build-slot `cargo check` lost its target
+  to a subagent's `rm -rf` in that window, and the keeper's bare `done: free 10.0 GB -> 34.0 GB` took the blame. The
+  contract (AGENTS.md section 7, docs/disk.md) now says targets go only through `bin/toli disk keep`, never `rm -rf`
+  by hand or by a subagent: only the keeper sees a build slot's cargo, a running gate and cargo's locks.
+
 ## v0.5.40 - 2026-11-18
 
 ### Fixed
