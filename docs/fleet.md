@@ -279,7 +279,9 @@ more than it has slots; that is the price of never deadlocking.
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
 (a `just` recipe, a hook that resets PATH), where the cargo shim below never sees it: a gate's runner
 (`bin/toli gate run`, `bin/toli push --gate`, [delivery.md](delivery.md#gates-long-checks-run-once-per-tree)) runs
-the recipe in a slot, and `bin/toli push` in a project with a pre-push hook runs `git push`, and so the hook, in one.
+the recipe in a slot, and `bin/toli push` in a project with a pre-push hook runs `git push`, and so the hook, in one,
+unless the hook declares the push light under its environment (`# toli-light-push: NAME=VALUE`,
+[delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
 Cargo reads the slot's variables from the environment however it is reached, and a cargo, `build-slot` or gate the
 check starts runs inside that slot at once. On Linux the whole check (the gate's recipe, or `git push` and so its
 hook) also runs in the slot's memory-capped scope below, so every cargo it starts shares that one cap; the runner

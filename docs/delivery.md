@@ -135,6 +135,11 @@ parents, message or author):
   see `TOLI_GATE_PROJECT`, `TOLI_GATE_SHA`, `TOLI_GATE_TREE` and `TOLI_GATE_RECIPE`: information, not proof. In a
   project with a pre-push hook, `bin/toli push` (with or without `--gate`) runs `git push` in one heavy-build slot the
   same way, since the hook may run the long check itself; a `bin/toli gate run` the hook starts runs inside that slot.
+  A hook with an escape hatch that skips its heavy steps declares it in a comment line, one per condition:
+  `# toli-light-push: VERIFY_SKIP=1`. A push whose environment meets one (`VERIFY_SKIP=1 bin/toli push <p>`) prints
+  `toli: the pre-push hook declares no heavy step with VERIFY_SKIP=1: pushing without a heavy-build slot` and never
+  queues for a slot; every other push keeps its slot. The declaration is the project's word about its own hook, so
+  keep it next to the check it names.
 - A pass is sealed with an HMAC over its project, tree, recipe text and end time, keyed by `state/gate-key` (made once
   per installation, owner-only). Only the gate runner writes it, and `gate run` and `gate check` count a record only
   when its proof verifies for the tree and recipe asked about: a record edited to say `passed`, copied to another

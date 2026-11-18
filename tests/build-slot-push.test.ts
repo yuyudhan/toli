@@ -88,6 +88,37 @@ describe("a push check in one heavy-build slot", () => {
         expect(readFileSync(threads, "utf8").trim()).toBe("2 3");
     });
 
+    // T1905: a push whose hook skips its heavy steps (the project's own escape hatch) queued ~20 min for a slot.
+    test("a push the pre-push hook declares light, by the env it reads, takes no slot; a heavy one still does", async () => {
+        const { box, dir, log } = slotProject();
+        box.ok(["project", "set", "app", "--standing-push", "yes"]);
+        writeFileSync(
+            join(dir, ".git", "hooks", "pre-push"),
+            '#!/bin/sh\n# toli-light-push: APP_VERIFY_SKIP=1\n[ "${APP_VERIFY_SKIP:-}" = 1 ] && exit 0\nexec just verify push\n',
+            { mode: 0o755 },
+        );
+        const holder = await holdSlot(box, log);
+        const light = await box.toliAsync(["push", "app"], { env: { ...UNCAPPED, APP_VERIFY_SKIP: "1" } });
+        expect(light.code).toBe(0);
+        expect(light.stderr).toContain(
+            "toli: the pre-push hook declares no heavy step with APP_VERIFY_SKIP=1: pushing without a heavy-build slot",
+        );
+        expect(light.stderr).not.toContain("waiting for a heavy-build slot");
+        writeFileSync(join(dir, "heavy.txt"), "heavy\n");
+        box.git(dir, ["add", "heavy.txt"]);
+        box.git(dir, ["commit", "-m", "heavy"]);
+        const heavy = box.toliAsync(["push", "app"], { env: { ...UNCAPPED, APP_VERIFY_SKIP: "0", STUB_LABEL: "p" } });
+        const queue = join(box.root, "state", "build-slots", "queue");
+        await until(
+            "the heavy push waiting in line for the busy slot",
+            () => existsSync(queue) && readdirSync(queue).some((name) => name.endsWith(".wait")),
+        );
+        writeFileSync(`${log}.done-a`, "");
+        expect((await holder.done).code).toBe(0);
+        expect((await heavy).code).toBe(0);
+        expect(runs(log).find((run) => run.label === "p")).toMatchObject({ slot: "1", args: "test verify push" });
+    });
+
     /** systemd-run's logged line for one scope: unit toli-build-1-<pid> capped at scopeBox's 512 MB. */
     const SCOPE_LINE =
         /^--user --scope --collect --quiet --unit=toli-build-1-\d+\.scope -p MemoryMax=512M -p MemorySwapMax=0 -- \/bin\/sh /;

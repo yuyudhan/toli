@@ -71,6 +71,17 @@ export function activeHookPath(dir: string, name: string): string | null {
     }
 }
 
+/**
+ * The `NAME=VALUE` a hook declares it runs no heavy step under (a `# toli-light-push: NAME=VALUE` line, one per
+ * condition) that `env` meets now, else null: the project's own escape hatch, so `bin/toli push` need not wait for a
+ * heavy-build slot for a hook that skips its checks (T1905).
+ */
+export function lightPushCondition(hook: string, env: NodeJS.ProcessEnv = process.env): string | null {
+    for (const [, name, value] of readText(hook).matchAll(/^#\s*toli-light-push:\s*([A-Za-z_]\w*)=(\S+)\s*$/gm))
+        if (name !== undefined && env[name] === value) return `${name}=${value}`;
+    return null;
+}
+
 function isDir(path: string): boolean {
     return statSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
 }

@@ -27,6 +27,10 @@ one. See docs/releasing.md.
 - A follow-up on a done task can reopen it: `bin/toli task start T<n> --reopen [--agent <id>]` makes a done or
   dropped task active again and notes who reopened it. A plain `task start` on a closed task still refuses, now naming
   the flag.
+- `bin/toli push` no longer queues for a heavy-build slot when the project's pre-push hook skips its heavy steps: a
+  hook declares its escape hatch in a comment, `# toli-light-push: VERIFY_SKIP=1` (one line per condition), and a push
+  whose environment meets one runs without a slot, saying so. A push with such a skip set waited ~20 minutes for a
+  slot its hook never used; every other push keeps its slot.
 
 ## v0.5.40 - 2026-11-18
 

@@ -5,9 +5,9 @@ import { Args } from "../core/args.ts";
 import { currentBranch, git, gitOk, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
-import { out, platform, printJson, run, runInherit, ToliError } from "../core/util.ts";
+import { out, platform, printJson, run, runInherit, ToliError, warn } from "../core/util.ts";
 import { runInSlot, withBuildSlot } from "../fleet/build-slots.ts";
-import { activeHookPath } from "../projects/hooks.ts";
+import { activeHookPath, lightPushCondition } from "../projects/hooks.ts";
 import { requirePushHooks } from "../projects/hooks-gates.ts";
 import { type Forge, findProject, loadProjects, type Project, projectCloneDir } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
@@ -234,7 +234,8 @@ function requirePushAuthority(project: string, word: string | null): void {
  * hook that only repeats it is skipped for exactly the gated commit. A project whose pre-push hook runs pushes in one
  * heavy-build slot and its memory-capped scope (src/fleet/build-slots.ts), since the hook may run the long check
  * itself: its cargo gets one slot's share of the cores even through `just` without toli's cargo shim, and a `bin/toli
- * gate run` it starts rides on that slot. A push is refused when the repo declares a pre-push hook
+ * gate run` it starts rides on that slot, unless the hook declares the push light under the environment it runs in
+ * (`# toli-light-push: NAME=VALUE`, lightPushCondition). A push is refused when the repo declares a pre-push hook
  * (src/projects/hooks.ts) that git would not run, so the project's own check never silently skips; `--no-hooks-ok`
  * pushes anyway. Other declared hooks that are not installed only warn.
  */
@@ -266,8 +267,12 @@ export async function pushCommand(argv: string[]): Promise<void> {
         skipHookAt === null
             ? ["git", "-C", dir, "push", "-u", "origin", `${ref}:${ref}`]
             : ["git", "-C", dir, "push", "--no-verify", "origin", `${skipHookAt}:${ref}`];
+    const hook = skipHookAt === null ? activeHookPath(dir, "pre-push") : null;
+    const light = hook === null ? null : lightPushCondition(hook);
+    if (light !== null)
+        warn(`toli: the pre-push hook declares no heavy step with ${light}: pushing without a heavy-build slot`);
     const code =
-        skipHookAt === null && activeHookPath(dir, "pre-push") !== null
+        hook !== null && light === null
             ? await withBuildSlot(dir, project, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
             : await runInherit(push, { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push origin ${branch} failed (exit ${code})`);

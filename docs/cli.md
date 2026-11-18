@@ -175,7 +175,8 @@ the interactive Sardar's subagents.
   uncommitted edits (other jawans' in a shared clone) is waited on for `--gate-wait` minutes (default 30, 0 refuses at
   once) until they are committed; a pre-push hook that runs only that recipe is skipped (`--no-verify`) for the exact
   gated commit from a clean checkout, and any other push whose project has a pre-push hook runs in one heavy-build
-  slot ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
+  slot, unless the hook declares it light under the push's environment (`# toli-light-push: NAME=VALUE`)
+  ([delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
 
 ### Jawans and harnesses
 
