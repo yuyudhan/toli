@@ -85,6 +85,13 @@ export async function until(what: string, ready: () => boolean, timeoutMs = 15_0
 
 export const toliArgs = (...args: string[]): string[] => [process.execPath, TOLI_BIN, ...args];
 
+/**
+ * A shell loop spinning on the CPU (a command at work) until `stop` exists or process `watched` (by default this test
+ * process) is gone, so a test killed or timed out mid-run never leaves it spinning (T1799).
+ */
+export const spinUntil = (stop: string, watched: number = process.pid): string =>
+    `while [ ! -e "${stop}" ] && kill -0 ${watched} 2>/dev/null; do :; done`;
+
 export type Run = { label: string; start: number; end: number; slot: string; jobs: string; args: string };
 
 /** The stub cargo's runs from its log, in the order they started. */

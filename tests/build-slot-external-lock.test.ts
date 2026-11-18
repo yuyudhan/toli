@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Resources } from "../src/fleet/resources.ts";
-import { runs, type Started, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
+import { runs, type Started, slotBox, spinUntil, start, toliArgs, until } from "./build-slot-fixture.ts";
 
 // T1660: a slot's command that waits on a lock of its own (a project's dev-DB test lock) while the build holding that
 // lock waits for the slot. The real process table (no TOLI_PROCESS_TABLE), so the waiter sees the holder's command
@@ -25,7 +25,7 @@ describe("build slots and locks taken inside the wrapped command", () => {
                     "--",
                     "sh",
                     "-c",
-                    `until mkdir "${dbLock}" 2>/dev/null; do sleep 0.5; done; cargo test; rmdir "${dbLock}"`,
+                    `until mkdir "${dbLock}" 2>/dev/null; do kill -0 ${process.pid} 2>/dev/null || exit 1; sleep 0.5; done; cargo test; rmdir "${dbLock}"`,
                 ),
                 { ...REAL_PROCESSES, STUB_LABEL: "a" },
             );
@@ -62,11 +62,7 @@ describe("build slots and locks taken inside the wrapped command", () => {
         const started: Started[] = [];
         try {
             // A command at work: a shell spinning on the CPU until told to stop.
-            const busy = start(
-                box,
-                toliArgs("build-slot", "--", "sh", "-c", `while [ ! -e "${stop}" ]; do :; done`),
-                REAL_PROCESSES,
-            );
+            const busy = start(box, toliArgs("build-slot", "--", "sh", "-c", spinUntil(stop)), REAL_PROCESSES);
             started.push(busy);
             await until(
                 "the busy command holding the slot",
@@ -85,6 +81,29 @@ describe("build slots and locks taken inside the wrapped command", () => {
             expect(runs(log)[0]).toMatchObject({ label: "b", slot: "1" });
         } finally {
             for (const proc of started) proc.proc.kill("SIGKILL");
+        }
+    }, 40_000);
+
+    test("a test killed mid-run leaves no command spinning behind (T1799)", async () => {
+        const { box } = slotBox(1, 3);
+        const stop = join(box.root, ".stop");
+        // A stand-in for the test process, killed the way a timed-out test run is: no finally ever runs.
+        const runner = Bun.spawn(["sleep", "60"]);
+        const busy = start(box, toliArgs("build-slot", "--", "sh", "-c", spinUntil(stop, runner.pid)), REAL_PROCESSES);
+        const spinning = (): boolean => Bun.spawnSync(["pgrep", "-f", stop]).stdout.toString().trim() !== "";
+        try {
+            await until(
+                "the busy command holding the slot",
+                () => (JSON.parse(box.ok(["resources", "--json"])) as Resources).buildSlotsBusy === 1,
+            );
+            expect(spinning()).toBe(true);
+            runner.kill("SIGKILL");
+            await until("the spinning command to exit", () => !spinning(), 5_000);
+            expect((await busy.done).code).toBe(0);
+        } finally {
+            runner.kill("SIGKILL");
+            busy.proc.kill("SIGKILL");
+            mkdirSync(stop, { recursive: true });
         }
     }, 40_000);
 });
