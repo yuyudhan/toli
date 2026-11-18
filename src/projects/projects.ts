@@ -49,6 +49,11 @@ export type Project = {
     deliverySetAt?: string;
     workspace: Workspace;
     workspaceSetAt?: string;
+    /**
+     * Set while a per-task project is toggled to same-branch under a live task still working in its per-task
+     * workspace (T1904): `from` is the strategy to switch back to. `workspace prepare` refuses new records meanwhile.
+     */
+    workspaceToggle?: { from: Workspace; at: string };
     standing?: Standing;
     taskBranch?: string;
     liveStack?: true;
@@ -78,6 +83,7 @@ export function loadProjects(): Project[] {
             deliverySetAt,
             workspace,
             workspaceSetAt,
+            workspaceToggle,
             standing,
             taskBranch,
             liveStack,
@@ -95,6 +101,7 @@ export function loadProjects(): Project[] {
             ...(deliverySetAt ? { deliverySetAt } : {}),
             workspace: isWorkspace(workspace) ? workspace : legacyWorkspace({ mode, branch }),
             ...(workspaceSetAt ? { workspaceSetAt } : {}),
+            ...(workspaceToggle && isWorkspace(workspaceToggle.from) ? { workspaceToggle } : {}),
             ...(standing ? { standing: { push: standing.push === true, pr: standing.pr === true } } : {}),
             ...(taskBranch ? { taskBranch } : {}),
             ...(liveStack === true ? { liveStack: true as const } : {}),

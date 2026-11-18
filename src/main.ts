@@ -54,8 +54,8 @@ const USAGE = `usage: bin/toli <command> [args]
   project list [--json] | path <name>
   project set <name> [--mode <m>] [--branch <b>|none] [--task-branch <pattern>|none] [--forge github|gitlab|bitbucket|none]
               [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
-              [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
-  project set --all --workspace <strategy>
+              [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no] [--keep]
+  project set --all --workspace <strategy> [--keep]
   project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
   project setup <name> [--json] | setup --all [--json]
   task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]

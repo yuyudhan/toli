@@ -19,10 +19,9 @@ import { loadBacklog, type Task, type TaskWorkspace, updateTask } from "../recor
 import { excludeFromIndexing } from "./indexing.ts";
 import { findProject, type Project, projectCloneDir } from "./projects.ts";
 import { DEFAULT_TASK_BRANCH, perTask } from "./strategy.ts";
+import { LIVE, refuseWhileToggled } from "./workspace-toggle.ts";
 
 const SLUG_MAX = 40;
-/** Statuses whose jawans may still be using the workspace. */
-const LIVE: readonly Task["status"][] = ["active", "held"];
 
 /**
  * A task's branch: the project's `taskBranch` pattern (DEFAULT_TASK_BRANCH when unset) with `<project>`,
@@ -263,7 +262,10 @@ export function prepareWorkspace(taskId: string, options: { reset?: boolean } = 
     return withLock(workspaceLock(found.project), () => {
         const project = findProject(found.project);
         const task = loadBacklog().tasks.find((entry) => entry.id === id) ?? found;
-        if (options.reset === true) resetRecorded(project, task, clone);
+        if (options.reset === true) {
+            refuseWhileToggled(project, task.id);
+            resetRecorded(project, task, clone);
+        }
         const recorded = task.workspace;
         if (
             recorded !== undefined &&
@@ -272,6 +274,7 @@ export function prepareWorkspace(taskId: string, options: { reset?: boolean } = 
             existsSync(recorded.path)
         )
             return recorded;
+        refuseWhileToggled(project, task.id);
         const workspace: TaskWorkspace =
             cloneOfLiveTask(project, task, clone) ??
             (project.workspace === "branch-per-task"

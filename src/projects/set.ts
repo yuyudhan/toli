@@ -3,11 +3,13 @@
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
+import { persona } from "../core/persona.ts";
 import { now, out, run, ToliError, withLock } from "../core/util.ts";
 import { overrideLabels } from "./list.ts";
 import { FORGES, type Forge, loadProjects, type Project, parseMode, updateProjects } from "./projects.ts";
-import { parseTaskBranchPattern, parseWorkspace, type Workspace } from "./strategy.ts";
+import { parseTaskBranchPattern, parseWorkspace, perTask, type Workspace } from "./strategy.ts";
 import { cloneHolders, dirty, holdersText, refExists, workspaceLock } from "./workspace.ts";
+import { liveUnder } from "./workspace-toggle.ts";
 
 /** `--forge`: one of FORGES, or `none` (null) to clear the override. */
 function parseForge(value: string | undefined): Forge | null | undefined {
@@ -57,10 +59,31 @@ function parseRole(value: string | undefined): (typeof ROLES)[number] | undefine
 /**
  * Apply a strategy to one entry. The mode stays as it is: a per-task strategy lands each task branch through a PR/MR
  * under `pr` / `no-mistakes`, and under `commit` the branch is pushed for the machine that cuts releases to merge.
+ * A switch from a per-task strategy to same-branch while live tasks still work in their per-task workspaces is
+ * recorded as a toggle (T1904), refusing new prepares until it switches back or `keep` confirms it; returns the note
+ * saying so, else null.
  */
-function applyWorkspace(project: Project, workspace: Workspace, at: string): void {
+function applyWorkspace(project: Project, workspace: Workspace, at: string, keep: boolean): string | null {
+    const previous = project.workspace;
     project.workspace = workspace;
     project.workspaceSetAt = at;
+    if (keep || workspace !== "same-branch") {
+        delete project.workspaceToggle;
+        return null;
+    }
+    const from = project.workspaceToggle?.from ?? previous;
+    const live = perTask(from) ? liveUnder(project.name, from) : [];
+    if (live.length === 0) {
+        delete project.workspaceToggle;
+        return null;
+    }
+    project.workspaceToggle ??= { from, at };
+    const tasks = live.map((task) => `${task.id} (${task.status})`).join(", ");
+    return (
+        `note: ${tasks} still works in its ${from} workspace, so projects/${project.name} counts as toggled: ` +
+        `workspace prepare refuses new tasks until it switches back to ${from}; to keep ${workspace} for them too ` +
+        `(on ${persona().user}'s word): bin/toli project set ${project.name} --workspace ${workspace} --keep`
+    );
 }
 
 /**
@@ -124,20 +147,21 @@ function setAll(args: Args): void {
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
     const workspace = parseWorkspace(value);
     const at = now().toISOString();
-    underWorkspaceLocks(
+    const notes = underWorkspaceLocks(
         loadProjects().map((project) => project.name),
         () =>
-            updateProjects((projects) => {
-                for (const project of projects) applyWorkspace(project, workspace, at);
-            }),
+            updateProjects((projects) =>
+                projects.flatMap((project) => applyWorkspace(project, workspace, at, args.bool("keep")) ?? []),
+            ),
     );
     const total = loadProjects().length;
     out(`${total} project${total === 1 ? "" : "s"}: workspace=${workspace}`);
+    for (const note of notes) out(note);
 }
 
 export function projectSetCommand(argv: string[]): void {
     const args = new Args(argv, {
-        booleans: ["all"],
+        booleans: ["all", "keep"],
         values: [
             "mode",
             "branch",
@@ -170,6 +194,8 @@ export function projectSetCommand(argv: string[]): void {
     const liveStack = parseYesNo(args.str("live-stack"), "--live-stack");
     const role = parseRole(args.str("role"));
     const releasePriority = parseYesNo(args.str("release-priority"), "--release-priority");
+    if (args.bool("keep") && workspace === undefined)
+        throw new ToliError("--keep goes with --workspace: it keeps a switch to same-branch for new tasks too");
     if (
         [
             mode,
@@ -191,7 +217,7 @@ export function projectSetCommand(argv: string[]): void {
                 "--live-stack yes|no, --role full|verify-only or --release-priority yes|no (or --all --workspace <s>)",
         );
     const at = now().toISOString();
-    const updated = underWorkspaceLocks(workspace === undefined ? [] : [name], () =>
+    const { updated, note } = underWorkspaceLocks(workspace === undefined ? [] : [name], () =>
         updateProjects((projects) => {
             const project = projects.find((entry) => entry.name === name);
             if (!project) throw new ToliError(`unknown project "${name}"`);
@@ -205,7 +231,7 @@ export function projectSetCommand(argv: string[]): void {
             else if (forge !== undefined) project.forge = forge;
             if (forgeHost === null) delete project.forgeHost;
             else if (forgeHost !== undefined) project.forgeHost = forgeHost;
-            if (workspace !== undefined) applyWorkspace(project, workspace, at);
+            const note = workspace === undefined ? null : applyWorkspace(project, workspace, at, args.bool("keep"));
             if (standingPush !== undefined || standingPr !== undefined) {
                 const standing = {
                     push: standingPush ?? project.standing?.push ?? false,
@@ -224,7 +250,7 @@ export function projectSetCommand(argv: string[]): void {
             else if (role === "full") delete project.role;
             if (releasePriority === true) project.releasePriority = true;
             else if (releasePriority === false) delete project.releasePriority;
-            return { ...project };
+            return { updated: { ...project }, note };
         }),
     );
     out(
@@ -232,6 +258,7 @@ export function projectSetCommand(argv: string[]): void {
             " ",
         ),
     );
+    if (note !== null) out(note);
     const switched = typeof branch === "string" ? switchClone(name, branch) : null;
     if (switched !== null) out(switched);
 }

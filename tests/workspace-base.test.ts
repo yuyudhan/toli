@@ -94,6 +94,35 @@ describe("workspace prepare --reset", () => {
         expect(box.ok(["workspace", "prepare", "T1"])).toContain(`branch-per-task: ${clone} on toli/m1/T1-build-api`);
     });
 
+    // T1904: a jawan toggled its worktree project to same-branch to push; a task prepared meanwhile landed on the clone.
+    test("refuses to prepare a new task while a per-task project is toggled to same-branch under a live task", () => {
+        const { box, clone } = project("worktree-per-task", "Build API", "Draft docs");
+        box.ok(["task", "start", "T1"]);
+        box.ok(["workspace", "prepare", "T1"]);
+        expect(box.ok(["project", "set", "app", "--workspace", "same-branch"])).toContain(
+            "T1 (active) still works in its worktree-per-task workspace",
+        );
+        const refused = box.toli(["workspace", "prepare", "T2"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain(
+            "refusing to prepare T2: projects/app is toggled from worktree-per-task to same-branch",
+        );
+        expect(refused.stderr).toContain("--workspace same-branch --keep");
+        expect(box.ok(["workspace", "prepare", "T1"])).toContain("worktree-per-task: ");
+        // Switching back ends the toggle: T2 gets its own worktree, never the clone.
+        box.ok(["project", "set", "app", "--workspace", "worktree-per-task"]);
+        expect(box.ok(["workspace", "prepare", "T2"])).toContain("worktree-per-task: ");
+        // A switch the user means to keep applies to new tasks.
+        box.ok(["task", "add", "app", "Ship it"]);
+        box.ok(["project", "set", "app", "--workspace", "same-branch"]);
+        expect(box.toli(["workspace", "prepare", "T3"]).code).toBe(1);
+        expect(box.toli(["project", "set", "app", "--keep"]).stderr).toContain("--keep goes with --workspace");
+        expect(box.ok(["project", "set", "app", "--workspace", "same-branch", "--keep"])).toBe(
+            "app: mode=commit workspace=same-branch",
+        );
+        expect(box.ok(["workspace", "prepare", "T3"])).toContain(`same-branch: ${clone}`);
+    });
+
     test("a strategy switch waits for a prepare in progress (the workspace lock)", () => {
         const { box } = project("worktree-per-task", "Build API");
         mkdirSync(join(box.root, "state"), { recursive: true });

@@ -14,6 +14,11 @@ one. See docs/releasing.md.
   to a subagent's `rm -rf` in that window, and the keeper's bare `done: free 10.0 GB -> 34.0 GB` took the blame. The
   contract (AGENTS.md section 7, docs/disk.md) now says targets go only through `bin/toli disk keep`, never `rm -rf`
   by hand or by a subagent: only the keeper sees a build slot's cargo, a running gate and cargo's locks.
+- `workspace prepare` (and `spawn --task`) no longer records a task on the shared clone while a jawan has its
+  worktree project briefly switched to `same-branch` to push: a switch from a per-task strategy to `same-branch`
+  while a live task still works in its per-task workspace counts as a toggle, `project set` says so, and prepare
+  refuses new tasks until the project switches back, naming the command. A switch meant to stay takes
+  `project set <p> --workspace same-branch --keep`.
 
 ## v0.5.40 - 2026-11-18
 
