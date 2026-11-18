@@ -27,6 +27,16 @@ one. See docs/releasing.md.
 - `bin/toli task hold` on a done or dropped task no longer refuses and loses the question (a long-running job asking
   after its task closed carried on with nobody seeing it): the task is reopened as held, with a note naming who
   reopened it, and the question shows in `bin/toli needs`. A jawan still holds only its own task.
+- A shared compiler cache (sccache) at its size cap no longer freezes builds for an hour: the minute tick, whatever
+  the free disk, trims a cache at 95% of its cap or more down to 80% and then, once the server runs no compiler,
+  stops it so the next compile starts a fresh one (docs/disk.md "sccache at its cap").
+- A heavy build's memory scope no longer sets a soft limit below its hard cap: with swap off, a build past the soft
+  limit was throttled indefinitely instead of finishing or failing. A lower `CARGO_BUILD_JOBS` set by the caller
+  (a gate's `CARGO_BUILD_JOBS=1`) is now kept inside a build slot instead of being raised to the machine's share.
+- Queue balancing between machines no longer offers a task another machine delegated here, so work is never
+  bounced back or handed on a second hop.
+- A delegated brief's patch text (an inlined `git format-patch` mail, a git diff, a `## PATCH` section) is left
+  unchanged when the receiver rewrites task ids in the brief, so the patch still applies.
 
 ## v0.5.34 - 2026-11-16
 
