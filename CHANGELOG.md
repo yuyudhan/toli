@@ -20,6 +20,9 @@ one. See docs/releasing.md.
 - A pid lock or record that survived a reboot (`state/peer-listener.lock`, `state/peer/listener.json`, the tick's
   locks) no longer blocks `peer serve` once its pid belongs to another program or to a process started after the
   file was written: only the toli process that wrote it holds it.
+- A peer that receives a second copy of one signed request (a sender trying its next address after the first stopped
+  answering, as happens around reboots) answers it as a `duplicate` when it was applied, else asks the sender to
+  send it again; it never refuses it as a replayed nonce, so the sender keeps the message instead of cancelling it.
 
 ## v0.5.36 - 2026-11-18
 

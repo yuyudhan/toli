@@ -87,7 +87,13 @@ export function sealEnvelope(identity: Identity, fields: Unsigned): Envelope {
     return { ...unsigned, sig: signWith(identity.privateKey, canonicalJson(unsigned)) };
 }
 
-export type Verified = { ok: true; peer: Peer; envelope: Envelope } | { ok: false; code: number; reason: string };
+/**
+ * A refused envelope's HTTP status and reason. `replay`: it is signed and in its window, only its nonce was seen, so
+ * it is a second copy of a request already checked here (applyBatch answers it by its id).
+ */
+export type Verified =
+    | { ok: true; peer: Peer; envelope: Envelope }
+    | { ok: false; code: number; reason: string; replay?: { peer: Peer; envelope: Envelope } };
 
 function shapeOf(value: unknown): Envelope | null {
     if (!isJsonObject(value)) return null;
@@ -145,7 +151,8 @@ export function verifyEnvelope(value: unknown, self: string, relayed = false): V
     } else {
         if (Math.abs(age) > CLOCK_SKEW_MS)
             return { ok: false, code: 401, reason: "sentAt outside the 5-minute window (replayed or clock skew)" };
-        if (!freshNonce(envelope.fromKey, envelope.nonce)) return { ok: false, code: 409, reason: "replayed nonce" };
+        if (!freshNonce(envelope.fromKey, envelope.nonce))
+            return { ok: false, code: 409, reason: "replayed nonce", replay: { peer, envelope } };
     }
     if (envelope.title.length > TITLE_MAX)
         return { ok: false, code: 413, reason: `title over ${TITLE_MAX} characters` };
@@ -310,6 +317,25 @@ export async function applyBatch(
     const applied = new Map<string, { count: number; oldest: number }>();
     for (const value of values) {
         const verified = verifyEnvelope(value, self, relayed);
+        if (!verified.ok && verified.replay !== undefined) {
+            // A second copy of a request this listener already took (a sender that sent one signed batch again,
+            // e.g. to its next address after the first stopped answering): the message it carries is a duplicate
+            // once applied, and otherwise still pending here, never refused, so the sender keeps it and re-signs it.
+            const { peer, envelope } = verified.replay;
+            const done = loadReceived(peer.name)[envelope.id];
+            if (done !== undefined) {
+                receipts.push({ id: envelope.id, status: "duplicate", stdout: done.stdout });
+                continue;
+            }
+            receipts.push({
+                id: envelope.id,
+                status: "failed",
+                reason: "replayed nonce: the first copy of this request is not applied here (yet); send it again",
+                stdout: "",
+                code: 409,
+            });
+            break;
+        }
         if (!verified.ok) {
             const id = isJsonObject(value) && typeof value.id === "string" ? value.id : "";
             receipts.push({ id, status: "refused", reason: verified.reason, stdout: "", code: verified.code });

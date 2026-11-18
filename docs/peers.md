@@ -32,7 +32,10 @@ JSON. The receiver checks, in order:
 3. it is addressed to this machine's fingerprint;
 4. `from` is that peer's name;
 5. `sentAt` is within 5 minutes;
-6. the nonce was not seen in the last 10 minutes;
+6. the nonce was not seen in the last 10 minutes. A seen nonce on an envelope that passed checks 1-5 is a second copy
+   of one request (a sender that sent the same signed batch again, say to its next address after the first stopped
+   answering): it gets the stored receipt as a `duplicate` when its id was applied, else `failed`, so the sender keeps
+   it and signs it afresh; such a copy is never `refused`, so a slow or restarting receiver never cancels a message;
 7. sizes: title at most 200 characters, an `inbox` body 16 KiB, a delegation 256 KiB, anything else 64 KiB;
 8. the peer has the permission the kind needs (`talk` for inbox items, `delegate`, `share`, `answer`);
 9. what the message claims: a delegation, link or share speaks only for its sender; an update comes only from the

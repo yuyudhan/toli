@@ -46,16 +46,34 @@ describe("applyEnvelope refusals", () => {
         expect(receipt?.reason).toBe("not addressed to this machine");
     });
 
-    test("a replayed nonce is refused and the message lands once", () => {
+    test("a replayed nonce of an applied message is a duplicate: it lands once and is never refused", () => {
         const recv = peerBox("recv");
         const alice = sender();
         pin(recv.box, [{ name: "alice", identity: alice }]);
         const signed = envelope(alice, "alice", recv.fingerprint);
-        expect(applyIn(recv.box, [signed])[0]?.status).toBe("applied");
+        const [first] = applyIn(recv.box, [signed]);
+        expect(first?.status).toBe("applied");
+        // The same signed request again (a sender trying its next address after the first stopped answering).
         const [replayed] = applyIn(recv.box, [signed]);
-        expect(replayed?.status).toBe("refused");
-        expect(replayed?.reason).toBe("replayed nonce");
+        expect(replayed?.status).toBe("duplicate");
+        expect(replayed?.stdout).toBe(first?.stdout ?? "");
         expect(inboxFiles(recv.box.root)).toHaveLength(1);
+    });
+
+    test("a replayed nonce of a message not applied here stays queued with its sender, never refused", () => {
+        const recv = peerBox("recv");
+        const alice = sender();
+        pin(recv.box, [{ name: "alice", identity: alice }]);
+        // Checked here (its nonce recorded), then refused on its claim: nothing was applied.
+        const signed = envelope(alice, "alice", recv.fingerprint, {
+            kind: "answer",
+            body: JSON.stringify({ id: "T999", answer: "yes" }),
+        });
+        expect(applyIn(recv.box, [signed])[0]?.status).toBe("refused");
+        const [replayed] = applyIn(recv.box, [signed]);
+        expect(replayed?.status).toBe("failed");
+        expect(replayed?.reason).toContain("replayed nonce");
+        expect(inboxFiles(recv.box.root)).toHaveLength(0);
     });
 
     test("an old sentAt (a captured request replayed later) is refused", () => {
