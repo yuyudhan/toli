@@ -5,8 +5,10 @@
 // inbox. A delegated question holds the `--for` task (src/records/delegation-sync.ts); anything else becomes a new
 // held task in the sender's project, with the question, and the options, recommendation and what it blocks when the
 // message names them. Each sender's question is held once (state/word-holds.json): a reminder repeating it, or one
-// already answered (`task answer`), never holds again, and the tick's look over the last day's inbox skips a message
-// this machine already answered with a `talk` reply quoting it (state/talk-sent.jsonl).
+// already answered (`task answer`), never holds again. The tick's look over the inbox holds only unacknowledged
+// messages that arrived since it first looked, never older ones, and skips a message this machine already answered
+// with a `talk` reply quoting it (state/talk-sent.jsonl). A Sardar citing the user's word as authority ("on Asha's
+// word", "Asha's word (date): '...'", "questions for Asha go to hub") asks nothing of him.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadMachine } from "../core/config.ts";
@@ -24,8 +26,11 @@ export type WordQuestion = { question: string; options: HoldOption[]; recommend?
 /** One held question: the task holding it and where it came from. */
 type HeldWord = { task: string; at: string; source: string };
 
-/** state/word-holds.json: held questions by sender and question; inbox items the tick already read, by file. */
-type Registry = { holds: Record<string, HeldWord>; read: Record<string, string> };
+/**
+ * state/word-holds.json: when the tick first looked at the inbox (it never holds what arrived before), held questions
+ * by sender and question, and inbox items the tick already read, by file.
+ */
+type Registry = { since?: string; holds: Record<string, HeldWord>; read: Record<string, string> };
 
 /** A held question is remembered this long, so a reminder weeks later still does not hold it twice. */
 const HELD_KEEP_MS = 60 * 86_400_000;
@@ -42,28 +47,62 @@ const NAMED_MIN = 4;
 
 const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Phrases that ask for the user's word, the installation's own user name included. */
-function wordPhrases(): RegExp[] {
+/** A mention of the user's word, and when it cites his word as authority instead of asking for it. */
+type WordPhrase = { pattern: RegExp; cites?: (before: string, after: string) => boolean };
+
+/**
+ * "Asha's word" cited, not asked for: "on/per/by Asha's word", "act on Asha's word when ...", or introducing a quote of
+ * what he said ("Asha's word (2026-11-18): '...'").
+ */
+const citesWord = (before: string, after: string): boolean =>
+    /\b(?:on|upon|per|by|under)\s+$/i.test(before) || /^\s*(?:\([^)\n]*\)\s*)?:\s*['"‘“]/.test(after);
+
+/** "questions for Asha go to hub": where his questions are sent, not one of them. */
+const routesQuestions = (_before: string, after: string): boolean =>
+    /^\s+(?:go(?:es)?|should go|(?:are|is) (?:sent|routed))\b/i.test(after);
+
+/** Phrases that mention the user's word, the installation's own user name included. */
+function wordPhrases(): WordPhrase[] {
     const user = escapeRegex(persona().user);
     return [
-        new RegExp(`\\b${user}'s word\\b`, "i"),
-        /\b[A-Z][\w-]*'s word\b/,
-        /\bthe user's word\b/i,
-        new RegExp(`\\bquestions? for (?:${user}|the user)\\b`, "i"),
-        /\bquestions? for [A-Z][\w-]*\b/,
-        /\bneeds? (?:his|her|their|your) word\b/i,
-        /\bword needed\b/i,
-        /(?:^|[.!?:;]\s+)Reply\s+(?:[`"'][^`"'\n]+[`"']|\(?\d\)?(?!\w)|yes\b|no\b)/m,
+        { pattern: new RegExp(`\\b${user}'s word\\b`, "gi"), cites: citesWord },
+        { pattern: /\b[A-Z][\w-]*'s word\b/g, cites: citesWord },
+        { pattern: /\bthe user's word\b/gi, cites: citesWord },
+        { pattern: new RegExp(`\\bquestions? for (?:${user}|the user)\\b`, "gi"), cites: routesQuestions },
+        { pattern: /\bquestions? for [A-Z][\w-]*\b/g, cites: routesQuestions },
+        { pattern: /\bneeds? (?:his|her|their|your) word\b/gi },
+        { pattern: /\bword needed\b/gi },
     ];
 }
+
+/** `Reply "<option>"`, `Reply 2`, `Reply yes`: asks for a pick in itself. */
+const REPLY_OPTION = /(?:^|[.!?:;]\s+)Reply\s+(?:[`"'][^`"'\n]+[`"']|\(?\d\)?(?!\w)|yes\b|no\b)/m;
 
 /** toli's own hold format: a `## Question` section, or a `task hold ... --question` command line. */
 const HOLD_FORMAT = [/^##\s*Question\s*$/m, /--question\s+["']/];
 
-/** Whether `text` asks for the user's word; `format` counts toli's hold format too (a peer message, not an update). */
-export function asksForWord(text: string, format: boolean): boolean {
-    if (wordPhrases().some((phrase) => phrase.test(text))) return true;
-    return format && HOLD_FORMAT.some((pattern) => pattern.test(text));
+/**
+ * Whether `text` asks for the user's word. A `peer` message (not a delegated task's held question, which asks by
+ * being held) asks only in a paragraph that is a question (has a `?`), so a Sardar relaying his rules ("merges still
+ * need his word") is not a request; toli's hold format and `Reply <option>` ask in themselves. A mention that cites
+ * his word as authority never asks.
+ */
+export function asksForWord(text: string, peer: boolean): boolean {
+    if (REPLY_OPTION.test(text) || (peer && HOLD_FORMAT.some((pattern) => pattern.test(text)))) return true;
+    const phrases = wordPhrases();
+    return text
+        .split(/\n\s*\n/)
+        .some(
+            (paragraph) =>
+                (!peer || paragraph.includes("?")) &&
+                phrases.some(({ pattern, cites }) =>
+                    [...paragraph.matchAll(pattern)].some(
+                        (match) =>
+                            cites === undefined ||
+                            !cites(paragraph.slice(0, match.index), paragraph.slice(match.index + match[0].length)),
+                    ),
+                ),
+        );
 }
 
 const collapse = (text: string): string => text.replace(/\s+/g, " ").trim();
@@ -160,7 +199,7 @@ export function messageWords(body: string): string {
 
 function loadRegistry(): Registry {
     const raw = readJson<Partial<Registry>>(paths.wordHolds(), {});
-    return { holds: raw.holds ?? {}, read: raw.read ?? {} };
+    return { ...(raw.since === undefined ? {} : { since: raw.since }), holds: raw.holds ?? {}, read: raw.read ?? {} };
 }
 
 /** Drop held questions past HELD_KEEP_MS and read marks past the scan window. */
@@ -296,16 +335,28 @@ export function answeredByTalk(from: string, receivedAt: string, question: strin
 }
 
 /**
- * The tick's look over the last day's inbox: every message another machine's lead sent with `talk` (`message from
- * <machine>`), not read before, that asks for the user's word and was not answered with a quoting `talk` reply is
- * held (holdPeerMessage). Other items (a delegated task's report, a delegation's brief) are not messages to read
- * that way: `delegation update` holds a delegated question on arrival. Returns one line per hold.
+ * The tick's look over the inbox: every message another machine's lead sent with `talk` (`message from <machine>`)
+ * that arrived since this toli first looked (`since`, at most SCAN_MS ago), is not acknowledged yet, was not read
+ * before, asks for the user's word and was not answered with a quoting `talk` reply is held (holdPeerMessage). What
+ * was in the inbox at the first look (an upgrade) was the lead's to handle already, so it is never backfilled. Other
+ * items (a delegated task's report, a delegation's brief) are not messages to read that way: `delegation update`
+ * holds a delegated question on arrival. Returns one line per hold.
  */
 export function holdInboxWords(): string[] {
     const self = loadMachine().name;
-    const since = now().getTime() - SCAN_MS;
+    const started = loadRegistry().since;
+    if (started === undefined) {
+        withLock(paths.lock("word-holds"), () => {
+            const registry = loadRegistry();
+            registry.since ??= now().toISOString();
+            writeJsonAtomic(paths.wordHolds(), registry);
+        });
+        return [];
+    }
+    const since = Math.max(Date.parse(started), now().getTime() - SCAN_MS);
     const fresh = listInbox().filter(
         (item) =>
+            item.unseen &&
             item.from !== self &&
             item.title === `message from ${item.from}` &&
             Date.parse(stampTime(item.stamp)) >= since,

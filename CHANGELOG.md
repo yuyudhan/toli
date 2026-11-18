@@ -12,6 +12,11 @@ one. See docs/releasing.md.
   in-session subagent (`task start --agent <id>`) whose harness report lapsed or never came: a subagent recorded from
   a live lead session counts as running, in the stale check and the jawan count alike, until its report says it
   ended or that session is gone.
+- Peer messages no longer turn into Needs-you holds when they were already handled or only cite the user's word: the
+  tick holds only unacknowledged `talk` messages that arrived after its first look, never the inbox it found on an
+  upgrade (v0.5.39 held every message of the last day), and a message citing his word as authority
+  (`on <name>'s word`, `<name>'s word (date): '...'`, `questions for <name> go to <machine>`) or stating a rule
+  without asking (no `?`) is no request. Holds v0.5.39 made that way are dropped by hand: `bin/toli task drop T<n>`.
 
 ## v0.5.39 - 2026-11-18
 

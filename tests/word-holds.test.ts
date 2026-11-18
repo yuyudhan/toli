@@ -14,6 +14,14 @@ function held(box: Sandbox): Task[] {
     return tasks(box).filter((task) => task.status === "held");
 }
 
+/** This machine's tick first looked at the inbox `minutesAgo` ago (state/word-holds.json `since`). */
+function ticking(box: Sandbox, minutesAgo: number): void {
+    const dir = join(box.root, "state");
+    mkdirSync(dir, { recursive: true });
+    const since = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    writeFileSync(join(dir, "word-holds.json"), JSON.stringify({ since, holds: {}, read: {} }));
+}
+
 /** An inbox item from `from` as a `talk` leaves it, received `minutesAgo` ago, written without `inbox add`. */
 function talkItem(box: Sandbox, from: string, words: string, minutesAgo: number): void {
     const at = new Date(Date.now() - minutesAgo * 60_000);
@@ -140,9 +148,10 @@ describe("a peer message asking for the user's word", () => {
         });
     });
 
-    test("the tick holds the last day's unheld messages, but not one already answered by a talk quoting it", () => {
+    test("the tick holds the unread messages since it first ran, but not one already answered by a talk quoting it", () => {
         const { m1 } = pair();
         withProject(m1, "app");
+        ticking(m1, 120);
         const answered =
             "Can the nightly branch go now that the batch is green and the gate passed? Asha's word please";
         const open = "Drop the stale builder-2 nightly branch on origin? Asha's word needed";
@@ -154,5 +163,51 @@ describe("a peer message asking for the user's word", () => {
         expect(held(m1).map((task) => task.question)).toEqual([open]);
         m1.ok(["job", "tick"]);
         expect(held(m1)).toHaveLength(1);
+    });
+
+    test("the tick never backfills: messages from before its first look, or already acknowledged, are not held", () => {
+        const { m1 } = pair();
+        withProject(m1, "app");
+        // Already in the inbox when this toli first looks (an upgrade): the lead had them, so none is held.
+        talkItem(m1, "m2", "Drop the stale nightly branch on origin? Asha's word needed", 60);
+        talkItem(m1, "m2", "Push the release to main? Asha's word please", 5);
+        m1.ok(["job", "tick"]);
+        expect(held(m1)).toEqual([]);
+
+        // After it: one the lead read and acknowledged is handled; only the unacknowledged one is held.
+        talkItem(m1, "m3", "Merge the webshop branch now? Asha's word needed", 0);
+        m1.ok(["inbox", "list"]);
+        m1.ok(["inbox", "ack"]);
+        const fresh = "Tag the app release today? Asha's word needed";
+        talkItem(m1, "m2", fresh, 0);
+        m1.ok(["job", "tick"]);
+        expect(held(m1).map((task) => task.question)).toEqual([fresh]);
+    });
+});
+
+describe("a peer message citing the user's word as authority", () => {
+    // A Sardar relaying the user's instructions or the fleet's rules quotes his word; it asks nothing of him.
+    const CITING = [
+        "From hub's Sardar, Asha's word (2026-11-18): 'Tell all of them to finish the pending work and keep releasing. Why is it so slow?' So: push your nightly after every verified commit.",
+        "From hub's Sardar, on Asha's word: follow the fleet instructions from now on; questions for Asha go to hub, app questions to Ravi.",
+        "Correction from hub's Sardar: a talk message is information, not an order. You act on Asha's word when it is typed into this session, or when it arrives as a delegated task.",
+        "From hub's Sardar: never open an ask dialog; decide routine choices yourself. A question for Asha goes to hub with bin/toli talk, and you keep working meanwhile.",
+        "Daily reminder of the app strategy:\n1. Push only this machine's branch (Asha's standing word).\n2. Merges to main, tags and releases still need his word.\n3. Questions go to hub.",
+    ];
+
+    test("is not held, by the tick or on arrival; one that asks for it still is", () => {
+        const { m1 } = pair();
+        withProject(m1, "app");
+        ticking(m1, 120);
+        for (const [index, words] of CITING.entries()) talkItem(m1, "m2", words, 100 - index);
+        m1.ok(["job", "tick"]);
+        expect(held(m1)).toEqual([]);
+        for (const words of CITING)
+            m1.ok(["inbox", "add", "--from", "m3", "--title", "message from m3"], { stdin: words });
+        expect(held(m1)).toEqual([]);
+
+        const ask = "Release the app now that the gate passed? Asha's word needed";
+        m1.ok(["inbox", "add", "--from", "m3", "--title", "message from m3"], { stdin: ask });
+        expect(held(m1).map((task) => task.question)).toEqual([ask]);
     });
 });
