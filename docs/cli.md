@@ -59,7 +59,8 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     project list [--json] | path <name>
     project set <name> [--mode <m>] [--branch <b>|none] [--base-branch <b>|none] [--task-branch <pattern>|none]
                 [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
-                [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no] [--keep]
+                [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
+                [--hook-timeout <seconds>|none|default] [--keep]
     project set --all --workspace <strategy> [--keep]
     project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
     project setup <name> [--json] | setup --all [--json]
@@ -73,9 +74,12 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
   `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)). `--live-stack yes`
   puts the project in live-stack mode ([projects.md](projects.md#live-stack-mode)). `--release-priority yes` makes
   other projects' heavy builds on this machine wait while the project's `--work release` run runs
-  ([fleet.md](fleet.md#release-priority)). Switching a per-task project to `same-branch` while a live task still
-  works in its per-task workspace records a toggle: `workspace prepare` refuses new tasks until it switches back, or
-  `--keep` keeps the switch for them too ([projects.md](projects.md#workspace-strategy)).
+  ([fleet.md](fleet.md#release-priority)). `--hook-timeout <seconds>|none|default` sets how long each of the
+  project's commit hooks may run under `bin/toli commit` (`none`: no limit; `default`: back to the machine's
+  `capacity.commitHookTimeoutSeconds`, 300 s when unset; [projects.md](projects.md#git-hooks)). Switching a per-task
+  project to `same-branch` while a live task still works in its per-task workspace records a toggle:
+  `workspace prepare` refuses new tasks until it switches back, or `--keep` keeps the switch for them too
+  ([projects.md](projects.md#workspace-strategy)).
 - `drop` keeps the clone and data unless asked; it refuses a dirty clone or unpushed commits.
 - `setup` is the per-project checklist ([projects.md](projects.md#setting-up-an-existing-project)); for one named
   project it first installs the repo's declared git hooks like `ensure` does.

@@ -61,6 +61,12 @@ export type CapacityConfig = {
      * (src/forge/gate.ts; default 30).
      */
     gateStallMinutes?: number;
+    /**
+     * Seconds each of a project's commit hooks (pre-commit, commit-msg) may run under `bin/toli commit` before it is
+     * stopped and the commit refused, or "none" for no limit; a project's own `project set --hook-timeout` wins
+     * (src/projects/commit-hooks.ts; default 300).
+     */
+    commitHookTimeoutSeconds?: number | "none";
 };
 
 /** Retention for `bin/toli prune`, in days unless named otherwise; any field left out uses its default. */

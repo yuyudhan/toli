@@ -157,12 +157,15 @@ export type RunResult = { code: number; stdout: string; stderr: string };
 
 export type RunOptions = { cwd?: string; stdin?: string; timeoutMs?: number; env?: Record<string, string | undefined> };
 
-/** Run a program synchronously; a missing binary is reported as exit 127, never thrown. */
-export function run(cmd: string[], options: RunOptions = {}): RunResult {
+/**
+ * Run a program synchronously; a missing binary is reported as exit 127, never thrown. `timedOut`: it was killed for
+ * running past `timeoutMs`.
+ */
+export function run(cmd: string[], options: RunOptions = {}): RunResult & { timedOut: boolean } {
     const program = cmd[0];
     if (program === undefined) throw new Error("run: empty command");
     const resolved = program.includes("/") ? program : Bun.which(program, { PATH: process.env.PATH ?? "" });
-    if (!resolved) return { code: 127, stdout: "", stderr: `${program}: command not found` };
+    if (!resolved) return { code: 127, stdout: "", stderr: `${program}: command not found`, timedOut: false };
     const proc = Bun.spawnSync([resolved, ...cmd.slice(1)], {
         cwd: options.cwd ?? process.cwd(),
         env: { ...process.env, ...options.env },
@@ -175,6 +178,7 @@ export function run(cmd: string[], options: RunOptions = {}): RunResult {
         code: proc.exitCode ?? 1,
         stdout: proc.stdout.toString(),
         stderr: proc.stderr.toString(),
+        timedOut: proc.exitedDueToTimeout === true,
     };
 }
 

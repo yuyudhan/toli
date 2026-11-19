@@ -1,10 +1,11 @@
 // `bin/toli project set`: record the user's delivery, base branch, forge, workspace strategy, task-branch pattern,
-// standing-grant, live-stack, role and release-priority answers.
+// standing-grant, live-stack, role, release-priority and commit-hook time-limit answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { now, out, run, ToliError, withLock } from "../core/util.ts";
+import { parseHookTimeout } from "./commit-hooks.ts";
 import { overrideLabels } from "./list.ts";
 import { FORGES, type Forge, loadProjects, type Project, parseMode, updateProjects } from "./projects.ts";
 import { parseTaskBranchPattern, parseWorkspace, perTask, type Workspace } from "./strategy.ts";
@@ -155,6 +156,7 @@ function setAll(args: Args): void {
         "live-stack",
         "role",
         "release-priority",
+        "hook-timeout",
     ].filter((flag) => args.str(flag) !== undefined);
     if (others.length > 0)
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
@@ -188,6 +190,7 @@ export function projectSetCommand(argv: string[]): void {
             "live-stack",
             "role",
             "release-priority",
+            "hook-timeout",
         ],
     });
     args.maxPositional(1);
@@ -209,6 +212,7 @@ export function projectSetCommand(argv: string[]): void {
     const liveStack = parseYesNo(args.str("live-stack"), "--live-stack");
     const role = parseRole(args.str("role"));
     const releasePriority = parseYesNo(args.str("release-priority"), "--release-priority");
+    const hookTimeout = parseHookTimeout(args.str("hook-timeout"));
     if (args.bool("keep") && workspace === undefined)
         throw new ToliError("--keep goes with --workspace: it keeps a switch to same-branch for new tasks too");
     if (
@@ -225,12 +229,14 @@ export function projectSetCommand(argv: string[]): void {
             liveStack,
             role,
             releasePriority,
+            hookTimeout,
         ].every((value) => value === undefined)
     )
         throw new ToliError(
             "nothing to set: pass --mode <m>, --branch <b>|none, --base-branch <b>|none, --task-branch <pattern>|none, --forge <f>|none, " +
                 "--forge-host <h>|none, --workspace <s>, --standing-push yes|no, --standing-pr yes|no, " +
-                "--live-stack yes|no, --role full|verify-only or --release-priority yes|no (or --all --workspace <s>)",
+                "--live-stack yes|no, --role full|verify-only, --release-priority yes|no or " +
+                "--hook-timeout <seconds>|none|default (or --all --workspace <s>)",
         );
     const at = now().toISOString();
     const { updated, note } = underWorkspaceLocks(workspace === undefined ? [] : [name], () =>
@@ -268,6 +274,8 @@ export function projectSetCommand(argv: string[]): void {
             else if (role === "full") delete project.role;
             if (releasePriority === true) project.releasePriority = true;
             else if (releasePriority === false) delete project.releasePriority;
+            if (hookTimeout === null) delete project.hookTimeoutSeconds;
+            else if (hookTimeout !== undefined) project.hookTimeoutSeconds = hookTimeout;
             return { updated: { ...project }, note };
         }),
     );

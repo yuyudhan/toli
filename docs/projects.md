@@ -311,6 +311,12 @@ per declaration: active, or what is missing and the command that installs it. Th
 already set to something else. `bin/toli project setup` lists a `hooks` item per declaration, and `bin/toli doctor`
 warns about each clone whose declared hooks are not installed.
 
+`bin/toli commit` stops a commit hook (pre-commit, commit-msg) still running after 300 s and refuses the commit. A
+project whose hooks take longer sets its own limit with `bin/toli project set <p> --hook-timeout <seconds>|none`
+(`none`: no limit; `default` goes back to the machine's), shown as `hook-timeout=` in `bin/toli project list`
+(`hookTimeoutSeconds` in `--json`). The machine's default for every project is `capacity.commitHookTimeoutSeconds` in
+`config/machine.json` (seconds or `"none"`). The refusal names both settings.
+
 `bin/toli push` refuses when the repo declares a `pre-push` hook git would not run: the project's own pre-push check
 would otherwise skip without a word, which is how pushes went out unverified before. `--no-hooks-ok` pushes anyway,
 for the rare repo whose declared hook is meant to stay off on this machine. Other declared hooks that are not

@@ -54,7 +54,11 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Ca
    `target`) are linked in at the same paths so its tools resolve. A hook that reformats or re-stages a file is
    refused, naming the files: run the formatter on them and commit again. `commit-msg` runs on a temporary message
    file, from the checkout root with `GIT_INDEX_FILE` at the private index, and a message it edits is committed as
-   edited. Repeated `-m` values become separate paragraphs, as with `git commit`.
+   edited. Repeated `-m` values become separate paragraphs, as with `git commit`. Each hook may run 300 s by
+   default; one still running then is stopped and the commit refused, naming the settings that give it longer: the
+   project's `bin/toli project set <p> --hook-timeout <seconds>|none` (`none`: no limit; `default` clears it), else
+   this machine's `capacity.commitHookTimeoutSeconds` in `config/machine.json` (seconds or `"none"`). A slow check
+   (a pre-commit hook over a large catch-up merge) gets a longer limit or none, never a patched-out one.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes (other than

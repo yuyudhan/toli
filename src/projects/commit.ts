@@ -31,6 +31,7 @@ import { out, ToliError, warn } from "../core/util.ts";
 import { DEVELOP_BRANCH } from "../release/release.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
 import { buildCommit } from "./commit-build.ts";
+import { type HookLimit, hookLimit } from "./commit-hooks.ts";
 import { adoptsMerge } from "./commit-merge.ts";
 import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
 import { perTask } from "./strategy.ts";
@@ -64,6 +65,8 @@ export type CommitRequest = {
      * cleanly may change too (recorded as `Merge-amended:` trailers).
      */
     resolved?: boolean;
+    /** How long each of the project's commit hooks may run (DEFAULT_HOOK_LIMIT, src/projects/commit-hooks.ts, if absent). */
+    hookLimit?: HookLimit;
 };
 
 /** One `--patch` file: its name as given (for errors) and its diff. */
@@ -327,6 +330,7 @@ export function commitCommand(argv: string[]): void {
         resolved: args.bool("resolved"),
         message,
         allowRevert: args.all("allow-revert"),
+        hookLimit: hookLimit(name),
     };
     if (patchOut !== undefined) {
         writePatch(exportPatch(request), resolve(process.cwd(), patchOut));

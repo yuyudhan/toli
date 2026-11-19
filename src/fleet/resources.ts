@@ -15,8 +15,7 @@ import { localQueue, type Queue } from "./queue.ts";
 
 /**
  * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskKeep`, `diskSweepStaleMinutes`, `diskBuildTools`,
- * `gateStallMinutes` and `buildMemoryMax` are not ones (see their readers below, in src/fleet/disk-alert.ts,
- * src/forge/gate.ts and src/fleet/build-slots.ts).
+ * `gateStallMinutes`, `buildMemoryMax` and `commitHookTimeoutSeconds` are not ones (each has its own reader).
  */
 export type Capacity = Required<
     Omit<
@@ -28,6 +27,7 @@ export type Capacity = Required<
         | "diskBuildTools"
         | "gateStallMinutes"
         | "buildMemoryMax"
+        | "commitHookTimeoutSeconds"
     >
 >;
 

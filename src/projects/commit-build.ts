@@ -12,7 +12,7 @@ import {
     checkReverts,
     scanLeaks,
 } from "./commit-checks.ts";
-import { commitMsgHook, preCommitHook } from "./commit-hooks.ts";
+import { commitMsgHook, DEFAULT_HOOK_LIMIT, preCommitHook } from "./commit-hooks.ts";
 import { cleanMerge, type Merge } from "./commit-merge.ts";
 import { parseHunks } from "./diff-hunks.ts";
 
@@ -120,7 +120,8 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
                       ]),
                   );
         checkReverts(dir, parent, tree, own, request.allowRevert ?? [], brought);
-        preCommitHook(attempt);
+        const limit = request.hookLimit ?? DEFAULT_HOOK_LIMIT;
+        preCommitHook(attempt, limit);
         const trailed =
             amended.length === 0
                 ? request.message
@@ -134,7 +135,7 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
                       ],
                       `${request.message}\n`,
                   );
-        const message = commitMsgHook(attempt, trailed);
+        const message = commitMsgHook(attempt, trailed, limit);
         const parents = ["-p", parent, ...(merge === null ? [] : ["-p", merge.commit])];
         const created = git(dir, ["commit-tree", tree, ...parents, "-F", "-"], `${message}\n`);
         if (created.code !== 0)

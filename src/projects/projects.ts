@@ -24,6 +24,9 @@ export type Mode = (typeof MODES)[number];
 export const FORGES = ["github", "gitlab", "bitbucket"] as const;
 export type Forge = (typeof FORGES)[number];
 
+/** A commit-hook limit as stored: a positive whole number of seconds, or `none` for no limit. */
+export type HookTimeout = number | "none";
+
 /**
  * A project cloned on this machine; `data/projects.json` lists only this machine's clones.
  * `branch`: the fixed working branch `toli commit` requires. `forge`/`forgeHost`: override origin-based detection.
@@ -38,6 +41,8 @@ export type Forge = (typeof FORGES)[number];
  * `role`: `verify-only` when this machine takes no ship work for the project (docs/projects.md "Verify-only machines").
  * `releasePriority`: while the project's `--work release` run runs, other projects' heavy builds on this machine wait
  * for it (docs/fleet.md "Release priority", src/fleet/release-priority.ts).
+ * `hookTimeoutSeconds`: how long each of the project's commit hooks may run under `bin/toli commit` (`none`: no
+ * limit); absent, the machine's capacity.commitHookTimeoutSeconds applies (src/projects/commit-hooks.ts).
  */
 export type Project = {
     name: string;
@@ -61,6 +66,7 @@ export type Project = {
     liveStack?: true;
     role?: "verify-only";
     releasePriority?: true;
+    hookTimeoutSeconds?: HookTimeout;
     /** Set for `project link`: the user's own checkout that projects/<name> is a symlink to (never deleted by toli). */
     linkedTo?: string;
 };
@@ -92,6 +98,7 @@ export function loadProjects(): Project[] {
             liveStack,
             role,
             releasePriority,
+            hookTimeoutSeconds,
             linkedTo,
         }) => ({
             name,
@@ -111,6 +118,7 @@ export function loadProjects(): Project[] {
             ...(liveStack === true ? { liveStack: true as const } : {}),
             ...(role === "verify-only" ? { role } : {}),
             ...(releasePriority === true ? { releasePriority: true as const } : {}),
+            ...(hookTimeoutSeconds === undefined ? {} : { hookTimeoutSeconds }),
             ...(linkedTo ? { linkedTo } : {}),
         }),
     );

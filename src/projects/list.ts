@@ -9,7 +9,7 @@ import { standingText } from "./strategy.ts";
 
 /**
  * `branch=`, `base-branch=`, `task-branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=`, `role=`,
- * `release-priority=` labels for the fields that are set.
+ * `release-priority=`, `hook-timeout=` labels for the fields that are set.
  */
 export function overrideLabels(project: Project): string[] {
     return [
@@ -22,6 +22,9 @@ export function overrideLabels(project: Project): string[] {
         ...(project.liveStack ? ["live-stack=yes"] : []),
         ...(project.role ? [`role=${project.role}`] : []),
         ...(project.releasePriority ? ["release-priority=yes"] : []),
+        ...(project.hookTimeoutSeconds === undefined
+            ? []
+            : [`hook-timeout=${project.hookTimeoutSeconds === "none" ? "none" : `${project.hookTimeoutSeconds}s`}`]),
     ];
 }
 
@@ -39,6 +42,7 @@ export function projectListCommand(argv: string[]): void {
                 standing: entry.standing ?? { push: false, pr: false },
                 liveStack: entry.liveStack === true,
                 releasePriority: entry.releasePriority === true,
+                hookTimeoutSeconds: entry.hookTimeoutSeconds ?? null,
                 path: paths.projectDir(entry.name),
                 cloned: isGitRepo(paths.projectDir(entry.name)),
                 linkedTo: entry.linkedTo ?? null,

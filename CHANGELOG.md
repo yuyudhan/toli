@@ -16,6 +16,12 @@ one. See docs/releasing.md.
   `bin/toli project set <p> --base-branch <b>|none` names the branch task branches start from and PR/MRs target when
   it is not the fixed `--branch` (for example a project on a nightly branch whose tasks start from `main`); unset,
   they start from `--branch` as before (docs/projects.md "Workspace strategy").
+- The time limit on a project's commit hooks is configurable. `bin/toli commit` stopped a pre-commit or commit-msg
+  hook after a fixed 300 s, so a project whose pre-commit takes longer (a large catch-up merge) could not commit
+  without patching toli. `bin/toli project set <p> --hook-timeout <seconds>|none|default` sets it per project
+  (`none`: no limit), and `capacity.commitHookTimeoutSeconds` in `config/machine.json` (seconds or `"none"`) sets the
+  machine's default, still 300 s when unset. A hook stopped at its limit now says so, naming both settings, instead of
+  reporting a failed check (docs/projects.md "Git hooks").
 
 ### Fixed
 

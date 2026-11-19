@@ -74,6 +74,7 @@ describe("fixed working branch", () => {
                 standing: { push: false, pr: false },
                 liveStack: false,
                 releasePriority: false,
+                hookTimeoutSeconds: null,
                 path: join(box.root, "projects", "old"),
                 cloned: false,
                 linkedTo: null,
