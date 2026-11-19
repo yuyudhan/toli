@@ -144,32 +144,36 @@ describe("the disk keeper beside live builds", () => {
     }
 
     test(
-        "under the emergency level it deletes every other target before one a live build compiles into",
+        "under the emergency level it deletes an idle target, never one a live build compiles into or cargo's lock holds",
         () => {
             const { alpha, beta, gamma, result } = emergency(false);
             expect(result.report.lastResort).toBe(true);
             expect(result.lines).toContain(`deleted ${join(beta, "target")}, freed `);
-            expect(result.lines).toContain(`deleted ${join(gamma, "target")}, freed `);
+            expect(result.lines).not.toContain(`deleted ${join(gamma, "target")}`);
             expect(result.lines).not.toContain("that build fails");
             expect(existsSync(rlib(alpha))).toBe(true);
+            expect(existsSync(rlib(gamma))).toBe(true);
         },
         KEEPER_MS,
     );
 
     test(
-        "under the emergency level it never deletes a target a live build compiles into, and names it when still under the floor",
+        "under the emergency level it never deletes a target in use, names each when still under the floor and pauses new jobs",
         () => {
             const { alpha, gamma, result } = emergency(true);
             const target = join(alpha, "target");
             const why = `cargo (pid 4301) builds into it (CARGO_TARGET_DIR ${target})`;
+            const lock = join(gamma, "target", "debug", ".cargo-lock");
             expect(result.report.lastResort).toBe(true);
-            expect(result.lines).toContain(
-                `kept ${target}: in use (${why}); a target a live build uses is never deleted`,
-            );
-            expect(result.lines).toContain(`deleted ${join(gamma, "target")}, freed `);
-            expect(result.lines).not.toContain(`${target} is in use`);
+            expect(result.lines).toContain(`kept ${target}: ${why}`);
+            expect(result.lines).not.toContain(`deleted ${join(gamma, "target")}`);
+            expect(result.lines).not.toContain("deleting it anyway");
             expect(result.lines).toContain(`left in use: ${target} (${why})`);
-            expect(result.report.inUseLeft).toEqual([{ path: target, reason: why }]);
+            expect(result.report.inUseLeft).toEqual([
+                { path: target, reason: why },
+                { path: join(gamma, "target"), reason: `a build holds ${lock}` },
+            ]);
+            expect(result.report.jobsPaused).toBe(true);
             expect(existsSync(rlib(alpha))).toBe(true);
         },
         KEEPER_MS,
@@ -218,6 +222,8 @@ describe("the disk keeper beside live builds", () => {
                     },
                     { path: join(beta, "target"), reason: `gate of beta (pid ${process.pid}) builds in ${beta}` },
                     { path: join(delta, "target"), reason: `rustc (pid 4302) builds with ${deps}` },
+                    // The gate holds its whole checkout: beta's dist stays too (T2030).
+                    { path: join(beta, "web", "dist"), reason: `a gate of beta (pid ${process.pid}) runs in it` },
                 ]);
                 expect(lines).toContain("done, still under the floor");
                 expect(lines).toContain(`left in use: ${join(alpha, "target")} (heavy-build slot 1`);

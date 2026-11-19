@@ -231,9 +231,7 @@ describe("docker build volumes in the keeper", () => {
                 expect(lines).toContain(
                     "removed docker volume x_target (21.5 GB), freed 9.0 GB (step 5: idle build volume)",
                 );
-                expect(lines).toContain(
-                    `kept ${join(busy, "target")} in use: free 10.0 GB is over the emergency level`,
-                );
+                expect(lines).toContain(`kept ${join(busy, "target")}: a build holds `);
                 expect(lines).toContain("kept docker volume y_target: container stack-cache-1 uses it (running)");
                 expect(lines).toContain("kept docker volume x_db_target: its name may hold data");
                 expect(lines).not.toContain("deleting it anyway");
@@ -253,10 +251,11 @@ describe("docker build volumes in the keeper", () => {
             const report = keep();
             const lines = report.lines.join("\n");
             expect(report.lastResort).toBe(true);
-            const volumeAt = lines.indexOf("removed docker volume x_target");
-            expect(volumeAt).toBeGreaterThan(-1);
-            expect(volumeAt).toBeLessThan(lines.indexOf(`deleted ${join(busy, "target")}, freed `));
-            expect(lines).toContain(`deleted ${join(busy, "target")}, freed 0.0 GB (step 7: last resort)`);
+            expect(lines).toContain("removed docker volume x_target");
+            // A target cargo's locks hold stays even then: a build folder in use is never deleted (T2030).
+            expect(lines).not.toContain(`deleted ${join(busy, "target")}`);
+            expect(existsSync(join(busy, "target", "debug", "deps", "libx.rlib"))).toBe(true);
+            expect(report.inUseLeft.map((left) => left.path)).toContain(join(busy, "target"));
             sparedTheRest(calls());
         } finally {
             release();

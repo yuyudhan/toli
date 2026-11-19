@@ -1,6 +1,8 @@
 # The disk keeper
 
-Low free disk never stops work on a toli machine. No floor refuses a spawn, a pick, or a build. When free space on
+Low free disk never stops work on a toli machine. No floor refuses a spawn, a pick, or a build; only a disk under the
+emergency level with nothing left to free but build folders in use pauses new jobs ("When only folders in use are
+left"). When free space on
 the volume holding toli is under the floor, toli deletes rebuildable output until free space is back at the floor.
 Nobody has to decide anything and nobody is asked. The floor is `capacity.diskKeepGB` in `config/machine.json`
 (default 60), but never more than 15% of the volume's size: a setting too high for a small disk would otherwise keep
@@ -9,21 +11,23 @@ is 17.5 GB, and `bin/toli disk keep` says so: `floor 17.5 GB (15% of 117.0 GB di
 it)` (`--json`: `floorGB`, `floorNote`, `diskTotalGB`; the same text reaches `logs/disk.log` whenever the keeper
 runs or skips).
 
-**A full disk means delete the build folders nothing builds into.** Every `target/` folder no live build uses can go
-when the disk is nearly full: cargo builds it again. If free space is still under the emergency level after the idle
-steps (max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper first removes Docker
-volumes of idle build output (step 5), then wipes busy targets between build steps (step 6), then deletes the
-`target/` folders left in the clones and task worktrees that no live build uses, then the rest of the build output
-(step 7), re-checking free space after each item and stopping once it is over the emergency level. It never deletes
-part of a target a build uses: a target goes whole or not at all. A target a live build compiles into (a cargo or
-rustc working there or naming it, a held heavy-build slot, a running gate in that clone; see "Live builds" below) is
-never deleted at any step, the last resort included: the keeper frees the other rebuildable folders instead, says
-which it kept (`kept <target>: in use (...)`), and a run that ends still under the floor names each one it left
-(`done, still under the floor: ...; left in use: <target> (<why>), ...`; `--json`: `inUseLeft`). A Sardar or jawan on
-any machine that finds its disk full runs `bin/toli disk keep` and never asks first, and never deletes a `target/` with
-`rm -rf` itself: only the keeper sees a cargo in a build slot, a running gate and cargo's own locks (T1901: a subagent's
-hand `rm -rf` of a target broke a `bin/toli build-slot -- cargo check` compiling into it). When free space comes back
-over the floor while the keeper lists build folders, it deletes nothing and says who freed it:
+**A full disk means delete the build folders nothing uses.** Every build folder no jawan, gate, subagent, process or
+live build uses can go when the disk is nearly full: it rebuilds itself. If free space is still under the emergency
+level after the idle steps (max(5 GB, 3% of the disk), never above the floor; `--json`: `emergencyGB`), the keeper
+removes Docker volumes of idle build output (step 5), then Playwright's browser cache (step 6, the last resort),
+re-checking free space after each item and stopping once it is over the emergency level. **A build folder in use is
+never deleted, at any step:** one in a checkout a running jawan, a live native subagent, a running gate or any process
+works in, one cargo's locks hold, one a live build compiles into (a cargo or rustc working there or naming it, a held
+heavy-build slot, a running gate; see "Live builds" below), one holding open files. The keeper says which it kept
+(`skipped <path>: <why>`, `kept <path>: <why>`), and a run that ends still under the floor names each one it left
+(`done, still under the floor: ...; left in use: <path> (<why>), ...`; `--json`: `inUseLeft`). A run that ends under
+the emergency level with such folders left pauses new jobs instead (see "When only folders in use are left"): until
+2026-11 the last resort deleted a busy checkout's build output too, and a worktree's `node_modules` went mid-gate
+(T2030). A Sardar or jawan on any machine that finds its disk full runs `bin/toli disk keep` and never asks first,
+and never deletes a `target/` with `rm -rf` itself: only the keeper sees a cargo in a build slot, a running gate and
+cargo's own locks (T1901: a subagent's hand `rm -rf` of a target broke a `bin/toli build-slot -- cargo check`
+compiling into it). When free space comes back over the floor while the keeper lists build folders, it deletes
+nothing and says who freed it:
 `done: free A -> B, freed by another process meanwhile, not the keeper`.
 
     bin/toli disk keep [--dry-run] [--floor <GB>] [--json]
@@ -39,8 +43,10 @@ over the floor while the keeper lists build folders, it deletes nothing and says
   holds up a tick. Nothing starts while a keeper runs or a live pause holds it; in a dry run nothing starts.
 - By hand, with `bin/toli disk keep`. `--dry-run` (or `TOLI_DRY_RUN=1`) lists what would go and counts each folder's
   size as freed. It makes every check a real deletion makes (cargo's locks, taken and released at once, the processes,
-  live builds and open files of step 6, open files under a `node_modules` or `dist`) and deletes nothing, so it keeps
-  what a real run would keep, with the same reason. `--floor` overrides the floor and is not capped (it is the
+  live builds and open files of a target wipe (step 1), open files under a `node_modules` or `dist`) and deletes
+  nothing, so it keeps
+  what a real run would keep, with the same reason; it never pauses jobs. `--floor` overrides the floor and is not
+  capped (it is the
   caller's choice), so a dry run with a high floor shows the whole plan.
 
 Only one keeper runs at a time (`state/disk-keep.lock` holds its pid). Every action goes to `logs/disk.log`. A reason
@@ -88,13 +94,11 @@ It stops as soon as free space is back at the floor: no margin on top, since eve
 that is one a build would have reused, and the keeper runs again before the next jawan starts and every minute
 anyway. Within each step it takes the least recently used folders first (by the newest modification time of the
 folder and its direct children: a build rewrites `target/debug`, `node_modules/.bin`), so the output of the work
-going on now goes last. Steps 1 to 5 spare build output in use; steps 6 and 7, under the emergency level only, take
-the build output of busy checkouts too, but never a target a live build uses. Steps 5 to 7 run only under the
-emergency level and stop as soon as free space is over it, so build output of busy checkouts goes only when nothing
-idle is left. Each item freed is logged with its size and its step (`deleted <path>, freed
+going on now goes last. No step takes build output in use. Steps 5 and 6 run only under the emergency level and stop
+as soon as free space is over it. Each item freed is logged with its size and its step (`deleted <path>, freed
 X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0 GB (step 5: idle build volume)`).
 
-0. Leftovers of an interrupted target wipe (see 6): every untracked `<name>.toli-wipe-<ms>` folder of a checkout, which
+0. Leftovers of an interrupted target wipe (see 1): every untracked `<name>.toli-wipe-<ms>` folder of a checkout, which
    nothing builds into any more, is deleted whole before anything else, root-owned files through a throwaway container
    as in step 1 (`deleted <path>, freed X GB (step 0: leftover of an interrupted target wipe)`, or `kept <path>: ...`
    with the reason).
@@ -103,12 +107,48 @@ X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0
    that nothing uses. A checkout is all registered projects' clones plus their git worktrees. Nothing uses it when no
    running jawan works in it (or, for a main clone, on its project), no live native subagent's task records it as its
    workspace (whatever the task's status: a follow-up in a done task's worktree runs no process there between two
-   commands; `skipped <dir>: T<n>'s jawan <id> works in it`), and no process has its working directory inside it. The
-   same check holds `node_modules/` and `dist/` in step 2. The wipe still takes cargo's locks and checks that no
-   process and no live build uses the target (see 6 and
+   commands; `skipped <dir>: T<n>'s jawan <id> works in it`), no running gate checks it (`bin/toli gate run`, `push
+--gate`, the pre-push hook; `skipped <dir>: a gate of <project> (pid N) runs in it`), and no process has its working
+   directory inside it. The same check holds `node_modules/` and `dist/` in step 2. The wipe still takes cargo's locks
+   and checks that no process and no live build uses the target (below and
    "Live builds"), so a build or test started from elsewhere is never cut off: the target is kept
    (`kept <target>: cargo (pid N) builds into it (CARGO_TARGET_DIR <dir>)`) and the keeper moves on to the next
    folder.
+
+    The wipe takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; cargo holds
+    them while it compiles) and then checks that no process and no live build (see "Live builds") uses the target.
+    Cargo releases its locks before it runs
+    the test binaries, so the locks alone are not enough. The target is in use when, from the process table (`ps`,
+    then each process's executable, mapped files and working directory: `lsof -d cwd,txt` on macOS, `/proc/<pid>/exe`
+    and `/proc/<pid>/cwd` on Linux), any process runs an executable or maps a file under it, works inside its
+    workspace (the folder holding `target/`), or is `cargo`, `rustc`, `rustdoc`, `clippy-driver`, `just` or one of the
+    machine's own build tools (`capacity.diskBuildTools`, below) working in, above, or naming that workspace; when a
+    cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) runs in the folder holding the target (`cargo test`
+    drops its locks before it runs the test binaries one after
+    another); or when any process holds a file under it open. A process table it cannot read counts as in use. A
+    process of the user's that cannot be inspected (lsof leaves out one caught mid-exec; Linux hides the files of one
+    that is not dumpable, such as `systemd --user`, or one in a container) counts as in use only when its command
+    line could run from the target: the command line names the target or its workspace, or its program is a file in
+    the target (a relative program counts when it names one from a parent folder of the target). For a process in a
+    container (its `/proc/<pid>/cgroup` names a container id) the program is looked up through the folders its
+    `/proc/<pid>/mountinfo` mounts from the host, so another project's target, which no mount shows, stays free. On
+    Linux every one of these checks, and the working directories and open files of steps 1 and 2, reads `/proc`
+    (`/proc/<pid>/cwd`, `exe`, `maps`, `fd/*`, `comm`), so they hold where `lsof` is not installed. Each skip is
+    logged with its reason. Only then does it rename the folder aside under the locks (`<target>.toli-wipe-<ms>`; the
+    checkout's `.git/info/exclude` gets `*.toli-wipe-*` first, so `git status` and any dirty-tree check never list it),
+    release them, and delete the renamed tree (where the rename fails, as it can on a full disk, it deletes the folder
+    in place under the locks). A cargo that starts meanwhile waits on the lock, then builds into an empty target.
+    Files a container wrote as root (a `target/` or `node_modules/` a compose stack built into) go through the same
+    throwaway container as a no-mistakes run's (step 1), never sudo; a tree that still stays is logged
+    (`kept <target>: renamed aside to <path>, which stays: <why>`) and deleted first by the next keeper run (step 0
+    above), as is one a killed keeper left behind.
+
+    A target that is in use right now (jawans building it back to back hold its lock all the time) is kept whole:
+    the keeper never deletes part of a target under a live build. Cargo links up-to-date artifacts it compiled hours
+    ago, so artifacts left unwritten for hours are not stale to a running build, and deleting them breaks it at link
+    time (`crate ... required in rlib format, but was not found`). A target a live build uses never goes, nor one a
+    lock or an open file holds. The keeper tries the wipe once; it checks
+    `state/disk-keep.pause` before the wipe, so a job that writes the pause is not cut off.
 
     no-mistakes runs each gate push in a detached worktree, `$NM_HOME/worktrees/<repo>/<run>` (`NM_HOME` defaults to
     `~/.no-mistakes`), and removes it when the run ends, best effort: a run whose checks started a compose stack leaves
@@ -132,7 +172,7 @@ them (never sudo)`).
    clone's `node_modules/` is never deleted: builds run there between jobs (a project's build queue) and do not
    reinstall dependencies on their own, while cargo rebuilds a wiped `target/` by itself.
 3. Docker: `docker builder prune -af`, then `docker image prune -f` (dangling images only); under the emergency level
-   (see 7) `docker image prune -af`, every image no container uses. This step never touches volumes or containers
+   (see 6) `docker image prune -af`, every image no container uses. This step never touches volumes or containers
    (step 5 removes idle build-output volumes). A prune
    deletes what a pull or build in flight has fetched but not yet tagged or started (a `lease does not exist` or
    `lchown ... no such file` failure of `docker pull`), and an unused image a minute-old pull just left is gone before
@@ -151,7 +191,7 @@ them (never sudo)`).
 4. sccache: when its local cache is over its own cap, the oldest entries until it is back under the cap. A missing
    entry is only a cache miss. A cache at its cap is also handled on every tick, whatever the free disk (see "sccache
    at its cap" below).
-5. Only under the emergency level (see 7): Docker volumes of idle build output, largest first (sizes from `docker
+5. Only under the emergency level (see 6): Docker volumes of idle build output, largest first (sizes from `docker
 system df -v`), until free space is over that level. A volume is build output only when its name says so (ends in
    `target`, as `demo_backend_target` or `app-target` do, or contains `cargo` or `node_modules`) or a container mounts
    it at a `target` or `node_modules` folder or a `cargo` path (`/app/target`, `/usr/local/cargo/registry`). Never
@@ -171,61 +211,35 @@ stopped container <c> mounts it and its image postgres:16 keeps data`, `... it a
    `buildx`, `compose up` or `load` runs (`docker volumes: skipped (pid N ... is running)`). Docker's build cache
    already went in step 3. On macOS Docker Desktop keeps volumes in its VM disk image, so the host may get the space
    back only later; the keeper logs what free space actually gained.
-6. Only under the emergency level (see 7): every `target/` still left, busy checkouts included, between build steps.
-   Over that level a target in use is left whole (`kept <target> in use: free X GB is over the emergency level Y GB`):
-   its build may have run for an hour, and the disk is not yet full.
-   The keeper takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; cargo holds
-   them while it compiles) and then checks that no process and no live build (see "Live builds") uses the target.
-   Cargo releases its locks before it runs
-   the test binaries, so the locks alone are not enough. The target is in use when, from the process table (`ps`,
-   then each process's executable, mapped files and working directory: `lsof -d cwd,txt` on macOS, `/proc/<pid>/exe`
-   and `/proc/<pid>/cwd` on Linux), any process runs an executable or maps a file under it, works inside its
-   workspace (the folder holding `target/`), or is `cargo`, `rustc`, `rustdoc`, `clippy-driver`, `just` or one of the
-   machine's own build tools (`capacity.diskBuildTools`, below) working in, above, or naming that workspace; when a
-   cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) runs in the folder holding the target (`cargo test`
-   drops its locks before it runs the test binaries one after
-   another); or when any process holds a file under it open. A process table it cannot read counts as in use. A
-   process of the user's that cannot be inspected (lsof leaves out one caught mid-exec; Linux hides the files of one
-   that is not dumpable, such as `systemd --user`, or one in a container) counts as in use only when its command
-   line could run from the target: the command line names the target or its workspace, or its program is a file in
-   the target (a relative program counts when it names one from a parent folder of the target). For a process in a
-   container (its `/proc/<pid>/cgroup` names a container id) the program is looked up through the folders its
-   `/proc/<pid>/mountinfo` mounts from the host, so another project's target, which no mount shows, stays free. On
-   Linux every one of these checks, and the working directories and open files of steps 1 and 2, reads `/proc`
-   (`/proc/<pid>/cwd`, `exe`, `maps`, `fd/*`, `comm`), so they hold where `lsof` is not installed. Each skip is
-   logged with its reason. Only then does it rename the folder aside under the locks (`<target>.toli-wipe-<ms>`; the
-   checkout's `.git/info/exclude` gets `*.toli-wipe-*` first, so `git status` and any dirty-tree check never list it),
-   release them, and delete the renamed tree (where the rename fails, as it can on a full disk, it deletes the folder
-   in place under the locks). A cargo that starts meanwhile waits on the lock, then builds into an empty target.
-   Files a container wrote as root (a `target/` or `node_modules/` a compose stack built into) go through the same
-   throwaway container as a no-mistakes run's (step 1), never sudo; a tree that still stays is logged
-   (`kept <target>: renamed aside to <path>, which stays: <why>`) and deleted first by the next keeper run (step 0
-   above), as is one a killed keeper left behind.
-
-    A target that is in use right now (jawans building it back to back hold its lock all the time) is kept whole:
-    the keeper never deletes part of a target under a live build. Cargo links up-to-date artifacts it compiled hours
-    ago, so artifacts left unwritten for hours are not stale to a running build, and deleting them breaks it at link
-    time (`crate ... required in rlib format, but was not found`). A target a live build uses never goes; one only
-    a lock or an open file held may go in step 7, whole. The keeper tries the wipe once; it checks
-    `state/disk-keep.pause` before the wipe, so a job that writes the pause is not cut off.
-
-7. The last resort, only when free space is still under the emergency level after steps 1 to 6: max(5 GB, 3% of the
+6. The last resort, only when free space is still under the emergency level after steps 1 to 5: max(5 GB, 3% of the
    disk), never above the floor (6.8 GB on a 228 GB disk, 14 GB on a 468 GB one). Under the floor but over that
-   level the keeper stops after step 4 (`done, still under the floor`) and build output in use stays. Under it,
-   the `target/` folders still there that no live build uses, held lock or not, are deleted outright, one at a time
-   until free space is over that level (`free X GB is under the emergency level Y GB: deleting every build folder
-left that no live build uses, until free space is over that level`). A target a live build compiles into stays
-   even here (`kept <target>: in use (cargo (pid N) builds into it (...)); a target a live build uses is never
-deleted`): a push gate that loses hours of build output costs more than the space. Then, while it is still under
-   that level, the `node_modules/` (never a main clone's, see 2) and `dist/` left (Vite's cache is
-   `node_modules/.vite`, so it goes with them) and Playwright's downloaded browsers (the `chromium-1140`-style folders
-   in `PLAYWRIGHT_BROWSERS_PATH`, else `~/Library/Caches/ms-playwright` on macOS and `~/.cache/ms-playwright` on
-   Linux; `playwright install` fetches them again). Docker's build cache already went in step 3, its idle build
-   volumes in step 5. Each deletion is logged with what it freed (`deleted <path>, freed X GB (step 7: last
-resort)`), and a folder of a busy checkout first with why it was busy (`<path> is in use (...): deleting it
-anyway`); `--json` sets `lastResort`. A run that still ends under the floor names the targets live builds kept
-   (`left in use: ...`, `--json`: `inUseLeft`). A folder a live container mounts stays too (see "What it never
-   deletes").
+   level the keeper stops after step 4 (`done, still under the floor`). Under it, Playwright's downloaded browsers go
+   (the `chromium-1140`-style folders in `PLAYWRIGHT_BROWSERS_PATH`, else `~/Library/Caches/ms-playwright` on macOS
+   and `~/.cache/ms-playwright` on Linux; `playwright install` fetches them again), unless a process holds a file in
+   them open (`free X GB is under the emergency level Y GB: deleting Playwright's browsers; build folders in use
+stay`, `deleted <path>, freed X GB (step 6: last resort)`); `--json` sets `lastResort`. Docker's build cache
+   already went in step 3, its idle build volumes in step 5. Build output in use stays even here, as does a folder a
+   live container mounts (see "What it never deletes"). A run that still ends under the floor names every folder it
+   left in use (`left in use: <path> (<why>), ...`, `--json`: `inUseLeft`).
+
+### When only folders in use are left
+
+A run that ends under the emergency level with build folders in use left pauses new jobs: it writes
+`state/disk-hold.json` (why, since when, and until when: 30 minutes on, renewed by every keeper run that ends the same
+way) and, when the pause starts, posts one inbox item, `disk full on <machine>: new jobs paused, only build folders in
+use left`, naming each folder and what uses it (`new jobs paused until free disk is over the emergency level (...);
+alert posted to the inbox` in `logs/disk.log`; `--json`: `jobsPaused`). While it holds:
+
+- a new jawan run is queued, not started (`queued <run>: new jobs paused (since <time>): <why>; it starts once the
+disk keeper lifts the pause`); `bin/toli spawn --now` still starts one;
+- queued jawan runs stay queued (the tick and a finishing run's supervisor start none);
+- the tick starts no scheduled job (`due jobs not started: <names>: new jobs paused ...` in `logs/tick.log`); each
+  stays due and runs once the pause lifts. `bin/toli job run <name>` by hand still runs.
+
+Running work goes on: as it ends, its folders are no longer in use and the next keeper run (every minute from the
+tick while free disk is under the floor) frees them. A keeper run that ends over the emergency level, or a tick that
+finds free disk back over the floor, lifts the pause (`new jobs resume: free X GB is ...`); a pause no keeper renews
+lapses after its 30 minutes.
 
 ### Live builds
 

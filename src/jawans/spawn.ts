@@ -10,6 +10,7 @@ import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError, warn } from "../core/util.ts";
+import { currentDiskHold, diskHoldText } from "../fleet/disk-hold.ts";
 import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
 import { refuseHeadlessSpawnWhenFull } from "../fleet/full.ts";
 import {
@@ -232,11 +233,14 @@ export function spawnCommand(argv: string[]): void {
         return;
     }
     if (run.replaces !== undefined) out(`replaced ${run.replaces.join(", ")} (stopped as \`bin/toli run kill\` does)`);
-    if (run.status === "queued")
-        out(
-            `queued ${run.id}: all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees (\`bin/toli runs\`). Log ${relative(paths.root(), run.logPath)}`,
-        );
-    else
+    if (run.status === "queued") {
+        const hold = currentDiskHold();
+        const why =
+            hold === null
+                ? `all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees`
+                : `${diskHoldText(hold)}; it starts once the disk keeper lifts the pause (\`spawn --now\` starts it anyway)`;
+        out(`queued ${run.id}: ${why} (\`bin/toli runs\`). Log ${relative(paths.root(), run.logPath)}`);
+    } else
         out(
             `spawned ${run.id}: ${modelText(run)} in ${run.cwd} (supervisor pid ${run.supervisorPid}); log ${relative(paths.root(), run.logPath)}`,
         );

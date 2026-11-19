@@ -30,6 +30,15 @@ one. See docs/releasing.md.
   one fleet review) because the user could not answer them by number; a free-text `--recommend` without options is
   gone with them.
 
+- The disk keeper never deletes a build folder in use, its last resort included: one in a checkout a running jawan,
+  live subagent, running gate (now counted for `node_modules/` and `dist/` too) or process works in, one under cargo's
+  locks or a live build, one holding open files. The last resort deleted a busy checkout's build output under the
+  emergency level and took a worktree's `node_modules` mid-gate at 6.6 GB free; it now takes only Playwright's
+  browser cache. A run that ends under the emergency level with only folders in use left pauses new jobs instead
+  (`state/disk-hold.json`): one inbox item `disk full on <machine>: new jobs paused, ...` names each folder and what
+  uses it, new jawan runs queue (`spawn --now` still starts one), queued runs and scheduled jobs wait, and the pause
+  lifts once free disk is back over the emergency level (docs/disk.md "When only folders in use are left").
+
 - A scheduled job's headless run has a deadline: `maxMinutes` in its `config/jobs.json` entry (`bin/toli job add
 --max-minutes <n>|none`), 30 minutes when unset. A 4-minute job ran 2 hours on a swapping machine because a run
   that kept making progress had no time limit. A run still going at its deadline is stopped and its result says

@@ -190,6 +190,8 @@ export const paths = {
     diskDockerPrune: () => join(repoRoot(), "state", "disk-docker-prune.json"),
     /** Touched when the last low-disk alert went out with capacity.diskKeep false (src/fleet/disk-alert.ts). */
     diskAlertStamp: () => join(repoRoot(), "state", "disk-alert.stamp"),
+    /** Set while the disk is under the emergency level with only build folders in use left: new jobs wait (disk-hold.ts). */
+    diskHold: () => join(repoRoot(), "state", "disk-hold.json"),
     /** One flock'd file per heavy-build slot, `<n>.lock` (src/fleet/build-slots.ts). */
     buildSlotsDir: () => join(repoRoot(), "state", "build-slots"),
     /** The cargo shim jawans get first on PATH; it routes heavy cargo commands through a build slot. */

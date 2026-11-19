@@ -2,7 +2,7 @@
 // subagent jawans share. A new run is recorded, then started at once when a slot is free (or with `spawn --now`),
 // otherwise left `queued`; queued runs start oldest first as slots free, from the supervisor of each finishing run and
 // from the minute tick. Before any start, the disk keeper frees build output when the disk is low (src/fleet/disk.ts):
-// low disk never holds a run.
+// low disk holds a run only when the keeper is left with build folders in use alone (a disk hold, disk-hold.ts).
 import { spawn as spawnChild } from "node:child_process";
 import {
     closeSync,
@@ -20,6 +20,7 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { currentDiskHold } from "../fleet/disk-hold.ts";
 import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
 import { LEAD_TURN_ENV } from "../fleet/full.ts";
 import { subagentJawans } from "../fleet/queue.ts";
@@ -241,8 +242,8 @@ function launch(id: string): JawanRun {
 }
 
 /**
- * Record a new run, name it as its task's agent, and start it if a jawan slot is free (always with `now`); otherwise
- * it stays `queued`.
+ * Record a new run, name it as its task's agent, and start it if a jawan slot is free and no disk hold pauses new jobs
+ * (src/fleet/disk-hold.ts); always with `now`. Otherwise it stays `queued`.
  */
 export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun {
     keepDiskBeforeWork();
@@ -260,7 +261,7 @@ export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun
                     delete entry.waitingOn;
                 }
             });
-        if (options.now || busySlots() < jawanSlots()) return launch(run.id);
+        if (options.now || (busySlots() < jawanSlots() && currentDiskHold() === null)) return launch(run.id);
         return updateRun(run.id, (record) => {
             record.queuedAt = record.startedAt;
         });
@@ -293,11 +294,12 @@ export type DrainResult = { started: JawanRun[]; failed: { run: JawanRun; error:
 /**
  * Start queued runs, oldest first, while jawan slots are free. A run that cannot start is recorded failed.
  * `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached). A headless lead
- * turn under `lead.dispatch: "subagents"` is refused and starts none.
+ * turn under `lead.dispatch: "subagents"` is refused and starts none; while a disk hold pauses new jobs none start.
  */
 export function startQueued(options: { diskKept?: boolean } = {}): DrainResult {
     refuseHeadlessDispatch("start queued runs");
     if (options.diskKept !== true) keepDiskBeforeWork();
+    if (currentDiskHold() !== null) return { started: [], failed: [] };
     return withLock(paths.lock(SLOTS_LOCK), () => {
         const result: DrainResult = { started: [], failed: [] };
         const queued = listRuns()

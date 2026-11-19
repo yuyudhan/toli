@@ -7,6 +7,7 @@ import { now, out, pidAlive, readJson, ToliError } from "../core/util.ts";
 import { resumeDevStacksWhenIdle } from "../fleet/build-slots.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { currentDiskHold, diskHoldText } from "../fleet/disk-hold.ts";
 import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import type { RunRecord } from "../fleet/resources.ts";
@@ -150,12 +151,20 @@ function failStaleRuns(): string[] {
 /**
  * Claim and run every job due on this machine, each in its own headless omp, and wait for all of them.
  * Claiming goes through beginJob's lock, so a job another runner already claimed is skipped, never run twice. A job
- * whose model is paused by a rate/usage limit is skipped, its window kept for one run after the reset.
+ * whose model is paused by a rate/usage limit is skipped, its window kept for one run after the reset. While a disk
+ * hold pauses new jobs (src/fleet/disk-hold.ts) none starts; each stays due until the hold lifts.
  */
 async function runDueJobs(origin: string): Promise<void> {
     const at = now();
     const machine = loadMachine();
-    const runs = dueJobs(at, machine).map(async (job) => {
+    const due = dueJobs(at, machine);
+    const hold = currentDiskHold();
+    if (hold !== null) {
+        if (due.length > 0)
+            log(`due jobs not started: ${due.map((job) => job.name).join(", ")}: ${diskHoldText(hold)}`);
+        return;
+    }
+    const runs = due.map(async (job) => {
         const pause = limitPauseFor(job, at);
         if (pause !== null) {
             const notice = noticePause(machine, job.name, pause);

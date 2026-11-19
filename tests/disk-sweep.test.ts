@@ -98,7 +98,7 @@ describe("sweeping stale artifacts out of a cargo target", () => {
         expect(atimeVerdict("darwin", ["apfs", "noatime", "strictatime"], 180).atime).toBe(false);
     });
 
-    test("under the emergency level disk keep never sweeps part of a target a build keeps locked; the last resort deletes it whole", () => {
+    test("under the emergency level disk keep never sweeps part of a target a build keeps locked, nor deletes it whole", () => {
         const box = sandbox();
         box.ok(["init", "--name", "m1", "--role", "coordinator"]);
         const clone = realpathSync(withProject(box, "alpha"));
@@ -125,8 +125,9 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
             expect(lines).toContain(`kept ${target}: a build holds ${lock}`);
             expect(lines).not.toContain("stale artifacts");
             expect(report.lastResort).toBe(true);
-            expect(lines).toContain(`${target} is in use (a build holds ${lock}): deleting it anyway`);
-            expect(existsSync(target)).toBe(false);
+            expect(lines).not.toContain("deleting it anyway");
+            expect(existsSync(target)).toBe(true);
+            expect(report.inUseLeft).toContainEqual({ path: target, reason: `a build holds ${lock}` });
         } finally {
             release();
         }
@@ -152,7 +153,6 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
             expect(report.emergencyGB).toBe(6);
             expect(report.lastResort).toBe(false);
             expect(lines).toContain(`kept ${target}: a build holds ${lock}`);
-            expect(lines).toContain(`kept ${target} in use: free 20.0 GB is over the emergency level 6.0 GB`);
             expect(lines).not.toContain("stale artifacts");
             for (const path of [...stale, ...fresh, lock]) expect(existsSync(path)).toBe(true);
         } finally {

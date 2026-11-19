@@ -98,8 +98,7 @@ describe("disk keeper", () => {
             expect(lines).not.toContain(`would delete ${join(busy, "web", "node_modules")}`);
             expect(lines).not.toContain("docs/dist");
             expect(lines).toContain("docker: skipped (daemon not reachable)");
-            expect(lines).toContain(`kept ${join(busy, "target")} in use: free 100.0 GB is over the emergency level`);
-            const order = ["alpha/target", "T1/web/node_modules", "docker:", "beta/target in use"];
+            const order = ["alpha/target", "T1/web/node_modules", "docker:"];
             const at = order.map((text) => lines.indexOf(text));
             expect(at).toEqual([...at].sort((a, b) => a - b));
             expect(existsSync(join(idle, "target"))).toBe(true);
@@ -169,41 +168,108 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
         return { idle, busy, release: holdLock(join(busy, "target", "debug", ".cargo-lock")) };
     }
 
+    // T2030: a builder's keeper deleted a worktree's node_modules mid-gate at 6.6 GB free.
     keeperTest(
-        "still under the emergency level after the normal tiers, it deletes held build output too, never sources, git or a main clone's node_modules",
+        "still under the emergency level after the normal tiers, it never deletes a build folder in use: it pauses new jobs and alerts once",
         () => {
             const box = keeperBox();
             const { idle, busy, release } = heldTree(box, 1);
+            // A worktree of alpha a push gate is checking right now (its runner, this test, is alive).
+            const copy = join(box.root, "projects", ".worktrees", "alpha", "T1");
+            box.git(idle, ["worktree", "add", "--detach", copy]);
+            const tree = realpathSync(copy);
+            const deps = join(tree, "web", "node_modules");
+            mkdirSync(join(deps, "pkg"), { recursive: true });
+            writeFileSync(join(deps, "pkg", "index.js"), "1\n");
+            const gates = join(box.root, "state", "gates", "alpha");
+            mkdirSync(gates, { recursive: true });
+            const gate = { project: "alpha", sha: "a".repeat(40), tree: "b".repeat(40), recipe: "just verify" };
+            writeFileSync(
+                join(gates, `${"b".repeat(40)}-0123456789abcdef.json`),
+                JSON.stringify({
+                    ...gate,
+                    dir: tree,
+                    status: "running",
+                    pid: process.pid,
+                    startedAt: "",
+                    endedAt: null,
+                }),
+            );
             const browsers = join(box.root, ".playwright");
             mkdirSync(join(browsers, "chromium-1140"), { recursive: true });
             writeFileSync(join(browsers, "chromium-1140", "chrome"), "x");
             writeFileSync(join(browsers, "notes.txt"), "not a browser\n");
+            const env = { TOLI_DRY_RUN: "0" };
+            const alerts = (): string[] =>
+                (JSON.parse(box.ok(["inbox", "list", "--json"])) as { title: string }[])
+                    .map((item) => item.title)
+                    .filter((title) => title.startsWith("disk full on m1"));
             try {
                 const keep = ["disk", "keep", "--floor", "50", "--json"];
-                const report = JSON.parse(box.ok(keep, { env: { TOLI_DRY_RUN: "0" } })) as KeepReport;
+                const report = JSON.parse(box.ok(keep, { env })) as KeepReport;
                 const lines = report.lines.join("\n");
                 expect(report.emergencyGB).toBe(6);
                 expect(report.lastResort).toBe(true);
-                expect(lines).toContain("free 1.0 GB is under the emergency level 6.0 GB: deleting every build folder");
                 expect(lines).toContain(`deleted ${join(idle, "target")}, freed `);
-                expect(lines).toContain(`kept ${join(busy, "target")}: a build holds `);
-                expect(lines).toContain(`${join(busy, "target")} is in use (a build holds `);
-                expect(lines).toContain(`deleted ${join(busy, "target")}, freed `);
-                expect(lines).toContain(`kept ${join(busy, "web", "node_modules")}: a main clone's dependencies`);
+                expect(lines).toContain(`skipped ${join(busy, "target")}: jawan j-20261105-000000-test works in it`);
+                expect(lines).toContain(`skipped ${deps}: a gate of alpha (pid ${process.pid}) runs in it`);
                 expect(lines).toContain(`deleted ${join(browsers, "chromium-1140")}, freed `);
-                for (const gone of ["target", "web/dist"]) expect(existsSync(join(busy, gone))).toBe(false);
-                // Even the last resort spares a main clone's dependencies: its builds cannot reinstall them.
-                expect(existsSync(join(busy, "web", "node_modules", "pkg", "index.js"))).toBe(true);
-                expect(existsSync(join(browsers, "chromium-1140"))).toBe(false);
+                expect(lines).not.toContain("deleting it anyway");
+                for (const kept of ["target/debug/deps/libx.rlib", "web/dist/app.js", "web/node_modules/pkg/index.js"])
+                    expect(existsSync(join(busy, kept))).toBe(true);
+                expect(existsSync(join(deps, "pkg", "index.js"))).toBe(true);
                 expect(readFileSync(join(browsers, "notes.txt"), "utf8")).toBe("not a browser\n");
                 expect(readFileSync(join(busy, "main.rs"), "utf8")).toBe("fn main() {}\n");
-                expect(readFileSync(join(busy, "docs", "dist", "page.html"), "utf8")).toBe("tracked\n");
-                expect(box.git(busy, ["log", "--format=%s", "-1"])).toBe("tracked dist");
+                expect(report.inUseLeft).toContainEqual({
+                    path: join(busy, "target"),
+                    reason: "jawan j-20261105-000000-test works in it",
+                });
+                expect(report.inUseLeft).toContainEqual({
+                    path: deps,
+                    reason: `a gate of alpha (pid ${process.pid}) runs in it`,
+                });
+                expect(report.jobsPaused).toBe(true);
+                expect(lines).toContain("new jobs paused until free disk is over the emergency level");
+                expect(alerts()).toEqual(["disk full on m1: new jobs paused, only build folders in use left"]);
+
+                // While paused a new jawan run queues, saying why; the keeper it runs first renews the pause, no new
+                // alert; the tick starts no queued run.
+                box.stub("omp", "true");
+                const brief = join(box.root, "brief.md");
+                writeFileSync(brief, "TOLI_BRIEF v1\nsay hi\n");
+                const spawned = box.ok(["spawn", "--harness", "omp", "--brief", brief, "--cwd", box.root], { env });
+                expect(spawned).toMatch(
+                    /^queued j-\S+: new jobs paused \(since \S+\): free 1\.0 GB is under the emergency level/m,
+                );
+                expect(alerts()).toHaveLength(1);
+                box.ok(["job", "tick"], { env });
+                const id = /^queued (j-\S+):/m.exec(spawned)?.[1];
+                const runs = JSON.parse(box.ok(["runs", "--json"])) as { id: string; status: string }[];
+                expect(runs.find((run) => run.id === id)?.status).toBe("queued");
             } finally {
                 release();
             }
         },
     );
+
+    keeperTest("a disk hold lifts once free disk is back over the floor", () => {
+        const box = keeperBox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        mkdirSync(join(box.root, "state"), { recursive: true });
+        const until = new Date(Date.now() + 10 * 60_000).toISOString();
+        const hold = { reason: "free 1.0 GB is under the emergency level", since: new Date().toISOString(), until };
+        writeFileSync(join(box.root, "state", "disk-hold.json"), JSON.stringify(hold));
+        box.stub("docker", "exit 1");
+        box.stub("sccache", "exit 2");
+        box.stub("df", `kb=${100 * 1048576}\n${dfLine(200)}`);
+        const report = JSON.parse(
+            box.ok(["disk", "keep", "--floor", "50", "--json"], { env: { TOLI_DRY_RUN: "0" } }),
+        ) as KeepReport;
+        expect(report.jobsPaused).toBe(false);
+        expect(report.lines).toEqual(["new jobs resume: free 100.0 GB is back over the floor"]);
+        expect(existsSync(join(box.root, "state", "disk-hold.json"))).toBe(false);
+        expect(readFileSync(join(box.root, "logs", "disk.log"), "utf8")).toContain("new jobs resume");
+    });
 
     keeperTest("back above the floor after the normal tiers, it keeps held build output", () => {
         const box = keeperBox();
