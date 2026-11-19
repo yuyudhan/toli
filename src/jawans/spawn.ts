@@ -31,7 +31,8 @@ import {
     usageText,
 } from "../harness/models.ts";
 import { findProject, isLiveStack } from "../projects/projects.ts";
-import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
+import { prepareWorkspace } from "../projects/workspace.ts";
+import { workspaceBrief } from "../projects/workspace-brief.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { continueRun } from "./continue.ts";
 import { jawanSlots, startOrQueue, stopRun } from "./launch.ts";

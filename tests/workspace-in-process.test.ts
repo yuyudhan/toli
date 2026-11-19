@@ -12,8 +12,8 @@ import {
     prepareWorkspace,
     taskBranch,
     workDir,
-    workspaceBrief,
 } from "../src/projects/workspace.ts";
+import { workspaceBrief } from "../src/projects/workspace-brief.ts";
 import { workspaceCommand } from "../src/projects/workspace-command.ts";
 import { type TaskWorkspace, taskCommand } from "../src/records/backlog.ts";
 import { commandIn, inProcess, type Sandbox, sandbox, withProject } from "./helpers.ts";

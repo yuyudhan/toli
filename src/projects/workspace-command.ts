@@ -172,17 +172,23 @@ function pruneCommand(argv: string[]): void {
 }
 
 function prepareCommand(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json", "reset"] });
+    const args = new Args(argv, { booleans: ["json", "reset", "same-branch"] });
     args.maxPositional(1);
-    const workspace = prepareWorkspace(args.pos(0, "task id"), { reset: args.bool("reset") });
+    const workspace = prepareWorkspace(args.pos(0, "task id"), {
+        reset: args.bool("reset"),
+        sameBranch: args.bool("same-branch"),
+    });
     if (args.bool("json")) printJson(workspace);
     else
         out(
-            `${workspace.strategy}: ${workspace.path} on ${workspace.branch ?? "(detached)"}${workspace.base === null ? "" : ` from ${workspace.base}`}`,
+            `${workspace.strategy}: ${workspace.path} on ${workspace.branch ?? "(detached)"}${workspace.base === null ? "" : ` from ${workspace.base}`}${workspace.pinned === true ? " (pinned)" : ""}`,
         );
 }
 
-/** `toli workspace prepare <T-id> [--reset] [--json]` | `list [--project p] [--json]` | `prune [--project p] [--json]`. */
+/**
+ * `toli workspace prepare <T-id> [--reset | --same-branch] [--json]` | `list [--project p] [--json]` |
+ * `prune [--project p] [--json]`.
+ */
 export function workspaceCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
     if (sub === "prepare") prepareCommand(rest);
@@ -190,6 +196,6 @@ export function workspaceCommand(argv: string[]): void {
     else if (sub === "prune") pruneCommand(rest);
     else
         throw new ToliError(
-            "usage: toli workspace prepare <T-id> [--reset] | list [--project p] | prune [--project p]",
+            "usage: toli workspace prepare <T-id> [--reset | --same-branch] | list [--project p] | prune [--project p]",
         );
 }

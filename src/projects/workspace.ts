@@ -6,6 +6,10 @@
 //                      project holds the clone on a different branch
 //   worktree-per-task  `git worktree add projects/.worktrees/<project>/<T-id> -b <task branch> <base>`
 //
+// Per-task strategies start task branches from the project's `baseBranch` (`project set --base-branch`), else its
+// `branch`. One task of a per-task project can be pinned to the clone on the project's branch (`workspace prepare
+// T<n> --same-branch`, e.g. a release train on a fixed release branch); it commits there with `--task`.
+//
 // The prepared workspace is recorded on the task (`workspace` in data/backlog.json), so the verifier, `bin/toli
 // commit|push|pr --task` and `bin/toli workspace list|prune` (src/projects/workspace-command.ts) find it again.
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
@@ -48,8 +52,12 @@ export function refExists(dir: string, ref: string): boolean {
     return git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).code === 0;
 }
 
-/** The branch task branches start from and PR/MRs target: the project's `branch`, else origin's default branch. */
+/**
+ * The branch task branches start from and PR/MRs target: the project's `baseBranch`, else its `branch`, else origin's
+ * default branch.
+ */
 export function baseBranch(project: Project, clone: string): string {
+    if (project.baseBranch) return project.baseBranch;
     if (project.branch) return project.branch;
     const originHead = git(clone, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
     if (originHead.code === 0) return originHead.stdout.trim().replace(/^origin\//, "");
@@ -220,16 +228,15 @@ function recordedWork(clone: string, recorded: TaskWorkspace): string | null {
     return null;
 }
 
-/** Under the project's workspace lock: forget the task's recorded workspace once nothing of its own is left there. */
-function resetRecorded(project: Project, task: Task, clone: string): void {
-    const recorded = task.workspace;
-    if (recorded === undefined) return;
-    if (recorded.strategy === project.workspace)
-        throw new ToliError(`nothing to reset: ${task.id}'s workspace is already ${recorded.strategy}`);
+/**
+ * Under the project's workspace lock: forget the task's recorded workspace (removing its worktree), refused while it
+ * holds the task's own work.
+ */
+function forgetRecorded(project: Project, task: Task, clone: string, recorded: TaskWorkspace): void {
     const work = recordedWork(clone, recorded);
     if (work !== null)
         throw new ToliError(
-            `refusing to reset ${task.id}'s ${recorded.strategy} workspace: ${work}. Land that work from there ` +
+            `refusing to move ${task.id} off its ${recorded.strategy} workspace: ${work}. Land that work from there ` +
                 `(bin/toli commit|push ${project.name} --task ${task.id}) or ask ${persona().user}.`,
         );
     if (recorded.strategy === "worktree-per-task" && existsSync(recorded.path)) {
@@ -246,18 +253,49 @@ function resetRecorded(project: Project, task: Task, clone: string): void {
     delete task.workspace;
 }
 
+/** Under the project's workspace lock: forget the task's recorded workspace once nothing of its own is left there. */
+function resetRecorded(project: Project, task: Task, clone: string): void {
+    const recorded = task.workspace;
+    if (recorded === undefined) return;
+    if (recorded.strategy === project.workspace && recorded.pinned !== true)
+        throw new ToliError(`nothing to reset: ${task.id}'s workspace is already ${recorded.strategy}`);
+    forgetRecorded(project, task, clone, recorded);
+}
+
+/**
+ * Under the project's workspace lock: pin the task to the clone on the project's branch, after forgetting a per-task
+ * workspace that holds none of its own work. No toggle check: the user asked for the clone by name.
+ */
+function pinSameBranch(project: Project, task: Task, clone: string): TaskWorkspace {
+    const recorded = task.workspace;
+    if (recorded !== undefined && recorded.strategy !== "same-branch") forgetRecorded(project, task, clone, recorded);
+    return {
+        strategy: "same-branch",
+        path: clone,
+        branch: project.branch ?? currentBranch(clone),
+        base: null,
+        pinned: true,
+    };
+}
+
 /**
  * Prepare (idempotently) and record the workspace of a task per its project's strategy; returns where its jawans
  * work. Serialized per project, with `project set --workspace` too (src/projects/set.ts), so a strategy switch never
  * lands in the middle of a prepare and two spawns cannot both switch the shared clone. A live task prepared under
  * another strategy keeps the workspace it has (its work, maybe uncommitted, is there): switching a project's strategy
- * applies to tasks prepared afterwards. `reset` re-derives it from the current strategy instead, refused while the
- * recorded workspace holds the task's own commits or uncommitted changes.
+ * applies to tasks prepared afterwards. `reset` re-derives it from the current strategy instead (dropping a pin),
+ * refused while the recorded workspace holds the task's own commits or uncommitted changes. `sameBranch` pins the task
+ * to the clone on the project's branch whatever the strategy; a pinned task is prepared there until `reset`.
  */
-export function prepareWorkspace(taskId: string, options: { reset?: boolean } = {}): TaskWorkspace {
+export function prepareWorkspace(
+    taskId: string,
+    options: { reset?: boolean; sameBranch?: boolean } = {},
+): TaskWorkspace {
     const id = taskId.toUpperCase();
     const found = loadBacklog().tasks.find((entry) => entry.id === id);
     if (!found) throw new ToliError(`unknown task "${taskId}" (see \`bin/toli task list\`)`);
+    if (options.reset === true && options.sameBranch === true)
+        throw new ToliError("--same-branch and --reset go separately: --reset drops a pin, --same-branch sets one");
     const clone = projectCloneDir(found.project);
     return withLock(workspaceLock(found.project), () => {
         const project = findProject(found.project);
@@ -267,26 +305,29 @@ export function prepareWorkspace(taskId: string, options: { reset?: boolean } = 
             resetRecorded(project, task, clone);
         }
         const recorded = task.workspace;
+        const pinned = options.sameBranch === true || recorded?.pinned === true;
         if (
+            !pinned &&
             recorded !== undefined &&
             recorded.strategy !== project.workspace &&
             LIVE.includes(task.status) &&
             existsSync(recorded.path)
         )
             return recorded;
-        refuseWhileToggled(project, task.id);
-        const workspace: TaskWorkspace =
-            cloneOfLiveTask(project, task, clone) ??
-            (project.workspace === "branch-per-task"
-                ? prepareBranch(project, task, clone)
-                : project.workspace === "worktree-per-task"
-                  ? prepareWorktree(project, task, clone)
-                  : {
-                        strategy: "same-branch",
-                        path: clone,
-                        branch: project.branch ?? currentBranch(clone),
-                        base: null,
-                    });
+        if (!pinned) refuseWhileToggled(project, task.id);
+        const workspace: TaskWorkspace = pinned
+            ? pinSameBranch(project, task, clone)
+            : (cloneOfLiveTask(project, task, clone) ??
+              (project.workspace === "branch-per-task"
+                  ? prepareBranch(project, task, clone)
+                  : project.workspace === "worktree-per-task"
+                    ? prepareWorktree(project, task, clone)
+                    : {
+                          strategy: "same-branch",
+                          path: clone,
+                          branch: project.branch ?? currentBranch(clone),
+                          base: null,
+                      }));
         updateTask(id, (entry) => {
             entry.workspace = workspace;
         });
@@ -297,23 +338,6 @@ export function prepareWorkspace(taskId: string, options: { reset?: boolean } = 
 /** The lock serializing everything that prepares or switches the project's workspaces. */
 export function workspaceLock(project: string): string {
     return paths.lock(`workspace-${project}`);
-}
-
-/** Markdown block spawn appends to a brief so the jawan works where the workspace was prepared. */
-export function workspaceBrief(project: string, taskId: string, workspace: TaskWorkspace): string {
-    const commit = perTask(workspace.strategy)
-        ? `bin/toli commit ${project} --task ${taskId} -m "<message>" -- <paths...>`
-        : `bin/toli commit ${project} -m "<message>" -- <paths...>`;
-    return [
-        "",
-        "## Workspace (prepared by bin/toli spawn)",
-        "",
-        `- Strategy: ${workspace.strategy}`,
-        `- Path: ${workspace.path} - work and run the project's commands here, not in any other checkout`,
-        `- Branch: ${workspace.branch ?? "the checked-out branch"}${workspace.base === null ? "" : `, from ${workspace.base}`} - stay on it`,
-        `- Commit (only where the Landing section allows it): ${commit}`,
-        "",
-    ].join("\n");
 }
 
 /** The task id of the project's task worktree that contains `cwd`, or null outside every task worktree. */

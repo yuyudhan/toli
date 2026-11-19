@@ -29,7 +29,8 @@ export type Forge = (typeof FORGES)[number];
  * `branch`: the fixed working branch `toli commit` requires. `forge`/`forgeHost`: override origin-based detection.
  * `deliverySetAt`: when the user's delivery choice (mode/branch) was recorded; absent means mode is a default.
  * `workspace`: the branching/worktree strategy; `workspaceSetAt` stamps the user's choice (absent: defaulted).
- * With a per-task strategy, `branch` is the base branch task branches start from and PR/MRs target, and
+ * With a per-task strategy, `branch` is the base branch task branches start from and PR/MRs target, unless
+ * `baseBranch` names another (a project whose fixed `branch` is a release branch, its tasks starting from main), and
  * `taskBranch` the pattern a task's branch is named by (DEFAULT_TASK_BRANCH, src/projects/strategy.ts, when unset).
  * `liveStack`: the project runs in live-stack mode (docs/projects.md "Live-stack mode"): its jawans code in the one
  * shared checkout against the machine's running dev stack, which rebuilds on every save, instead of building
@@ -44,6 +45,7 @@ export type Project = {
     mode: Mode;
     addedAt: string;
     branch?: string;
+    baseBranch?: string;
     forge?: Forge;
     forgeHost?: string;
     deliverySetAt?: string;
@@ -78,6 +80,7 @@ export function loadProjects(): Project[] {
             mode,
             addedAt,
             branch,
+            baseBranch,
             forge,
             forgeHost,
             deliverySetAt,
@@ -96,6 +99,7 @@ export function loadProjects(): Project[] {
             mode,
             addedAt,
             ...(branch ? { branch } : {}),
+            ...(baseBranch ? { baseBranch } : {}),
             ...(forge ? { forge } : {}),
             ...(forgeHost ? { forgeHost } : {}),
             ...(deliverySetAt ? { deliverySetAt } : {}),

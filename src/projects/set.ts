@@ -1,5 +1,5 @@
-// `bin/toli project set`: record the user's delivery, forge, workspace strategy, task-branch pattern, standing-grant,
-// live-stack, role and release-priority answers.
+// `bin/toli project set`: record the user's delivery, base branch, forge, workspace strategy, task-branch pattern,
+// standing-grant, live-stack, role and release-priority answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
@@ -20,13 +20,25 @@ function parseForge(value: string | undefined): Forge | null | undefined {
     return value as Forge;
 }
 
-/** `--branch`: a valid branch name, or `none` (null) to clear it. */
-function parseBranch(value: string | undefined): string | null | undefined {
+/** `--branch` / `--base-branch`: a valid branch name, or `none` (null) to clear it. */
+function parseBranch(value: string | undefined, flag = "--branch"): string | null | undefined {
     if (value === undefined) return undefined;
     if (value === "none") return null;
     if (run(["git", "check-ref-format", "--branch", value]).code !== 0)
-        throw new ToliError(`--branch "${value}" is not a valid branch name`);
+        throw new ToliError(`${flag} "${value}" is not a valid branch name`);
     return value;
+}
+
+/**
+ * `--base-branch`: the branch task branches start from, named as on origin (they start from origin's copy, fetched
+ * first), or `none` (null) to start from `--branch` again.
+ */
+function parseBaseBranch(value: string | undefined): string | null | undefined {
+    if (value?.startsWith("origin/") === true)
+        throw new ToliError(
+            `--base-branch takes the branch name ("${value.slice("origin/".length)}"): task branches already start from origin's copy of it`,
+        );
+    return parseBranch(value, "--base-branch");
 }
 
 /** `--forge-host`: a bare host name (no scheme, path or user), or `none` (null) to clear it. */
@@ -134,6 +146,7 @@ function setAll(args: Args): void {
     const others = [
         "mode",
         "branch",
+        "base-branch",
         "task-branch",
         "forge",
         "forge-host",
@@ -165,6 +178,7 @@ export function projectSetCommand(argv: string[]): void {
         values: [
             "mode",
             "branch",
+            "base-branch",
             "task-branch",
             "forge",
             "forge-host",
@@ -184,6 +198,7 @@ export function projectSetCommand(argv: string[]): void {
     const name = args.pos(0, "name");
     const mode = parseMode(args.str("mode"));
     const branch = parseBranch(args.str("branch"));
+    const base = parseBaseBranch(args.str("base-branch"));
     const taskBranch = parseTaskBranchPattern(args.str("task-branch"));
     const forge = parseForge(args.str("forge"));
     const forgeHost = parseForgeHost(args.str("forge-host"));
@@ -200,6 +215,7 @@ export function projectSetCommand(argv: string[]): void {
         [
             mode,
             branch,
+            base,
             taskBranch,
             forge,
             forgeHost,
@@ -212,7 +228,7 @@ export function projectSetCommand(argv: string[]): void {
         ].every((value) => value === undefined)
     )
         throw new ToliError(
-            "nothing to set: pass --mode <m>, --branch <b>|none, --task-branch <pattern>|none, --forge <f>|none, " +
+            "nothing to set: pass --mode <m>, --branch <b>|none, --base-branch <b>|none, --task-branch <pattern>|none, --forge <f>|none, " +
                 "--forge-host <h>|none, --workspace <s>, --standing-push yes|no, --standing-pr yes|no, " +
                 "--live-stack yes|no, --role full|verify-only or --release-priority yes|no (or --all --workspace <s>)",
         );
@@ -225,6 +241,8 @@ export function projectSetCommand(argv: string[]): void {
             if (branch === null) delete project.branch;
             else if (branch !== undefined) project.branch = branch;
             if (mode !== undefined || branch !== undefined) project.deliverySetAt = at;
+            if (base === null) delete project.baseBranch;
+            else if (base !== undefined) project.baseBranch = base;
             if (taskBranch === null) delete project.taskBranch;
             else if (taskBranch !== undefined) project.taskBranch = taskBranch;
             if (forge === null) delete project.forge;

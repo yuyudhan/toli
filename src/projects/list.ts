@@ -8,12 +8,13 @@ import { loadProjects, type Project } from "./projects.ts";
 import { standingText } from "./strategy.ts";
 
 /**
- * `branch=`, `task-branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=`, `role=`, `release-priority=` labels
- * for the fields that are set.
+ * `branch=`, `base-branch=`, `task-branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=`, `role=`,
+ * `release-priority=` labels for the fields that are set.
  */
 export function overrideLabels(project: Project): string[] {
     return [
         ...(project.branch ? [`branch=${project.branch}`] : []),
+        ...(project.baseBranch ? [`base-branch=${project.baseBranch}`] : []),
         ...(project.taskBranch ? [`task-branch=${project.taskBranch}`] : []),
         ...(project.forge ? [`forge=${project.forge}`] : []),
         ...(project.forgeHost ? [`forge-host=${project.forgeHost}`] : []),
@@ -33,6 +34,7 @@ export function projectListCommand(argv: string[]): void {
             projects.map((entry) => ({
                 ...entry,
                 branch: entry.branch ?? null,
+                baseBranch: entry.baseBranch ?? null,
                 taskBranch: entry.taskBranch ?? null,
                 standing: entry.standing ?? { push: false, pr: false },
                 liveStack: entry.liveStack === true,

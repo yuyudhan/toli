@@ -25,8 +25,17 @@ import { describeTask } from "./task-line.ts";
 import { parseShape } from "./task-shape.ts";
 import { startTaskCommand } from "./task-start.ts";
 
-/** Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task only. */
-export type TaskWorkspace = { strategy: Workspace; path: string; branch: string | null; base: string | null };
+/**
+ * Where a task's jawans work, recorded when its workspace is prepared (src/projects/workspace.ts). `base`: per-task
+ * only. `pinned`: the task was pinned to the clone (`workspace prepare --same-branch`) and keeps it until `--reset`.
+ */
+export type TaskWorkspace = {
+    strategy: Workspace;
+    path: string;
+    branch: string | null;
+    base: string | null;
+    pinned?: true;
+};
 
 export const STATUSES = ["queued", "active", "held", "done", "dropped"] as const;
 export type Status = (typeof STATUSES)[number];

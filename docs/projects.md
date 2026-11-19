@@ -67,14 +67,14 @@ toli itself never uses worktrees.
 
 - `bin/toli spawn --task T<n>` prepares the workspace (or `bin/toli workspace prepare T<n>` for native subagents)
   and records it on the task; the brief carries the strategy, path, and branch, and the verifier reuses it.
-  Task branches start from the base branch: the project's `--branch`, else origin's default branch, as origin has
-  it: `git fetch origin <base>` runs first and the branch starts from `origin/<base>` with no upstream, so a clone
-  whose own base is behind never seeds a stale task (without that ref on origin it starts from the local base, with
-  a warning). A live task prepared under an earlier strategy keeps its recorded workspace when the project switches
-  strategy; the new one applies to tasks prepared afterwards, and switching never touches the clone. A live task with
-  no recorded workspace (dispatched before the switch) whose clone is checked out on a branch naming it (`T375` in
-  `shop/m1/T375-e2e-proof`) keeps the clone: `workspace prepare`, `commit --task` and `push --task` record it
-  as its workspace on that branch, unless another live task records the clone.
+  Task branches start from the base branch: the project's `--base-branch`, else its `--branch`, else origin's default
+  branch, as origin has it: `git fetch origin <base>` runs first and the branch starts from `origin/<base>` with no
+  upstream, so a clone whose own base is behind never seeds a stale task (without that ref on origin it starts from
+  the local base, with a warning). A live task prepared under an earlier strategy keeps its recorded workspace when
+  the project switches strategy; the new one applies to tasks prepared afterwards, and switching never touches the
+  clone. A live task with no recorded workspace (dispatched before the switch) whose clone is checked out on a branch
+  naming it (`T375` in `shop/m1/T375-e2e-proof`) keeps the clone: `workspace prepare`, `commit --task` and
+  `push --task` record it as its workspace on that branch, unless another live task records the clone.
   Never toggle a project's strategy to land such a task: nothing needs it. A switch from a per-task strategy to
   `same-branch` while a live task still works in its per-task workspace counts as such a toggle: `project set` says
   so, and `workspace prepare` (so `spawn --task`) refuses every task without a workspace of its own until the project
@@ -93,6 +93,15 @@ toli itself never uses worktrees.
   `node_modules/` and `dist/` are never indexed or backed up. A failed exclusion only warns.
 - `bin/toli commit|push|pr create <project> --task T<n>` act in the task's workspace (commands run from inside a
   task worktree find it themselves). Per-task projects refuse a commit without `--task`.
+- A release train on a per-task project: its one long-lived task works in the clone on the project's fixed
+  `--branch` (a nightly or release branch) while every other task gets its own task branch.
+  `bin/toli workspace prepare T<n> --same-branch` (on the user's word) pins that task to the clone, whatever the
+  strategy and the task's status; spawn prepares it there, and `bin/toli commit <p> --task T<n>` commits there with
+  the fixed-branch check. Pinning refuses while the task's own worktree or task branch holds unlanded work, and
+  removes a clean worktree; `workspace prepare T<n> --reset` drops the pin. So the other tasks start from the
+  mainline rather than the release branch, `bin/toli project set <p> --base-branch main` names the branch task
+  branches start from and PR/MRs target (the name as on origin, never `origin/main`); `--base-branch none` goes back
+  to `--branch`. A task keeps the base it was prepared from.
 - Pushing the task branch and opening its PR/MR need the user's word for that change, unless the project carries an
   explicit standing grant ([delivery.md](delivery.md#standing-grants)). Without one, the verifier commits and holds
   the task with the question.

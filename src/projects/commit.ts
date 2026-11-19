@@ -240,7 +240,8 @@ function requireWorkingBranch(name: string, dir: string): void {
 /**
  * The checkout to commit in. `toli` (when no registered project has that name) is toli's own checkout, committing
  * on `develop` when it exists. Per-task strategies commit only on the task's own branch, in its workspace (`--task`,
- * or run from inside the task's worktree); same-branch projects keep the fixed-branch check on the clone.
+ * or run from inside the task's worktree), or in the clone for a task recorded there (pinned with `workspace prepare
+ * --same-branch`); same-branch work keeps the fixed-branch check on the clone.
  */
 function commitDir(name: string, taskId: string | undefined): string {
     const root = toliSelfCheckout(name);
@@ -269,10 +270,11 @@ function commitDir(name: string, taskId: string | undefined): string {
         return target.dir;
     }
     const workspace = findProject(name).workspace;
-    if (perTask(workspace))
+    if (perTask(workspace) && target.task?.workspace?.strategy !== "same-branch")
         throw new ToliError(
             `refusing: ${name} uses ${workspace}, so commits go on a task branch: pass --task <T-id> ` +
-                `(its workspace is prepared by bin/toli spawn --task or bin/toli workspace prepare <T-id>)`,
+                `(its workspace is prepared by bin/toli spawn --task or bin/toli workspace prepare <T-id>; ` +
+                `a task pinned to the clone, on ${persona().user}'s word, commits there: bin/toli workspace prepare <T-id> --same-branch)`,
         );
     requireWorkingBranch(name, target.dir);
     return target.dir;

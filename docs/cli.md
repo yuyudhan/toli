@@ -57,8 +57,8 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     project ensure <name> <git-url> [--mode commit|pr|no-mistakes]
     project link <name> <path> [--mode commit|pr|no-mistakes]
     project list [--json] | path <name>
-    project set <name> [--mode <m>] [--branch <b>|none] [--task-branch <pattern>|none] [--forge github|gitlab|bitbucket|none]
-                [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
+    project set <name> [--mode <m>] [--branch <b>|none] [--base-branch <b>|none] [--task-branch <pattern>|none]
+                [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
                 [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no] [--keep]
     project set --all --workspace <strategy> [--keep]
     project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
@@ -136,7 +136,7 @@ the interactive Sardar's subagents.
     commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
       (--resolved -- <conflicted paths> [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers)
     branch <project> <branch>
-    workspace prepare T<n> [--reset] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
+    workspace prepare T<n> [--reset | --same-branch] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
     push <project> [--task T<n>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]

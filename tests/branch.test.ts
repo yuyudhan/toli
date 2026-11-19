@@ -68,6 +68,7 @@ describe("fixed working branch", () => {
             {
                 ...legacy,
                 branch: null,
+                baseBranch: null,
                 taskBranch: null,
                 workspace: "branch-per-task",
                 standing: { push: false, pr: false },
