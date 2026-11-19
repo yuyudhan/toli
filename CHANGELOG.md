@@ -8,6 +8,12 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A run that waits silently on a remote CI pipeline is no longer stopped as stalled half way. Watching a pipeline
+  shows no output, file change or CPU use, so a release run waiting on a 47-minute build job was stopped after
+  `capacity.stallMinutes` (30) and needed a second run to finish. A brief (or a scheduled job's prompt) may now carry a
+  `Stall: <minutes>` header line, before its first `## ` section like `Tier:` (for example `Stall: 90`); that run, a
+  `bin/toli exec` run or a job uses those minutes instead of the machine's, and the run record shows them as
+  `stallMinutes`. A malformed value is refused at spawn (docs/brief-template.md, docs/harnesses.md).
 - `bin/toli disk keep` no longer hangs on a macOS privacy prompt. Its scan for build folders outside the clones read
   every folder of the home folder but `~/Library` and hidden ones, so it opened `~/Music` and macOS asked whether Bun
   may access "Media & Apple Music"; the read blocked until someone answered, which on an unattended machine left the

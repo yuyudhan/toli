@@ -1,10 +1,11 @@
 // Stall detection for agent runs. A run has no wall-clock limit by default; it counts as stuck only when it shows no
 // progress for capacity.stallMinutes (default 30): its output log did not grow, its harness session (where omp writes
 // every message and tool call) did not change, the files of its working tree did not change, and its process tree
-// burned almost no CPU. A long build or test a run waits on keeps it alive through its CPU use.
+// burned almost no CPU. A long build or test a run waits on keeps it alive through its CPU use. Work that sits silent
+// longer by design (watching a remote CI pipeline) declares its own stall time with a `Stall: <minutes>` brief line.
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { run } from "../core/util.ts";
+import { run, ToliError } from "../core/util.ts";
 
 /** CPU seconds a run's process tree must burn since the last progress to count as progress by itself. */
 export const CPU_PROGRESS_SECONDS = 10;
@@ -194,4 +195,21 @@ export function watchStall(
 /** The words a stalled run's record and inbox item use. */
 export function stallText(stallMinutes: number): string {
     return `no progress for ${stallMinutes} minutes (no output, session activity, file change or CPU use)`;
+}
+
+/**
+ * The `Stall: <minutes>` line of a brief's header (the lines before its first `## ` section), or null. It replaces
+ * capacity.stallMinutes for that run, for work that legitimately sits silent longer, such as watching a CI pipeline. A
+ * malformed value is an error rather than silently ignored.
+ */
+export function briefStallMinutes(brief: string): number | null {
+    for (const line of brief.split("\n")) {
+        if (line.startsWith("## ")) return null;
+        const match = /^Stall:\s*(\S+)$/i.exec(line.trim());
+        if (match?.[1] === undefined) continue;
+        if (!/^[1-9]\d*$/.test(match[1]))
+            throw new ToliError(`the brief's Stall: line must be a positive whole number of minutes, not ${match[1]}`);
+        return Number(match[1]);
+    }
+    return null;
 }

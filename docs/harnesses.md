@@ -123,7 +123,11 @@ always does, and the spawn proceeds. Runs for other tasks, and spawns without `-
 done, like the lead. toli stops it only when it shows no progress for `capacity.stallMinutes` (default 30): its output
 log did not grow, its omp session (`<run dir>/session`, passed as `--session-dir`, where omp writes every message and
 tool call) did not change, the files of its working tree did not change, and its process tree used less than 10 CPU
-seconds. A long build or test the run waits on keeps it alive through its CPU use. A stalled run without a report is
+seconds. A long build or test the run waits on keeps it alive through its CPU use. Work that sits silent longer by
+design, such as a release run watching a remote CI pipeline, carries a `Stall: <minutes>` line in its brief header
+(before the first `## ` section, like `Tier:`; for example `Stall: 90`): that run, its exec run or scheduled job
+uses those minutes instead of `capacity.stallMinutes`, and `bin/toli runs --json` shows them as `stallMinutes`. A
+malformed value is refused at spawn. A stalled run without a report is
 recorded `stalled` and resumed: on omp the same session continues (`omp --resume <session file>`) with a short
 `## RESUME (auto, N)` prompt saying why it stopped, so nothing is re-read or redone; on other harnesses a fresh run
 gets the original brief plus a `## RESUME (auto, N)` section naming the previous run, its log and its uncommitted

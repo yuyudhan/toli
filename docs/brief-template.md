@@ -15,6 +15,9 @@ Independent verification of ship work uses docs/verify-brief-template.md.
 Model tier: the work type picks the jawan's model (docs/harnesses.md "Model tiers": scout and ship standard,
 mechanical light, verify and release deep). A hard brief adds a line `Tier: deep` (or `light`, `standard`) right under
 the title, before the first `## ` section; `bin/toli spawn --tier` and `--model` still override it.
+Stall time: a run is stopped after 30 minutes without progress (`capacity.stallMinutes`). A brief whose work waits
+silently longer, such as a release that watches a remote CI pipeline, adds a line `Stall: <minutes>` (for example
+`Stall: 90`) in the same header place; it replaces the machine's value for that run.
 Live-stack projects (`liveStack: true` in `bin/toli project list --json`, docs/projects.md "Live-stack mode"): keep
 the `## Live stack` section and fill its commands from the notes' `## Live stack mode`; drop it for every other
 project and for scouts. `bin/toli spawn` warns when a live-stack project's code brief lacks it.
@@ -130,8 +133,8 @@ spawn` run leaves open when it exits; a native subagent's stay open until you cl
   report.
 - There is no time limit: work until the Goal's Stop when holds. Commit as you go (when the Landing section lets you
   commit; otherwise keep the tree in a state you can describe), because your session may be resumed: a run that shows
-  no progress for 30 minutes is stopped and resumed where it stopped, in the same session. Long builds or tests you wait
-  on count as progress while they use CPU.
+  no progress for 30 minutes (or the brief's `Stall:` minutes) is stopped and resumed where it stopped, in the same
+  session. Long builds or tests you wait on count as progress while they use CPU.
 - Work directly in the workspace path above. Never create a git worktree yourself (toli prepares the one a
   worktree-per-task project uses). Stay on the branch named above; never create, switch, or rebase branches.
 - Run git only through `bash` (git CLI), never through other git tools or integrations.

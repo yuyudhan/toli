@@ -196,7 +196,7 @@ the interactive Sardar's subagents.
   when one frees; `--now` starts it anyway.
   A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
   Runs have no time limit unless given `--max-time`; a run that shows no progress for `capacity.stallMinutes`
-  (default 30), or uses its explicit limit, without a report is resumed in the same omp session
+  (default 30, or its brief's `Stall: <minutes>` line), or uses its explicit limit, without a report is resumed in the same omp session
   (`capacity.autoResume`, default 3). `resume` lets the lead continue any finished run's session. Under
   `lead.dispatch: "subagents"`, `spawn`, `resume` and queued-run starts refuse in a headless lead turn.
 - `harness sync` links skills and commands into every harness; `harness status` shows installed CLIs and logins.

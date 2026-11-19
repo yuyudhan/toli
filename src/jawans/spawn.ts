@@ -35,6 +35,7 @@ import { prepareWorkspace, workspaceBrief } from "../projects/workspace.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { continueRun } from "./continue.ts";
 import { jawanSlots, startOrQueue, stopRun } from "./launch.ts";
+import { briefStallMinutes } from "./progress.ts";
 import { ACTIVE, activeRuns, type JawanRun, listRuns, loadRun, modelText, runLine, updateRun } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 
@@ -108,6 +109,8 @@ export function planSpawn(options: SpawnOptions): SpawnPlan {
         if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new ToliError(`--cwd is not a directory: ${cwd}`);
     }
     const harness = options.harness ?? defaultHarness(work ?? undefined);
+    // A malformed Stall: line fails here, before a workspace or run is created (recordRun applies it).
+    briefStallMinutes(brief);
     requireInstalled(harness);
     const choice = resolveModel(
         harness,

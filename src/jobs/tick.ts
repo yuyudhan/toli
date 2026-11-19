@@ -17,7 +17,7 @@ import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
 import { sessionFile } from "../jawans/launch.ts";
-import { stallText, watchStall } from "../jawans/progress.ts";
+import { briefStallMinutes, stallText, watchStall } from "../jawans/progress.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
@@ -126,13 +126,16 @@ async function keepExchanging(machine: Machine, work: Promise<void>): Promise<vo
 
 /**
  * Run a claimed job in headless omp on its tier's model, counted as load (a run record) while it runs. It has no
- * wall-clock limit: omp is stopped only when it shows no progress for capacity.stallMinutes (src/jawans/progress.ts).
+ * wall-clock limit: omp is stopped only when it shows no progress for capacity.stallMinutes, or the minutes of its
+ * prompt's `Stall:` header line (src/jawans/progress.ts).
  * A run stopped by a rate or usage limit retries once on a lower allowed tier (never waiting: the tick runs every
  * minute); a limit that names a later reset also pauses the model's due jobs until then (limitPauseFor). If the agent
  * never called `job finish`, record its captured output.
  */
 async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     const name = job.name;
+    // The prompt's Stall: line replaces capacity.stallMinutes; a malformed one fails before the run is registered.
+    const stall = briefStallMinutes(begun.prompt) ?? stallMinutes(loadMachine());
     registerRun({
         runId: begun.runId,
         pid: process.pid,
@@ -147,7 +150,6 @@ async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
     let model: string | null;
     let fallback: string;
     let result: Outcome;
-    const stall = stallMinutes(loadMachine());
     const sessionDir = paths.jobSessionDir(begun.runId);
     let stalled = false;
     try {

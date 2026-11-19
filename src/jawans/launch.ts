@@ -28,6 +28,7 @@ import { briefPointer, type Harness, headlessCommand, type WorkType } from "../h
 import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { deadlineSection } from "./limits.ts";
+import { briefStallMinutes } from "./progress.ts";
 import { type JawanRun, killRun, listRuns, loadRun, RUNNING, runMinuteMs, updateRun } from "./runs.ts";
 import { type Argv, awaitScope, inSupervisorScope } from "./scope.ts";
 
@@ -115,6 +116,7 @@ export type AttachedStart = { argv: string[]; ownerPid: number };
  */
 export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
     const createdAt = now();
+    const stall = briefStallMinutes(input.baseBrief) ?? stallMinutes(loadMachine());
     const id = newRunId(createdAt);
     const runDir = input.project === null ? join(paths.jawansDir(), id) : join(paths.projectRunsDir(input.project), id);
     mkdirSync(runDir, { recursive: true });
@@ -154,7 +156,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
             ...(command.stdin === null ? [] : ["< brief"]),
         ].join(" "),
         maxMinutes: input.maxMinutes,
-        stallMinutes: stallMinutes(loadMachine()),
+        stallMinutes: stall,
         ...(sessionDir === undefined ? {} : { sessionDir }),
         ...(input.resumeSession === undefined ? {} : { resumeSession: input.resumeSession }),
         status: attached === undefined ? "queued" : "running",
