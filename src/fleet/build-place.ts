@@ -8,6 +8,8 @@
 // anyway: it warns and appends a line to logs/build-place.log. `bin/toli disk keep` and `bin/toli doctor` flag, never
 // delete, folders outside those places under /tmp, $TMPDIR and the home folder that hold a `target/` or
 // `node_modules/`, and every `git worktree list` entry of toli's checkout or a registered clone that toli did not make.
+// The scan never opens the home folder's privacy-protected folders (Desktop, Documents, Downloads, Movies, Music,
+// Pictures, Library): on macOS reading one raises a privacy prompt that blocks the reader until someone answers (T1907).
 import { appendFileSync, type Dirent, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -28,10 +30,25 @@ const SCAN_ROOTS_ENV = "TOLI_BUILD_SCAN_ROOTS";
 const SCAN_DEPTH = 3;
 /** At most this many folders are read per scan root, so a huge home folder cannot stall `doctor` or the keeper. */
 const SCAN_LIMIT = 10_000;
+/** At most this long is spent reading each scan root, so a slow disk cannot stall `doctor` or the keeper either. */
+const SCAN_MS = 60_000;
 /** The build folders whose presence marks a folder as a build's working tree. */
 const BUILD_FOLDERS: readonly string[] = ["target", "node_modules"];
 /** Folders never descended into: OS and app data on macOS, never a project checkout. */
 const SKIPPED_FOLDERS: Readonly<Record<string, true>> = { Library: true };
+/**
+ * The home folder's own folders macOS guards with a privacy (TCC) prompt: opening one makes the system ask the user
+ * whether toli's runtime may read it, and the read blocks until someone answers, which on an unattended machine is
+ * never. `~/Library` (iCloud Drive included) is a SKIPPED_FOLDERS entry. Never a project checkout's place either.
+ */
+const HOME_PROTECTED_FOLDERS: Readonly<Record<string, true>> = {
+    Desktop: true,
+    Documents: true,
+    Downloads: true,
+    Movies: true,
+    Music: true,
+    Pictures: true,
+};
 /** Submodules nest; past this many superprojects the outermost one found counts. */
 const MAX_SUPERPROJECTS = 8;
 /** Variables a git hook sets that would point git at the hook's repository instead of the folder asked about. */
@@ -164,13 +181,22 @@ function scanRoots(): string[] {
     return [...new Set(roots.filter((root) => root !== "").map(real))];
 }
 
-/** Folders below the scan roots, outside every known place, that hold a build folder. */
+/**
+ * Folders below the scan roots, outside every known place, that hold a build folder. The home folder's protected
+ * folders are never opened; a root read for SCAN_LIMIT folders or SCAN_MS stops there, leaving the scan incomplete.
+ */
 function strayBuildFolders(places: Places, roots: string[]): OutsideScan {
     const found: OutsideBuild[] = [];
+    const home = real(homedir());
     let complete = true;
     let budget = 0;
+    let deadline = 0;
     const visit = (dir: string, depth: number): void => {
         if (budget <= 0 || insidePlace(dir, places)) return;
+        if (Date.now() > deadline) {
+            budget = 0;
+            return;
+        }
         budget--;
         let entries: Dirent[];
         try {
@@ -187,11 +213,13 @@ function strayBuildFolders(places: Places, roots: string[]): OutsideScan {
         if (depth >= SCAN_DEPTH) return;
         for (const entry of folders) {
             if (entry.name.startsWith(".") || SKIPPED_FOLDERS[entry.name] === true) continue;
+            if (dir === home && HOME_PROTECTED_FOLDERS[entry.name] === true) continue;
             visit(join(dir, entry.name), depth + 1);
         }
     };
     for (const root of roots) {
         budget = SCAN_LIMIT;
+        deadline = Date.now() + SCAN_MS;
         visit(root, 0);
         if (budget <= 0) complete = false;
     }
@@ -240,7 +268,7 @@ export function outsideBuildLine({ path, why }: OutsideBuild): string {
 }
 
 /** What the scan left out, when it stopped early. */
-export const PARTIAL_SCAN = `the scan stopped after ${SCAN_LIMIT} folders of a scan root, so more may exist`;
+export const PARTIAL_SCAN = `the scan stopped after ${SCAN_LIMIT} folders or ${SCAN_MS / 1000} s in a scan root, so more may exist`;
 
 /** At most this many flagged folders get a `doctor` line each; `disk keep --dry-run` lists them all. */
 const DOCTOR_LINES = 10;

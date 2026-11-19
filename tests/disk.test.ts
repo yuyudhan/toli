@@ -46,6 +46,21 @@ describe("disk keeper", () => {
         expect(box.ok(["disk", "keep", "--floor", "0"])).toContain("nothing to do");
     });
 
+    keeperTest("a keeper stuck past its time limit logs it and exits instead of hanging (T1907)", () => {
+        const box = keeperBox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        // A df that never answers in time stands for any call that blocks: a privacy prompt nobody clicks.
+        box.stub("df", "exec sleep 30");
+        const started = Date.now();
+        const result = box.toli(["disk", "keep"], { env: { TOLI_DISK_KEEP_LIMIT_MS: "1000" } });
+        expect(Date.now() - started).toBeLessThan(20_000);
+        expect(result.code).not.toBe(0);
+        expect(result.stderr).toContain("disk keeper: stopped after its time limit of 1 s");
+        expect(readFileSync(join(box.root, "logs", "disk.log"), "utf8")).toContain(
+            "stopped after its time limit of 1 s",
+        );
+    });
+
     keeperTest(
         "under the floor it plans idle build output first, skips a running jawan's clone, never tracked files or a main clone's node_modules",
         () => {

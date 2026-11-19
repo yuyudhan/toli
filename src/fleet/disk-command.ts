@@ -6,6 +6,7 @@ import { outsideBuildLine, outsideBuilds, PARTIAL_SCAN } from "./build-place.ts"
 import { floorText, type KeepReport, keepDisk } from "./disk.ts";
 import { diskAlertCommand } from "./disk-alert.ts";
 import { describe, gb } from "./disk-state.ts";
+import { watchKeeper } from "./disk-watchdog.ts";
 import { fallbackSweep } from "./stale-sweep.ts";
 
 /** `toli disk keep [--dry-run] [--floor <GB>] [--json]`, `toli disk alert`. */
@@ -30,6 +31,17 @@ export function diskCommand(argv: string[]): void {
     const floorGB = number("floor");
     const json = args.bool("json");
     const dryRun = args.bool("dry-run");
+    // Past its time limit a keeper stuck in a call that never returns is logged and stopped, never left hanging.
+    const stopWatch = watchKeeper();
+    try {
+        keepAndReport(floorGB, json, dryRun);
+    } finally {
+        stopWatch();
+    }
+}
+
+/** `disk keep`'s run (by hand or the background keeper), its report and the build folders outside the clones. */
+function keepAndReport(floorGB: number | undefined, json: boolean, dryRun: boolean): void {
     let report: KeepReport;
     try {
         report = keepDisk({

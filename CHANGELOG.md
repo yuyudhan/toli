@@ -4,6 +4,19 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.5.42 - unreleased
+
+### Fixed
+
+- `bin/toli disk keep` no longer hangs on a macOS privacy prompt. Its scan for build folders outside the clones read
+  every folder of the home folder but `~/Library` and hidden ones, so it opened `~/Music` and macOS asked whether Bun
+  may access "Media & Apple Music"; the read blocked until someone answered, which on an unattended machine left the
+  keeper hanging over an hour with no output and stopped a build queue. The scan now never opens the home folder's
+  privacy-protected folders (Desktop, Documents, Downloads, Movies, Music, Pictures, Library) and stops reading a scan
+  root after 60 s, like after 10,000 folders. Every `disk keep`, by hand or in the background, also has a time limit
+  (2 h): past it the keeper logs `disk keeper: stopped after its time limit of ...` to `logs/disk.log` and stderr and
+  exits, whatever call it is stuck in.
+
 ## v0.5.41 - 2026-11-18
 
 ### Fixed

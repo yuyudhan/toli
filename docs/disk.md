@@ -45,6 +45,10 @@ over the floor while the keeper lists build folders, it deletes nothing and says
 
 Only one keeper runs at a time (`state/disk-keep.lock` holds its pid). Every action goes to `logs/disk.log`. A reason
 the keeper did not run (paused, or another keeper busy) is logged once when it starts, not on every minute's tick.
+Every `bin/toli disk keep`, by hand or in the background, has a time limit of 2 h: a call that never returns (a
+macOS privacy prompt nobody answers, a hung disk or tool) blocks the keeper's own thread, so a watchdog thread logs
+`disk keeper: stopped after its time limit of 120 min` to `logs/disk.log` and stderr and kills the process; the next
+run starts over (`src/fleet/disk-watchdog.ts`).
 
 ## Switching automatic deletion off
 
@@ -322,7 +326,9 @@ briefs. The known places are a registered project's clone (`data/projects.json`)
   `bin/toli doctor` (`build-place`, a warning per folder, the first 10) flag, never delete, folders outside those
   places under `/tmp`, `$TMPDIR` and the home folder that hold a `target/` or `node_modules/`, and every
   `git worktree list` entry of toli's checkout or a registered clone that toli did not make. The scan reads up to 3
-  levels below each of those folders (10,000 folders each at most), skipping hidden folders and `~/Library`.
+  levels below each of those folders (10,000 folders and 60 s each at most), skipping hidden folders, `Library`
+  folders and the home folder's privacy-protected ones (`~/Desktop`, `~/Documents`, `~/Downloads`, `~/Movies`,
+  `~/Music`, `~/Pictures`): on macOS opening one raises a privacy prompt that blocks the scan until someone answers.
 
 A cargo that bypassed the shim (another cargo ahead of it on PATH) reaches toli only through the rustc wrapper
 ([fleet.md](fleet.md#heavy-build-slots)), which takes a slot but does not check the place. toli has no node or pnpm

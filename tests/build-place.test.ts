@@ -151,4 +151,23 @@ describe("build place guard", () => {
         }[];
         expect(doctor.filter((check) => check.name === "build-place").map((check) => check.level)).toEqual(["ok"]);
     }, 60_000);
+
+    test("the stray scan never reads the home folder's macOS privacy-protected folders (T1907)", () => {
+        const { box } = placeBox();
+        const home = tempDir("home");
+        const protectedFolders = ["Desktop", "Documents", "Downloads", "Movies", "Music", "Pictures", "Library"];
+        for (const name of protectedFolders) mkdirSync(join(home, name, "app", "target"), { recursive: true });
+        mkdirSync(join(home, "code", "app", "target"), { recursive: true });
+        // Only the home folder's own ones: a `Music` folder of a project elsewhere under home is read like any other.
+        mkdirSync(join(home, "code", "Music", "target"), { recursive: true });
+        const env = { HOME: home, TOLI_BUILD_SCAN_ROOTS: home };
+        const json = JSON.parse(box.toli(["disk", "keep", "--dry-run", "--json"], { env }).stdout) as {
+            outsideBuilds: { path: string }[];
+        };
+        const real = realpathSync(home);
+        expect(json.outsideBuilds.map((entry) => entry.path).sort()).toEqual([
+            join(real, "code", "Music"),
+            join(real, "code", "app"),
+        ]);
+    }, 60_000);
 });
