@@ -177,7 +177,7 @@ below, nothing is locked or refused because a machine is busy.
     bin/toli fleet questions [--json]         # every open question across the fleet, one numbered list
     bin/toli fleet releases <project>@<machine>... [--health <project>=<url>]...   # where each project's releases stand
     bin/toli fleet say "<text>" [--key <key>] [--os <uname>] [--to <m,...>] [--wait <s>]   # type into other leads
-    bin/toli fleet start [--session <s>] [--window <w>] [--message "<text>"] [--attach "<cmd>"] [--listener] [--os <uname>]
+    bin/toli fleet start [--session <s>] [--window <w>] [--message "<text>"] [--attach "<cmd>"] [--os <uname>]
 
 These read every machine at once, this one in its toli root and every other over ssh in its own, with one POSIX `sh`
 script of plain tools (`sysctl`, `vm_stat` and `top` on macOS; `/proc`, `nproc` on Linux; `df`, `git`, `tmux`) and
@@ -225,9 +225,11 @@ the pane then shows the text or changed. `--os Linux` (or `Darwin`) limits it to
 (`--session`, default `toli`; a new `--window`, default `lead`, when the session exists) in the toli root, runs
 `--attach` there first when given (a shell command that opens a terminal attached to the session, such as a terminal
 emulator on a desktop workspace), starts the harness (`--harness`, default omp), waits for its status bar and types
-`--message` with `--key`. A machine whose lead already runs is never touched. `--listener` also starts the HTTPS peer
-listener on Linux as a systemd user unit, `toli-peer-serve`, where none runs; a listener lock whose pid now belongs to
-a process that is not toli (a pid reused after the reboot) is moved aside first.
+`--message` with `--key`. A machine whose lead already runs is never touched. The HTTPS peer listener is not
+`fleet start`'s: the lead service starts it and keeps it up ([peers.md](peers.md)). A second supervisor, such as the
+`toli-peer-serve` unit `fleet start --listener` started before 0.5.42, loses the listener lock to the lead service's
+listener and restarts every few seconds; stop it with
+`systemctl --user stop toli-peer-serve; systemctl --user reset-failed toli-peer-serve`.
 
 ### Heavy-build slots
 

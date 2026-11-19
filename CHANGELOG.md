@@ -27,6 +27,13 @@ one. See docs/releasing.md.
   not touch are kept. A reported loss of main's files after such a merge was not the commit: those files changed on
   main after the merged sha. To check a merge commit `M`, compare `git rev-parse M^{tree}` with
   `git merge-tree --write-tree M^1 M^2`; only the paths named in the commit (`--resolved`, `Merge-amended:`) may differ.
+- `toli-peer-serve` no longer restarts every 5 s. `bin/toli fleet start --listener` started the peer listener as a
+  systemd user unit restarted always, beside the lead service, which already keeps the listener up and replaces it
+  after an upgrade: once the lead service had stopped that listener and started its own, the unit restarted every
+  5 s, found the listener lock taken (`a peer listener already runs here`) and exited 1, about 4,300 times in 6 hours
+  on each of 11 machines. `--listener` is gone; the lead service is the listener's one supervisor. On a Linux machine
+  that still has the unit, run once after upgrading:
+  `systemctl --user stop toli-peer-serve; systemctl --user reset-failed toli-peer-serve`.
 
 ## v0.5.41 - 2026-11-18
 

@@ -3,7 +3,7 @@ import { LEAD_PANES_SH, parseSections } from "../src/fleet/machine-script.ts";
 import { inboxQuestion } from "../src/fleet/questions.ts";
 import { findVersion, parseRelease, releaseScript } from "../src/fleet/releases.ts";
 import { sayResult } from "../src/fleet/say.ts";
-import { startResult } from "../src/fleet/start.ts";
+import { startResult, startScript } from "../src/fleet/start.ts";
 import { ENV, fleet, remoteSnapshot } from "./fleet-fixture.ts";
 import { AT, stubFleetScripts } from "./fleet-scripts-fixture.ts";
 import { sandbox } from "./helpers.ts";
@@ -107,17 +107,36 @@ describe("fleet say and start", () => {
         expect(sayResult({ machine: "x", local: false, ok: true, sections: [] }).outcome).toBe("no lead in tmux");
     });
 
-    test("start never touches a machine whose lead runs, and reports the listener", () => {
+    test("start never touches a machine whose lead runs", () => {
         const box = fleet(remoteSnapshot("m2"));
         stubFleetScripts(box);
-        const output = box.ok(["fleet", "start", "--listener", "--message", "hi"], { env: ENV });
-        expect(output).toContain("m2: lead already running: lead:toli omp; listener already running (toli-peer-serve)");
+        const output = box.ok(["fleet", "start", "--message", "hi"], { env: ENV });
+        expect(output).toContain("m2: lead already running: lead:toli omp\n");
         expect(
             startResult({ machine: "x", local: false, ok: true, sections: parseSections("@@started s:w") }).lead,
         ).toBe("started: s:w");
         expect(box.toli(["fleet", "start", "--session", "a b"], { env: ENV }).stderr).toContain(
             "--session and --window",
         );
+    });
+
+    test("start leaves the peer listener to the lead service: no second supervisor looping on its lock (T1946)", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        stubFleetScripts(box);
+        const result = box.toli(["fleet", "start", "--listener", "--message", "hi"], { env: ENV });
+        expect(result.code).not.toBe(0);
+        expect(result.stderr).toContain("unknown option --listener");
+        const script = startScript({
+            session: "toli",
+            window: "lead",
+            binary: "omp",
+            key: "Enter",
+            message: null,
+            attach: null,
+            os: null,
+        });
+        expect(script).not.toContain("peer serve");
+        expect(script).not.toContain("systemd-run");
     });
 });
 

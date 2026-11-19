@@ -345,7 +345,7 @@ const FLEET_USAGE = [
     "  | questions [--json] | releases <project>@<machine>... [--health <project>=<url>]... [--main <branch>] [--json]",
     '  | say "<text>" [--key <key>] [--os <uname>] [--to <machine,...>] [--wait <seconds>] [--json]',
     '  | start [--session <s>] [--window <w>] [--harness <h>] [--key <key>] [--message "<text>"] [--attach "<command>"]',
-    "    [--listener] [--os <uname>] [--json]",
+    "    [--os <uname>] [--json]",
     "  | check [--json] [--wake] [--local] | export | sync",
 ].join("\n");
 

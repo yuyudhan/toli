@@ -124,7 +124,7 @@ const USAGE = `usage: bin/toli <command> [args]
   fleet releases <project>@<machine>... [--health <project>=<url>]... [--main <branch>] [--json]
   fleet say "<text>" [--key <key>] [--os <uname>] [--to <machine,...>] [--wait <seconds>] [--json]
   fleet start [--session <s>] [--window <w>] [--harness <h>] [--key <key>] [--message "<text>"]
-        [--attach "<command>"] [--listener] [--os <uname>] [--json]
+        [--attach "<command>"] [--os <uname>] [--json]
   fleet export | sync
   fleet check [--json] [--wake] [--local]
   pick [--project <name>] [--shape ship|scout] [--json]

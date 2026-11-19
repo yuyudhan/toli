@@ -86,7 +86,7 @@ export function stubFleetScripts(box: Sandbox): void {
         ["@@tasks", WORK],
         ["@@held", `@@held\n${HELD}`],
         ["@@sent", "@@sent lead:toli\n@@seen\n@@changed\n@@screen\nthe typed text"],
-        ["@@started", "@@running lead:toli omp\n@@listener already running (toli-peer-serve)"],
+        ["@@started", "@@running lead:toli omp"],
         ["@@release", RELEASE],
         ["@@clones", WORK.slice(WORK.indexOf("@@clones"))],
     ];
