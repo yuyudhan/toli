@@ -1,11 +1,12 @@
-// `bin/toli fleet say "<text>" [--key <key>] [--os Linux|Darwin] [--to <machine,...>] [--wait <seconds>]`: type one
-// message into every other fleet machine's lead (or only the ones `--to` names), where it runs in tmux (a harness in
-// the toli root, src/fleet/machine-script.ts), and
-// submit it with `--key` (a tmux key name, default Enter; a harness bound to submit on another key takes that one).
+// `bin/toli fleet say "<text>" [--steer | --key <key>] [--os Linux|Darwin] [--to <machine,...>] [--wait <seconds>]`:
+// type one message into every other fleet machine's lead (or only the ones `--to` names), where it runs in tmux (a
+// harness in the toli root, src/fleet/machine-script.ts), and submit it with the lead's harness's submit key (omp:
+// Ctrl+Q, queued for when its turn yields; `--steer`: Ctrl+S, into the running turn; never Enter, T1960), or `--key`.
 // It waits up to `--wait` seconds (default 300) for a lead whose harness has drawn its status bar, then confirms per
 // machine that the pane shows the text or changed. The one fleet command that writes: it types, nothing else.
 import { Args } from "../core/args.ts";
 import { out, printJson, shellQuote, ToliError } from "../core/util.ts";
+import { SPECS } from "../harness/harness.ts";
 import { LEAD_PANES_SH, runOnFleet, type ScriptOutcome, section } from "./machine-script.ts";
 
 const DEFAULT_WAIT_SECONDS = 300;
@@ -15,25 +16,36 @@ const SEND_SECONDS = 40;
 /** Leading text the pane must show to count as received: a long message wraps or scrolls past its end. */
 const PROBE_LENGTH = 24;
 
-export type SayOptions = { text: string; key: string; os: string | null; waitSeconds: number };
+/** `key` null: the pane's harness's submit key, or its steer key with `steer`. */
+export type SayOptions = { text: string; key: string | null; steer: boolean; os: string | null; waitSeconds: number };
 
 /** The script each machine runs: find (or wait for) its ready lead pane, type, submit, read back. */
 export function sayScript(options: SayOptions): string {
     return `${LEAD_PANES_SH}
 text=${shellQuote(options.text)}
 probe=${shellQuote(options.text.slice(0, PROBE_LENGTH))}
-key=${shellQuote(options.key)}
+key=${shellQuote(options.key ?? "")}
 want=${shellQuote(options.os ?? "")}
 if [ -n "$want" ] && [ "$(uname -s)" != "$want" ]; then echo "@@skip $(uname -s)"; exit 0; fi
 ready_pane() {
   lead_panes | while IFS='|' read -r id name cmd; do
-    tmux capture-pane -p -t "$id" 2>/dev/null | grep -q '────────' && { echo "$id|$name"; break; }
+    tmux capture-pane -p -t "$id" 2>/dev/null | grep -q '────────' && { echo "$id|$name|$cmd"; break; }
   done
 }
 target=$(ready_pane); waited=0
 while [ -z "$target" ] && [ "$waited" -lt ${options.waitSeconds} ]; do sleep 5; waited=$((waited + 5)); target=$(ready_pane); done
 if [ -z "$target" ]; then echo "@@none"; exit 0; fi
-id=\${target%%|*}; name=\${target#*|}
+id=\${target%%|*}; rest=\${target#*|}; name=\${rest%%|*}; harness=\${rest#*|}
+if [ -z "$key" ]; then
+  case "$harness" in
+${Object.values(SPECS)
+    .map(
+        (spec) =>
+            `    ${shellQuote(spec.binary)}) key=${shellQuote(options.steer ? spec.steerKey : spec.submitKey)} ;;`,
+    )
+    .join("\n")}
+  esac
+fi
 before=$(tmux capture-pane -p -t "$id" | cksum)
 tmux send-keys -t "$id" -l "$text"
 sleep 2
@@ -85,9 +97,9 @@ export function sayResult(outcome: ScriptOutcome): SayResult {
     };
 }
 
-/** `toli fleet say "<text>" [--key <key>] [--os <uname>] [--to <m1,m2>] [--wait <seconds>] [--json]`. */
+/** `toli fleet say "<text>" [--steer | --key <key>] [--os <uname>] [--to <m1,m2>] [--wait <seconds>] [--json]`. */
 export async function sayCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv, { booleans: ["json"], values: ["key", "os", "to", "wait"] });
+    const args = new Args(argv, { booleans: ["json", "steer"], values: ["key", "os", "to", "wait"] });
     args.maxPositional(1);
     const text = args.pos(0, "text");
     if (text.trim() === "") throw new ToliError("fleet say needs the text to type");
@@ -95,7 +107,10 @@ export async function sayCommand(argv: string[]): Promise<number> {
     const waitSeconds = waitText === undefined ? DEFAULT_WAIT_SECONDS : Number(waitText);
     if (!Number.isInteger(waitSeconds) || waitSeconds < 0)
         throw new ToliError("--wait must be whole seconds, 0 or more");
-    const options: SayOptions = { text, key: args.str("key") ?? "Enter", os: args.str("os") ?? null, waitSeconds };
+    const key = args.str("key") ?? null;
+    const steer = args.bool("steer");
+    if (steer && key !== null) throw new ToliError("--steer and --key both pick the submit key: give one");
+    const options: SayOptions = { text, key, steer, os: args.str("os") ?? null, waitSeconds };
     const to = args.str("to");
     const outcomes = await runOnFleet(sayScript(options), {
         withSelf: false,

@@ -3,11 +3,12 @@
 // machine where none runs (a machine whose lead already runs in tmux is never touched): a detached tmux session (or a
 // new window in an existing one) in the toli root running the harness, optionally a terminal attached to it
 // (`--attach`, run on that machine, e.g. a terminal emulator on a desktop workspace), and the first message typed and
-// submitted with `--key` once the harness has drawn its status bar. The HTTPS peer listener is the lead service's
+// submitted with the harness's submit key (omp: Ctrl+Q, never Enter, T1960; `--key` overrides) once the harness has
+// drawn its status bar. The HTTPS peer listener is the lead service's
 // (src/peer/supervise.ts ensureListener): a second supervisor fights it for the listener lock (T1946).
 import { Args } from "../core/args.ts";
 import { out, printJson, shellQuote, ToliError } from "../core/util.ts";
-import { parseHarness, SPECS } from "../harness/harness.ts";
+import { type Harness, parseHarness, SPECS } from "../harness/harness.ts";
 import { LEAD_PANES_SH, runOnFleet, type ScriptOutcome } from "./machine-script.ts";
 
 /** Waiting for an attached client (60 s) and the harness (90 s), then typing. */
@@ -16,8 +17,9 @@ const START_CAP_MS = 240_000;
 export type StartOptions = {
     session: string;
     window: string;
-    binary: string;
-    key: string;
+    harness: Harness;
+    /** Null: the harness's submit key. */
+    key: string | null;
     message: string | null;
     attach: string | null;
     os: string | null;
@@ -47,7 +49,7 @@ else
           : `(${options.attach}) >/dev/null 2>&1
   for _ in $(seq 1 30); do [ "$(tmux list-clients -t "$session" 2>/dev/null | wc -l)" -gt 0 ] && break; sleep 2; done`
   }
-  tmux send-keys -t "$target" ${shellQuote(options.binary)} Enter
+  tmux send-keys -t "$target" ${shellQuote(SPECS[options.harness].binary)} Enter
   ready=0
   for _ in $(seq 1 45); do
     sleep 2
@@ -55,7 +57,7 @@ else
     [ "$ready" -ge 2 ] && break
   done
   if [ "$ready" -lt 2 ]; then
-    echo "@@failed ${options.binary} drew no status bar in 90 s in $target"
+    echo "@@failed ${SPECS[options.harness].binary} drew no status bar in 90 s in $target"
   else
     ${
         options.message === null
@@ -63,7 +65,7 @@ else
             : `sleep 3
     tmux send-keys -t "$target" -l ${shellQuote(options.message)}
     sleep 1
-    tmux send-keys -t "$target" ${shellQuote(options.key)}`
+    tmux send-keys -t "$target" ${shellQuote(options.key ?? SPECS[options.harness].submitKey)}`
     }
     echo "@@started $target"
   fi
@@ -98,8 +100,8 @@ export async function startCommand(argv: string[]): Promise<number> {
     const options: StartOptions = {
         session,
         window,
-        binary: SPECS[parseHarness(args.str("harness") ?? "omp")].binary,
-        key: args.str("key") ?? "Enter",
+        harness: parseHarness(args.str("harness") ?? "omp"),
+        key: args.str("key") ?? null,
         message: args.str("message") ?? null,
         attach: args.str("attach") ?? null,
         os: args.str("os") ?? null,

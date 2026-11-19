@@ -31,6 +31,13 @@ export type HarnessSpec = {
     login: string;
     /** Whether the harness's own subagents run in the background so the lead stays free (otherwise use spawn). */
     asyncSubagents: boolean;
+    /**
+     * The tmux key that submits a message typed into the live session without interrupting its turn: queued for
+     * when the turn yields, sent at once when idle. Never Enter for omp (T1960).
+     */
+    submitKey: string;
+    /** The tmux key that submits a typed message into the running turn (steering); the submit key where none differs. */
+    steerKey: string;
 };
 
 export const SPECS: Record<Harness, HarnessSpec> = {
@@ -41,6 +48,8 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         install: "bun install -g @oh-my-pi/pi-coding-agent",
         login: "omp login",
         asyncSubagents: true,
+        submitKey: "C-q",
+        steerKey: "C-s",
     },
     claude: {
         name: "claude",
@@ -49,6 +58,8 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         install: "curl -fsSL https://claude.ai/install.sh | bash",
         login: "claude auth login (or ANTHROPIC_API_KEY)",
         asyncSubagents: true,
+        submitKey: "Enter",
+        steerKey: "Enter",
     },
     codex: {
         name: "codex",
@@ -57,6 +68,8 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         install: "npm install -g @openai/codex",
         login: "codex login (or CODEX_API_KEY)",
         asyncSubagents: false,
+        submitKey: "Enter",
+        steerKey: "Enter",
     },
     cursor: {
         name: "cursor",
@@ -65,6 +78,8 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         install: "curl https://cursor.com/install -fsS | bash",
         login: "cursor-agent login (or CURSOR_API_KEY)",
         asyncSubagents: false,
+        submitKey: "Enter",
+        steerKey: "Enter",
     },
     grok: {
         name: "grok",
@@ -73,6 +88,8 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         install: "curl -fsSL https://x.ai/cli/install.sh | bash",
         login: "grok login (or XAI_API_KEY)",
         asyncSubagents: true,
+        submitKey: "Enter",
+        steerKey: "Enter",
     },
     pi: {
         name: "pi",
@@ -81,6 +98,8 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         install: "npm install -g @earendil-works/pi-coding-agent",
         login: "provider API keys (e.g. ANTHROPIC_API_KEY) or /login inside pi",
         asyncSubagents: false,
+        submitKey: "Enter",
+        steerKey: "Enter",
     },
 };
 

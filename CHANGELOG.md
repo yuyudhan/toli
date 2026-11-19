@@ -8,6 +8,12 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli fleet say` and the first message of `bin/toli fleet start` no longer submit with Enter into an omp lead.
+  Enter is not how a message typed into a live omp session is sent: they now submit with Ctrl+Q (`C-q`), which
+  queues the message for when the lead's running turn yields (sent at once when it is idle). `fleet say --steer`
+  submits with Ctrl+S (`C-s`) instead, steering the message into the running turn, for a message that must interrupt
+  it. Leads on Claude Code, Codex, Cursor, Grok and pi still submit with Enter; `--key` still overrides
+  (docs/fleet.md).
 - A run that waits silently on a remote CI pipeline is no longer stopped as stalled half way. Watching a pipeline
   shows no output, file change or CPU use, so a release run waiting on a 47-minute build job was stopped after
   `capacity.stallMinutes` (30) and needed a second run to finish. A brief (or a scheduled job's prompt) may now carry a

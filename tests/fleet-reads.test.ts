@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import { LEAD_PANES_SH, parseSections } from "../src/fleet/machine-script.ts";
 import { inboxQuestion } from "../src/fleet/questions.ts";
 import { findVersion, parseRelease, releaseScript } from "../src/fleet/releases.ts";
-import { sayResult } from "../src/fleet/say.ts";
-import { startResult, startScript } from "../src/fleet/start.ts";
+import { type SayOptions, sayResult, sayScript } from "../src/fleet/say.ts";
+import { type StartOptions, startResult, startScript } from "../src/fleet/start.ts";
 import { ENV, fleet, remoteSnapshot } from "./fleet-fixture.ts";
 import { AT, stubFleetScripts } from "./fleet-scripts-fixture.ts";
 import { sandbox } from "./helpers.ts";
@@ -129,14 +130,97 @@ describe("fleet say and start", () => {
         const script = startScript({
             session: "toli",
             window: "lead",
-            binary: "omp",
-            key: "Enter",
+            harness: "omp",
+            key: null,
             message: null,
             attach: null,
             os: null,
         });
         expect(script).not.toContain("peer serve");
         expect(script).not.toContain("systemd-run");
+    });
+
+    // A fake tmux: one lead pane running `harness` in the toli root (or none), a drawn status bar, and every
+    // send-keys call's arguments recorded one line each.
+    function fakeTmux(harness: string | null): { run: (script: string) => string[] } {
+        const box = sandbox();
+        const root = Bun.spawnSync(["pwd", "-P"], { cwd: box.root }).stdout.toString().trim();
+        const log = `${box.root}/keys.log`;
+        const pane = harness === null ? ":" : `printf '%s\\n' '%1|lead:toli|${harness}|${root}|11'`;
+        box.stub(
+            "tmux",
+            [
+                'case "$1" in',
+                `  list-panes) ${pane} ;;`,
+                "  has-session) exit 1 ;;",
+                "  capture-pane) echo '────────────────' ;;",
+                `  send-keys) shift; printf '%s\\n' "$*" >> '${log}' ;;`,
+                "esac",
+            ].join("\n"),
+        );
+        box.stub("sleep", ":");
+        return {
+            run: (script) => {
+                const result = Bun.spawnSync(["sh", "-c", script], {
+                    cwd: box.root,
+                    env: { ...process.env, PATH: `${box.stubs}:/usr/bin:/bin` },
+                });
+                expect(result.exitCode).toBe(0);
+                return existsSync(log) ? readFileSync(log, "utf8").trimEnd().split("\n") : [];
+            },
+        };
+    }
+    const say = (options: Partial<SayOptions>): SayOptions => ({
+        text: "hello",
+        key: null,
+        steer: false,
+        os: null,
+        waitSeconds: 0,
+        ...options,
+    });
+    const start = (options: Partial<StartOptions>): StartOptions => ({
+        session: "toli",
+        window: "lead",
+        harness: "omp",
+        key: null,
+        message: "hi",
+        attach: null,
+        os: null,
+        ...options,
+    });
+
+    test("say submits into an omp lead with Ctrl+Q (queued for its yield), never Enter (T1960)", () => {
+        expect(fakeTmux("omp").run(sayScript(say({})))).toEqual(["-t %1 -l hello", "-t %1 C-q"]);
+    });
+
+    test("say --steer submits into an omp lead with Ctrl+S, interrupting its running turn (T1960)", () => {
+        expect(fakeTmux("omp").run(sayScript(say({ steer: true })))).toEqual(["-t %1 -l hello", "-t %1 C-s"]);
+    });
+
+    test("say keeps Enter for a harness that submits on it, and --key overrides any default (T1960)", () => {
+        expect(fakeTmux("claude").run(sayScript(say({})))).toEqual(["-t %1 -l hello", "-t %1 Enter"]);
+        expect(fakeTmux("omp").run(sayScript(say({ key: "M-Enter" })))).toEqual(["-t %1 -l hello", "-t %1 M-Enter"]);
+    });
+
+    test("say refuses --steer with --key: the key is then ambiguous (T1960)", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        stubFleetScripts(box);
+        const result = box.toli(["fleet", "say", "hi", "--steer", "--key", "C-q", "--wait", "0"], { env: ENV });
+        expect(result.code).not.toBe(0);
+        expect(result.stderr).toContain("--steer and --key");
+    });
+
+    test("start launches the harness with Enter and submits the first message with its submit key (T1960)", () => {
+        expect(fakeTmux(null).run(startScript(start({})))).toEqual([
+            "-t toli:lead omp Enter",
+            "-t toli:lead -l hi",
+            "-t toli:lead C-q",
+        ]);
+        expect(fakeTmux(null).run(startScript(start({ harness: "claude" })))).toEqual([
+            "-t toli:lead claude Enter",
+            "-t toli:lead -l hi",
+            "-t toli:lead Enter",
+        ]);
     });
 });
 

@@ -265,7 +265,7 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     fleet push [--json]
     fleet questions [--json]
     fleet releases <project>@<machine>... [--health <project>=<url>]... [--main <branch>] [--json]
-    fleet say "<text>" [--key <key>] [--os <uname>] [--to <machine,...>] [--wait <seconds>] [--json]
+    fleet say "<text>" [--steer | --key <key>] [--os <uname>] [--to <machine,...>] [--wait <seconds>] [--json]
     fleet start [--session <s>] [--window <w>] [--harness <h>] [--key <key>] [--message "<text>"]
           [--attach "<command>"] [--os <uname>] [--json]
     fleet export | sync
@@ -284,7 +284,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
 - `fleet push`, `fleet questions`, `fleet releases`: every clone's branch, unpushed commits, ages, dirty files and a
   push its newest report says is blocked; every open question across the fleet as one numbered list; where each
   project's releases stand on the machine that cuts them. `fleet say` types one message into every other machine's
-  lead in tmux and confirms it arrived; `fleet start` starts the lead in tmux on every other machine where none runs
+  lead in tmux, submits it with Ctrl+Q into omp (queued for its yield; `--steer`: Ctrl+S, into the running turn;
+  never Enter) and confirms it arrived; `fleet start` starts the lead in tmux on every other machine where none runs
   ([fleet.md](fleet.md#fleet-health-and-work)).
 - `fleet check`: idle machines (no running jawan, spawn run or native subagent) with queued work for a project
   cloned there, and active tasks no live run works on, on every reachable machine; `--wake` posts the findings as one
