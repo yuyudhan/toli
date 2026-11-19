@@ -1,6 +1,16 @@
 // The project's own git hooks as `bin/toli commit` (src/projects/commit.ts) runs them on its private index:
 // pre-commit on exactly the commit being made, then commit-msg on its message.
-import { accessSync, constants, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    accessSync,
+    constants,
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readFileSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { machineSettings } from "../core/config.ts";
 import { gitOk } from "../core/git.ts";
@@ -99,22 +109,57 @@ function hookPath(attempt: Attempt, name: string): string {
  * Link the checkout's ignored `entry` (a path git lists relative to `root`, a directory ending in `/`) into the staged
  * `tree` at the same place, so a hook finds a nested package's node_modules or a virtualenv as under `git commit`.
  * Missing parent directories are created; an entry the tree already has, or one under a link (into the checkout,
- * where creating anything would touch the shared working tree), is left alone.
+ * where creating anything would touch the shared working tree), is left alone. Returns the linked path, or null.
  */
-function linkIgnored(root: string, tree: string, entry: string): void {
+function linkIgnored(root: string, tree: string, entry: string): string | null {
     const name = entry.replace(/\/$/, "");
-    if (name === "") return;
+    if (name === "") return null;
     const parts = name.split("/");
     let parent = tree;
     for (const part of parts.slice(0, -1)) {
         parent = join(parent, part);
         const stat = lstatSync(parent, { throwIfNoEntry: false });
         if (stat === undefined) mkdirSync(parent);
-        else if (!stat.isDirectory()) return;
+        else if (!stat.isDirectory()) return null;
     }
     const target = join(tree, name);
-    if (lstatSync(target, { throwIfNoEntry: false }) !== undefined) return;
+    if (lstatSync(target, { throwIfNoEntry: false }) !== undefined) return null;
     symlinkSync(join(root, name), target);
+    return name;
+}
+
+/** `name` as a gitignore pattern matching exactly that path from the top: anchored, special characters escaped. */
+function excludePattern(name: string): string {
+    return `/${name.replace(/[\\*?[\]!# ]/g, "\\$&")}`;
+}
+
+/** The user's own excludes file as git resolves it: core.excludesFile, else $XDG_CONFIG_HOME/git/ignore. */
+function userExcludes(attempt: Attempt): string {
+    const configured = attempt.git(["config", "--path", "core.excludesFile"]);
+    if (configured.code === 0 && configured.stdout.trim() !== "") return configured.stdout.trim();
+    return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "git", "ignore");
+}
+
+/**
+ * Keep the `linked` paths out of git's untracked files in the staged tree. A link to an ignored directory is a symlink,
+ * which a directory-only pattern (`node_modules/`) does not match, so git would list it as untracked and a hook that
+ * reads untracked files (pretty-quick) would trip over it. The tree's git directory shares `info/exclude` with the
+ * checkout, so the paths go in a scratch excludes file after the user's own, made core.excludesFile through
+ * GIT_CONFIG_COUNT (after any entries the caller's environment already sets). Returns that environment.
+ */
+function excludeLinked(attempt: Attempt, linked: string[]): Record<string, string> {
+    if (linked.length === 0) return {};
+    const own = userExcludes(attempt);
+    const base = existsSync(own) ? readFileSync(own, "utf8").replace(/\n?$/, "\n") : "";
+    const file = attempt.file("exclude");
+    writeFileSync(file, `${base}${linked.map(excludePattern).join("\n")}\n`);
+    const count = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "", 10);
+    const index = Number.isNaN(count) ? 0 : count;
+    return {
+        GIT_CONFIG_COUNT: String(index + 1),
+        [`GIT_CONFIG_KEY_${index}`]: "core.excludesFile",
+        [`GIT_CONFIG_VALUE_${index}`]: file,
+    };
 }
 
 /**
@@ -124,9 +169,10 @@ function linkIgnored(root: string, tree: string, entry: string): void {
  * lists only the named paths and every file it reads is the committed version, even for a hook that unsets GIT_DIR,
  * GIT_WORK_TREE and GIT_INDEX_FILE: other jawans' staged or half-edited files in the shared checkout can neither fail
  * nor pass it. A hook file that is tracked runs as committed; the checkout's ignored entries at any depth (node_modules
- * of a nested package, a virtualenv, target) are linked in so its tools resolve. A hook that reformats or re-stages a
- * file is refused rather than followed: the commit would then differ from the working tree. A missing or
- * non-executable hook is skipped, as git skips it. A hook still running at `limit` is stopped and the commit refused.
+ * of a nested package, a virtualenv, target) are linked in so its tools resolve, and excluded so git never lists them
+ * as untracked there. A hook that reformats or re-stages a file is refused rather than followed: the commit would then
+ * differ from the working tree. A missing or non-executable hook is skipped, as git skips it. A hook still running at
+ * `limit` is stopped and the commit refused.
  */
 export function preCommitHook(attempt: Attempt, limit: HookLimit): void {
     const hook = hookPath(attempt, "pre-commit");
@@ -138,9 +184,18 @@ export function preCommitHook(attempt: Attempt, limit: HookLimit): void {
     const program = inside && executable(join(tree, rel)) ? join(tree, rel) : hook;
     const shown = inside ? rel : hook;
     const ignored = attempt.git(["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
-    for (const entry of ignored.code === 0 ? ignored.stdout.split("\0") : []) linkIgnored(root, tree, entry);
+    const linked: string[] = [];
+    for (const entry of ignored.code === 0 ? ignored.stdout.split("\0") : []) {
+        const name = linkIgnored(root, tree, entry);
+        if (name !== null) linked.push(name);
+    }
     const before = attempt.gitOk(["write-tree"]);
-    const env = { GIT_DIR: attempt.linkStaged(), GIT_WORK_TREE: tree, GIT_INDEX_FILE: attempt.index };
+    const env = {
+        ...excludeLinked(attempt, linked),
+        GIT_DIR: attempt.linkStaged(),
+        GIT_WORK_TREE: tree,
+        GIT_INDEX_FILE: attempt.index,
+    };
     const result = run([program], { cwd: tree, env, ...timeout(limit) });
     const output = tail(`${result.stdout}${result.stderr}`);
     if (result.timedOut) throw timedOut("pre-commit", shown, limit, output);

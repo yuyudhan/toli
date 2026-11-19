@@ -25,6 +25,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A project's pre-commit hook under `bin/toli commit` no longer sees the checkout's ignored directories it links into
+  the hook's tree as untracked files. A directory-only `.gitignore` pattern such as `node_modules/` does not match
+  the symlink, so a hook reading untracked files (pretty-quick) crashed with EISDIR. The linked paths now go in a
+  hook-only `core.excludesFile` after the user's own excludes.
+
 - `bin/toli fleet say` and the first message of `bin/toli fleet start` no longer submit with Enter into an omp lead.
   Enter is not how a message typed into a live omp session is sent: they now submit with Ctrl+Q (`C-q`), which
   queues the message for when the lead's running turn yields (sent at once when it is idle). `fleet say --steer`

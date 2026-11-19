@@ -186,4 +186,27 @@ describe("bin/toli commit runs the project's pre-commit hook", () => {
         );
         expect(head(dir)).toBe(committed.sha);
     });
+
+    test("linked ignored entries are never untracked in the hook's tree, whatever the gitignore style", () => {
+        // `node_modules/` matches directories only, so the link to the clone's node_modules does not match it.
+        const dir = repo({ ".gitignore": "node_modules/\n", "README.md": "# app\n" });
+        mkdirSync(join(dir, "apps/x"), { recursive: true });
+        writeFileSync(join(dir, "apps/x/index.js"), "x\n");
+        git(dir, ["add", "apps/x/index.js"]);
+        git(dir, ["commit", "--quiet", "-m", "x"]);
+        installHook(
+            dir,
+            ".git/hooks",
+            "pre-commit",
+            [
+                "untracked=$(git ls-files --others --exclude-standard; env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git ls-files --others --exclude-standard)",
+                'if [[ -n "$untracked" ]]; then echo "pre-commit: untracked: $untracked" >&2; exit 1; fi',
+            ].join("\n"),
+        );
+        installHook(dir, "node_modules/.bin", "check", "exit 0");
+        installHook(dir, "apps/x/node_modules/.bin", "check", "exit 0");
+        writeFileSync(join(dir, "README.md"), "# app changed\n");
+        const committed = safeCommit({ dir, paths: ["README.md"], message: "Change the readme" });
+        expect(head(dir)).toBe(committed.sha);
+    });
 });
