@@ -222,7 +222,7 @@ describe("delegated results go back", () => {
     test("an answer recorded on the delegator goes to the owner, which releases the task and wakes its lead", () => {
         const { m1, m2 } = pair();
         m1.ok(["delegate", "m2", "ask", "--brief", brief(m1)]);
-        m2.ok(["task", "hold", "T1", "--question", "Go?"]);
+        m2.ok(["task", "hold", "T1", "--question", "Go?", "--option", "yes => go", "--option", "no => wait"]);
         const output = m1.ok(["task", "answer", "m2/T1", "yes, go"]);
         expect(output).toContain("m2 recorded the answer for m2/T1:");
         expect(output).toContain("unblocked: dispatch T1 now");

@@ -184,10 +184,20 @@ describe("project decisions", () => {
     test("answering a held task appends the question and answer to data/projects/<p>/decisions.md", () => {
         const box = registered();
         box.ok(["task", "add", "app", "Pick a cache"]);
-        box.ok(["task", "hold", "T1", "--question", "Redis or in-memory?"]);
+        box.ok([
+            "task",
+            "hold",
+            "T1",
+            "--question",
+            "Redis or in-memory?",
+            "--option",
+            "redis => Redis",
+            "--option",
+            "memory => in-memory",
+        ]);
         box.ok(["task", "answer", "T1", "in-memory"], { now: "2026-10-30T12:00:00Z" });
         expect(readFileSync(join(box.root, "data/projects/app/decisions.md"), "utf8")).toBe(
-            "# app decisions\n\n## 2026-10-30 T1: Pick a cache\n\n- Q: Redis or in-memory?\n- A: in-memory\n",
+            "# app decisions\n\n## 2026-10-30 T1: Pick a cache\n\n- Q: Redis or in-memory?\n- Options: 1. redis => Redis; 2. memory => in-memory\n- A: in-memory\n",
         );
     });
 });

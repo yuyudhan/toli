@@ -43,7 +43,22 @@ describe("digest", () => {
         box.ok(["task", "add", "alpha", "ask first"]);
         box.ok(["task", "add", "alpha", "later"]);
         box.ok(["task", "start", "T1"]);
-        box.ok(["task", "hold", "T2", "--question", "which db?"], { now: "2026-03-01T10:00:00Z" });
+        box.ok(
+            [
+                "task",
+                "hold",
+                "T2",
+                "--question",
+                "which db?",
+                "--option",
+                "pg => postgres",
+                "--option",
+                "lite => sqlite",
+            ],
+            {
+                now: "2026-03-01T10:00:00Z",
+            },
+        );
 
         const text = box.ok(["digest"], { now: NOW });
         const lines = text.split("\n");
@@ -55,7 +70,9 @@ describe("digest", () => {
             "Needs you (1):",
             "  alpha:",
             "    T2 ask first: which db? (held 3d)",
-            '      reply "T2: <answer>"',
+            "      1. pg => postgres",
+            "      2. lite => sqlite",
+            '      reply "T2: 1" (any option number, or own words)',
             '  record each reply verbatim: bin/toli task answer T<n> "<the user\'s words>", then dispatch it',
         ]);
         expect(section(text, "queued")).toEqual(["queued (1):", "  T3 alpha: later"]);
@@ -126,7 +143,17 @@ describe("digest", () => {
         writeFileSync(machinePath, JSON.stringify({ ...machine, harness: { byWork: { verify: "codex" } } }));
         box.ok(["task", "add", "alpha", "ask first"]);
         box.ok(["task", "add", "alpha", "build it", "--shape", "ship"]);
-        box.ok(["task", "hold", "T1", "--question", "which db?"]);
+        box.ok([
+            "task",
+            "hold",
+            "T1",
+            "--question",
+            "which db?",
+            "--option",
+            "pg => postgres",
+            "--option",
+            "lite => sqlite",
+        ]);
         box.ok(["inbox", "add", "--from", "m2", "--title", "news"], { stdin: "x", now: "2026-03-04T09:00:00Z" });
         const next = section(box.ok(["digest"], { now: NOW }), "Next");
         expect(next[0]).toBe("Next (6):");

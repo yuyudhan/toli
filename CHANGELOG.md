@@ -25,6 +25,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli task hold` refuses a hold without `--question` and 2-4 `--option "<choice> => <what happens then>"`
+  values, naming the format and how many it got. Holds with no options piled up in the Needs-you queue (8 of 26 in
+  one fleet review) because the user could not answer them by number; a free-text `--recommend` without options is
+  gone with them.
+
 - A project's pre-commit hook under `bin/toli commit` no longer sees the checkout's ignored directories it links into
   the hook's tree as untracked files. A directory-only `.gitignore` pattern such as `node_modules/` does not match
   the symlink, so a hook reading untracked files (pretty-quick) crashed with EISDIR. The linked paths now go in a

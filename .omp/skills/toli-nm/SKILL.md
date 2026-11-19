@@ -50,7 +50,8 @@ grant named, in place of the "Never push" rule) tells the jawan to:
   or `disown`.
 - Decide `auto-fix` and `no-op` findings on judgment as the global skill describes.
 - Apply the ask-user policy below to `ask-user` findings: answer what clearly follows the intent, and for anything
-  that must escalate, leave the run parked, record `bin/toli task hold <id> --question "..."` with the five-part
+  that must escalate, leave the run parked, record `bin/toli task hold <id> --question "..."` with 2-4
+  `--option "<choice> => <what happens then>"` and the five-part
   escalation, and report.
 - Use `--yes` only when the brief quotes the user saying to drive it unattended ("drive it unattended" or equivalent).
 - Never edit code itself while a run is active; the pipeline owns fixes.

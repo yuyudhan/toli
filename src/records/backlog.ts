@@ -211,30 +211,29 @@ function done(argv: string[]): void {
 }
 
 /**
- * `task hold <id> --question "..." [--option "<choice> => <then>"]... [--recommend <n|choice|text>] [--blocks "..."]
- * [--reversible]`: put the task in the Needs-you queue. Re-holding replaces every hold field. A done or dropped task is
- * reopened as held, with a note naming who reopened it, so a question from a job still running is never lost.
- * `--reversible` needs a recommendation and refuses holds about push, merge, main, MR, tag, release, destructive,
- * security or money steps.
+ * `task hold <id> --question "..." --option "<choice> => <then>" --option ... [--recommend <n|choice>] [--blocks "..."]
+ * [--reversible]`: put the task in the Needs-you queue. A hold needs its question and 2-4 options, so the user answers
+ * it by number; anything less is refused before the task changes. Re-holding replaces every hold field. A done or
+ * dropped task is reopened as held, with a note naming who reopened it, so a question from a job still running is
+ * never lost. `--reversible` needs a recommendation and refuses holds about push, merge, main, MR, tag, release,
+ * destructive, security or money steps.
  */
 function hold(argv: string[]): void {
     const args = new Args(argv, { values: ["question", "option", "recommend", "blocks"], booleans: ["reversible"] });
     args.maxPositional(1);
     const question = args.str("question")?.trim();
-    if (!question) throw new ToliError('hold needs --question "..."');
     const options = args.all("option").map(parseOption);
-    if (options.length > 0 && (options.length < HOLD_OPTIONS_MIN || options.length > HOLD_OPTIONS_MAX))
-        throw new ToliError(`give ${HOLD_OPTIONS_MIN}-${HOLD_OPTIONS_MAX} --option values, or none`);
+    if (!question || options.length < HOLD_OPTIONS_MIN || options.length > HOLD_OPTIONS_MAX)
+        throw new ToliError(
+            `hold needs --question "..." and ${HOLD_OPTIONS_MIN}-${HOLD_OPTIONS_MAX} --option "<choice> => <what happens then>" values, so the user answers by number; got ${question ? "" : "no question and "}${options.length}`,
+        );
     const recommendValue = args.str("recommend")?.trim();
     let recommend: string | undefined;
     if (recommendValue) {
-        if (options.length === 0) recommend = recommendValue;
-        else {
-            const match = matchOption(options, recommendValue);
-            if (match === undefined)
-                throw new ToliError(`--recommend must be an option's number (1-${options.length}) or its choice text`);
-            recommend = match.choice;
-        }
+        const match = matchOption(options, recommendValue);
+        if (match === undefined)
+            throw new ToliError(`--recommend must be an option's number (1-${options.length}) or its choice text`);
+        recommend = match.choice;
     }
     const blocks = args.str("blocks")?.trim();
     const reversible = args.bool("reversible");
@@ -261,8 +260,7 @@ function hold(argv: string[]): void {
         entry.status = "held";
         entry.question = question;
         entry.heldAt = now().toISOString();
-        if (options.length > 0) entry.options = options;
-        else delete entry.options;
+        entry.options = options;
         if (recommend !== undefined) entry.recommend = recommend;
         else delete entry.recommend;
         if (blocks) entry.blocks = blocks;

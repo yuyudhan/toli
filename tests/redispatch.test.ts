@@ -95,7 +95,22 @@ function deadTask(box: Sandbox, fields: Record<string, unknown>): void {
     box.ok(["task", "add", "alpha", "pick the database"]);
     spawnRun(box, DEAD, { task: "T1", project: "alpha", endedAt: "2026-03-04T08:10:00.000Z", ...fields });
     box.ok(["task", "start", "T1", "--agent", DEAD], { now: START });
-    box.ok(["task", "hold", "T2", "--question", "postgres or sqlite?"], { now: START });
+    box.ok(
+        [
+            "task",
+            "hold",
+            "T2",
+            "--question",
+            "postgres or sqlite?",
+            "--option",
+            "pg => postgres",
+            "--option",
+            "lite => sqlite",
+        ],
+        {
+            now: START,
+        },
+    );
     box.ok(["task", "answer", "T2", "postgres"], { now: "2026-03-04T08:20:00.000Z" });
 }
 
@@ -148,7 +163,22 @@ describe("the tick re-dispatches a task whose jawan died, once", () => {
             const t1 = tasks.find((entry) => entry.id === "T1");
             if (t1 !== undefined) t1.agentSession = { agent: "T11Sub", pid: session.pid };
         });
-        box.ok(["task", "hold", "T2", "--question", "postgres or sqlite?"], { now: START });
+        box.ok(
+            [
+                "task",
+                "hold",
+                "T2",
+                "--question",
+                "postgres or sqlite?",
+                "--option",
+                "pg => postgres",
+                "--option",
+                "lite => sqlite",
+            ],
+            {
+                now: START,
+            },
+        );
         box.ok(["task", "answer", "T2", "postgres"], { now: "2026-03-04T08:20:00.000Z" });
         box.ok(["job", "tick"], { now: "2026-03-04T09:00:00.000Z" });
         const next = runs(box).find((run) => run.id !== BLOCKER);

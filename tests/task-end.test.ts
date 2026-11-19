@@ -36,7 +36,7 @@ describe("task-end hook", () => {
         const box = withHook();
         for (const title of ["queued", "active", "held", "closed"]) box.ok(["task", "add", "alpha", title]);
         box.ok(["task", "start", "T2"]);
-        box.ok(["task", "hold", "T3", "--question", "which?"]);
+        box.ok(["task", "hold", "T3", "--question", "which?", "--option", "a => x", "--option", "b => y"]);
         expect(calls(box)).toEqual([]);
         box.ok(["task", "done", "T4"]);
         box.ok(["task", "done", "T4", "--note", "again"]);

@@ -70,7 +70,17 @@ describe("a delegated task's question for the user's word", () => {
         const { m1, m2 } = pair();
         withProject(m1, "app");
         m1.ok(["delegate", "m2", "the work", "--brief", brief(m1), "--project", "app"]);
-        m2.ok(["task", "hold", "T1", "--question", "question for Asha: which colour?"]);
+        m2.ok([
+            "task",
+            "hold",
+            "T1",
+            "--question",
+            "question for Asha: which colour?",
+            "--option",
+            "red => red",
+            "--option",
+            "blue => blue",
+        ]);
         const [task] = held(m1);
         expect(task).toMatchObject({
             project: "app",
@@ -86,7 +96,17 @@ describe("a delegated task's question for the user's word", () => {
         withProject(m1, "app");
         m1.ok(["task", "add", "app", "parent work"]);
         m1.ok(["delegate", "m2", "the work", "--brief", brief(m1), "--for", "T1"]);
-        m2.ok(["task", "hold", "T1", "--question", "Which crate first?"]);
+        m2.ok([
+            "task",
+            "hold",
+            "T1",
+            "--question",
+            "Which crate first?",
+            "--option",
+            "core => core first",
+            "--option",
+            "cli => cli first",
+        ]);
         expect(held(m1)).toEqual([]);
     });
 });

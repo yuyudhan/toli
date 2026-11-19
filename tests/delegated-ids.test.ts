@@ -172,7 +172,7 @@ describe("a spawned jawan", () => {
         const jawan = { TOLI_ROLE: "jawan", TOLI_TASK: "T2" };
         for (const args of [
             ["task", "done", "T1"],
-            ["task", "hold", "t1", "--question", "which?"],
+            ["task", "hold", "t1", "--question", "which?", "--option", "a => x", "--option", "b => y"],
             ["task", "drop", "T1"],
         ]) {
             const refused = box.toli(args, { env: jawan });

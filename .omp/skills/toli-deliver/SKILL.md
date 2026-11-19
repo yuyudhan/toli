@@ -79,7 +79,8 @@ The verifier brief (`docs/verify-brief-template.md`) fills its Workspace section
     `pr create --task` targets the task's base branch (the project's `branch`, else origin's default).
 
 - push-only grant: it pushes, then holds the task asking for the PR/MR.
-- neither: it commits and holds the task (`bin/toli task hold <id> --question "...push it and open the PR/MR?"`);
+- neither: it commits and holds the task (`bin/toli task hold <id> --question "...push it and open the PR/MR?"
+--option "yes => a jawan pushes and opens the PR/MR" --option "no => it stays a local branch"`);
   relay the question, and on the user's word dispatch a `sonic` jawan whose brief quotes it and runs the push and
   `pr create` lines above.
 

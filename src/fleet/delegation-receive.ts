@@ -318,7 +318,7 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
             `${delegation.from}'s lead delegated this task to you as ${fleetId(self, task.id)}: it is yours now.`,
             `Dispatch your own jawan for it (toli-dispatch skill; \`bin/toli task start ${task.id} --agent <id>\` or`,
             `\`bin/toli spawn --task ${task.id} --brief ${briefFile}\`). Marking it done, held or dropped reports back to`,
-            `${delegation.from} by itself; a question for the user goes in \`bin/toli task hold ${task.id}\`.`,
+            `${delegation.from} by itself; a question for the user goes in \`bin/toli task hold ${task.id} --question "..."\` with 2-4 \`--option "<choice> => <then>"\`.`,
             "",
             `- brief: ${briefFile}`,
             `- project: ${project}${cloned ? "" : " (not cloned here)"}`,

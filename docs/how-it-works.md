@@ -57,7 +57,8 @@ sequenceDiagram
    and the lead sends a fix.
 6. **Report.** The lead tells you the outcome in plain words, with full links to any commit, PR, or report.
 
-Questions a jawan cannot answer put the task on hold (`bin/toli task hold`) with 2-4 options, a recommendation, and
+Questions a jawan cannot answer put the task on hold (`bin/toli task hold`) with 2-4 options (a hold without them
+is refused, so every question can be answered by number), a recommendation, and
 what it blocks. Held tasks are the Needs-you queue (`bin/toli needs`, the top of the digest): the lead raises them
 together at session start, after results that add questions, or when you ask (`/ahoy`), never one at a time or every
 turn. `bin/toli task answer` records your reply verbatim in the project's `decisions.md` and names every task waiting

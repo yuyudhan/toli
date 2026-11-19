@@ -101,7 +101,22 @@ describe("active tasks with no live run", () => {
         box.ok(["task", "add", "alpha", "integrate and push"]);
         box.ok(["task", "add", "alpha", "audit speed"]);
         box.ok(["task", "start", "T1", "--agent", "remote:m2:bg_7"], { now: START });
-        box.ok(["task", "hold", "T2", "--question", "budget 45 ms or 20 ms?"], { now: START });
+        box.ok(
+            [
+                "task",
+                "hold",
+                "T2",
+                "--question",
+                "budget 45 ms or 20 ms?",
+                "--option",
+                "45 => 45 ms",
+                "--option",
+                "20 => 20 ms",
+            ],
+            {
+                now: START,
+            },
+        );
         legacyRemoteRecord(box, "T1", "2026-03-04T08:20:00.000Z", "waiting on the answer to question 45");
         box.ok(["task", "answer", "T2", "45 ms"], { now: "2026-03-04T08:30:00.000Z" });
 
@@ -173,8 +188,30 @@ describe("active tasks with no live run", () => {
 describe("answers reach the waiting work", () => {
     function heldDecision(box: Sandbox): void {
         for (const title of ["pick db", "build store", "migrate", "report"]) box.ok(["task", "add", "alpha", title]);
-        box.ok(["task", "hold", "T1", "--question", "postgres or sqlite?", "--blocks", "T2 and the T3 migration"]);
-        box.ok(["task", "hold", "T4", "--question", "resume when T1 is decided"]);
+        box.ok([
+            "task",
+            "hold",
+            "T1",
+            "--question",
+            "postgres or sqlite?",
+            "--option",
+            "pg => postgres",
+            "--option",
+            "lite => sqlite",
+            "--blocks",
+            "T2 and the T3 migration",
+        ]);
+        box.ok([
+            "task",
+            "hold",
+            "T4",
+            "--question",
+            "resume when T1 is decided",
+            "--option",
+            "yes => resume",
+            "--option",
+            "no => wait",
+        ]);
         const briefs = join(box.root, "data", "projects", "alpha", "briefs");
         mkdirSync(briefs, { recursive: true });
         writeFileSync(join(briefs, "T1.md"), "brief");
@@ -225,7 +262,22 @@ describe("answers reach the waiting work", () => {
         box.ok(["task", "add", "alpha", "integrate and push"]);
         box.ok(["task", "start", "T1", "--agent", "remote:m2:bg_7"], { now: START });
         legacyRemoteRecord(box, "T1", "2026-03-04T08:20:00.000Z", "waiting on the answer to question 45");
-        box.ok(["task", "hold", "T1", "--question", "budget 45 ms or 20 ms?"], { now: "2026-03-04T08:21:00.000Z" });
+        box.ok(
+            [
+                "task",
+                "hold",
+                "T1",
+                "--question",
+                "budget 45 ms or 20 ms?",
+                "--option",
+                "45 => 45 ms",
+                "--option",
+                "20 => 20 ms",
+            ],
+            {
+                now: "2026-03-04T08:21:00.000Z",
+            },
+        );
         box.ok(["task", "answer", "T1", "45 ms"], { now: "2026-03-04T09:00:00.000Z" });
 
         // The run ended 41 minutes ago, but the lead is dispatching the answer right now: no digest line, no wake.

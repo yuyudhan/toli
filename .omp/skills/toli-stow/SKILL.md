@@ -113,7 +113,8 @@ For every task this session touched:
 
 - Work landed and verified, but still `active`: the stow jawan runs `bin/toli task done <id> --commit <sha>` or
   `--report <path>`.
-- Waiting on the user but not recorded: Sardar runs `bin/toli task hold <id> --question "..."`.
+- Waiting on the user but not recorded: Sardar runs `bin/toli task hold <id> --question "..."` with 2-4
+  `--option "<choice> => <what happens then>"`.
 - Abandoned by the user: Sardar runs `bin/toli task drop <id>` (only on their word).
 - Jawans still running: leave `active` and mention it.
 

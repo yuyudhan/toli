@@ -115,7 +115,7 @@ describe("applyEnvelope refusals", () => {
         ]);
         const delegation = { id: "alice-1", from: "alice", title: "held work", brief: "b" };
         recv.box.ok(["delegation", "receive", "--from", "alice"], { stdin: JSON.stringify(delegation) });
-        recv.box.ok(["task", "hold", "T1", "--question", "which way?"]);
+        recv.box.ok(["task", "hold", "T1", "--question", "which way?", "--option", "a => x", "--option", "b => y"]);
         const body = JSON.stringify({ id: "T1", answer: "the forged way" });
         const [receipt] = applyIn(recv.box, [envelope(mallory, "mallory", recv.fingerprint, { kind: "answer", body })]);
         expect(receipt?.status).toBe("refused");
@@ -194,7 +194,7 @@ describe("the ssh commands hold the sender to its task", () => {
         recv.box.ok(["delegation", "receive"], {
             stdin: JSON.stringify({ id: "alice-1", from: "alice", title: "held work", brief: "b" }),
         });
-        recv.box.ok(["task", "hold", "T1", "--question", "which way?"]);
+        recv.box.ok(["task", "hold", "T1", "--question", "which way?", "--option", "a => x", "--option", "b => y"]);
         const forged = recv.box.toli(["task", "answer", "T1", "forged", "--from", "mallory"]);
         expect(forged.code).toBe(1);
         expect(forged.stderr).toContain("T1 was delegated by alice, not mallory");

@@ -67,7 +67,8 @@ How jobs run, in plain words for the user:
 ## Scheduled-run rules
 
 Every scheduled run: never push, merge, open PRs, or ask questions. Ship jobs commit only with `bin/toli commit` on
-the current branch. Anything needing the user becomes `bin/toli task hold <id> --question "..."` and is noted in the
+the current branch. Anything needing the user becomes `bin/toli task hold <id> --question "..."` with 2-4
+`--option "<choice> => <what happens then>"` (a hold without options is refused) and is noted in the
 result. A run never answers "skipped" because the user is away (`state/afk`); it does its job and reports.
 
 ## Handling `[toli job <name> <runId>]`

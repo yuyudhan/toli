@@ -31,20 +31,40 @@ describe("task lifecycle", () => {
     test("an answered task that was never started goes back to queued", () => {
         const box = project();
         box.ok(["task", "add", "alpha", "investigate"]);
-        box.ok(["task", "hold", "T1", "--question", "which branch?"]);
+        box.ok([
+            "task",
+            "hold",
+            "T1",
+            "--question",
+            "which branch?",
+            "--option",
+            "main => base it on main",
+            "--option",
+            "dev => base it on dev",
+        ]);
         expect(task(box, "T1")).toMatchObject({ status: "held", question: "which branch?" });
         box.ok(["task", "answer", "T1", "main"]);
         const answered = task(box, "T1");
         expect(answered.status).toBe("queued");
         expect(answered.answer).toBe("main");
-        expect(answered.notes).toEqual(["Q: which branch?\nA: main"]);
+        expect(answered.notes).toEqual(["Q: which branch?\nA: main (= main)"]);
     });
 
     test("an answered task that had started resumes as active", () => {
         const box = project();
         box.ok(["task", "add", "alpha", "build"]);
         box.ok(["task", "start", "t1"]);
-        box.ok(["task", "hold", "T1", "--question", "ok to delete?"]);
+        box.ok([
+            "task",
+            "hold",
+            "T1",
+            "--question",
+            "ok to delete?",
+            "--option",
+            "yes => delete",
+            "--option",
+            "no => keep",
+        ]);
         box.ok(["task", "answer", "T1", "yes"]);
         expect(task(box, "T1").status).toBe("active");
     });
@@ -52,9 +72,9 @@ describe("task lifecycle", () => {
     test("re-holding clears the previous answer", () => {
         const box = project();
         box.ok(["task", "add", "alpha", "build"]);
-        box.ok(["task", "hold", "T1", "--question", "q1"]);
+        box.ok(["task", "hold", "T1", "--question", "q1", "--option", "a => x", "--option", "b => y"]);
         box.ok(["task", "answer", "T1", "a1"]);
-        box.ok(["task", "hold", "T1", "--question", "q2"]);
+        box.ok(["task", "hold", "T1", "--question", "q2", "--option", "a => x", "--option", "b => y"]);
         expect(task(box, "T1").answer).toBeUndefined();
     });
 
@@ -94,7 +114,7 @@ describe("task lifecycle", () => {
         const box = project();
         box.ok(["task", "add", "alpha", "a"]);
         box.ok(["task", "add", "alpha", "b"]);
-        box.ok(["task", "hold", "T2", "--question", "q"]);
+        box.ok(["task", "hold", "T2", "--question", "q", "--option", "a => x", "--option", "b => y"]);
         const held = JSON.parse(box.ok(["task", "list", "--status", "held", "--json"])) as TaskJson[];
         expect(held.map((entry) => entry.id)).toEqual(["T2"]);
         expect(box.ok(["task", "list", "--status", "done"])).toBe("no tasks");
@@ -166,7 +186,18 @@ describe("task commands in process", () => {
         task(["add", "alpha", "One"]);
         const refusals: [string[], string][] = [
             [["hold", "T1"], 'hold needs --question "..."'],
-            [["hold", "T1", "--question", "q", "--option", "a => b"], "give 2-4 --option values, or none"],
+            [["hold", "T1", "--question", "q"], "hold needs --question"],
+            [["hold", "T1", "--question", "q", "--option", "a => b"], "2-4 --option"],
+            [
+                [
+                    "hold",
+                    "T1",
+                    "--question",
+                    "q",
+                    ...["a", "b", "c", "d", "e"].flatMap((c) => ["--option", `${c} => x`]),
+                ],
+                "got 5",
+            ],
             [["hold", "T1", "--question", "q", "--option", "no arrow", "--option", "x => y"], "--option must be"],
             [
                 ["hold", "T1", "--question", "q", "--option", "a => b", "--option", "c => d", "--recommend", "e"],
@@ -205,15 +236,14 @@ describe("task commands in process", () => {
         expect(task(["start", "T1", "--reopen"])).not.toContain("reopened");
     });
 
-    test("a free-text recommendation stands when the hold offers no options", () => {
+    test("a hold without options names the format and the count it got", () => {
         const box = project();
         const task = commandIn(box.root, taskCommand);
         task(["add", "alpha", "One"]);
-        task(["hold", "T1", "--question", "go?", "--recommend", "wait for Monday"]);
-        task(["answer", "T1", "later"]);
-        const decisions = readFileSync(join(box.root, "data", "projects", "alpha", "decisions.md"), "utf8");
-        expect(decisions).toContain("- Q: go?\n- Recommended: wait for Monday\n- A: later\n");
-        expect(decisions).not.toContain("Options:");
+        expect(() => task(["hold", "T1", "--question", "go?", "--recommend", "wait for Monday"])).toThrow(
+            'hold needs --question "..." and 2-4 --option "<choice> => <what happens then>" values, so the user answers by number; got 0',
+        );
+        inProcess(box.root, () => expect(loadBacklog().tasks[0]?.status).toBe("queued"));
     });
 
     test("--reversible marks the hold, needs a recommendation, and a re-hold without it clears the mark", () => {

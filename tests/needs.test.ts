@@ -67,6 +67,14 @@ function needsSection(text: string): string[] {
     return lines.slice(start, end < 0 ? undefined : end);
 }
 
+/** Strip `fields` from held tasks `ids`, as backlogs written before a hold required options may hold them. */
+function legacyHolds(box: Sandbox, ids: string[], fields: ("question" | "options")[]): void {
+    const backlogPath = join(box.root, "data", "backlog.json");
+    const backlog = JSON.parse(readFileSync(backlogPath, "utf8")) as { tasks: HeldJson[] };
+    for (const entry of backlog.tasks) if (ids.includes(entry.id)) for (const field of fields) delete entry[field];
+    writeFileSync(backlogPath, JSON.stringify(backlog));
+}
+
 const DB_OPTIONS = [
     "--option",
     "postgres => migrate the schema today",
@@ -104,11 +112,14 @@ describe("task hold with options", () => {
             blocks: "T4 rollout",
             heldAt: "2026-03-18T09:00:00.000Z",
         });
-        // Re-holding with only a question replaces every hold field (backwards compatible form).
-        box.ok(["task", "hold", "T1", "--question", "still sure?"]);
+        // Re-holding replaces every hold field.
+        box.ok(["task", "hold", "T1", "--question", "still sure?", "--option", "yes => go", "--option", "no => stop"]);
         const plain = task(box, "T1");
         expect(plain.question).toBe("still sure?");
-        expect(plain.options).toBeUndefined();
+        expect(plain.options).toEqual([
+            { choice: "yes", outcome: "go" },
+            { choice: "no", outcome: "stop" },
+        ]);
         expect(plain.recommend).toBeUndefined();
         expect(plain.blocks).toBeUndefined();
     });
@@ -119,7 +130,7 @@ describe("task hold with options", () => {
         box.ok(["task", "hold", "T1", "--question", "which db?", ...DB_OPTIONS, "--recommend", "Postgres"]);
         expect(task(box, "T1").recommend).toBe("postgres");
         const hold = (extra: string[]) => box.toli(["task", "hold", "T1", "--question", "q", ...extra]);
-        expect(hold(["--option", "a => x"]).stderr).toContain("give 2-4 --option values, or none");
+        expect(hold(["--option", "a => x"]).stderr).toContain('2-4 --option "<choice> => <what happens then>" values');
         expect(
             hold([
                 "--option",
@@ -133,11 +144,12 @@ describe("task hold with options", () => {
                 "--option",
                 "e => 5",
             ]).stderr,
-        ).toContain("give 2-4 --option values");
+        ).toContain("got 5");
         expect(hold(["--option", "a", "--option", "b => y"]).stderr).toContain('--option must be "<choice> => <what');
         expect(hold([...DB_OPTIONS, "--recommend", "3"]).stderr).toContain("--recommend must be an option's number");
-        expect(hold(["--recommend", "whatever works"]).code).toBe(0);
-        expect(task(box, "T1").recommend).toBe("whatever works");
+        // A hold without options, a free-text recommendation included, is refused (T2030).
+        expect(hold(["--recommend", "whatever works"]).stderr).toContain("hold needs --question");
+        expect(task(box, "T1").recommend).toBe("postgres");
     });
 });
 
@@ -154,9 +166,11 @@ describe("task hold on a closed task", () => {
         const said = box.ok(["task", "hold", "T1", "--question", "tag v2 now?", ...DB_OPTIONS], { env: jawan });
         expect(said).toContain("T1: reopened from done by T1's jawan to hold on a question");
         expect(said).toContain("bin/toli needs");
-        box.ok(["task", "hold", "T2", "--question", "delete the old bucket?"], { env: { TOLI_LEAD_TURN: "1" } });
+        box.ok(["task", "hold", "T2", "--question", "delete the old bucket?", ...DB_OPTIONS], {
+            env: { TOLI_LEAD_TURN: "1" },
+        });
         // The jawan-scope rule still holds: a jawan for T1 cannot hold the closed T2.
-        const foreign = box.toli(["task", "hold", "T2", "--question", "x?"], { env: jawan });
+        const foreign = box.toli(["task", "hold", "T2", "--question", "x?", ...DB_OPTIONS], { env: jawan });
         expect(foreign.code).toBe(1);
         expect(foreign.stderr).toContain("this jawan runs for T1");
 
@@ -179,9 +193,12 @@ describe("toli needs", () => {
         const box = twoProjects();
         for (const title of ["a1", "a2", "b1", "b2", "a3"])
             box.ok(["task", "add", title.startsWith("a") ? "alpha" : "beta", title]);
-        box.ok(["task", "hold", "T1", "--question", "a1?"], { now: "2026-03-10T10:00:00Z" });
-        box.ok(["task", "hold", "T2", "--question", "a2?", "--blocks", "release"], { now: "2026-03-19T10:00:00Z" });
-        box.ok(["task", "hold", "T3", "--question", "b1?"], { now: "2026-03-05T10:00:00Z" });
+        box.ok(["task", "hold", "T1", "--question", "a1?", ...DB_OPTIONS], { now: "2026-03-10T10:00:00Z" });
+        box.ok(["task", "hold", "T2", "--question", "a2?", ...DB_OPTIONS, "--blocks", "release"], {
+            now: "2026-03-19T10:00:00Z",
+        });
+        box.ok(["task", "hold", "T3", "--question", "b1?", ...DB_OPTIONS], { now: "2026-03-05T10:00:00Z" });
+        legacyHolds(box, ["T1", "T2", "T3"], ["options"]);
         box.ok(["task", "hold", "T4", "--question", "b2?", ...DB_OPTIONS, "--recommend", "2"], {
             now: "2026-03-15T10:00:00Z",
         });
@@ -230,7 +247,7 @@ describe("toli needs", () => {
         const machine = JSON.parse(readFileSync(machinePath, "utf8"));
         writeFileSync(machinePath, JSON.stringify({ ...machine, needs: { staleDays: 2 } }));
         box.ok(["task", "add", "alpha", "x"]);
-        box.ok(["task", "hold", "T1", "--question", "x?"], { now: "2026-03-17T10:00:00Z" });
+        box.ok(["task", "hold", "T1", "--question", "x?", ...DB_OPTIONS], { now: "2026-03-17T10:00:00Z" });
         expect(needs(box)).toMatchObject({ staleDays: 2, groups: [{ items: [{ ageDays: 3, stale: true }] }] });
     });
 });
@@ -241,12 +258,9 @@ describe("digest Needs you", () => {
         box.ok(["task", "add", "alpha", "old one"]);
         box.ok(["task", "add", "beta", "silent"]);
         box.ok(["task", "hold", "T1", "--question", "keep it?", ...DB_OPTIONS], { now: "2026-03-01T10:00:00Z" });
-        box.ok(["task", "hold", "T2", "--question", "placeholder"], { now: "2026-03-19T10:00:00Z" });
+        box.ok(["task", "hold", "T2", "--question", "placeholder", ...DB_OPTIONS], { now: "2026-03-19T10:00:00Z" });
         // Older data or a hand edit can leave a hold without its question.
-        const backlogPath = join(box.root, "data", "backlog.json");
-        const backlog = JSON.parse(readFileSync(backlogPath, "utf8")) as { tasks: HeldJson[] };
-        for (const entry of backlog.tasks) if (entry.id === "T2") delete entry.question;
-        writeFileSync(backlogPath, JSON.stringify(backlog));
+        legacyHolds(box, ["T2"], ["question", "options"]);
 
         const first = needsSection(box.ok(["digest"], { now: NOW }));
         expect(first).toEqual([
@@ -276,7 +290,7 @@ describe("digest Needs you", () => {
         );
 
         // Re-holding starts a new hold: it can be re-surfaced again once it goes stale.
-        box.ok(["task", "hold", "T1", "--question", "keep it now?"], { now: "2026-03-01T10:00:00Z" });
+        box.ok(["task", "hold", "T1", "--question", "keep it now?", ...DB_OPTIONS], { now: "2026-03-01T10:00:00Z" });
         expect(needsSection(box.ok(["digest"], { now: NOW })).some((line) => line.includes("STALE"))).toBe(true);
     });
 
@@ -284,8 +298,8 @@ describe("digest Needs you", () => {
         const box = twoProjects();
         box.ok(["task", "add", "alpha", "a"]);
         box.ok(["task", "add", "beta", "b"]);
-        box.ok(["task", "hold", "T1", "--question", "a?"]);
-        box.ok(["task", "hold", "T2", "--question", "b?"]);
+        box.ok(["task", "hold", "T1", "--question", "a?", ...DB_OPTIONS]);
+        box.ok(["task", "hold", "T2", "--question", "b?", ...DB_OPTIONS]);
         const digest = JSON.parse(box.ok(["digest", "--json"])) as { next: { action: string }[] };
         const asks = digest.next.filter((action) => action.action.startsWith("Ask the user"));
         expect(asks.map((action) => action.action)).toEqual([
