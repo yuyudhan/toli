@@ -96,4 +96,41 @@ describe("oversight never pauses in away mode", () => {
         box.ok(["job", "tick"], { now: "2026-03-04T10:00:00.000Z" });
         expect(checks()).toHaveLength(2);
     });
+
+    // T2030: a coordinator reached none of 15 machines for 2 h 44 m and its fleet check still said "all clear".
+    test("when more than half the machines cannot be checked, fleet check and fleet status say BLIND first", () => {
+        const at = "2026-03-04T09:00:00.000Z";
+        const box = fleet(remoteSnapshot("m2", { projects: ["alpha"] }));
+        box.stub(
+            "ssh",
+            [SSH_STUB_ARGS, "echo 'ssh: connect to host port 22: Connection refused' >&2", "exit 255"].join("\n"),
+        );
+
+        const output = box.ok(["fleet", "check", "--wake"], { env: ENV, now: at });
+        const lines = output.split("\n");
+        expect(lines[0]).toBe(
+            `fleet check at ${at}: BLIND: 2 of 3 machines not checked (m2, m3), so no all clear: what they run is unknown`,
+        );
+        expect(output).not.toContain("all clear,");
+        expect(output).toMatch(/\n- m2: unreachable: /);
+        expect(output).toMatch(/\n- m3: unreachable: /);
+        const [posted] = inbox(box);
+        expect(posted).toStartWith("# fleet check: BLIND, 2 of 3 machines not checked\n");
+        const json = JSON.parse(box.ok(["fleet", "check", "--json"], { env: ENV, now: at })) as { blind: boolean };
+        expect(json.blind).toBe(true);
+
+        const status = box.ok(["fleet", "status"], { env: ENV }).split("\n");
+        expect(status[0]).toBe("BLIND: 2 of 3 machines not measured (m2, m3)");
+        expect(status.slice(1).some((line) => line.startsWith("m2: unavailable: unreachable"))).toBe(true);
+    });
+
+    test("one machine of three unreachable is no blind check: all clear names it as not checked", () => {
+        const at = "2026-03-04T09:00:00.000Z";
+        const box = fleet(remoteSnapshot("m2", { projects: [] }));
+        stubFleetCheck(box, { stale: [], waiting: [] });
+        const output = box.ok(["fleet", "check"], { env: ENV, now: at });
+        expect(output).toStartWith(`fleet check at ${at}: all clear, `);
+        expect(output).toContain("; not checked: m3 (");
+        expect(box.ok(["fleet", "status"], { env: ENV })).not.toContain("BLIND");
+    });
 });

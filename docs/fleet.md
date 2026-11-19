@@ -555,6 +555,13 @@ rate/usage limit`).
   ([peers.md](peers.md#the-listener)). `--wake` posts the findings as one batched inbox item, only when there is
   something to act on. The coordinator's tick runs `fleet check --wake` every `oversight.fleetCheckMinutes` (default
   60), detached when other machines must be reached over ssh, in-process on a lone machine.
+- **A blind check.** When more than half the machines are unreachable or their backlog cannot be read, the check
+  says so first and is never "all clear": `fleet check at <time>: BLIND: 9 of 15 machines not checked (<names>), ...`
+  (`--json`: `blind`), followed by each machine and why, and `--wake` posts it
+  (`fleet check: BLIND, 9 of 15 machines not checked`), so the lead finds out why the fleet cannot be reached (ssh,
+  VPN, a machine asleep, a swapping or overloaded coordinator) before it trusts any fleet answer. `fleet status`
+  starts with `BLIND: N of M machines not measured (<names>)` in the same case. One or a few machines down is not
+  blind: the check's all clear then names them as `not checked`.
 
 Both intervals live in `config/machine.json` (defaults shown):
 

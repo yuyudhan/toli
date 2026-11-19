@@ -39,11 +39,17 @@ one. See docs/releasing.md.
   uses it, new jawan runs queue (`spawn --now` still starts one), queued runs and scheduled jobs wait, and the pause
   lifts once free disk is back over the emergency level (docs/disk.md "When only folders in use are left").
 
-- A scheduled job's headless run has a deadline: `maxMinutes` in its `config/jobs.json` entry (`bin/toli job add
---max-minutes <n>|none`), 30 minutes when unset. A 4-minute job ran 2 hours on a swapping machine because a run
-  that kept making progress had no time limit. A run still going at its deadline is stopped and its result says
-  `status: timed-out` (`Timed out: ...`), never `ok`; a rate-limit retry counts against the same deadline
-  (docs/jobs.md).
+- A scheduled job's headless run has a deadline: `maxMinutes` in its `config/jobs.json` entry
+  (`bin/toli job add --max-minutes <n>|none`), 30 minutes when unset. A 4-minute job ran 2 hours on a swapping
+  machine because a run that kept making progress had no time limit. A run still going at its deadline is stopped
+  and its result says `status: timed-out` (`Timed out: ...`), never `ok`; a rate-limit retry counts against the same
+  deadline (docs/jobs.md).
+
+- `bin/toli fleet check` and `bin/toli fleet status` no longer say "all clear" when they could not see the fleet.
+  When more than half the machines are unreachable or unmeasured, the check's first line says
+  `BLIND: N of M machines not checked (<names>)` instead of all clear, `--wake` posts it, and `fleet status` starts
+  with `BLIND: N of M machines not measured (<names>)`. A coordinator that reached none of 15 machines for 2 h 44 m
+  kept reporting all clear (docs/fleet.md "Oversight").
 
 - A project's pre-commit hook under `bin/toli commit` no longer sees the checkout's ignored directories it links into
   the hook's tree as untracked files. A directory-only `.gitignore` pattern such as `node_modules/` does not match
