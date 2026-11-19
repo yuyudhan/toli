@@ -3,7 +3,7 @@ import { relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, withLock } from "../core/util.ts";
-import { listResults } from "../jobs/jobs.ts";
+import { listResults } from "../jobs/results.ts";
 import { receivingNow } from "../peer/receiving.ts";
 import { type AckStream, ackCommand, ackedThrough, ackThrough, markShown, type ResultStream } from "./acks.ts";
 import { listInbox } from "./inbox.ts";

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { loadMachine, type Machine } from "../core/config.ts";
@@ -19,12 +19,13 @@ import {
 } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
 import { findProject } from "../projects/projects.ts";
-import { ackedThrough, acknowledge, markShown } from "../records/acks.ts";
 import { deliverOutbox, queueOutbox } from "./outbox.ts";
+import { resultSubcommands } from "./results.ts";
 
 export type JobShape = "scout" | "ship";
 export type Via = "session" | "headless";
-export type RunStatus = "ok" | "failed";
+/** A run's recorded status; `timed-out`: a headless run stopped at its job's deadline (`maxMinutes`). */
+export type RunStatus = "ok" | "failed" | "timed-out";
 
 export type JobConfig = {
     name: string;
@@ -34,6 +35,8 @@ export type JobConfig = {
     machine?: string;
     shape: JobShape;
     tier?: Tier;
+    /** Deadline of a headless run, in minutes: unset is DEFAULT_JOB_MAX_MINUTES, null is none. */
+    maxMinutes?: number | null;
     enabled: boolean;
     createdAt: string;
 };
@@ -53,21 +56,8 @@ type JobStateFile = { jobs: Record<string, JobState> };
 
 export type BegunRun = { runId: string; prompt: string };
 
-/** A quiet result is an idle run's record (`job finish --quiet`): kept in the history, never unseen, never a wake. */
-export type JobResult = {
-    job: string;
-    file: string;
-    path: string;
-    stamp: string;
-    status: string;
-    quiet: boolean;
-    unseen: boolean;
-};
-
 /** A run still marked running after this long is treated as dead and recorded as failed. */
 export const STALE_RUN_MS = 3 * 60 * 60 * 1000;
-
-const STAMP_LENGTH = stamp(new Date(0)).length;
 
 export function loadJobs(): JobConfig[] {
     return readJson<JobsFile>(paths.jobsConfig(), { jobs: [] }).jobs;
@@ -217,28 +207,10 @@ export function finishJob(name: string, runId: string, body: string, status: Run
     return path;
 }
 
-export function listResults(): JobResult[] {
-    const base = paths.jobResultsDir();
-    if (!existsSync(base)) return [];
-    const acked = ackedThrough("jobs");
-    const results: JobResult[] = [];
-    for (const job of readdirSync(base)) {
-        const dir = join(base, job);
-        if (!statSync(dir).isDirectory()) continue;
-        for (const file of readdirSync(dir).filter((entry) => entry.endsWith(".md"))) {
-            const path = join(dir, file);
-            const resultStamp = file.slice(0, STAMP_LENGTH);
-            const text = readFileSync(path, "utf8");
-            const status = /^- status: (\S+)$/m.exec(text)?.[1] ?? "unknown";
-            const quiet = /^- quiet: yes$/m.test(text);
-            results.push({ job, file, path, stamp: resultStamp, status, quiet, unseen: !quiet && resultStamp > acked });
-        }
-    }
-    return results.sort((a, b) => a.stamp.localeCompare(b.stamp) || a.job.localeCompare(b.job));
-}
-
 function add(argv: string[]): void {
-    const args = new Args(argv, { values: ["cron", "prompt", "project", "machine", "shape", "tier"] });
+    const args = new Args(argv, {
+        values: ["cron", "prompt", "project", "machine", "shape", "tier", "max-minutes"],
+    });
     args.maxPositional(1);
     const name = requireName("job", args.positional[0]);
     const cron = args.str("cron");
@@ -253,6 +225,10 @@ function add(argv: string[]): void {
     if (project !== undefined) findProject(project);
     const machineName = args.str("machine");
     if (machineName !== undefined) requireName("machine", machineName);
+    const maxValue = args.str("max-minutes");
+    const maxMinutes = maxValue === "none" ? null : maxValue === undefined ? undefined : Number(maxValue);
+    if (typeof maxMinutes === "number" && !(Number.isInteger(maxMinutes) && maxMinutes >= 1))
+        throw new ToliError("--max-minutes must be a whole number of minutes (at least 1) or none");
     updateJobs((jobs) => {
         if (jobs.some((entry) => entry.name === name)) throw new ToliError(`job "${name}" already exists`);
         jobs.push({
@@ -263,6 +239,7 @@ function add(argv: string[]): void {
             ...(machineName === undefined ? {} : { machine: machineName }),
             shape,
             ...(tier === undefined ? {} : { tier }),
+            ...(maxMinutes === undefined ? {} : { maxMinutes }),
             enabled: true,
             createdAt: now().toISOString(),
         });
@@ -291,6 +268,7 @@ function list(argv: string[]): void {
             job.tier ? `${job.shape} tier=${job.tier}` : job.shape,
             job.project ? `project=${job.project}` : "",
             job.machine ? `machine=${job.machine}` : "",
+            job.maxMinutes === undefined ? "" : `deadline=${job.maxMinutes === null ? "none" : `${job.maxMinutes}m`}`,
             job.state.running ? `running since ${job.state.running.startedAt}` : "",
             job.state.lastStatus ? `last=${job.state.lastStatus} ${job.state.lastFinished ?? ""}` : "",
         ];
@@ -363,38 +341,4 @@ function finish(argv: string[]): void {
     out(finishJob(args.pos(0, "name"), args.pos(1, "runId"), body, status, args.bool("quiet")));
 }
 
-function results(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json", "unseen"], values: ["job"] });
-    args.maxPositional(0);
-    const job = args.str("job");
-    const items = listResults().filter(
-        (item) => (!args.bool("unseen") || item.unseen) && (job === undefined || item.job === job),
-    );
-    // One job's results say nothing of other jobs' newer ones, so only an unfiltered listing raises the shown mark.
-    if (job === undefined)
-        markShown(
-            "jobs",
-            items.map((item) => item.stamp),
-        );
-    if (args.bool("json")) {
-        printJson(items);
-        return;
-    }
-    if (items.length === 0) {
-        out(args.bool("unseen") ? "no unseen job results" : "no job results");
-        return;
-    }
-    for (const item of items)
-        out(`${item.unseen ? "*" : " "} ${item.stamp}\t${item.job}\t${item.status}\t${item.path}`);
-}
-
-function ack(argv: string[]): void {
-    acknowledge(
-        "jobs",
-        argv,
-        listResults().flatMap((item) => (item.quiet ? [] : [item.stamp])),
-        "job result",
-    );
-}
-
-export const jobSubcommands = { add, list, setEnabled, remove, due, begin, finish, results, ack };
+export const jobSubcommands = { add, list, setEnabled, remove, due, begin, finish, ...resultSubcommands };

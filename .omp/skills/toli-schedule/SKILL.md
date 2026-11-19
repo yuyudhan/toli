@@ -22,7 +22,7 @@ ambiguous ("in the morning", "evening"), ask once.
 
 ## Commands
 
-    /schedule add <words>     ->  bin/toli job add <name> --cron "<cron>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
+    /schedule add <words>     ->  bin/toli job add <name> --cron "<cron>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--max-minutes <n>|none]
     /schedule list            ->  bin/toli job list --json
     /schedule pause <name>    ->  bin/toli job pause <name>
     /schedule resume <name>   ->  bin/toli job resume <name>
@@ -34,8 +34,8 @@ ambiguous ("in the morning", "evening"), ask once.
 - Never write a prompt that skips itself while the user is away (`state/afk`): away mode changes who is asked, never
   what is checked. A status or fleet job starts with `bin/toli fleet check` and reports its findings first.
 - `--machine`: run the job only on that machine (e.g. where the project is cloned), when that is not this one.
-- `bin/toli job run <name>` runs a job once now, for testing. It takes as long as the job (there is no time limit; it
-  is stopped only if it stalls), so run it only through `bash` with `async: true` and `timeout: 0`, then end the turn;
+- `bin/toli job run <name>` runs a job once now, for testing. It takes as long as the job (up to its deadline,
+  `--max-minutes`, 30 minutes by default), so run it only through `bash` with `async: true` and `timeout: 0`, then end the turn;
   its result arrives as a new turn.
 
 Present `list` as a short table: name, schedule in words, project, paused or active, last result.

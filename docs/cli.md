@@ -211,7 +211,7 @@ Details: [harnesses.md](harnesses.md).
 
 ### Scheduled jobs and results
 
-    job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--tier light|standard|deep]
+    job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--tier light|standard|deep] [--max-minutes <n>|none]
     job list [--json] | pause|resume|remove <name> | due [--json] | run <name> | run-due | tick
     job begin <name> --via session|headless [--json] | finish <name> <runId> [--status ok|failed] [--quiet] (result on stdin)
     job results [--unseen] [--json] | ack [--through <stamp>]

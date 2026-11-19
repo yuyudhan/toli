@@ -1,48 +1,42 @@
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { loadMachine, type Machine, pullsItsMessages } from "../core/config.ts";
-import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { tryPidLock } from "../core/pid-lock.ts";
-import { now, out, pidAlive, readJson, runCombined, ToliError, warn } from "../core/util.ts";
+import { now, out, pidAlive, readJson, ToliError } from "../core/util.ts";
 import { resumeDevStacksWhenIdle } from "../fleet/build-slots.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
-import { type RunRecord, registerRun, removeRun, stallMinutes } from "../fleet/resources.ts";
+import type { RunRecord } from "../fleet/resources.ts";
 import { keepSccache } from "../fleet/sccache-keep.ts";
 import { choiceText } from "../harness/models.ts";
-import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
-import { sessionFile } from "../jawans/launch.ts";
-import { briefStallMinutes, stallText, watchStall } from "../jawans/progress.ts";
-import { runMinuteMs } from "../jawans/runs.ts";
-import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { drainQueue } from "../jawans/supervise.ts";
 import { hasIdentity } from "../peer/identity.ts";
 import { pullPeers } from "../peer/pull-peers.ts";
 import { peerSettings } from "../peer/store.ts";
 import { pullLine } from "../peer/transport-command.ts";
 import { loadBacklog } from "../records/backlog.ts";
-import { loadRetention, weeklyPruneReport } from "../records/prune.ts";
+import { weeklyPruneReport } from "../records/prune.ts";
 import { redispatchDeadRuns } from "../records/redispatch.ts";
 import { surfaceStaleTasks } from "../records/stale.ts";
 import { holdInboxWords } from "../records/word-holds.ts";
 import { startDueUpdateCheck } from "../release/update-check.ts";
+import { jobMaxMinutes, runHeadless } from "./headless.ts";
 import {
     type BegunRun,
     beginJob,
     dueJobs,
     findJob,
     finishJob,
-    type JobConfig,
     jobSubcommands,
     loadJobState,
     STALE_RUN_MS,
 } from "./jobs.ts";
-import { attemptWithinLimits, jobModel, limitPauseFor, noticePause, type Outcome } from "./limit-pause.ts";
+import { jobModel, limitPauseFor, noticePause } from "./limit-pause.ts";
 import { dryRun as envDryRun } from "./os-scheduler.ts";
 import { deliverOutbox } from "./outbox.ts";
 import { postWaitingAlerts } from "./outbox-admin.ts";
@@ -125,99 +119,8 @@ async function keepExchanging(machine: Machine, work: Promise<void>): Promise<vo
 }
 
 /**
- * Run a claimed job in headless omp on its tier's model, counted as load (a run record) while it runs. It has no
- * wall-clock limit: omp is stopped only when it shows no progress for capacity.stallMinutes, or the minutes of its
- * prompt's `Stall:` header line (src/jawans/progress.ts).
- * A run stopped by a rate or usage limit retries once on a lower allowed tier (never waiting: the tick runs every
- * minute); a limit that names a later reset also pauses the model's due jobs until then (limitPauseFor). If the agent
- * never called `job finish`, record its captured output.
- */
-async function runHeadless(job: JobConfig, begun: BegunRun): Promise<string> {
-    const name = job.name;
-    // The prompt's Stall: line replaces capacity.stallMinutes; a malformed one fails before the run is registered.
-    const stall = briefStallMinutes(begun.prompt) ?? stallMinutes(loadMachine());
-    registerRun({
-        runId: begun.runId,
-        pid: process.pid,
-        from: loadMachine().name,
-        task: null,
-        startedAt: now().toISOString(),
-        title: `job ${name}`,
-    });
-    // The tick starts toli with PATH alone; omp needs the login profile's provider keys.
-    adoptLoginEnv();
-    const choice = jobModel(job);
-    let model: string | null;
-    let fallback: string;
-    let result: Outcome;
-    const sessionDir = paths.jobSessionDir(begun.runId);
-    let stalled = false;
-    try {
-        const attempt = async (chosen: string | null): Promise<Outcome> => {
-            let root: StopRoot | null = null;
-            const stopping: Promise<number[]>[] = [];
-            const stopWatch = watchStall(
-                () => ({ pid: root?.pid ?? null, logPath: null, sessionDir, cwd: paths.root() }),
-                stall,
-                runMinuteMs(),
-                () => {
-                    stalled = true;
-                    if (root !== null) stopping.push(stopTree(root, HARNESS_STOP_GRACE_MS));
-                },
-            );
-            try {
-                return await runCombined(
-                    headlessOmpArgs(begun.prompt, paths.root(), null, chosen, { dir: sessionDir }),
-                    {
-                        cwd: paths.root(),
-                        onStart: (started) => {
-                            root = { pid: started, spawnedAtMs: Date.now() };
-                        },
-                    },
-                );
-            } finally {
-                stopWatch();
-                // omp's children that ignore SIGTERM end with it: the attempt is over once none is left.
-                const survivors = (await Promise.all(stopping)).flat();
-                if (survivors.length > 0) warn(`job ${name}: pid ${survivors.join(", ")} outlived SIGKILL`);
-            }
-        };
-        ({ result, model, fallback } = await attemptWithinLimits(job, choice, attempt));
-    } finally {
-        removeRun(begun.runId);
-    }
-    if (stalled) fallback += `; stopped: ${stallText(stall)}`;
-    const ran = `omp ${choiceText({ ...choice, model })}${fallback}`;
-    const stillRunning = loadJobState()[name]?.running?.runId === begun.runId;
-    const failed = stalled || result.code !== 0 || (!stillRunning && loadJobState()[name]?.lastStatus === "failed");
-    // A failed run's session stays for the resume command omp printed; `bin/toli prune` removes it later.
-    const session = failed ? sessionFile(sessionDir) : null;
-    if (session === null) rmSync(sessionDir, { recursive: true, force: true });
-    const resume =
-        session === null
-            ? []
-            : [
-                  "",
-                  `Session kept: resume it with \`omp --cwd ${paths.root()} --session-dir ${sessionDir} --resume ${session}\` (\`bin/toli prune\` removes it after ${loadRetention().jobResultsDays} days).`,
-              ];
-    if (!stillRunning)
-        return `job ${name} ${begun.runId}: finished by the agent (${ran}, exit ${result.code})${session === null ? "" : `; session kept in ${sessionDir}`}`;
-    const body = [
-        `omp exited ${result.code} without calling \`bin/toli job finish\`; captured output follows.`,
-        `Model: ${ran}.`,
-        "",
-        "```text",
-        result.output.trimEnd(),
-        "```",
-        ...resume,
-    ].join("\n");
-    const path = finishJob(name, begun.runId, body, result.code === 0 ? "ok" : "failed");
-    return `job ${name} ${begun.runId}: ${ran}, exit ${result.code}, result ${path}`;
-}
-
-/**
  * Record runs stuck in "running" past the stale limit as failed so their schedule resumes. A headless run whose omp
- * is still alive (its load record names a live pid) is not stale: it has no time limit and stops only when it stalls.
+ * is still alive (its load record names a live pid) is not stale: its deadline (maxMinutes) or a stall stops it.
  */
 function failStaleRuns(): string[] {
     const cutoff = now().getTime() - STALE_RUN_MS;
@@ -342,9 +245,10 @@ async function runNow(argv: string[]): Promise<void> {
     args.maxPositional(1);
     const name = args.pos(0, "name");
     const job = findJob(name);
+    const maxMinutes = jobMaxMinutes(job);
     const begun = beginJob(name, "headless");
     out(
-        `job ${name} ${begun.runId}: running headless omp ${choiceText(jobModel(job))} (no time limit; stopped if it stalls)`,
+        `job ${name} ${begun.runId}: running headless omp ${choiceText(jobModel(job))} (${maxMinutes === null ? "no deadline" : `deadline ${maxMinutes} min`}; stopped sooner if it stalls)`,
     );
     const summary = await runHeadless(job, begun);
     log(summary);

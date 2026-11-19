@@ -30,8 +30,9 @@ import {
     RUNNING,
     runLine,
 } from "../jawans/runs.ts";
-import { type JobResult, listResults, loadJobState } from "../jobs/jobs.ts";
+import { loadJobState } from "../jobs/jobs.ts";
 import { waitingLines } from "../jobs/outbox-admin.ts";
+import { type JobResult, listResults } from "../jobs/results.ts";
 import { brokenLink } from "../projects/link.ts";
 import { loadProjects, type Mode } from "../projects/projects.ts";
 import { projectsNeedingSetup } from "../projects/setup.ts";

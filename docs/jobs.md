@@ -12,12 +12,14 @@ becomes
 
 ## Defining a job
 
-    bin/toli job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship]
+    bin/toli job add <name> --cron "<m h dom mon dow>" --prompt "<text>" [--project <p>] [--machine <m>] [--shape scout|ship] [--max-minutes <n>|none]
 
 - `--shape scout` (the default) reads and reports only; `ship` may commit on the current branch with
   `bin/toli commit`.
 - `--machine` pins the job to one machine; without it every machine that has the job in its `config/jobs.json`
   runs it.
+- `--max-minutes` is the deadline of each headless run (`maxMinutes` in the job's entry; default 30 minutes, `none`
+  for no deadline; edit `config/jobs.json` to change it for an existing job).
 - Jobs live in `config/jobs.json` on each machine.
 
     bin/toli job list [--json] # schedule, shape, project, machine, running, last result
@@ -44,7 +46,11 @@ Jobs never run inside your chat. Every minute something checks for due jobs and 
 
 A machine that was asleep through a scheduled minute runs the job once to catch up, not once per missed window. A
 claimed job is never run twice, and a run still marked running after 3 hours is recorded as failed so the schedule
-resumes. Each headless run has a 45-minute limit.
+resumes. Each headless run is stopped at its job's deadline (`maxMinutes`, 30 minutes unless set; a rate-limit retry
+counts against the same deadline) and sooner when it shows no progress for `capacity.stallMinutes`. A run stopped at
+its deadline that never called `job finish` records the result `status: timed-out`, never `ok` (a slow or swapping
+machine once kept a 4-minute job running for 2 hours). A job whose
+`maxMinutes` is not a whole number of minutes (or `null`) is refused before it starts.
 
 Scheduled runs follow fixed rules: never push, merge, or open a PR, and never ask questions; anything that needs
 your decision goes into the result. The run finishes with `bin/toli job finish <name> <runId>`, which writes the

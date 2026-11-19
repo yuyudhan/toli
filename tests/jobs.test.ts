@@ -97,6 +97,39 @@ describe("job tick", () => {
         return box;
     }
 
+    // T2030: a 4-minute job ran 2 h on a swapping machine; headless runs had no time limit at all.
+    test("a headless run still going at its job's deadline is stopped and its result says timed-out, not ok", () => {
+        const box = tickBox();
+        box.ok(["job", "add", "slow", "--cron", "0 0 1 1 *", "--prompt", "work", "--max-minutes", "1"]);
+        box.stub("omp", "exec sleep 60");
+        const started = Date.now();
+        // One run-minute is 500 ms here: the 1-minute deadline hits long before the 60 s sleep ends.
+        const said = box.ok(["job", "run", "slow"], { env: { TOLI_RUN_MINUTE_MS: "500" } });
+        expect(Date.now() - started).toBeLessThan(30_000);
+        expect(said).toContain("(deadline 1 min; stopped sooner if it stalls)");
+        expect(said).toMatch(/stopped: timed out after 1 min \(maxMinutes in config\/jobs\.json\), timed out, result /);
+        const results = JSON.parse(box.ok(["job", "results", "--json"])) as { status: string; path: string }[];
+        expect(results.map((result) => result.status)).toEqual(["timed-out"]);
+        const text = readFileSync(results[0]?.path ?? "", "utf8");
+        expect(text).toContain("- status: timed-out");
+        expect(text).toContain("Timed out: omp was still running at this job's deadline of 1 min");
+    });
+
+    test("job add takes --max-minutes <n>|none; a job without one gets the 30-minute default", () => {
+        const box = tickBox();
+        box.ok(["job", "add", "long", "--cron", "0 0 * * *", "--prompt", "x", "--max-minutes", "none"]);
+        box.ok(["job", "add", "short", "--cron", "0 0 * * *", "--prompt", "x", "--max-minutes", "5"]);
+        const listed = box.ok(["job", "list"]).split("\n");
+        expect(listed.find((line) => line.startsWith("long\t"))).toContain("deadline=none");
+        expect(listed.find((line) => line.startsWith("short\t"))).toContain("deadline=5m");
+        expect(listed.find((line) => line.startsWith("every\t"))).not.toContain("deadline");
+        for (const bad of ["0", "1.5", "soon"])
+            expect(
+                box.toli(["job", "add", "bad", "--cron", "0 0 * * *", "--prompt", "x", "--max-minutes", bad]).stderr,
+            ).toContain("--max-minutes must be a whole number of minutes (at least 1) or none");
+        expect(box.ok(["job", "run", "every"])).toContain("(deadline 30 min; stopped sooner if it stalls)");
+    });
+
     test("leaves due jobs to a live interactive session", () => {
         const box = tickBox();
         box.ok(["session", "start", "--pid", String(process.pid)]);

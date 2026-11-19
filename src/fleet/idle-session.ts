@@ -6,7 +6,7 @@
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { now, stamp, ToliError } from "../core/util.ts";
 import { liveSession, type SessionFile } from "../harness/session.ts";
-import { listResults } from "../jobs/jobs.ts";
+import { listResults } from "../jobs/results.ts";
 import { listInbox } from "../records/inbox.ts";
 
 const DEFAULT_IDLE_SESSION_MINUTES = 60;

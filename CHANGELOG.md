@@ -30,6 +30,12 @@ one. See docs/releasing.md.
   one fleet review) because the user could not answer them by number; a free-text `--recommend` without options is
   gone with them.
 
+- A scheduled job's headless run has a deadline: `maxMinutes` in its `config/jobs.json` entry (`bin/toli job add
+--max-minutes <n>|none`), 30 minutes when unset. A 4-minute job ran 2 hours on a swapping machine because a run
+  that kept making progress had no time limit. A run still going at its deadline is stopped and its result says
+  `status: timed-out` (`Timed out: ...`), never `ok`; a rate-limit retry counts against the same deadline
+  (docs/jobs.md).
+
 - A project's pre-commit hook under `bin/toli commit` no longer sees the checkout's ignored directories it links into
   the hook's tree as untracked files. A directory-only `.gitignore` pattern such as `node_modules/` does not match
   the symlink, so a hook reading untracked files (pretty-quick) crashed with EISDIR. The linked paths now go in a
