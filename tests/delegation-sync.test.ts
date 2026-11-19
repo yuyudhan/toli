@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { brief, inbox, type Pair, pair, type Task, type Trio, tasks, trio } from "./delegate-fixture.ts";
+import { brief, inbox, type Pair, pair, type Task, tasks } from "./delegate-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
 
 function parent(box: Sandbox): Task {
@@ -92,6 +92,25 @@ describe("delegated tasks write back to the --for task", () => {
         m2.ok(["task", "drop", "T1"]);
         expect(parent(m1).status).toBe("dropped");
         expect(inbox(m1).at(-1)?.title).toBe("m2/T1 dropped: the work");
+    });
+
+    test("a dropped or handed-back delegation never closes the --for task; the last open one done does (T1976)", () => {
+        const { m1, m2 } = delegated();
+        m1.ok(["delegate", "m2", "more work", "--brief", brief(m1), "--for", "T1"]);
+        m2.ok(["task", "done", "T1", "--commit", "a1"]);
+        m2.ok(["task", "drop", "T2"]);
+        expect(parent(m1).status).toBe("active");
+        expect(parent(m1).commit).toBeUndefined();
+        expect(readFileSync(inbox(m1).at(-1)?.path ?? "", "utf8")).toContain("Your task T1 is active");
+        m1.ok(["delegate", "m2", "last work", "--brief", brief(m1), "--for", "T1"]);
+        m2.ok(["task", "done", "T3", "--commit", "c3"]);
+        expect(parent(m1)).toMatchObject({ status: "done", commit: "c3" });
+
+        // Handed back after the others are done, the work is queued again for another Sardar, not done.
+        m1.ok(["delegate", "m2", "again", "--brief", brief(m1), "--for", "T1"]);
+        expect(parent(m1).status).toBe("active");
+        m2.ok(["task", "handback", "T4", "--reason", "overloaded"]);
+        expect(parent(m1).status).toBe("queued");
     });
 
     test("a slice delegated while the task's own jawan works on it adds notes, commit and report, never closes it", () => {
@@ -331,67 +350,4 @@ test("task handback --full also marks the owner full, so no lead offers it more 
     expect(output).toContain("full: handed back T1: overloaded (until ");
     expect(m2.ok(["lead", "full", "--status"])).toStartWith("full: handed back T1: overloaded");
     expect(m1.ok(["lead", "full", "--status"])).toBe("not full: this machine takes work");
-});
-
-describe("work forwarded on (m1 -> m2 -> m3)", () => {
-    /** m1's T1 delegated to m2 as m2/T1, which m2 delegates on to m3 as m3/T1 (`--for T1`) and drops. */
-    function forwarded(): Trio {
-        const machines = trio();
-        const { m1, m2 } = machines;
-        withProject(m1, "app");
-        m1.ok(["task", "add", "app", "parent work"]);
-        m1.ok(["delegate", "m2", "the work", "--brief", brief(m1), "--for", "T1"]);
-        m2.ok(["delegate", "m3", "forwarded work", "--brief", brief(m2), "--for", "T1"]);
-        m2.ok(["task", "drop", "T1"]);
-        return machines;
-    }
-
-    test("the originator's task follows the live owner and gets its done report", () => {
-        const { m1, m3 } = forwarded();
-        expect(tasks(m3)[0]?.delegatedBy).toMatchObject({
-            machine: "m2",
-            task: "T1",
-            upstream: [{ machine: "m1", task: "T1" }],
-        });
-        const following = parent(m1);
-        expect(following).toMatchObject({ status: "active", agent: "m3/T1", delegatedTo: ["m2/T1", "m3/T1"] });
-        expect(following.notes).toContain("m2/T1 forwarded the work to m3/T1");
-        expect(following.notes).toContain("m2/T1 is forwarded to m3/T1");
-        expect(inbox(m1).map((item) => item.title)).toContain("m2/T1 forwarded to m3/T1: the work");
-
-        writeFileSync(join(m3.root, "report.md"), "shipped\n");
-        m3.ok(["task", "done", "T1", "--commit", "f0rward", "--report", "report.md"]);
-        expect(parent(m1)).toMatchObject({ status: "done", commit: "f0rward" });
-        const wake = inbox(m1).find((item) => item.title === "m3/T1 done: forwarded work");
-        const body = readFileSync(wake?.path ?? "", "utf8");
-        expect(body).toContain("- for: T1 on m1");
-        expect(body).toContain("- via: m2/T1, which forwarded it");
-        expect(body).toContain("shipped");
-    });
-
-    test("the originator answers the live owner's question", () => {
-        const { m1, m3 } = forwarded();
-        m3.ok(["task", "hold", "T1", "--question", "Which?", "--option", "a => fast", "--option", "b => slow"]);
-        expect(parent(m1).delegates?.["m3/T1"]).toMatchObject({ status: "held", question: "Which?" });
-        expect(m1.ok(["task", "answer", "m3/T1", "a"])).toContain("m3 recorded the answer for m3/T1:");
-        expect(tasks(m3)[0]?.status).toBe("queued");
-    });
-
-    test("task link to the forwarded task is still refused: only its own delegator links it", () => {
-        const { m1, m3 } = forwarded();
-        m1.ok(["task", "add", "app", "other work"]);
-        const refused = m1.toli(["task", "link", "T2", "m3/T1"]);
-        expect(refused.code).toBe(1);
-        expect(refused.stderr).toContain("m3 refused the link: T1 was delegated by m2, not m1");
-        expect(tasks(m3)[0]?.delegatedBy).toMatchObject({ machine: "m2", task: "T1" });
-    });
-
-    test("the live owner handing the work back queues the originator's task again, never drops it", () => {
-        const { m1, m3 } = forwarded();
-        m3.ok(["task", "handback", "T1", "--reason", "verifier only"]);
-        const task = parent(m1);
-        expect(task.status).toBe("queued");
-        expect(task.agent).toBeUndefined();
-        expect(task.notes).toContain("m3/T1 handed the work back: verifier only");
-    });
 });

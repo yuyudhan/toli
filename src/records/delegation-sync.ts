@@ -113,11 +113,12 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
 }
 
 /**
- * The `--for` task's own status after a delegate's change: done when every delegation not dropped is done, dropped
- * when all are dropped, queued again (for another Sardar or this one) when every delegation was handed back. A
- * delegation dropped after forwarding the work on counts only through the delegations it forwarded to, so when those
- * are handed back the task is queued again, never dropped. A slice only releases the hold it escalated; the task's own
- * jawan decides the rest.
+ * The `--for` task's own status after a delegate's change: done when a delegation finishes and every other one not
+ * dropped is done too, dropped when all are dropped, queued again (for another Sardar or this one) when every
+ * delegation was handed back, or when one is handed back and the rest are done or dropped. A dropped delegation never
+ * closes the task: with the rest done, the task stays as it is for its lead (T1976). A delegation dropped after
+ * forwarding the work on counts only through the delegations it forwarded to, so when those are handed back the task
+ * is queued again, never dropped. A slice only releases the hold it escalated; the task's own jawan decides the rest.
  */
 function settle(
     task: Task,
@@ -139,12 +140,14 @@ function settle(
     const open = live
         .map((entry) => task.delegates?.[entry]?.status ?? "active")
         .filter((entry) => entry !== "dropped");
-    if (live.length === 0) {
+    const finished = open.every((entry) => entry === "done");
+    if (live.length === 0 || (finished && task.delegates?.[id]?.handedBack !== undefined)) {
         task.status = "queued";
         delete task.agent;
         delete task.dispatchedAt;
     } else if (open.length === 0) task.status = "dropped";
-    else if (open.every((entry) => entry === "done")) {
+    else if (finished) {
+        if (status !== "done") return;
         task.status = "done";
         task.doneAt = now().toISOString();
         if (commit !== undefined) task.commit = commit;

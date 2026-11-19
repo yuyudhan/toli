@@ -6,6 +6,17 @@ one. See docs/releasing.md.
 
 ## v0.5.42 - unreleased
 
+### Added
+
+- A per-task project can also run a release train. `bin/toli workspace prepare T<n> --same-branch` pins one task to
+  the clone on the project's fixed `--branch`, whatever the project's strategy: `bin/toli commit <p> --task T<n>`
+  then commits there (with the usual fixed-branch check), while every other task keeps its own task branch or
+  worktree and a commit without `--task` is still refused. The pin holds whatever the task's status, refuses while
+  the task's own worktree or branch holds unlanded work, and `workspace prepare T<n> --reset` drops it.
+  `bin/toli project set <p> --base-branch <b>|none` names the branch task branches start from and PR/MRs target when
+  it is not the fixed `--branch` (for example a project on a nightly branch whose tasks start from `main`); unset,
+  they start from `--branch` as before (docs/projects.md "Workspace strategy").
+
 ### Fixed
 
 - `bin/toli fleet say` and the first message of `bin/toli fleet start` no longer submit with Enter into an omp lead.
@@ -45,6 +56,12 @@ one. See docs/releasing.md.
   another that took the lock but could bind nothing, and `bin/toli peer status` named that idle one
   (`running (pid ...) on no private address yet`) while the old one served. The exiting listener leaves the new one's
   lock, record and control socket alone.
+- A delegated task its owner drops no longer closes the delegating machine's `--for` task as done. When every other
+  delegation of that task was already done, a dropped one marked it done, so a coordinator task with many delegations
+  read `Your task T1773 is done` after a remote machine dropped one of them and had to be reopened by hand. Now only a
+  delegation that finishes marks the `--for` task done, when every other one not dropped is done too; a dropped one
+  leaves the task as it is for its lead. One handed back with the rest done or dropped queues the task again for
+  another Sardar, as a hand-back of its only delegation does; work forwarded on is still followed, never read as dropped.
 
 ## v0.5.41 - 2026-11-18
 
