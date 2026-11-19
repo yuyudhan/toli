@@ -34,6 +34,11 @@ one. See docs/releasing.md.
   on each of 11 machines. `--listener` is gone; the lead service is the listener's one supervisor. On a Linux machine
   that still has the unit, run once after upgrading:
   `systemctl --user stop toli-peer-serve; systemctl --user reset-failed toli-peer-serve`.
+- A peer listener whose lock another listener took now exits at its next 15-second rescan, and the lock's holder binds
+  the port it frees. Before, the old listener kept serving the port with neither lock nor record, so the lead started
+  another that took the lock but could bind nothing, and `bin/toli peer status` named that idle one
+  (`running (pid ...) on no private address yet`) while the old one served. The exiting listener leaves the new one's
+  lock, record and control socket alone.
 
 ## v0.5.41 - 2026-11-18
 

@@ -66,8 +66,9 @@ machine when `peer.listen` is on and no listener runs, or one is stuck on a repl
 runs from crontab has no listener unless `peer serve` is run, and pulls from its peers instead. One listener runs per
 checkout (`state/peer-listener.lock`, and its record `state/peer/listener.json`); a lock or record that survived a
 reboot names no listener once its pid belongs to another program or to a process started after the file was written,
-so `peer serve` and the lead take over instead of refusing. Settings live in
-`config/machine.json` `peer`:
+so `peer serve` and the lead take over instead of refusing. A listener whose lock now names another listener exits at
+its next rescan without touching that one's lock, record or control socket, and the lock's holder binds the port it
+frees, so the record always names the listener that serves. Settings live in `config/machine.json` `peer`:
 
 | Setting       | Default   | Meaning                                                                                                                                        |
 | ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 import type { Server } from "bun";
 import { loadMachine } from "../core/config.ts";
 import { codeRoot, paths } from "../core/paths.ts";
-import { tryPidLock } from "../core/pid-lock.ts";
+import { holdsPidLock, tryPidLock } from "../core/pid-lock.ts";
 import { isJsonObject, now, readJson, ToliError, warn, writeJsonAtomic } from "../core/util.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
 import { bindAddresses, hostPort } from "./bind.ts";
@@ -182,8 +182,9 @@ function listenPort(): number {
 export const onBound: Array<(context: ListenerContext, addrs: string[]) => void> = [];
 
 /**
- * `peer serve`: run the listener in the foreground until stopped (SIGTERM, `peer listen off`, a newer runtime, or
- * `peer.listen: false`). One per checkout (a pid lock). Makes the identity first when it is missing.
+ * `peer serve`: run the listener in the foreground until stopped (SIGTERM, `peer listen off`, a newer runtime,
+ * `peer.listen: false`, or another listener taking its lock). One per checkout (a pid lock). Makes the identity first
+ * when it is missing.
  */
 export async function runListener(): Promise<number> {
     const lock = paths.lock("peer-listener");
@@ -206,10 +207,14 @@ export async function runListener(): Promise<number> {
         clearInterval(rescan);
         for (const server of servers.values()) server.stop(true);
         servers.clear();
-        control?.stop(true);
-        rmSync(paths.peerControl(), { force: true });
-        if (readListener()?.pid === process.pid) rmSync(paths.peerListener(), { force: true });
-        rmSync(lock, { force: true });
+        // A listener whose lock another one took leaves that one's control socket, record and lock alone; stopping
+        // its control server would unlink the socket path, which the lock's holder has bound since.
+        if (holdsPidLock(lock)) {
+            control?.stop(true);
+            rmSync(paths.peerControl(), { force: true });
+            if (readListener()?.pid === process.pid) rmSync(paths.peerListener(), { force: true });
+            rmSync(lock, { force: true });
+        } else control?.unref();
         finish(0);
     };
     const context: ListenerContext = {
@@ -262,6 +267,13 @@ export async function runListener(): Promise<number> {
             code: codeRoot(),
         } satisfies ListenerRecord);
     const rebind = (): void => {
+        if (!holdsPidLock(lock)) {
+            // Its lock was taken (a holder judged gone, or removed under it): the lock's holder is the listener, and
+            // binds the port once this one lets it go; serving on beside it would leave the record naming an idle one.
+            peerLog(`listener: the listener lock names another listener now; pid ${process.pid} stopping`);
+            stop();
+            return;
+        }
         if (!existsSync(paths.machine())) {
             // The checkout was removed (or never finished `init`): nothing here can take a message any more.
             peerLog("listener: config/machine.json is gone; stopping");

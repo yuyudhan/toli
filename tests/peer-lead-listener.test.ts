@@ -8,7 +8,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TOLI_BIN } from "./helpers.ts";
 import { peerBox } from "./peer-fixture.ts";
-import { livePid, peerEnv, serve, until } from "./peer-serve-fixture.ts";
+import { type Listening, livePid, peerEnv, serve, until } from "./peer-serve-fixture.ts";
 
 /** Run the lead service (`lead run`, dry run) in `root` for a few passes; returns logs/lead.log ("" when none). */
 async function leadPasses(env: Record<string, string | undefined>, root: string): Promise<string> {
@@ -110,6 +110,40 @@ describe("the lead service and the listener", () => {
             );
         } finally {
             await listening.stop();
+        }
+    }, 60_000);
+
+    test("a listener that lost its lock exits, and the lock's holder takes the port and the record (T1946)", async () => {
+        // A fleet machine: the lock and record were taken from a listener that kept serving; the lead then started one
+        // that took the lock but could not bind, and `peer status` named that idle one while the old one held the port.
+        const recv = peerBox("alpha");
+        const root = recv.box.root;
+        const rescan = { TOLI_PEER_RESCAN_MS: "100" };
+        const old = await serve(recv, rescan);
+        const oldPid = livePid(root);
+        let fresh: Listening | null = null;
+        try {
+            rmSync(join(root, "state", "peer-listener.lock"));
+            rmSync(join(root, "state", "peer", "listener.json"));
+            fresh = await serve(recv, { ...rescan, TOLI_PEER_PORT: String(old.port) });
+            const freshPid = livePid(root);
+            expect(freshPid).not.toBe(oldPid);
+            expect(await old.exited).toBe(0);
+            const record = await until("the lock's holder bound", 20_000, () => {
+                const parsed = JSON.parse(readFileSync(join(root, "state", "peer", "listener.json"), "utf8")) as {
+                    pid: number;
+                    addrs: string[];
+                };
+                return parsed.addrs.length > 0 ? parsed : null;
+            });
+            expect(record).toEqual(expect.objectContaining({ pid: freshPid, addrs: [`127.0.0.1:${old.port}`] }));
+            expect(readFileSync(join(root, "state", "peer-listener.lock"), "utf8").trim()).toBe(String(freshPid));
+            expect(existsSync(join(root, "state", "peer", "control.sock"))).toBe(true);
+            expect(recv.box.ok(["peer", "status"])).toContain(`running (pid ${freshPid}) on 127.0.0.1:${old.port}`);
+            expect((await fresh.fetch("/v1/hello")).status).toBe(200);
+        } finally {
+            await old.stop();
+            await fresh?.stop();
         }
     }, 60_000);
 });

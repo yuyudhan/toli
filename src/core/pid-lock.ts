@@ -49,6 +49,20 @@ export function toliHolds(pid: number, file: string): boolean {
     return info.startMs <= writtenMs + ELAPSED_SLACK_MS;
 }
 
+/** The pid written in `lockPath`, or 0 when it is absent or unreadable. */
+function lockHolder(lockPath: string): number {
+    try {
+        return Number(readFileSync(lockPath, "utf8").trim()) || 0;
+    } catch {
+        return 0;
+    }
+}
+
+/** Whether `lockPath` still names this process: a run that may lose it (tryPidLock's takeover) checks before acting. */
+export function holdsPidLock(lockPath: string): boolean {
+    return lockHolder(lockPath) === process.pid;
+}
+
 /**
  * Take `lockPath` for this process without waiting, as a run that must never overlap another (the tick's messaging
  * pass, a pull, the peer listener): false when the toli process that wrote it still runs. One whose holder is gone, or
@@ -64,13 +78,8 @@ export function tryPidLock(lockPath: string): boolean {
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    let holder = 0;
-    try {
-        holder = Number(readFileSync(lockPath, "utf8").trim());
-    } catch {
-        // Released between the open and the read: take it.
-    }
-    if (toliHolds(holder, lockPath)) return false;
+    // Released between the open and the read: 0, which no process holds, so it is taken.
+    if (toliHolds(lockHolder(lockPath), lockPath)) return false;
     writeJsonAtomic(lockPath, process.pid);
     return true;
 }
