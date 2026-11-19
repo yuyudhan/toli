@@ -16,6 +16,11 @@ one. See docs/releasing.md.
   root after 60 s, like after 10,000 folders. Every `disk keep`, by hand or in the background, also has a time limit
   (2 h): past it the keeper logs `disk keeper: stopped after its time limit of ...` to `logs/disk.log` and stderr and
   exits, whatever call it is stuck in.
+- Tests now pin that `bin/toli commit --merge <sha>` records the merge result in a plain clone and in a linked task
+  worktree, with or without a `git merge` in progress, clean or `--resolved`: main's changes to paths the branch did
+  not touch are kept. A reported loss of main's files after such a merge was not the commit: those files changed on
+  main after the merged sha. To check a merge commit `M`, compare `git rev-parse M^{tree}` with
+  `git merge-tree --write-tree M^1 M^2`; only the paths named in the commit (`--resolved`, `Merge-amended:`) may differ.
 
 ## v0.5.41 - 2026-11-18
 
