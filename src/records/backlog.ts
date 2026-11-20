@@ -2,6 +2,7 @@ import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { isValidName, now, out, printJson, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { parseOptionalTier, type Tier } from "../harness/models.ts";
+import { cancelQueuedRuns } from "../jawans/runs.ts";
 import { findProject } from "../projects/projects.ts";
 import type { Workspace } from "../projects/strategy.ts";
 import { answerWake } from "./answer-wake.ts";
@@ -193,6 +194,16 @@ function list(argv: string[]): Promise<void> | undefined {
     for (const task of tasks) out(describeTask(task));
 }
 
+/**
+ * Cancel the queued jawan runs of task `id`, now `how` (done, dropped, handed back), naming each: they never start.
+ * A run already started is left to finish, never signalled.
+ */
+export function cancelQueuedRunsOf(id: string, how: string): void {
+    for (const run of cancelQueuedRuns(id, `${id} is ${how}`))
+        out(`${id}: cancelled queued run ${run.id}; it never started`);
+}
+
+/** `task done <id> [--report <file>] [--commit <sha>] [--note "..."]`; the task's queued runs are cancelled. */
 function done(argv: string[]): void {
     const args = new Args(argv, { values: ["report", "commit", "note"] });
     args.maxPositional(1);
@@ -208,6 +219,7 @@ function done(argv: string[]): void {
         if (note !== undefined) entry.notes.push(note);
     });
     out(describeTask(task));
+    cancelQueuedRunsOf(task.id, "done");
 }
 
 /**
@@ -310,6 +322,10 @@ function answer(argv: string[]): void {
     forwardEscalatedAnswer(heldFrom, reply);
 }
 
+/**
+ * `task drop <id>`: the task is dropped and its queued jawan runs are cancelled (never started), each named in the
+ * output; a run already started is left to finish, never signalled.
+ */
 function drop(argv: string[]): void {
     const args = new Args(argv);
     args.maxPositional(1);
@@ -317,6 +333,7 @@ function drop(argv: string[]): void {
         entry.status = "dropped";
     });
     out(describeTask(task));
+    cancelQueuedRunsOf(task.id, "dropped");
 }
 
 /** Run one `task` subcommand; only `list --fleet` returns a promise (callers await it), so the rest throw synchronously. */

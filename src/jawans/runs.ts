@@ -73,6 +73,12 @@ export const ACTIVE: readonly RunStatus[] = ["queued", "starting", "running"];
 /** Holding one of the machine's jawan slots. */
 export const RUNNING: readonly RunStatus[] = ["starting", "running"];
 
+/**
+ * Serializes jawan-slot checks with starts (src/jawans/launch.ts), so concurrent spawns and drains never overfill the
+ * machine, and a queued run is never started and cancelled at once.
+ */
+export const SLOTS_LOCK = "jawan-slots";
+
 /** Milliseconds per minute of a run's time limit; `TOLI_RUN_MINUTE_MS` shortens it for tests. */
 export function runMinuteMs(): number {
     const override = Number(process.env.TOLI_RUN_MINUTE_MS);
@@ -166,6 +172,34 @@ export function killRun(id: string): JawanRun {
     if (run.pid !== null) killGroup(run.pid, signal);
     else if (run.supervisorPid !== null) killGroup(run.supervisorPid, signal);
     return run;
+}
+
+/**
+ * Mark a still-queued run killed because `why` (its task closed): it never starts. Returns null when the run left the
+ * queue meanwhile (started or killed): a started run is never signalled. Callers hold the slots lock.
+ */
+export function cancelQueuedRun(id: string, why: string): JawanRun | null {
+    let cancelled = false;
+    const run = updateRun(id, (record) => {
+        if (record.status !== "queued") return;
+        cancelled = true;
+        record.status = "killed";
+        record.endedAt = now().toISOString();
+        record.error = `cancelled while queued: ${why}; it never started`;
+    });
+    return cancelled ? run : null;
+}
+
+/**
+ * Cancel every queued run of `task` (dropped or done), under the slots lock so none starts meanwhile. Runs already
+ * starting or running are left alone. Returns the cancelled runs.
+ */
+export function cancelQueuedRuns(task: string, why: string): JawanRun[] {
+    return withLock(paths.lock(SLOTS_LOCK), () =>
+        readRunRecords()
+            .filter((run) => run.task === task && run.status === "queued")
+            .flatMap((run) => cancelQueuedRun(run.id, why) ?? []),
+    );
 }
 
 /** The harness with its model and tier: `omp claude-sonnet-5-5 (standard)`, `omp default` without a model. */

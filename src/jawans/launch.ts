@@ -28,9 +28,20 @@ import { capacityFor, stallMinutes } from "../fleet/resources.ts";
 import { briefPointer, type Harness, headlessCommand, type WorkType } from "../harness/harness.ts";
 import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
+import { isClosed } from "../records/task-end.ts";
 import { deadlineSection } from "./limits.ts";
 import { briefStallMinutes } from "./progress.ts";
-import { type JawanRun, killRun, listRuns, loadRun, RUNNING, runMinuteMs, updateRun } from "./runs.ts";
+import {
+    cancelQueuedRun,
+    type JawanRun,
+    killRun,
+    listRuns,
+    loadRun,
+    RUNNING,
+    runMinuteMs,
+    SLOTS_LOCK,
+    updateRun,
+} from "./runs.ts";
 import { type Argv, awaitScope, inSupervisorScope } from "./scope.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
@@ -74,9 +85,6 @@ function newRunId(at: Date): string {
 export function jawanSlots(): number {
     return capacityFor(loadMachine(), Math.max(1, cpus().length)).maxRuns;
 }
-
-/** Serializes slot checks with starts, so concurrent spawns and drains never overfill the machine. */
-const SLOTS_LOCK = "jawan-slots";
 
 /**
  * Jawan slots in use, the count both startOrQueue and startQueued check against jawanSlots: running spawn runs plus
@@ -289,28 +297,51 @@ export function stopRun(id: string): JawanRun {
     });
 }
 
-export type DrainResult = { started: JawanRun[]; failed: { run: JawanRun; error: string }[] };
+export type DrainResult = {
+    started: JawanRun[];
+    failed: { run: JawanRun; error: string }[];
+    /** Queued runs whose task closed (done or dropped) since they queued: cancelled, never started. */
+    cancelled: JawanRun[];
+};
+
+/** Each closed (done or dropped) task's status by id, read when a drain begins under the slots lock. */
+function closedTasks(): Map<string, string> {
+    return new Map(
+        loadBacklog()
+            .tasks.filter((task) => isClosed(task.status))
+            .map((task) => [task.id, task.status]),
+    );
+}
 
 /**
- * Start queued runs, oldest first, while jawan slots are free. A run that cannot start is recorded failed.
+ * Start queued runs, oldest first, while jawan slots are free. A queued run whose task is done or dropped by now (a
+ * drop elsewhere, a handback, or a race with `task drop`) is cancelled instead, never started; the backlog is read
+ * under the slots lock, which `task drop` takes to cancel. A run that cannot start is recorded failed.
  * `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached). A headless lead
  * turn under `lead.dispatch: "subagents"` is refused and starts none; while a disk hold pauses new jobs none start.
  */
 export function startQueued(options: { diskKept?: boolean } = {}): DrainResult {
     refuseHeadlessDispatch("start queued runs");
     if (options.diskKept !== true) keepDiskBeforeWork();
-    if (currentDiskHold() !== null) return { started: [], failed: [] };
+    if (currentDiskHold() !== null) return { started: [], failed: [], cancelled: [] };
     return withLock(paths.lock(SLOTS_LOCK), () => {
-        const result: DrainResult = { started: [], failed: [] };
+        const result: DrainResult = { started: [], failed: [], cancelled: [] };
         const queued = listRuns()
             .filter((run) => run.status === "queued")
             .sort(
                 (a, b) =>
                     (a.queuedAt ?? a.startedAt).localeCompare(b.queuedAt ?? b.startedAt) || a.id.localeCompare(b.id),
             );
+        const closed = closedTasks();
         let free = jawanSlots() - busySlots();
         for (const run of queued) {
-            if (free <= 0) break;
+            const status = run.task === null ? undefined : closed.get(run.task);
+            if (status !== undefined) {
+                const cancelled = cancelQueuedRun(run.id, `${run.task} is ${status}`);
+                if (cancelled !== null) result.cancelled.push(cancelled);
+                continue;
+            }
+            if (free <= 0) continue;
             try {
                 const started = launch(run.id);
                 if (!RUNNING.includes(started.status)) continue;

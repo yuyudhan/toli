@@ -27,6 +27,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A queued jawan run for a task that is dropped or done never starts. Tasks dropped as duplicates still had their
+  queued `bin/toli spawn` runs start hours later. `bin/toli task drop`, `task done` and `task handback` now cancel the
+  task's queued runs (`T<n>: cancelled queued run <id>; it never started`), and the queue drain reads each run's
+  task again before starting it, cancelling one whose task was closed elsewhere and logging it. Runs already started
+  are never signalled (docs/harnesses.md "Jawan slots", T2127).
 - A delegated task with a long title reports back again. Its status update's envelope title is the owner's id, the
   status and the title (`m2/T1 done: <title>`), so a title near the 191-character delegation limit made it longer
   than 200 and the delegator refused every done or held update ("title over 200 characters"): the chain broke

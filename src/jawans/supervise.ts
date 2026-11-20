@@ -105,14 +105,16 @@ function postOutcome(machine: Machine, run: JawanRun): void {
 }
 
 /**
- * Start queued runs into free slots; one that cannot start has its failure posted. Returns one note per run.
+ * Start queued runs into free slots; one that cannot start has its failure posted. Returns one note per run, including
+ * each queued run cancelled because its task was done or dropped meanwhile.
  * `diskKept`: the caller has seen to the disk already (the minute tick), so no inline keeper runs first.
  */
 export function drainQueue(options: { diskKept?: boolean } = {}): string[] {
     const machine = loadMachine();
-    const { started, failed } = startQueued(options);
+    const { started, failed, cancelled } = startQueued(options);
     for (const { run } of failed) postOutcome(machine, run);
     return [
+        ...cancelled.map((run) => `jawan ${run.id}: not started from the queue, ${run.error}`),
         ...started.map((run) => `jawan ${run.id}: started from the queue`),
         ...failed.map(({ run, error }) => `jawan ${run.id}: could not start from the queue: ${error}`),
     ];

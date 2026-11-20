@@ -98,9 +98,13 @@ reported running`) for a re-dispatch, after the grace minutes. `spawn` with ever
 records the run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free,
 from the supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run
 regardless, for the lead's explicit use. `run kill` on a queued run cancels it; a task naming that run as its jawan
-goes back to queued with no jawan, ready for the next dispatch. The digest, `bin/toli resources` and `bin/toli fleet
-queues` show the slots as `jawans <n>/<slots> (<k> native subagents)`, and `jawans at cap N/N (...): queue instead`
-once all are taken: the lead then queues new work instead of starting another subagent.
+goes back to queued with no jawan, ready for the next dispatch. A queued run whose task is done or dropped never
+starts: `task drop`, `task done` and `task handback` cancel the task's queued runs and name each, and the queue drain
+reads each task again before a start, so a task closed elsewhere (or in a race) has its run cancelled too, logged in
+the tick log or the finishing run's `supervisor.log`. A run already started is left to finish, never signalled. The
+digest, `bin/toli resources` and `bin/toli fleet queues` show the slots as `jawans <n>/<slots> (<k> native
+subagents)`, and `jawans at cap N/N (...): queue instead` once all are taken: the lead then queues new work instead of
+starting another subagent.
 
 **Leftover browsers are closed.** When a run's harness exits, the supervisor closes the automation browsers the run
 left open: a browser binary (Chrome, Chromium, its headless shell, Edge, Brave, Firefox) started with remote

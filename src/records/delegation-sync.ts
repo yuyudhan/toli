@@ -23,7 +23,7 @@ import {
     writeTextAtomic,
 } from "../core/util.ts";
 import { fullText, HANDBACK_FULL_MINUTES, setFull } from "../fleet/full.ts";
-import { loadBacklog, type Task, updateTask } from "./backlog.ts";
+import { cancelQueuedRunsOf, loadBacklog, type Task, updateTask } from "./backlog.ts";
 import { escalateHold, holdDelegatedWord } from "./delegated-word.ts";
 import { linkTaskCommand } from "./delegation-link.ts";
 import {
@@ -364,6 +364,7 @@ function handback(argv: string[]): void {
     if (!reason) throw new ToliError('task handback needs --reason "..."');
     const task = handBack(args.pos(0, "id"), reason);
     out(`${task.id}\thanded back to ${task.delegatedBy?.machine}: ${reason}`);
+    cancelQueuedRunsOf(task.id, "handed back");
     if (args.bool("full")) out(fullText(setFull(`handed back ${task.id}: ${reason}`, HANDBACK_FULL_MINUTES)));
 }
 
