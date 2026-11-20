@@ -4,7 +4,7 @@
 // so the machine never runs more heavy builds than `capacity.buildSlots` (T2050).
 import { warn } from "../core/util.ts";
 import { busySlots, POLL_MS } from "./build-queue.ts";
-import { idleSlots, idleWatch } from "./idle-slots.ts";
+import { besideIdleText, idleSlots, idleWatch } from "./idle-slots.ts";
 import { processTable } from "./outside-builds.ts";
 
 /**
@@ -20,7 +20,10 @@ export async function waitForLentBuilds(slot: number): Promise<void> {
         const lent = busySlots().filter((busy) => busy.beside.includes(slot));
         const idle = lent.length === 0 ? [] : idleSlots(watch, lent, processTable());
         const running = lent.filter((busy) => !idle.includes(busy));
-        if (running.length === 0) return;
+        if (running.length === 0) {
+            for (const busy of idle) warn(besideIdleText(busy, watch));
+            return;
+        }
         if (!told) {
             const builds = running.map((busy) => `slot ${busy.slot}, pid ${busy.pid} in ${busy.cwd}`).join("; ");
             warn(`toli: heavy-build slot ${slot} is lent to a build beside it (${builds}); waiting for it to end`);

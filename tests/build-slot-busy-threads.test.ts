@@ -112,7 +112,10 @@ describe("at most capacity.buildSlots heavy builds at once (T2050)", () => {
         const { box, log } = slotBox(1, 3);
         const wake = join(box.root, ".wake");
         const stop = join(box.root, ".stop");
-        // The real process table, so the slot's sleeping command reads as idle, over a short window.
+        // The real process table, so the slot's sleeping command reads as idle to the build lent its slot, over a short
+        // window. The gate's own wait for that build keeps the minute's window: over a second, sampled every half
+        // second, one look at the lent build's last step starting up (its shell waiting on a child) on a loaded machine
+        // reads as idle and lets the gate through early, as the escape from a deadlock should after a real minute.
         const real = { TOLI_PROCESS_TABLE: "", TOLI_SLOT_IDLE_MS: "1000" };
         const started: Started[] = [];
         try {
@@ -126,7 +129,7 @@ describe("at most capacity.buildSlots heavy builds at once (T2050)", () => {
                     "-c",
                     `until [ -e "${wake}" ]; do kill -0 ${process.pid} 2>/dev/null || exit 1; sleep 0.3; done; cargo build`,
                 ),
-                { ...real, STUB_LABEL: "a" },
+                { ...real, TOLI_SLOT_IDLE_MS: "60000", STUB_LABEL: "a" },
             );
             started.push(gate);
             await until(
@@ -148,10 +151,17 @@ describe("at most capacity.buildSlots heavy builds at once (T2050)", () => {
             mkdirSync(stop);
             const [ran, lent] = await Promise.all([gate.done, beside.done]);
             expect([ran.code, lent.code]).toEqual([0, 0]);
+            expect(ran.stderr).not.toContain("has run nothing");
             const [first, second] = runs(log);
             expect(first).toMatchObject({ label: "b", slot: "2" });
             expect(second).toMatchObject({ label: "a", slot: "1" });
-            expect(second?.start).toBeGreaterThanOrEqual(first?.end ?? Number.NaN);
+            // The lent build ended before the gate's started: its end comes before the gate's start in the log.
+            expect(
+                readFileSync(log, "utf8")
+                    .trim()
+                    .split("\n")
+                    .map((line) => line.split(" ").slice(0, 2).join(" ")),
+            ).toEqual(["start b", "end b", "start a", "end a"]);
         } finally {
             for (const proc of started) proc.proc.kill("SIGKILL");
         }

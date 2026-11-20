@@ -285,7 +285,8 @@ The slot stays lent while that build runs: once the idle command wakes, its next
 the rustc wrapper, a nested `build-slot`, the next step of a gate's recipe) waits for the build beside it to end,
 saying once `heavy-build slot 1 is lent to a build beside it (slot 2, pid 4343 in /path); waiting for it to end`, so
 the machine never runs more builds than it has slots. It stops waiting only when that build has itself run nothing
-for the idle window (it may wait on something the woken command holds), so neither ever deadlocks. A cargo the idle
+for the idle window (it may wait on something the woken command holds), saying so with the same `has run nothing`
+line, so neither ever deadlocks. A cargo the idle
 command had already started and that never left the slot's processes (its test binaries running on) goes on.
 
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
