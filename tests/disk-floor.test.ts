@@ -84,6 +84,36 @@ describe("the disk keeper's floor", () => {
         expect(lines).not.toContain(`deleted ${join(alpha, "target")}`);
         expect(existsSync(join(alpha, "target", "debug", "deps", "libx.rlib"))).toBe(true);
     });
+
+    keeperTest(
+        "a target it deleted that grew back is not deleted again until free disk is under the emergency level (T2122)",
+        () => {
+            const box = keeperBox();
+            const [alpha = ""] = clones(box, ["alpha"]);
+            ageOutput(alpha, 300);
+            setCapacity(box, { diskKeepGB: 34 });
+            const target = join(alpha, "target");
+            const lib = join(target, "debug", "deps", "libx.rlib");
+            const regrow = (): void => {
+                mkdirSync(join(target, "debug", "deps"), { recursive: true });
+                writeFileSync(lib, "x".repeat(4096));
+            };
+            // A 1000 GB disk, so the floor is 34 and the emergency level 30; deleting the target frees next to nothing.
+            const free = (freeGB: number): void =>
+                box.stub("df", `kb=${Math.round(freeGB * 1048576)}\n${dfLine(1000)}`);
+            free(33.7);
+            expect(keep(box, []).lines.join("\n")).toContain(`deleted ${target}, freed `);
+            expect(existsSync(target)).toBe(false);
+            regrow();
+            const again = keep(box, []).lines.join("\n");
+            expect(again).not.toContain(`deleted ${target}`);
+            expect(again).toContain(`skipped ${target}: the keeper deleted it 0 min ago and it grew back`);
+            expect(existsSync(lib)).toBe(true);
+            // Under the emergency level a regrown folder goes again: low free disk is never a reason to stop work.
+            free(20);
+            expect(keep(box, []).lines.join("\n")).toContain(`deleted ${target}, freed `);
+        },
+    );
 });
 
 describe("the disk keeper on Linux, without lsof", () => {

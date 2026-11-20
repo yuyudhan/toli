@@ -8,7 +8,7 @@ import { cpus } from "node:os";
 import { dirname, resolve } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, pidAlive } from "../core/util.ts";
+import { now, pidAlive, writeJsonAtomic } from "../core/util.ts";
 import { capacityFor, diskKeepFloor, measureVolume } from "./resources.ts";
 
 export const KEEPER_LOCK = "disk-keep";
@@ -136,6 +136,64 @@ export function expirePause(): number | null {
         // Gone meanwhile, or not removable (a full disk keeps the file): diskPause ignores it either way.
     }
     return pause.pid;
+}
+
+/**
+ * How long a build folder the keeper deleted (steps 1 and 2) is left alone once it grows back, while free disk is over
+ * the emergency level: a folder a build refills within a minute frees next to nothing, and deleting it again every
+ * minute only costs that build its cache (T2122: one 0.6 GB target deleted 71 times a day, free disk just under the
+ * floor all along).
+ */
+export const REDELETE_AFTER_MS = 6 * 60 * 60_000;
+
+/**
+ * One keeper run's view of state/disk-keep.deleted.json (path -> ms): the build folders of steps 1 and 2 it deleted
+ * within REDELETE_AFTER_MS. A missing, unreadable or unwritable file holds nothing back: disk never stops the keeper.
+ */
+export class RecentDeletions {
+    private readonly recent = RecentDeletions.read();
+    private readonly deleted: string[] = [];
+
+    private static read(): Map<string, number> {
+        let saved: unknown;
+        try {
+            saved = JSON.parse(readFileSync(paths.diskKeepDeleted(), "utf8"));
+        } catch {
+            return new Map(); // None recorded yet, or a file a full disk cut short: no folder is held back.
+        }
+        if (typeof saved !== "object" || saved === null || Array.isArray(saved)) return new Map();
+        const since = now().getTime() - REDELETE_AFTER_MS;
+        const recent = new Map<string, number>();
+        for (const [path, ms] of Object.entries(saved)) if (typeof ms === "number" && ms > since) recent.set(path, ms);
+        return recent;
+    }
+
+    /** Why `path`, deleted lately and back since, stays this run; null when it may go (free disk is read only then). */
+    regrown(path: string, freeGB: () => number, emergencyGB: number): string | null {
+        const at = this.recent.get(path);
+        if (at === undefined || freeGB() < emergencyGB) return null;
+        const minutes = Math.floor((now().getTime() - at) / 60_000);
+        return `the keeper deleted it ${minutes} min ago and it grew back; left alone for ${REDELETE_AFTER_MS / 3_600_000} h while free disk is over the emergency level ${gb(emergencyGB)}`;
+    }
+
+    /** Pass a deletion's refusal through, noting `path` as deleted when there is none and it was no dry run. */
+    note(path: string, dryRun: boolean, refusal: string | null): string | null {
+        if (refusal === null && !dryRun) this.deleted.push(path);
+        return refusal;
+    }
+
+    /** Write this run's deletions, dropping expired ones: null when written or none, else the line for the log. */
+    save(): string | null {
+        if (this.deleted.length === 0) return null;
+        const at = now().getTime();
+        for (const path of this.deleted) this.recent.set(path, at);
+        try {
+            writeJsonAtomic(paths.diskKeepDeleted(), Object.fromEntries(this.recent));
+            return null;
+        } catch (error) {
+            return `cannot write ${paths.diskKeepDeleted()} (${describe(error)}): a folder that grows back may go again`;
+        }
+    }
 }
 
 /**

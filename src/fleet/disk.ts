@@ -7,7 +7,8 @@
 //      folders of checkouts nothing uses (no running jawan or live subagent in it, no process working there, no live
 //      build compiling into it: a cargo or rustc, a held heavy-build slot or a running gate, live-builds.ts);
 //   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/` (builds run
-//      there between jobs and cannot reinstall dependencies themselves; cargo rebuilds a wiped `target/` on its own);
+//      there between jobs and cannot reinstall dependencies themselves; cargo rebuilds a wiped `target/` on its own).
+//      One deleted within 6 h that grew back stays over the emergency level: it frees nothing (T2122, disk-state.ts);
 //   3. Docker build cache and unused images, not while a pull or build runs and not every minute (docker-prune.ts);
 //   4. sccache's local cache entries past its own cap;
 // Under the emergency level (max(5 GB, 3% of the disk), at most the floor) it goes on, re-checking free disk after
@@ -68,6 +69,7 @@ import {
     machineFloor,
     PAUSE_EXPIRY_MS,
     pauseHold,
+    RecentDeletions,
     releaseKeeper,
 } from "./disk-state.ts";
 import { pruneDocker } from "./docker-prune.ts";
@@ -270,6 +272,7 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             remove(leftover, "step 0: leftover of an interrupted target wipe", (dry) =>
                 dry ? null : removeTree(leftover),
             );
+        const recent = new RecentDeletions();
         const idleTier = (
             step: number,
             kinds: BuildDir["kind"][],
@@ -285,9 +288,13 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                     say(`kept ${dir.path}: a main clone's dependencies (its builds cannot reinstall them)`);
                     continue;
                 }
-                let reason = checkoutUse(dir.checkout, holders, checkouts);
+                let reason =
+                    recent.regrown(dir.path, free, report.emergencyGB) ?? checkoutUse(dir.checkout, holders, checkouts);
                 if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
-                if (reason === null) remove(dir.path, `step ${step}: idle ${dir.kind}`, (dry) => deleteIt(dir, dry));
+                if (reason === null)
+                    remove(dir.path, `step ${step}: idle ${dir.kind}`, (dry) =>
+                        recent.note(dir.path, dry, deleteIt(dir, dry)),
+                    );
                 else {
                     kept.set(dir.path, { reason, tried: false });
                     say(`skipped ${dir.path}: ${reason}`);
@@ -302,6 +309,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             if (open.length > 0) return `open files, e.g. ${open.join(", ")}`;
             return dry ? null : removeTree(dir.path);
         });
+        const unsaved = recent.save();
+        if (unsaved !== null) say(unsaved);
         // 3 and 4: machine-wide caches.
         if (!enough()) {
             const freeNow = free();
