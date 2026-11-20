@@ -17,10 +17,18 @@ import { cleanMerge, type Merge } from "./commit-merge.ts";
 import { parseHunks } from "./diff-hunks.ts";
 
 /**
- * The commit built on `parent` before any ref moves; `merge` is the clean merge it starts from, if any, and `amended`
- * the paths that merge changes which the commit changes again on top of its result (recorded as `Merge-amended:`).
+ * The commit built on `parent` before any ref moves; `merge` is the clean merge it starts from, if any, `amended`
+ * the paths that merge changes which the commit changes again on top of its result (recorded as `Merge-amended:`),
+ * and `patched` the paths the `--patch` diffs change on top of that start (their working-tree files were not read).
  */
-export type Built = { sha: string; subject: string; files: string[]; merge: Merge | null; amended: string[] };
+export type Built = {
+    sha: string;
+    subject: string;
+    files: string[];
+    merge: Merge | null;
+    amended: string[];
+    patched: string[];
+};
 
 /** `attempt.gitOk` for a `-z` path listing, untrimmed (see nulPaths in core/git.ts). */
 function attemptPaths(attempt: Attempt, args: string[]): string[] {
@@ -141,7 +149,8 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
         if (created.code !== 0)
             throw new ToliError(`git commit-tree failed: ${(created.stderr || created.stdout).trim()}`);
         const sha = created.stdout.trim();
-        return { sha, subject: message.split("\n")[0] ?? "", files, merge, amended };
+        const patched = own.filter((file) => fromPatch.includes(file));
+        return { sha, subject: message.split("\n")[0] ?? "", files, merge, amended, patched };
     } finally {
         attempt.dispose();
     }

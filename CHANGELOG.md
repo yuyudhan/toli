@@ -27,6 +27,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli commit --patch` now leaves the patched files in the working tree at the new commit. It committed the
+  hunks but left the files at their old content, so the clone showed the change as an uncommitted revert until the
+  same patch was applied by hand. A patched file still holding the version the commit replaced is checked out from
+  the commit; one already matching it stays; one holding anything else (your own uncommitted edit) is left as it is
+  and named in a warning. Other uncommitted work is never touched (docs/development.md, T2106).
 - The lead service no longer runs a headless turn beside a live interactive Sardar. A session that had left a wake
   unread for `lead.idleSessionMinutes` (one sitting at a permission prompt, say) was taken over by a headless turn,
   which then acted on the same inbox items as the session once someone typed into it, so the same tasks were

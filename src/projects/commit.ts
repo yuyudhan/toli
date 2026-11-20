@@ -34,6 +34,7 @@ import { refExists } from "./base-branch.ts";
 import { buildCommit } from "./commit-build.ts";
 import { type HookLimit, hookLimit } from "./commit-hooks.ts";
 import { adoptsMerge } from "./commit-merge.ts";
+import { syncCommittedWorktree } from "./commit-worktree.ts";
 import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
 import { perTask } from "./strategy.ts";
 import { samePath, workDir } from "./workspace.ts";
@@ -75,15 +76,18 @@ export type CommitPatch = { name: string; diff: string };
 
 /**
  * `files`: every path changed against the first parent; `merged`: those the merge brought in (not named); `amended`:
- * the merge-changed paths the commit changes again on top of the merge result (its `Merge-amended:` trailers).
+ * the merge-changed paths the commit changes again on top of the merge result (its `Merge-amended:` trailers);
+ * `patched`: the paths the `--patch` diffs change; `start`: the tree they went on (the merge result, else `parent`).
  */
 export type Committed = {
     sha: string;
     branch: string;
     parent: string;
+    start: string;
     files: string[];
     merged: string[];
     amended: string[];
+    patched: string[];
     attempts: number;
 };
 
@@ -101,13 +105,14 @@ function attemptCommit(
     if (branch === null) throw new ToliError(`refusing: ${dir} is on a detached HEAD; commit on a branch`);
     const ref = `refs/heads/${branch}`;
     const parent = headSha(dir, ref);
-    const { sha, subject, files, merge, amended } = buildCommit(request, parent, branch, adopted);
+    const { sha, subject, files, merge, amended, patched } = buildCommit(request, parent, branch, adopted);
     hooks.beforeUpdateRef?.(attemptNo);
     const moved = git(dir, ["update-ref", "-m", `toli commit: ${subject}`, ref, sha, parent]);
     if (moved.code !== 0) return null;
     // A path the merge touches that ends as in `parent` (a conflict resolved by deleting it) has nothing to check out.
     const merged = merge?.files.filter((file) => files.includes(file)) ?? [];
-    return { sha, branch, parent, files, merged, amended, attempts: attemptNo };
+    const start = merge?.tree ?? parent;
+    return { sha, branch, parent, start, files, merged, amended, patched, attempts: attemptNo };
 }
 
 /** A commit built for export: `patch` is its `git format-patch` text; no ref, index or working tree moved. */
@@ -190,6 +195,10 @@ export function safeCommit(request: CommitRequest, hooks: CommitHooks = {}): Com
             warn(
                 `toli: committed, but the shared index was not refreshed (git reset -q -- <paths>): ${synced.stderr.trim()}`,
             );
+        // The `--patch` hunks need not be in the working tree: bring each patched file to the commit where it still
+        // holds the version the commit replaced; a file holding the user's own edit is left, with a warning. Named
+        // paths were committed from their working-tree files, which already match.
+        syncCommittedWorktree(request.dir, committed.sha, [committed.parent, committed.start], committed.patched);
         // The merged files were clean before the merge: bring the index and the working tree to the merge result. A
         // file the merge deletes that is already out of the index (an adopted `git merge` removed it) is done; naming
         // it would fail the whole restore, as git knows it from neither side. The merged names are file names, not

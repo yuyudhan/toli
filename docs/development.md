@@ -42,7 +42,10 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Ca
    `git update-ref <branch> <new> <old>`, which fails if another commit landed meanwhile. It then rebuilds everything
    once from the new tip; a second move is a refusal ("run the same commit again").
 4. It points the shared index's entries for the committed files at the commit (so `git status` shows no phantom
-   staged changes) and strips AI co-author trailers from the message. Before writing the commit it runs the
+   staged changes) and brings each `--patch`-changed file in the working tree to the commit when it still holds the
+   version the commit replaced (the hunks never had to be in the working tree); a patched file that holds anything
+   else (your own uncommitted edit) is left as it is and named in a warning. It also strips AI co-author trailers
+   from the message. Before writing the commit it runs the
    project's `pre-commit` hook, then its `commit-msg` hook (`core.hooksPath` honoured, else `.git/hooks/`); a
    non-zero exit refuses the commit with the hook's output. There is no bypass flag. `pre-commit` runs on exactly the
    commit: its working tree is the private index's files written out to a temporary directory, made a linked
