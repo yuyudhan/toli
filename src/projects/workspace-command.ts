@@ -35,10 +35,22 @@ function dirtyFileCount(worktree: string): number {
     return status.stdout.split("\n").filter((line) => line !== "").length;
 }
 
-function worktreeEntries(projectFilter: string | undefined): WorktreeEntry[] {
+/** A task worktree under a project's worktrees dir, with its backlog task (if any); no per-worktree git reads. */
+type TaskWorktree = {
+    project: string;
+    clone: string;
+    root: string;
+    id: string;
+    /** The path git reports (symlinks resolved). */
+    gitPath: string;
+    branch: string | null;
+    task: Task | undefined;
+};
+
+function taskWorktrees(projectFilter: string | undefined): TaskWorktree[] {
     const projects = projectFilter === undefined ? loadProjects() : [findProject(projectFilter)];
     const tasks = new Map(loadBacklog().tasks.map((task) => [task.id, task]));
-    const entries: WorktreeEntry[] = [];
+    const found: TaskWorktree[] = [];
     for (const project of projects) {
         const clone = paths.projectDir(project.name);
         const root = paths.worktreesDir(project.name);
@@ -47,24 +59,35 @@ function worktreeEntries(projectFilter: string | undefined): WorktreeEntry[] {
         for (const worktree of gitWorktrees(clone)) {
             if (dirname(worktree.path) !== realRoot && dirname(worktree.path) !== root) continue;
             const id = basename(worktree.path);
-            const task = tasks.get(id);
-            const base = task?.workspace?.base ?? null;
-            const head = existsSync(worktree.path) ? git(worktree.path, ["rev-parse", "--verify", "HEAD"]) : null;
-            const sha = head !== null && head.code === 0 ? head.stdout.trim() : null;
-            entries.push({
+            found.push({
                 project: project.name,
-                task: id,
-                status: task?.status ?? "unknown",
-                path: join(root, id),
+                clone,
+                root,
+                id,
+                gitPath: worktree.path,
                 branch: worktree.branch,
-                base,
-                head: sha,
-                unmerged: sha === null || base === null ? null : unmergedCount(clone, sha, base),
-                dirtyFiles: dirtyFileCount(worktree.path),
+                task: tasks.get(id),
             });
         }
     }
-    return entries;
+    return found;
+}
+
+function worktreeEntry(worktree: TaskWorktree): WorktreeEntry {
+    const base = worktree.task?.workspace?.base ?? null;
+    const head = existsSync(worktree.gitPath) ? git(worktree.gitPath, ["rev-parse", "--verify", "HEAD"]) : null;
+    const sha = head !== null && head.code === 0 ? head.stdout.trim() : null;
+    return {
+        project: worktree.project,
+        task: worktree.id,
+        status: worktree.task?.status ?? "unknown",
+        path: join(worktree.root, worktree.id),
+        branch: worktree.branch,
+        base,
+        head: sha,
+        unmerged: sha === null || base === null ? null : unmergedCount(worktree.clone, sha, base),
+        dirtyFiles: dirtyFileCount(worktree.gitPath),
+    };
 }
 
 function entryLine(entry: WorktreeEntry): string {
@@ -141,22 +164,24 @@ function pruneOne(entry: WorktreeEntry): PruneResult {
     return removeWorktree(entry, entry.head);
 }
 
-/** Refresh origin's view of each base branch (best effort, bounded) so merges done on the forge count. */
-function fetchBases(entries: WorktreeEntry[]): void {
+/**
+ * Refresh origin's view of each base branch (best effort, bounded) so merges done on the forge count. Reads only the
+ * backlog's recorded bases: each worktree's own git state is read after the fetch.
+ */
+function fetchBases(worktrees: TaskWorktree[]): void {
     const seen = new Set<string>();
-    for (const entry of entries) {
-        if (entry.base === null || seen.has(`${entry.project}\0${entry.base}`)) continue;
-        seen.add(`${entry.project}\0${entry.base}`);
-        run(["git", "-C", paths.projectDir(entry.project), "fetch", "--quiet", "origin", entry.base], {
-            timeoutMs: FETCH_TIMEOUT_MS,
-        });
+    for (const worktree of worktrees) {
+        const base = worktree.task?.workspace?.base ?? null;
+        if (base === null || seen.has(`${worktree.project}\0${base}`)) continue;
+        seen.add(`${worktree.project}\0${base}`);
+        run(["git", "-C", worktree.clone, "fetch", "--quiet", "origin", base], { timeoutMs: FETCH_TIMEOUT_MS });
     }
 }
 
 function listCommand(argv: string[]): void {
     const args = new Args(argv, { booleans: ["json"], values: ["project"] });
     args.maxPositional(0);
-    const entries = worktreeEntries(args.str("project"));
+    const entries = taskWorktrees(args.str("project")).map(worktreeEntry);
     if (args.bool("json")) printJson(entries);
     else out(entries.length === 0 ? "no task worktrees" : entries.map(entryLine).join("\n"));
 }
@@ -165,8 +190,8 @@ function pruneCommand(argv: string[]): void {
     const args = new Args(argv, { booleans: ["json"], values: ["project"] });
     args.maxPositional(0);
     const project = args.str("project");
-    fetchBases(worktreeEntries(project));
-    const results = worktreeEntries(project).map(pruneOne);
+    fetchBases(taskWorktrees(project));
+    const results = taskWorktrees(project).map(worktreeEntry).map(pruneOne);
     if (args.bool("json")) printJson(results.map((result) => result.fields));
     else out(results.length === 0 ? "no task worktrees" : results.map((result) => result.text).join("\n"));
 }

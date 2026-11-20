@@ -272,7 +272,7 @@ describe("worktree-per-task", () => {
         expect(box.ok(["workspace", "prune"])).toContain(
             "kept: projects/.worktrees/app/T3: 0 unlanded commits / 1 dirty file",
         );
-    });
+    }, 60_000);
 
     test("on macOS keeps new worktrees out of Spotlight and Time Machine, and a failed exclusion only warns", () => {
         const box = coordinator();

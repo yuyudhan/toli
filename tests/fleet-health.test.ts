@@ -109,6 +109,10 @@ describe("fleet health", () => {
     test("reads every machine over ssh with plain tools, and an unreachable one is shown as such", () => {
         const box = fleet(remoteSnapshot("m2"));
         stubFleetScripts(box);
+        // m1's own CPU sample answers at once: the real `top -l 2 -s 1` (macOS) or `sleep 1` (Linux) costs 1 s per
+        // read, far more under load, and this test reads twice.
+        box.stub("top", "echo 'CPU usage: 10.0% user, 5.0% sys, 85.0% idle'");
+        box.stub("sleep", ":");
         const output = box.ok(["fleet", "health"], { env: ENV });
         const lines = output.split("\n");
         expect(lines[0]).toMatch(

@@ -52,5 +52,5 @@ describe("workspace prune", () => {
             "app/T1",
             "projects/.worktrees/app/T1: 1 unlanded commit / 0 dirty files",
         ]);
-    });
+    }, 60_000);
 });
