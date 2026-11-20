@@ -108,12 +108,17 @@ one. See docs/releasing.md.
   the symlink, so a hook reading untracked files (pretty-quick) crashed with EISDIR. The linked paths now go in a
   hook-only `core.excludesFile` after the user's own excludes.
 
-- `bin/toli fleet say` and the first message of `bin/toli fleet start` no longer submit with Enter into an omp lead.
-  Enter is not how a message typed into a live omp session is sent: they now submit with Ctrl+Q (`C-q`), which
-  queues the message for when the lead's running turn yields (sent at once when it is idle). `fleet say --steer`
-  submits with Ctrl+S (`C-s`) instead, steering the message into the running turn, for a message that must interrupt
-  it. Leads on Claude Code, Codex, Cursor, Grok and pi still submit with Enter; `--key` still overrides
-  (docs/fleet.md).
+- `bin/toli fleet say` and the first message of `bin/toli fleet start` reach an omp lead again. They submit with one
+  key, Ctrl+S (`C-s`), the fleet's omp submit key (`tui.input.submit`; Enter is a newline there), which sends at once
+  when the lead is idle and steers into its running turn when it is busy; Claude Code, Codex, Cursor, Grok and pi
+  leads still submit with Enter, and `--key` still overrides. `fleet say --steer` is gone: the one key already steers.
+  A pane counted as ready as soon as it showed a `────────` line, which a powerline shell prompt draws too, so on a
+  slow omp start (about 20 s) the message was typed into the shell and sat unsent in omp's editor. A pane is now ready
+  once the harness draws its bar below the shell's echo of its command line, and the submit key is pressed again every
+  3 s while the text still sits in the input, as omp keeps it while it finishes starting. `fleet say` no longer seems
+  to hang: each machine gets `--wait` seconds in all (default 60, was 300 plus 40 to wait and type), and each
+  machine's `ok`/`skip`/`fail` line prints as soon as that machine answers instead of after the slowest one; it exits
+  1 when any machine failed (docs/fleet.md).
 - A run that waits silently on a remote CI pipeline is no longer stopped as stalled half way. Watching a pipeline
   shows no output, file change or CPU use, so a release run waiting on a 47-minute build job was stopped after
   `capacity.stallMinutes` (30) and needed a second run to finish. A brief (or a scheduled job's prompt) may now carry a

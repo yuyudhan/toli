@@ -176,14 +176,14 @@ below, nothing is locked or refused because a machine is busy.
     bin/toli fleet push [--json]              # every clone: branch, unpushed commits, ages, dirty files, blocked pushes
     bin/toli fleet questions [--json]         # every open question across the fleet, one numbered list
     bin/toli fleet releases <project>@<machine>... [--health <project>=<url>]...   # where each project's releases stand
-    bin/toli fleet say "<text>" [--steer | --key <key>] [--os <uname>] [--to <m,...>] [--wait <s>]   # type into other leads
+    bin/toli fleet say "<text>" [--key <key>] [--os <uname>] [--to <m,...>] [--wait <s>]   # type into other leads
     bin/toli fleet start [--session <s>] [--window <w>] [--message "<text>"] [--attach "<cmd>"] [--os <uname>]
 
 These read every machine at once, this one in its toli root and every other over ssh in its own, with one POSIX `sh`
 script of plain tools (`sysctl`, `vm_stat` and `top` on macOS; `/proc`, `nproc` on Linux; `df`, `git`, `tmux`) and
 the `bin/toli` commands every release has (`lead status`, `task list --json`, `runs --json --active`), so a machine on
-an older toli answers in full. Each machine has 20 seconds (`say` and `start` add the time they wait); one that does
-not answer, or takes no inbound ssh, is shown as unreachable with the reason, and the rest still show. Only
+an older toli answers in full. Each machine has 20 seconds (`say` has its `--wait`, `start` the time it waits); one
+that does not answer, or takes no inbound ssh, is shown as unreachable with the reason, and the rest still show. Only
 `fleet say` and `fleet start` change anything.
 
 `fleet health` prints one row per machine: CPUs; CPU used (the busy share over a one-second sample); the 1-minute
@@ -216,24 +216,31 @@ reports (the first `version` field of its JSON). Nothing is fetched: origin's re
 whose age is shown.
 
 `fleet say "<text>"` types the text into every other machine's lead pane (a harness in the toli root inside tmux) and
-submits it with that harness's submit key, never Enter into omp: `C-q` (Ctrl+Q) for an omp lead, which queues the
-message for when its running turn yields (sent at once when idle). `--steer` submits with `C-s` (Ctrl+S) instead,
-which steers the message into the running turn; use it only when the lead must stop what it is doing for it.
-Claude Code, Codex, Cursor, Grok and pi leads submit on `Enter` either way. `--key` (a tmux key name) overrides
-both. It waits up to `--wait` seconds (default 300) for a lead whose harness has drawn its status bar, and reports
-per machine whether the pane then shows the text or changed. `--os Linux` (or `Darwin`) limits it to machines whose
+submits it with that harness's submit key, the one key `fleet start` uses too (`submitKey` in
+`src/harness/harness.ts`): `C-s` (Ctrl+S) for an omp lead, the fleet's omp submit key (`tui.input.submit` in
+yuyudhan-dotfiles `omp/keybindings.yml`, where Enter is a newline), which sends at once when the lead is idle and
+steers into its running turn when it is busy. Claude Code, Codex, Cursor, Grok and pi leads submit on `Enter`.
+`--key` (a tmux key name) overrides it. A pane counts as ready once the harness has drawn its status bar below the
+shell's echo of the command that started it (a powerline prompt draws a bar line of its own), and the key is pressed
+again every 3 seconds while the text still sits in the input at the bottom of the pane, as omp keeps it while it is
+still starting. Each machine has `--wait` seconds in all (default 60): waiting for a ready lead, typing, submitting
+and reading back; the last 15 of them are kept for the ssh connection, the last press and reading back. Each
+machine's line prints as soon as that machine answers: `ok received`, `skip` (another `--os`, or no inbound ssh),
+or `fail` with why (unreachable or no answer within `--wait`, no lead in tmux, typed but not submitted, typed but not
+confirmed); the command exits 1 when any machine failed. `--os Linux` (or `Darwin`) limits it to machines whose
 `uname -s` matches, `--to <machine,...>` to the machines named.
 
 `fleet start` brings the leads back after a reboot: on every other machine with no lead pane it opens a tmux session
 (`--session`, default `toli`; a new `--window`, default `lead`, when the session exists) in the toli root, runs
 `--attach` there first when given (a shell command that opens a terminal attached to the session, such as a terminal
 emulator on a desktop workspace), starts the harness (`--harness`, default omp; the command line itself is submitted
-with `Enter` to the shell), waits for its status bar and types `--message`, submitted with the harness's submit key
-(`C-q` for omp, `Enter` for the others; `--key` overrides). A machine whose lead already runs is never touched. The
-HTTPS peer listener is not `fleet start`'s: the lead service starts it and keeps it up ([peers.md](peers.md)). A
-second supervisor, such as the `toli-peer-serve` unit `fleet start --listener` started before 0.5.42, loses the
-listener lock to the lead service's listener and restarts every few seconds; stop it with
-`systemctl --user stop toli-peer-serve; systemctl --user reset-failed toli-peer-serve`.
+with `Enter` to the shell), waits up to 90 seconds for its status bar (drawn below the shell's echo of that command,
+as `fleet say` checks) and types `--message`, submitted with the harness's submit key (`C-s` for omp, `Enter` for the
+others; `--key` overrides) and pressed again for up to 60 seconds while the message still sits in its input. A
+machine whose lead already runs is never touched. The HTTPS peer listener is not `fleet start`'s: the lead service
+starts it and keeps it up ([peers.md](peers.md)). A second supervisor, such as the `toli-peer-serve` unit
+`fleet start --listener` started before 0.5.42, loses the listener lock to the lead service's listener and restarts
+every few seconds; stop it with `systemctl --user stop toli-peer-serve; systemctl --user reset-failed toli-peer-serve`.
 
 ### Heavy-build slots
 

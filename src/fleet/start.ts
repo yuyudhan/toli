@@ -3,15 +3,19 @@
 // machine where none runs (a machine whose lead already runs in tmux is never touched): a detached tmux session (or a
 // new window in an existing one) in the toli root running the harness, optionally a terminal attached to it
 // (`--attach`, run on that machine, e.g. a terminal emulator on a desktop workspace), and the first message typed and
-// submitted with the harness's submit key (omp: Ctrl+Q, never Enter, T1960; `--key` overrides) once the harness has
-// drawn its status bar. The HTTPS peer listener is the lead service's
-// (src/peer/supervise.ts ensureListener): a second supervisor fights it for the listener lock (T1946).
+// submitted with the harness's submit key (SPECS submitKey; omp: Ctrl+S, never Enter, T1960, T2086; `--key`
+// overrides) once the harness has drawn its status bar: a bar line below the shell's echo of the harness command,
+// since a powerline prompt draws one too and keys typed before the harness is up land unsent in its editor (T2086).
+// The HTTPS peer listener is the lead service's (src/peer/supervise.ts ensureListener): a second supervisor fights it
+// for the listener lock (T1946).
 import { Args } from "../core/args.ts";
 import { out, printJson, shellQuote, ToliError } from "../core/util.ts";
 import { type Harness, parseHarness, SPECS } from "../harness/harness.ts";
-import { LEAD_PANES_SH, runOnFleet, type ScriptOutcome } from "./machine-script.ts";
+import { LEAD_PANES_SH, runOnFleet, type ScriptOutcome, TYPE_INTO_LEAD_SH } from "./machine-script.ts";
 
-/** Waiting for an attached client (60 s) and the harness (90 s), then typing. */
+/** How long the first message's submit key is pressed again while the harness keeps it in its input. */
+const SUBMIT_SECONDS = 60;
+/** Waiting for an attached client (60 s), the harness (90 s) and the first message to go in (60 s). */
 const START_CAP_MS = 240_000;
 
 export type StartOptions = {
@@ -28,7 +32,7 @@ export type StartOptions = {
 /** The script each machine runs. */
 export function startScript(options: StartOptions): string {
     const target = `${options.session}:${options.window}`;
-    return `${LEAD_PANES_SH}
+    return `${LEAD_PANES_SH}${TYPE_INTO_LEAD_SH}
 want=${shellQuote(options.os ?? "")}
 if [ -n "$want" ] && [ "$(uname -s)" != "$want" ]; then echo "@@skip $(uname -s)"; exit 0; fi
 session=${shellQuote(options.session)}; target=${shellQuote(target)}
@@ -53,7 +57,7 @@ else
   ready=0
   for _ in $(seq 1 45); do
     sleep 2
-    tmux capture-pane -p -t "$target" 2>/dev/null | grep -q '────────' && ready=$((ready + 1))
+    harness_drawn "$target" ${shellQuote(SPECS[options.harness].binary)} && ready=$((ready + 1))
     [ "$ready" -ge 2 ] && break
   done
   if [ "$ready" -lt 2 ]; then
@@ -61,13 +65,14 @@ else
   else
     ${
         options.message === null
-            ? ":"
+            ? `echo "@@started $target"`
             : `sleep 3
-    tmux send-keys -t "$target" -l ${shellQuote(options.message)}
-    sleep 1
-    tmux send-keys -t "$target" ${shellQuote(options.key ?? SPECS[options.harness].submitKey)}`
+    if submit_text "$target" ${shellQuote(options.key ?? SPECS[options.harness].submitKey)} ${shellQuote(options.message)} $(( $(date +%s) + ${SUBMIT_SECONDS} )); then
+      echo "@@started $target"
+    else
+      echo "@@failed started in $target, but the first message still sits in its input after ${SUBMIT_SECONDS} s"
+    fi`
     }
-    echo "@@started $target"
   fi
 fi`;
 }

@@ -67,10 +67,15 @@ function firstLine(text: string): string {
 }
 
 /**
- * How long each machine may take (default 20 s), whether this machine runs the script too (default yes), and, when
- * given, the only other machines it runs on.
+ * How long each machine may take (default 20 s), whether this machine runs the script too (default yes), when given
+ * the only other machines it runs on, and a callback for each machine's outcome as soon as that machine answers.
  */
-export type FleetRunOptions = { capMs?: number; withSelf?: boolean; only?: readonly string[] };
+export type FleetRunOptions = {
+    capMs?: number;
+    withSelf?: boolean;
+    only?: readonly string[];
+    onOutcome?: (outcome: ScriptOutcome) => void;
+};
 
 /** Run `script` in this machine's toli root, with `$TOLI` naming this CLI. */
 async function runLocal(machine: string, script: string, capMs: number): Promise<ScriptOutcome> {
@@ -121,11 +126,19 @@ export async function runOnFleet(script: string, options: FleetRunOptions = {}):
         const unknown = only.filter((name) => !otherFleetMachines().some((machine) => machine.name === name));
         if (unknown.length > 0) throw new ToliError(`not another machine in config/fleet.json: ${unknown.join(", ")}`);
     }
+    const onOutcome = options.onOutcome;
+    const report = (run: Promise<ScriptOutcome>): Promise<ScriptOutcome> =>
+        onOutcome === undefined
+            ? run
+            : run.then((outcome) => {
+                  onOutcome(outcome);
+                  return outcome;
+              });
     const others = otherFleetMachines()
         .filter((machine) => only === undefined || only.includes(machine.name))
-        .map((machine) => runRemote(machine, script, capMs));
+        .map((machine) => report(runRemote(machine, script, capMs)));
     if (options.withSelf === false) return await Promise.all(others);
-    return await Promise.all([runLocal(loadMachine().name, script, capMs), ...others]);
+    return await Promise.all([report(runLocal(loadMachine().name, script, capMs)), ...others]);
 }
 
 /** Run `script` on one fleet machine (this one in its own root), under `capMs`. */
@@ -165,6 +178,36 @@ lead_panes() {
       done
     fi
     [ -n "$harness" ] && echo "$id|$name|$harness"
+  done
+}
+`;
+
+/**
+ * Shell functions for typing into a harness in tmux (`fleet say`, `fleet start`), after LEAD_PANES_SH:
+ *
+ * `harness_drawn <pane> <binary>`: whether the harness has drawn its status bar (a `────────` line) below the
+ * shell's echo of the command line that started it. A powerline prompt draws such a line too, and keys typed while
+ * only the prompt shows go to the shell's line buffer and land unsent in the harness's editor (T2086).
+ *
+ * `submit_text <pane> <key> <text> <deadline>`: type the text, then press the submit key until the text has left the
+ * input at the bottom of the pane, every 3 s until `<deadline>` (epoch seconds); fails when it is still there. omp
+ * draws its bar before it takes a message, so on a slow start the first press leaves the text in its editor (T2086).
+ */
+export const TYPE_INTO_LEAD_SH = `
+harness_drawn() {
+  tmux capture-pane -p -t "$1" 2>/dev/null |
+    awk -v cmd="$2" '{ line[NR] = $0 } $NF == cmd || $NF ~ ("/" cmd "$") { last = NR } END { for (i = last + 1; i <= NR; i++) print line[i] }' |
+    grep -q '────────'
+}
+submit_text() {
+  tmux send-keys -t "$1" -l "$3"
+  sleep 1
+  end=$(printf '%s' "$3" | tr -d ' \\n' | tail -c 8)
+  while :; do
+    tmux send-keys -t "$1" "$2"
+    sleep 3
+    tmux capture-pane -p -t "$1" | grep -v '^[[:space:]]*$' | tail -n 1 | tr -d ' ' | grep -F -q -- "$end" || return 0
+    [ "$(date +%s)" -lt "$4" ] || return 1
   done
 }
 `;

@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { LEAD_PANES_SH, parseSections } from "../src/fleet/machine-script.ts";
 import { inboxQuestion } from "../src/fleet/questions.ts";
 import { findVersion, parseRelease, releaseScript } from "../src/fleet/releases.ts";
-import { type SayOptions, sayResult, sayScript } from "../src/fleet/say.ts";
+import { SAY_SEND_SECONDS, type SayOptions, sayResult, sayScript } from "../src/fleet/say.ts";
 import { type StartOptions, startResult, startScript } from "../src/fleet/start.ts";
+import { SPECS } from "../src/harness/harness.ts";
 import { ENV, fleet, remoteSnapshot } from "./fleet-fixture.ts";
 import { AT, stubFleetScripts } from "./fleet-scripts-fixture.ts";
-import { sandbox } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, sandbox } from "./helpers.ts";
 
 describe("fleet push", () => {
     test("lists every clone with ahead, ages, dirty files and the blocked report line", () => {
@@ -85,17 +86,17 @@ describe("fleet releases", () => {
 });
 
 describe("fleet say and start", () => {
-    test("say types into every other machine's lead and confirms it per machine", () => {
+    test("say types into every other machine's lead and prints ok or fail per machine", () => {
         const box = fleet(remoteSnapshot("m2"));
         stubFleetScripts(box);
-        const result = box.toli(["fleet", "say", "hello leads", "--key", "C-q", "--wait", "0"], { env: ENV });
-        expect(result.code).toBe(0);
-        expect(result.stdout).toBe(
+        const result = box.toli(["fleet", "say", "hello leads", "--wait", "5"], { env: ENV });
+        expect(result.code).toBe(1);
+        expect(result.stdout.split("\n").sort()).toEqual(
             [
-                "m2: received (lead:toli: pane shows the text; last line: the typed text)",
-                "m3: unreachable (ssh host3 exited 255: ssh: connect to host host3 port 22: Connection refused)",
                 "",
-            ].join("\n"),
+                "m2: ok received (lead:toli: pane shows the text; last line: the typed text)",
+                "m3: fail unreachable (ssh host3 exited 255: ssh: connect to host host3 port 22: Connection refused)",
+            ].sort(),
         );
         expect(result.stdout).not.toContain("m1");
         const unconfirmed = sayResult({
@@ -105,7 +106,53 @@ describe("fleet say and start", () => {
             sections: parseSections("@@sent s:w\n@@screen\nsame"),
         });
         expect(unconfirmed.outcome).toBe("typed, not confirmed");
+        expect(unconfirmed.status).toBe("fail");
         expect(sayResult({ machine: "x", local: false, ok: true, sections: [] }).outcome).toBe("no lead in tmux");
+        const noInbound = { name: "x", ssh: "hx", root: "/srv/toli", inbound: false };
+        expect(
+            sayResult({ machine: "x", local: false, ok: false, reason: "takes no inbound ssh", fleet: noInbound })
+                .status,
+        ).toBe("skip");
+    });
+
+    // m2 answers `fleet say` after `m2Delay` seconds; m3 hangs (`exec sleep 30`) or refuses at once.
+    function slowSayFleet(m2Delay: number, m3: "hang" | "refuse"): Sandbox {
+        const box = fleet(remoteSnapshot("m2"));
+        box.stub(
+            "ssh",
+            [
+                SSH_STUB_ARGS,
+                'case "$host" in',
+                `  host2) cat >/dev/null; sleep ${m2Delay}; printf '%s\\n' '@@sent lead:toli' '@@seen' '@@screen' 'typed' ;;`,
+                m3 === "hang"
+                    ? "  host3) exec sleep 30 ;;"
+                    : "  host3) cat >/dev/null; echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
+                "  *) exit 255 ;;",
+                "esac",
+            ].join("\n"),
+        );
+        return box;
+    }
+
+    test("say bounds every machine by --wait: a hung ssh is a fail line, never a hang (T2086)", async () => {
+        const box = slowSayFleet(0, "hang");
+        const started = Date.now();
+        const result = await box.toliAsync(["fleet", "say", "hello leads", "--wait", "2"], { env: ENV });
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(result.code).toBe(1);
+        expect(result.stdout).toContain("m2: ok received (lead:toli: pane shows the text; last line: typed)\n");
+        expect(result.stdout).toContain("m3: fail unreachable (no answer from host3 within 2s)\n");
+    }, 20_000);
+
+    test("say prints each machine's line as soon as that machine answers (T2086)", () => {
+        const box = slowSayFleet(2, "refuse");
+        const result = box.toli(["fleet", "say", "hello leads", "--wait", "10"], { env: ENV });
+        expect(result.stdout.split("\n").map((line) => line.split(":")[0])).toEqual(["m3", "m2", ""]);
+    }, 20_000);
+
+    test("say waits for a ready lead only what --wait leaves after typing and confirming (T2086)", () => {
+        expect(sayScript(say({ waitSeconds: 60 }))).toContain(`deadline=$(( $(date +%s) + ${60 - SAY_SEND_SECONDS} ))`);
+        expect(sayScript(say({ waitSeconds: 3 }))).toContain("deadline=$(( $(date +%s) + 0 ))");
     });
 
     test("start never touches a machine whose lead runs", () => {
@@ -140,25 +187,47 @@ describe("fleet say and start", () => {
         expect(script).not.toContain("systemd-run");
     });
 
-    // A fake tmux: one lead pane running `harness` in the toli root (or none), a drawn status bar, and every
-    // send-keys call's arguments recorded one line each.
-    function fakeTmux(harness: string | null): { run: (script: string) => string[] } {
+    // What a pane in the toli root shows: a shell whose prompt draws its own bar line (powerline themes do), and the
+    // same pane once omp has drawn its status bar below it.
+    const SHELL_SCREEN = " ~/code/toli ────────────────\n❯ omp";
+    const OMP_SCREEN = `${SHELL_SCREEN}\n Opus · ~/code/toli ──────────────── 5%\n╰─`;
+
+    // A fake tmux: one lead pane running `harness` in the toli root, or none. The pane shows `initial` (OMP_SCREEN
+    // with a harness, SHELL_SCREEN without), which becomes `launched` once a command line is submitted with Enter
+    // (unless null), and below it an input still holding `held.text` until Ctrl+S was pressed `held.presses` times.
+    // Every send-keys call's arguments are recorded one line each.
+    type FakePane = { launched?: string | null; initial?: string; held?: { text: string; presses: number } };
+    function fakeTmux(
+        harness: string | null,
+        pane: FakePane = {},
+    ): { run: (script: string) => string[]; output: () => string } {
         const box = sandbox();
         const root = Bun.spawnSync(["pwd", "-P"], { cwd: box.root }).stdout.toString().trim();
         const log = `${box.root}/keys.log`;
-        const pane = harness === null ? ":" : `printf '%s\\n' '%1|lead:toli|${harness}|${root}|11'`;
+        const screen = `${box.root}/screen`;
+        const next = `${box.root}/launched`;
+        const launched = pane.launched === undefined ? OMP_SCREEN : pane.launched;
+        writeFileSync(screen, pane.initial ?? (harness === null ? SHELL_SCREEN : OMP_SCREEN));
+        if (launched !== null) writeFileSync(next, launched);
+        const list = harness === null ? ":" : `printf '%s\\n' '%1|lead:toli|${harness}|${root}|11'`;
+        const held =
+            pane.held === undefined
+                ? ""
+                : `; n=$(grep -c 'C-s$' '${log}' 2>/dev/null); [ "\${n:-0}" -lt ${pane.held.presses} ] && printf '╰─ %s\\n' '${pane.held.text}'`;
         box.stub(
             "tmux",
             [
                 'case "$1" in',
-                `  list-panes) ${pane} ;;`,
+                `  list-panes) ${list} ;;`,
                 "  has-session) exit 1 ;;",
-                "  capture-pane) echo '────────────────' ;;",
-                `  send-keys) shift; printf '%s\\n' "$*" >> '${log}' ;;`,
+                `  capture-pane) cat '${screen}'${held}; : ;;`,
+                `  send-keys) shift; printf '%s\\n' "$*" >> '${log}'`,
+                `    case "$*" in *" Enter") [ -f '${next}' ] && cp '${next}' '${screen}' ;; esac ;;`,
                 "esac",
             ].join("\n"),
         );
         box.stub("sleep", ":");
+        let stdout = "";
         return {
             run: (script) => {
                 const result = Bun.spawnSync(["sh", "-c", script], {
@@ -166,14 +235,15 @@ describe("fleet say and start", () => {
                     env: { ...process.env, PATH: `${box.stubs}:/usr/bin:/bin` },
                 });
                 expect(result.exitCode).toBe(0);
+                stdout = result.stdout.toString();
                 return existsSync(log) ? readFileSync(log, "utf8").trimEnd().split("\n") : [];
             },
+            output: () => stdout,
         };
     }
     const say = (options: Partial<SayOptions>): SayOptions => ({
         text: "hello",
         key: null,
-        steer: false,
         os: null,
         waitSeconds: 0,
         ...options,
@@ -189,12 +259,9 @@ describe("fleet say and start", () => {
         ...options,
     });
 
-    test("say submits into an omp lead with Ctrl+Q (queued for its yield), never Enter (T1960)", () => {
-        expect(fakeTmux("omp").run(sayScript(say({})))).toEqual(["-t %1 -l hello", "-t %1 C-q"]);
-    });
-
-    test("say --steer submits into an omp lead with Ctrl+S, interrupting its running turn (T1960)", () => {
-        expect(fakeTmux("omp").run(sayScript(say({ steer: true })))).toEqual(["-t %1 -l hello", "-t %1 C-s"]);
+    test("say submits into an omp lead with Ctrl+S, the fleet's omp submit key, never Ctrl+Q or Enter (T2086)", () => {
+        expect(SPECS.omp.submitKey).toBe("C-s");
+        expect(fakeTmux("omp").run(sayScript(say({})))).toEqual(["-t %1 -l hello", "-t %1 C-s"]);
     });
 
     test("say keeps Enter for a harness that submits on it, and --key overrides any default (T1960)", () => {
@@ -202,25 +269,59 @@ describe("fleet say and start", () => {
         expect(fakeTmux("omp").run(sayScript(say({ key: "M-Enter" })))).toEqual(["-t %1 -l hello", "-t %1 M-Enter"]);
     });
 
-    test("say refuses --steer with --key: the key is then ambiguous (T1960)", () => {
+    test("say has no --steer: omp's one submit key already steers into a running turn (T2086)", () => {
         const box = fleet(remoteSnapshot("m2"));
         stubFleetScripts(box);
-        const result = box.toli(["fleet", "say", "hi", "--steer", "--key", "C-q", "--wait", "0"], { env: ENV });
+        const result = box.toli(["fleet", "say", "hi", "--steer", "--to", "m2"], { env: ENV });
         expect(result.code).not.toBe(0);
-        expect(result.stderr).toContain("--steer and --key");
+        expect(result.stderr).toContain("unknown option --steer");
     });
 
-    test("start launches the harness with Enter and submits the first message with its submit key (T1960)", () => {
+    test("start launches the harness with Enter and submits the first message with its submit key (T2086)", () => {
         expect(fakeTmux(null).run(startScript(start({})))).toEqual([
             "-t toli:lead omp Enter",
             "-t toli:lead -l hi",
-            "-t toli:lead C-q",
+            "-t toli:lead C-s",
         ]);
         expect(fakeTmux(null).run(startScript(start({ harness: "claude" })))).toEqual([
             "-t toli:lead claude Enter",
             "-t toli:lead -l hi",
             "-t toli:lead Enter",
         ]);
+    });
+
+    test("start never types into a pane whose only bar is the shell prompt's own line (T2086)", () => {
+        const tmux = fakeTmux(null, { launched: null });
+        expect(tmux.run(startScript(start({})))).toEqual(["-t toli:lead omp Enter"]);
+        expect(tmux.output()).toContain("@@failed omp drew no status bar in 90 s in toli:lead");
+    }, 30_000);
+
+    test("start presses the submit key again while omp, drawn but still starting, holds the message (T2086)", () => {
+        const tmux = fakeTmux(null, { held: { text: "hi", presses: 2 } });
+        expect(tmux.run(startScript(start({})))).toEqual([
+            "-t toli:lead omp Enter",
+            "-t toli:lead -l hi",
+            "-t toli:lead C-s",
+            "-t toli:lead C-s",
+        ]);
+        expect(tmux.output()).toBe("@@started toli:lead\n");
+    });
+
+    test("say never types into a lead pane that shows only the shell prompt's bar: its harness is still starting (T2086)", () => {
+        const tmux = fakeTmux("omp", { launched: null, initial: SHELL_SCREEN });
+        expect(tmux.run(sayScript(say({})))).toEqual([]);
+        expect(tmux.output()).toBe("@@none\n");
+    });
+
+    test("say presses the submit key until the text leaves the input, and fails when it never does (T2086)", () => {
+        const later = fakeTmux("omp", { held: { text: "hello", presses: 2 } });
+        expect(later.run(sayScript(say({ waitSeconds: 60 })))).toEqual(["-t %1 -l hello", "-t %1 C-s", "-t %1 C-s"]);
+        expect(later.output()).not.toContain("@@pending");
+        const never = fakeTmux("omp", { held: { text: "hello", presses: 99 } });
+        expect(never.run(sayScript(say({ waitSeconds: 1 })))).toEqual(["-t %1 -l hello", "-t %1 C-s"]);
+        const outcome = sayResult({ machine: "x", local: false, ok: true, sections: parseSections(never.output()) });
+        expect(outcome.outcome).toBe("typed, not submitted");
+        expect(outcome.status).toBe("fail");
     });
 });
 
