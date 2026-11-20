@@ -8,7 +8,8 @@
 // Every slot number ever used counts while held (a build keeps its slot when `capacity.buildSlots` drops), and so does
 // each heavy build running outside the slots (src/fleet/outside-builds.ts): a waiter takes a slot only while all of
 // them together number fewer than `capacity.buildSlots`. A slot whose command has run nothing for a while (blocked on
-// a lock the waiter's build may hold) does not count, so a waiter never deadlocks against it (src/fleet/idle-slots.ts).
+// a lock the waiter's build may hold) does not count, so a waiter never deadlocks against it (src/fleet/idle-slots.ts);
+// that command's next build then waits for the build lent its slot (src/fleet/lent-slots.ts).
 import {
     closeSync,
     ftruncateSync,
@@ -66,8 +67,11 @@ export function slotHolder(cwd: string, env: Record<string, string | undefined> 
     return { cwd, targetDir: targetDir === "" ? null : resolve(cwd, targetDir) };
 }
 
-/** A busy slot (its number from 1) and the holder written into its lock file. */
-export type BusySlot = SlotHolder & { slot: number; pid: number };
+/**
+ * A busy slot (its number from 1) and the holder written into its lock file, with `beside`: the idle slots it was taken
+ * beside (`tryTake`), whose commands' next builds wait for it (`waitForLentBuilds`).
+ */
+export type BusySlot = SlotHolder & { slot: number; pid: number; beside: number[] };
 
 /**
  * Run `body` holding the queue lock, which every ticket taken, checked or left goes through, so a ticket is never
@@ -277,19 +281,30 @@ function tryTake(
         if (held.has(index)) continue;
         const fd = openSync(slotFile(index), "a");
         if (lock(fd, LOCK_EX | LOCK_NB) === 0) {
-            recordHolder(fd, holder);
-            return { index, fd, beside: room > 0 ? [] : idleHeld };
+            const beside = room > 0 ? [] : idleHeld;
+            recordHolder(
+                fd,
+                holder,
+                beside.map((slot) => slot.slot),
+            );
+            return { index, fd, beside };
         }
         closeSync(fd);
     }
     return { outside };
 }
 
-/** Write `holder` and this pid over the slot's lock file; best effort, since a full disk never stops a build. */
-function recordHolder(fd: number, holder: SlotHolder): void {
+/**
+ * Write `holder`, this pid and the idle slots it was taken beside over the slot's lock file; best effort, since a full
+ * disk never stops a build.
+ */
+function recordHolder(fd: number, holder: SlotHolder, beside: number[]): void {
     try {
         ftruncateSync(fd, 0);
-        writeSync(fd, `${JSON.stringify({ pid: process.pid, cwd: holder.cwd, targetDir: holder.targetDir })}\n`);
+        writeSync(
+            fd,
+            `${JSON.stringify({ pid: process.pid, cwd: holder.cwd, targetDir: holder.targetDir, beside })}\n`,
+        );
     } catch {
         // A full disk: the keeper then sees a busy slot without knowing where it builds.
     }
@@ -304,9 +319,14 @@ function parseHolder(text: string): Omit<BusySlot, "slot"> | null {
         return null;
     }
     if (typeof value !== "object" || value === null) return null;
-    const { pid, cwd, targetDir } = value as Record<string, unknown>;
+    const { pid, cwd, targetDir, beside } = value as Record<string, unknown>;
     if (typeof pid !== "number" || typeof cwd !== "string") return null;
-    return { pid, cwd, targetDir: typeof targetDir === "string" ? targetDir : null };
+    return {
+        pid,
+        cwd,
+        targetDir: typeof targetDir === "string" ? targetDir : null,
+        beside: Array.isArray(beside) ? beside.filter((slot): slot is number => Number.isInteger(slot)) : [],
+    };
 }
 
 /**

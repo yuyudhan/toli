@@ -275,12 +275,18 @@ that waits for the project's test-database lock, held by a plain `just test` els
 waits for that slot. Neither would ever move. So the first waiter in line watches each busy slot's command (every
 process below the `build-slot` or gate process holding it; for a cargo the rustc wrapper holds a slot for, that cargo
 and everything below it) in the process table each time it looks, and a slot whose command ran (on a CPU, runnable or
-in disk I/O) in at most 5% of those looks over the last minute does not count: the waiter takes a slot numbered above
+in disk I/O; a process runs when any of its threads does, read on Linux from `/proc/<pid>/task/*/stat`, since `ps`
+shows only the main thread and rustc, a test binary's harness, mold and lld work on other threads while it sleeps) in
+at most 5% of those looks over the last minute does not count: the waiter takes a slot numbered above
 `capacity.buildSlots` beside it and says so once, naming the slot, its holder's pid and directory:
 `heavy-build slot 1 (pid 4242 in /path) has run nothing for 60s, maybe waiting on a lock this build holds; building
 beside it`. A command that sleeps, waits on a socket or a lock is idle; one that compiles, links or runs tests is not.
-Once the idle command wakes, its own cargo still runs in its slot at once, so for a while the machine runs one build
-more than it has slots; that is the price of never deadlocking.
+The slot stays lent while that build runs: once the idle command wakes, its next build (a cargo through the shim or
+the rustc wrapper, a nested `build-slot`, the next step of a gate's recipe) waits for the build beside it to end,
+saying once `heavy-build slot 1 is lent to a build beside it (slot 2, pid 4343 in /path); waiting for it to end`, so
+the machine never runs more builds than it has slots. It stops waiting only when that build has itself run nothing
+for the idle window (it may wait on something the woken command holds), so neither ever deadlocks. A cargo the idle
+command had already started and that never left the slot's processes (its test binaries running on) goes on.
 
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
 (a `just` recipe, a hook that resets PATH), where the cargo shim below never sees it: a gate's runner

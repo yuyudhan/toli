@@ -32,6 +32,7 @@ import { busyBuildSlots, slotHolder, slotWaiters, takeInTurn } from "./build-que
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
+import { waitForLentBuilds } from "./lent-slots.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
 import { projectAt, realOrNull, within } from "./release-priority.ts";
 import { capacityFor } from "./resources.ts";
@@ -228,7 +229,10 @@ export async function withBuildSlot<T>(
     body: (held: HeldSlot) => Promise<T>,
 ): Promise<T> {
     const enclosing = enclosingSlot();
-    if (enclosing !== null) return await body({ env: { TOLI_BUILD_SLOT: String(enclosing) }, scope: null });
+    if (enclosing !== null) {
+        await waitForLentBuilds(enclosing);
+        return await body({ env: { TOLI_BUILD_SLOT: String(enclosing) }, scope: null });
+    }
     // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const capacity = capacityFor(machine, availableParallelism());

@@ -20,6 +20,7 @@ import { buildsOutsideSlots, busyBuildSlots, POLL_MS, slotHolder, takeInTurn } f
 import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
+import { waitForLentBuilds } from "./lent-slots.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
 import { heldFile, holderHolds } from "./outside-builds.ts";
 import { priorityReleaseAhead, priorityReleaseText } from "./release-priority.ts";
@@ -192,7 +193,11 @@ export async function slotForCargo(probingCargo: number): Promise<number> {
     const cargoPid = heavyCargoRun(probingCargo);
     if (cargoPid === null) return 0;
     if (liveStackProjectAt(process.cwd()) !== null) return 0;
-    if (enclosingSlot() !== null) return 0;
+    const enclosing = enclosingSlot();
+    if (enclosing !== null) {
+        await waitForLentBuilds(enclosing);
+        return 0;
+    }
     const lock = flock();
     if (lock === null) return 0; // The shim's `build-slot` says so; every rustc call need not.
     mkdirSync(paths.buildSlotsDir(), { recursive: true });

@@ -143,13 +143,38 @@ function lineage(table: ProcessTable, pid: number): number[] {
 }
 
 /**
- * Whether a process below `pid` (or `pid` itself, with `withRoot`) runs now (`ACTIVE_STAT`). A command blocked on a
- * lock, a socket, a pipe or a sleep does not; neither does one stopped (SIGSTOP).
+ * Whether one of Linux process `pid`'s threads runs now (`ACTIVE_STAT`, from `/proc/<pid>/task/<tid>/stat`). `ps`
+ * shows only the main thread's state, and rustc compiles on a thread of its own while its main thread sleeps on it (so
+ * do a test binary's harness, mold and lld): `Sl` while it works flat out (T2050). False where there is no /proc.
+ */
+function threadRunning(pid: number): boolean {
+    let tids: string[];
+    try {
+        tids = readdirSync(procFile(`${pid}/task`));
+    } catch {
+        return false; // Gone, not Linux, or not ours to read.
+    }
+    return tids.some((tid) => {
+        let text: string;
+        try {
+            text = readFileSync(procFile(`${pid}/task/${tid}/stat`), "utf8");
+        } catch {
+            return false; // The thread ended meanwhile.
+        }
+        // `<tid> (<comm>) <state> ...`: the name may hold spaces and parentheses, the state follows the last `)`.
+        return ACTIVE_STAT.test(text.slice(text.lastIndexOf(")") + 1).trimStart());
+    });
+}
+
+/**
+ * Whether a process below `pid` (or `pid` itself, with `withRoot`) runs now: its state (`ACTIVE_STAT`) or one of its
+ * threads' (`threadRunning`). A command blocked on a lock, a socket, a pipe or a sleep does not; neither does one
+ * stopped (SIGSTOP).
  */
 export function treeRunning(table: ProcessTable, pid: number, withRoot: boolean): boolean {
     for (const proc of table.values()) {
-        if (!ACTIVE_STAT.test(proc.stat)) continue;
-        if (proc.pid === pid ? withRoot : lineage(table, proc.pid).slice(1).includes(pid)) return true;
+        if (!(proc.pid === pid ? withRoot : lineage(table, proc.pid).slice(1).includes(pid))) continue;
+        if (ACTIVE_STAT.test(proc.stat) || threadRunning(proc.pid)) return true;
     }
     return false;
 }

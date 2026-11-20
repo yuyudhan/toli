@@ -30,6 +30,15 @@ one. See docs/releasing.md.
   "13 messages <peer> queued for this machine arrived ... They are the items just before this one in the inbox"
   with nothing before it. Nothing was lost; a batch that writes 5 or fewer inbox items now posts no notice (T2049).
 
+- A heavy-build slot whose build compiles is busy again on Linux, so at most `capacity.buildSlots` heavy builds run at
+  once. `ps` shows only a process's main thread, and rustc compiles on another thread while its main thread sleeps (as
+  a test binary's harness, mold and lld do), so a slot compiling flat out read as idle after a minute and every waiter
+  built beside it: on a 12-core worker with one slot, a push gate's cargo test, a `bin/toli build-slot` cargo and a
+  third cargo held slots 1, 2 and 3 at once, at load 554. A process now runs when any of its threads does
+  (`/proc/<pid>/task/*/stat`). And a slot lent to a build beside it while its command really ran nothing stays lent:
+  once that command wakes, its next build (through the cargo shim, the rustc wrapper or a nested `build-slot`) waits
+  for the build beside it to end instead of running a build more than the machine has slots (T2050).
+
 - A delegated task no longer reports, on every status change, to a machine above it that refuses the report. A
   slice (delegated while the `--for` task's own jawan works on it) forwarded on to a third machine carried the chain
   above it, so the new task also reported to the slice's delegator, which records only the slice and refused each
