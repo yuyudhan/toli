@@ -333,6 +333,7 @@ export async function runDueFleetCheck(at: Date = now()): Promise<string | null>
             cwd: paths.root(),
             detached: true,
             stdio: ["ignore", log, log],
+            env: process.env,
         });
         child.unref();
         return `fleet check: started in the background (pid ${child.pid ?? "unknown"}, log ${paths.fleetCheckLog()})`;

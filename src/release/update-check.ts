@@ -258,6 +258,7 @@ export function startDueUpdateCheck(at: Date = now()): string | null {
             cwd: root,
             detached: true,
             stdio: ["ignore", log, log],
+            env: process.env,
         });
         child.unref();
         return `update check: started in the background (pid ${child.pid ?? "unknown"}, log ${paths.updateCheckLog()})`;

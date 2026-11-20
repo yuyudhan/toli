@@ -210,7 +210,7 @@ export async function slotForCargo(probingCargo: number): Promise<number> {
             const holder = spawnChild(
                 process.execPath,
                 [TOLI_SCRIPT, "build-slot", "--hold", String(cargoPid), "--cwd", process.cwd()],
-                { cwd: paths.root(), detached: true, stdio: "ignore" },
+                { cwd: paths.root(), detached: true, stdio: "ignore", env: process.env },
             );
             holder.unref();
         }

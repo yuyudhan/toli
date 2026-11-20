@@ -59,9 +59,12 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Ca
    project's `bin/toli project set <p> --hook-timeout <seconds>|none` (`none`: no limit; `default` clears it), else
    this machine's `capacity.commitHookTimeoutSeconds` in `config/machine.json` (seconds or `"none"`). A slow check
    (a pre-commit hook over a large catch-up merge) gets a longer limit or none, never a patched-out one.
-   Toli finds every repository by its path, so a `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or other
-   repository-locating git variable inherited from the shell is ignored (no program toli runs sees it; the private
-   index above is the only one toli sets), and `bin/toli commit` / `bin/toli push` warn once on stderr naming it.
+   Toli finds every repository by its path, so `bin/toli` drops a `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or
+   other repository-locating git variable inherited from the shell before any command runs, and `bin/toli commit` /
+   `bin/toli push` warn once on stderr naming it. Every child process and worker thread toli's `src/` starts is given
+   that cleaned environment explicitly, because Bun hands a spawn without an `env` option, and a Worker, the
+   environment the process started with; the `spawn-env` guard in `just check` refuses a new spawn or Worker without
+   one. Toli's own settings (the private index above, the hooks' `GIT_DIR`/`GIT_WORK_TREE`) are passed per call.
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes (other than

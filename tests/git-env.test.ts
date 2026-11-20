@@ -80,4 +80,17 @@ describe("toli ignores inherited repository-locating git variables (T2052)", () 
         expect(result.code).toBe(0);
         expect(result.stderr).not.toContain("GIT_INDEX_FILE");
     });
+
+    test("doctor's worker sections ignore an inherited GIT_DIR: no false build-place warnings", () => {
+        const box = sandbox();
+        box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+        withProject(box, "app");
+        const decoy = tempDir("decoy");
+        box.git(decoy, ["init", "--quiet", "-b", "main"]);
+        box.git(decoy, ["commit", "--quiet", "--allow-empty", "-m", "decoy"]);
+        box.git(decoy, ["worktree", "add", "--quiet", "--detach", join(tempDir("decoy-tree"), "tree")]);
+        const env = { TOLI_BUILD_SCAN_ROOTS: tempDir("scan"), GIT_DIR: join(decoy, ".git") };
+        const checks = JSON.parse(box.toli(["doctor", "--json"], { env }).stdout) as { name: string; level: string }[];
+        expect(checks.filter((check) => check.name === "build-place").map((check) => check.level)).toEqual(["ok"]);
+    }, 60_000);
 });

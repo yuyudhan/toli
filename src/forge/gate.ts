@@ -88,6 +88,7 @@ function startRunner(file: string, record: GateRecord): GateRecord {
             cwd: paths.root(),
             detached: true,
             stdio: ["ignore", logFd, logFd],
+            env: process.env,
         });
         runner.unref();
         pid = runner.pid;

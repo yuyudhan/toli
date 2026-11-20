@@ -51,6 +51,7 @@ export async function talkCommand(argv: string[]): Promise<number> {
             `${inboundOffText(target)}: talk to its lead there, or with \`bin/toli talk ${machineName} "<words>"\``,
         );
     const proc = Bun.spawn(["ssh", "-t", target.ssh, remoteToliCommand(target.root, "lead attach")], {
+        env: process.env,
         stdio: ["inherit", "inherit", "inherit"],
     });
     return await proc.exited;

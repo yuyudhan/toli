@@ -29,9 +29,12 @@ one. See docs/releasing.md.
   variable: `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`,
   `GIT_PREFIX`) inherited from the shell. A jawan's shell left `GIT_INDEX_FILE` exported for hours, so
   `bin/toli commit` updated a scratch index instead of the checkout's (a clean checkout looked broken) and a
-  `GIT_DIR` would have sent it to another repository altogether. Every program toli runs now starts without them,
-  except the private index toli sets itself, and `bin/toli commit` / `bin/toli push` print one warning naming the
-  variables so the shell gets fixed (T2052).
+  `GIT_DIR` would have sent it to another repository altogether. `bin/toli` now drops them before any command runs
+  and hands every child process and worker thread it starts that cleaned environment explicitly (Bun gives a spawn
+  without `env`, and a Worker, the original one: `bin/toli doctor` saw false build-place warnings under an inherited
+  `GIT_DIR`). Toli's own private index and hook settings are still passed per call. `bin/toli commit` /
+  `bin/toli push` print one warning naming the variables so the shell gets fixed, and a `spawn-env` guard in
+  `just check` refuses a new spawn without `env` (T2052).
 
 - The "N queued messages from <peer> arrived" notice counts only the inbox items its batch wrote. It counted every
   applied message, so a batch of delegation updates (which record status on the task and write no inbox item) posted

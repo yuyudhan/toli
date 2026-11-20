@@ -1,5 +1,6 @@
 import { Args } from "../core/args.ts";
 import { hasMachine } from "../core/config.ts";
+import { workerEnv } from "../core/git-env.ts";
 import { captureLoginEnv, credentialNames, LOGIN_ENV_FLAG, loginShell } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, run } from "../core/util.ts";
@@ -261,7 +262,7 @@ function sectionLimitMs(section: Section): number {
  */
 async function runBounded(section: Section): Promise<Check[]> {
     const limitMs = sectionLimitMs(section);
-    const worker = new Worker(new URL("./doctor-worker.ts", import.meta.url).href);
+    const worker = new Worker(new URL("./doctor-worker.ts", import.meta.url).href, { env: workerEnv() });
     worker.unref();
     const { promise, resolve } = Promise.withResolvers<Check[]>();
     worker.onmessage = (event: MessageEvent<Check[]>) => resolve(event.data);
