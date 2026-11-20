@@ -7,12 +7,13 @@ import {
     remoteToliCommand,
     sshArgs,
 } from "../core/config.ts";
-import { out, printJson, runAsync } from "../core/util.ts";
+import { now, out, printJson, runAsync } from "../core/util.ts";
 import { httpPeer } from "../peer/transport.ts";
 import { loadProjects } from "../projects/projects.ts";
 import type { Shape } from "../records/backlog.ts";
 import { parseShape } from "../records/task-shape.ts";
 import { type Full, fullText } from "./full.ts";
+import { type Netbird, netbirdOnce, type ProbeFailure, unreachableReason } from "./netbird-reach.ts";
 import { outsideBuildText } from "./outside-builds.ts";
 import { perSlot, type Queue, queueText, slotText } from "./queue.ts";
 import { type FleetEntry, localResources, type Resources } from "./resources.ts";
@@ -173,9 +174,14 @@ export function parseResources(text: string): Resources {
 /**
  * Probe one other fleet machine for its `resources --json` (HTTPS when paired, else ssh); never throws. `budgetMs`
  * bounds the whole probe, HTTPS and the ssh fallback together, for a caller someone waits for (`delegate`'s
- * verify-only check): an HTTPS try that used it all leaves no ssh try.
+ * verify-only check): an HTTPS try that used it all leaves no ssh try. `netbird` is this machine's NetBird view, read
+ * only when an unbudgeted probe fails, to say why (src/fleet/netbird-reach.ts); a budgeted one spends no time on it.
  */
-export async function probeMachine(machine: FleetMachine, budgetMs?: number): Promise<FleetEntry> {
+export async function probeMachine(
+    machine: FleetMachine,
+    budgetMs?: number,
+    netbird: () => Promise<Netbird | null> = netbirdOnce(),
+): Promise<FleetEntry> {
     const deadline = budgetMs === undefined ? undefined : performance.now() + budgetMs;
     const unreachable = (detail: string): FleetEntry => ({
         machine: machine.name,
@@ -195,6 +201,10 @@ export async function probeMachine(machine: FleetMachine, budgetMs?: number): Pr
     });
     // A paired peer answers over HTTPS (its `status` permission for this machine); ssh is the fallback.
     const peer = httpPeer(machine.name);
+    // A budgeted probe has no time for netbird and `ssh -G`; its timeout still reads as no route / host down.
+    const view = deadline === undefined ? netbird : () => Promise.resolve(null);
+    const failed = async (failure: ProbeFailure): Promise<FleetEntry> =>
+        unreachable(await unreachableReason(failure, { ssh: machine.ssh, peerAddrs: peer?.addrs ?? [] }, view, now()));
     let httpsError = "";
     if (peer !== undefined) {
         try {
@@ -218,11 +228,18 @@ export async function probeMachine(machine: FleetMachine, budgetMs?: number): Pr
         [...sshArgs(machine.ssh, connectSeconds), remoteToliCommand(machine.root, "resources --json")],
         { timeoutMs: capMs },
     );
-    if (result.timedOut) return unreachable(`${httpsError}no answer from ${machine.ssh} within ${capSeconds}s`);
+    if (result.timedOut)
+        return await failed({
+            https: httpsError,
+            ssh: `no answer from ${machine.ssh} within ${capSeconds}s`,
+            timedOut: true,
+        });
     if (result.code !== 0)
-        return unreachable(
-            `${httpsError}ssh ${machine.ssh} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`,
-        );
+        return await failed({
+            https: httpsError,
+            ssh: `ssh ${machine.ssh} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`,
+            timedOut: false,
+        });
     try {
         return reached(parseResources(result.stdout));
     } catch (error) {
@@ -236,7 +253,8 @@ export async function probeMachine(machine: FleetMachine, budgetMs?: number): Pr
 export async function fleetStatus(): Promise<FleetEntry[]> {
     const local = localResources();
     const others = loadFleet().machines.filter((machine) => machine.name !== local.machine);
-    const remote = await Promise.all(others.map((machine) => probeMachine(machine)));
+    const netbird = netbirdOnce();
+    const remote = await Promise.all(others.map((machine) => probeMachine(machine, undefined, netbird)));
     return [
         {
             machine: local.machine,

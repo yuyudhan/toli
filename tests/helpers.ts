@@ -100,6 +100,8 @@ export function sandbox(): Sandbox {
     stub("systemctl", 'echo "Failed to connect to bus: No medium found" >&2; exit 1');
     // Never the host's sudo (cached credentials would run a test's root steps for real); a test that wants it uses withSudo.
     stub("sudo", 'echo "sudo: a password is required" >&2; exit 1');
+    // Never the host's NetBird: a fleet probe reads its peers to explain an unreachable machine; a test stubs its own.
+    stub("netbird", 'echo "netbird stub: no daemon" >&2; exit 1');
     stub(
         "crontab",
         'if [ "$1" = "-l" ]; then echo "no crontab for test" >&2; else echo "crontab stub: writes refused" >&2; fi; exit 1',

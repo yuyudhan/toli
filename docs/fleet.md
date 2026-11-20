@@ -132,6 +132,14 @@ one line for them (`outbox: pending 3 items for linux-4 left queued: ...`). A ho
 The pull line counts such machines (`pull: 2 waiting, 2 applied, 2 acknowledged; 4 machine(s) held back`). A hand-run
 `bin/toli outbox pull`, and a send's own delivery, try backed-off machines anyway and do not back them off.
 
+`fleet status` and `fleet check` say why a machine did not answer. A mesh VPN's userspace client may accept a TCP
+connection to any of its addresses, so a host that is off the network shows up as an ssh banner timeout or a TLS
+error. When the `netbird` CLI answers, the machine's NetBird peer (matched by its ssh host, the host name `ssh -G`
+resolves it to, or its paired peer address) decides: a peer that is not `Connected`, or an address on the NetBird
+network that is no peer, reads `off the network: NetBird peer <fqdn> is Connecting, last handshake 3 h ago`; a
+connected peer keeps the probe's own errors, with its state after them. Without NetBird, a timeout, no route or
+banner timeout reads `no route / host down (<ssh's error>)`, leaving out the HTTPS error.
+
 Passes never overlap: one that finds the previous still running (overlapping cron ticks) leaves the round to it. A
 tick that waits on its headless job runs runs a pass every minute meanwhile, since launchd and systemd start no tick
 while one is running.
