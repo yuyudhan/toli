@@ -41,8 +41,8 @@ export function remoteSnapshot(machine: string, overrides: Record<string, unknow
 }
 
 /**
- * Coordinator m1 with fleet machines m2 (answers `resources --json` with `m2Snapshot`) and m3 (ssh fails).
- * Every ssh invocation is appended to `.ssh.log`.
+ * Coordinator m1 with fleet machines m2 (answers `resources --json` with `m2Snapshot`) and m3 (ssh fails until
+ * `m3Answers` gives it a snapshot). Every ssh invocation is appended to `.ssh.log`.
  */
 export function fleet(m2Snapshot: string, capacity: Record<string, number> = ROOMY): Sandbox {
     const box = sandbox();
@@ -68,6 +68,8 @@ export function fleet(m2Snapshot: string, capacity: Record<string, number> = ROO
             SSH_STUB_ARGS,
             'case "$host" in',
             `  host2) case "$cmd" in *"resources --json"*) cat "${join(box.root, ".m2.json")}" ;; *) cat >/dev/null; echo "ran on m2" ;; esac ;;`,
+            `  host3) if [ -f "${join(box.root, ".m3.json")}" ]; then case "$cmd" in *"resources --json"*) cat "${join(box.root, ".m3.json")}" ;; *) cat >/dev/null; echo "ran on m3" ;; esac; exit 0; fi`,
+            "         echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
             "  *) echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
             "esac",
         ].join("\n"),
@@ -78,6 +80,11 @@ export function fleet(m2Snapshot: string, capacity: Record<string, number> = ROO
 export function sshLog(box: Sandbox): string {
     const path = join(box.root, ".ssh.log");
     return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+/** Make m3 reachable: it answers `resources --json` with `snapshot`. */
+export function m3Answers(box: Sandbox, snapshot: string): void {
+    writeFileSync(join(box.root, ".m3.json"), snapshot);
 }
 
 type BacklogTask = { id: string; status: string; [field: string]: unknown };

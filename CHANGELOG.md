@@ -39,6 +39,12 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- The lead's balancing offers (`queue: offer work to <machine>`) no longer go to a machine that cannot take the
+  work, nor repeat every period. A task is offered only to a machine that publishes its project's clone (its
+  `resources --json` `projects`), so a machine that registered one project is not offered the others; when the
+  shortest queue can take none of the queued work, the offer goes to the next machine still the gap below. The same
+  task set offered to the same machine is posted once: a declined offer comes back only when the set changes
+  (docs/sardars.md "Queues decide where work goes", T2153).
 - toli's own test runs no longer fill the temp dir with `toli-*` folders (3,458 on one machine, some holding
   `projects/*/target` that `bin/toli disk keep` then flagged). Each test's temp dirs are now removed when it ends, the
   rest when the run ends, a test calling `process.exit` or a run stopped by SIGINT/SIGTERM/SIGHUP included; the next

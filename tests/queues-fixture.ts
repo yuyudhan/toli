@@ -8,12 +8,18 @@ import { GIT_ENV, type Sandbox, withProject } from "./helpers.ts";
 
 export const T0 = "2026-11-10T09:00:00.000Z";
 
-/** m2's snapshot with a queue of `depth` queued tasks. */
-export function queued(depth: number, overrides: Record<string, unknown> = {}): string {
-    return remoteSnapshot("m2", {
+/** `machine`'s snapshot with a clone of project x and a queue of `depth` queued tasks. */
+export function queuedOn(machine: string, depth: number, overrides: Record<string, unknown> = {}): string {
+    return remoteSnapshot(machine, {
+        projects: ["x"],
         queue: { queued: depth, active: 0, held: 0, jawansRunning: 0, jawansQueued: 0, depth },
         ...overrides,
     });
+}
+
+/** m2's snapshot with a clone of project x and a queue of `depth` queued tasks. */
+export function queued(depth: number, overrides: Record<string, unknown> = {}): string {
+    return queuedOn("m2", depth, overrides);
 }
 
 /** Coordinator m1 with project x registered (and cloned) and `tasks` queued tasks on it. */

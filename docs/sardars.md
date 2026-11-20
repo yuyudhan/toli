@@ -287,11 +287,16 @@ Balancing between leads: every `lead.balanceMinutes` the lead service compares q
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer
 (`delegate queued work to <machine>`, listing only queued tasks no jawan works on, no other machine has, and that
 machine can take: not delegated here by another machine (the balancer never bounces work or delegates it on, so
-verify work that machine delegated never goes back to it), not pinned here, and of a project it has a clone of or
-whose git URL is registered here); when no queued task can move, no offer is posted; when
-this machine's queue is empty and another's is at least the gap deep, it
-asks that machine's lead for work (a `talk` message naming its empty queue). Each offer or ask is sent once per
-period. Thresholds live in `config/machine.json`:
+verify work that machine delegated never goes back to it), not pinned here, and of a project that machine has a
+clone of: the `projects` its `resources --json` publishes, so a machine that registered only some projects is only
+offered those (`pick` and `delegate` still accept a project whose git URL is registered here). The offer goes to the
+first machine, lightest queue first, still at least the gap below this one that can take some queued task; a full
+one never gets it (above). When no queued task can move, no offer is posted. An offer is posted once per change:
+the same task set offered to the same machine as last time is not posted again (`offered` in
+`state/lead/balance.json`), so a declined offer does not come back every period; a task added, picked up or pinned
+changes the set. When this machine's queue is empty and another's is at least the gap deep, it
+asks that machine's lead for work (a `talk` message naming its empty queue), once per period. Thresholds live in
+`config/machine.json`:
 
 ```json
 { "lead": { "balanceMinutes": 30, "balanceGap": 3 } }

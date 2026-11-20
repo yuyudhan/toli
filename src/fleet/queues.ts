@@ -17,7 +17,6 @@ import {
     writeJsonAtomic,
 } from "../core/util.ts";
 import { sendToMachine } from "../jobs/outbox.ts";
-import { loadProjects } from "../projects/projects.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
 import { fleetStatus, rankMachines, refusesShip, verifyOnlyText } from "./pick.ts";
@@ -156,8 +155,11 @@ export async function queuesCommand(argv: string[]): Promise<void> {
 /** What one balancing pass sent: an offer to this machine's own lead, or an ask to another machine's lead. */
 type BalanceSent = { kind: "offer" | "ask"; machine: string; at: string };
 
-/** `state/lead/balance.json`: when the last pass ran (its period starts there) and what that pass sent. */
-type BalanceState = { lastPass?: string; sent?: BalanceSent[] };
+/**
+ * `state/lead/balance.json`: when the last pass ran (its period starts there), what that pass sent, and per machine
+ * the task ids of the last offer posted for it (an offer of the same set to the same machine is not posted again).
+ */
+type BalanceState = { lastPass?: string; sent?: BalanceSent[]; offered?: Record<string, string[]> };
 
 /** Claim this period's pass: false when the previous pass is less than `minutes` old. */
 function claimPeriod(minutes: number): boolean {
@@ -166,37 +168,49 @@ function claimPeriod(minutes: number): boolean {
         const last = state.lastPass === undefined ? Number.NaN : Date.parse(state.lastPass);
         const at = now();
         if (Number.isFinite(last) && at.getTime() - last < minutes * 60_000) return false;
-        const claimed: BalanceState = { lastPass: at.toISOString(), sent: [] };
+        const claimed: BalanceState = { ...state, lastPass: at.toISOString(), sent: [] };
         writeJsonAtomic(paths.leadBalanceState(), claimed);
         return true;
     });
 }
 
-function recordSent(sent: BalanceSent): void {
+function recordSent(sent: BalanceSent, offered?: string[]): void {
     withLock(paths.lock("lead-balance"), () => {
         const state = readJson<BalanceState>(paths.leadBalanceState(), {});
-        const next: BalanceState = { ...state, sent: [...(state.sent ?? []), sent] };
+        const next: BalanceState = {
+            ...state,
+            sent: [...(state.sent ?? []), sent],
+            ...(offered === undefined ? {} : { offered: { ...state.offered, [sent.machine]: offered } }),
+        };
         writeJsonAtomic(paths.leadBalanceState(), next);
     });
 }
 
+/** Whether the last offer posted for `machine` listed exactly the tasks `ids` (sorted). */
+function alreadyOffered(machine: string, ids: string[]): boolean {
+    const last = readJson<BalanceState>(paths.leadBalanceState(), {}).offered?.[machine];
+    return last !== undefined && last.length === ids.length && last.every((id, index) => id === ids[index]);
+}
+
+/** One task an offer lists: its id and its `bin/toli delegate` line. */
+type OfferLine = { id: string; line: string };
+
 /**
- * The delegate command for each of this machine's tasks waiting for a jawan that can go to `target`, with its brief
+ * The delegate command for each of this machine's tasks waiting for a jawan that `target` can take, with its brief
  * when it has one. A task bound to this machine stays out: delegated here by another machine (work is never bounced
  * or delegated on by the balancer; this covers verify work `target` itself delegated), pinned here (`task pin`), of a
- * project `target` has no clone of and whose git URL is not registered here (`target` could not clone it; the pick
- * rule), or ship work of a project `target` marked verify-only (verify work goes, with `--verify`). A scout task's
- * command keeps its shape.
+ * project `target` has no clone of (its published `projects`: a machine that registered only some projects takes
+ * only those, and an unsolicited offer never asks it to clone one), or ship work of a project `target` marked
+ * verify-only (verify work goes, with `--verify`). A scout task's command keeps its shape.
  */
-function delegateLines(target: FleetEntry): string[] {
+function delegateLines(target: FleetEntry): OfferLine[] {
     const cloned = new Set(target.resources?.projects ?? []);
-    const clonable = new Set(loadProjects().flatMap((project) => (project.url ? [project.name] : [])));
     return waitingTasks()
         .filter(
             (task) =>
                 task.delegatedBy === undefined &&
                 task.pinned === undefined &&
-                (task.project === "" || cloned.has(task.project) || clonable.has(task.project)) &&
+                (task.project === "" || cloned.has(task.project)) &&
                 !(
                     task.shape === "ship" &&
                     task.verify !== true &&
@@ -206,23 +220,42 @@ function delegateLines(target: FleetEntry): string[] {
         )
         .map((task) => {
             const brief = briefPath(task.project, task.id);
-            return [
+            const line = [
                 `  ${task.id}: bin/toli delegate ${target.machine} ${shellQuote(task.title)}`,
                 `--brief ${brief === null ? "<file>" : shellQuote(brief)}`,
                 ...(task.project === "" ? [] : [`--project ${shellQuote(task.project)}`]),
                 ...(task.shape === "ship" ? [] : [`--shape ${task.shape}`]),
                 ...(task.verify === true ? ["--verify"] : []),
             ].join(" ");
+            return { id: task.id, line };
         });
+}
+
+/** The first other machine, lightest queue first, at least `gap` below `depth` that can take some queued task. */
+function offerTarget(
+    others: Known[],
+    entries: FleetEntry[],
+    depth: number,
+    gap: number,
+): { row: Known; lines: OfferLine[] } | undefined {
+    for (const row of others) {
+        if (depth < row.queue.depth + gap) continue;
+        const target = entries.find((entry) => entry.machine === row.machine);
+        const lines = target === undefined ? [] : delegateLines(target);
+        if (lines.length > 0) return { row, lines };
+    }
+    return undefined;
 }
 
 /**
  * One balancing pass of the lead service, due every `lead.balanceMinutes` (the period is claimed under a lock, so
  * overlapping passes send nothing twice). Null when not due, when there is no other fleet machine, or when the queues
  * are within `lead.balanceGap` of each other. When this machine's depth (its native subagent jawans included) is at
- * least the gap above the shortest other known queue and it has queued tasks that machine can take, it posts an offer
- * to its own inbox (waking its lead) with a `bin/toli delegate` command per such task; when its queue is empty and
- * another machine's is at least the gap deep, it asks that machine's lead for work. Returns the line to log.
+ * least the gap above the shortest other known queue, it offers its queued work to the first machine, lightest queue
+ * first, still at least the gap below it that can take some of it: an offer in its own inbox (waking its lead) with a
+ * `bin/toli delegate` command per such task, posted once per change (the same task set offered to the same machine
+ * last time is not posted again). When its queue is empty and another machine's is at least the gap deep, it asks
+ * that machine's lead for work. Returns the line to log.
  */
 export async function balancePass(): Promise<string | null> {
     const machine = loadMachine();
@@ -240,18 +273,20 @@ export async function balancePass(): Promise<string | null> {
     const depth = self.queue.depth;
     if (depth === 0 && self.queue.full !== undefined) return null;
     if (depth >= shortest.queue.depth + gap) {
-        const target = entries.find((entry) => entry.machine === shortest.machine);
-        const lines = target === undefined ? [] : delegateLines(target);
-        if (lines.length === 0) return null;
+        const offer = offerTarget(others, entries, depth, gap);
+        if (offer === undefined) return null;
+        const { row: target, lines } = offer;
+        const ids = lines.map((line) => line.id).sort();
+        if (alreadyOffered(target.machine, ids)) return null;
         const body = [
-            `${machine.name}'s queue is ${depth} deep; ${shortest.machine}'s is ${shortest.queue.depth}`,
-            `(lead.balanceGap ${gap}). Hand queued work to ${shortest.machine}'s lead:`,
+            `${machine.name}'s queue is ${depth} deep; ${target.machine}'s is ${target.queue.depth}`,
+            `(lead.balanceGap ${gap}). Hand queued work to ${target.machine}'s lead:`,
             "",
-            ...lines,
+            ...lines.map((line) => line.line),
         ];
-        addInboxItem(machine.name, `queue: offer work to ${shortest.machine}`, body.join("\n"));
-        recordSent({ kind: "offer", machine: shortest.machine, at: now().toISOString() });
-        return `queue: offered work to ${shortest.machine} (${machine.name} ${depth}, ${shortest.machine} ${shortest.queue.depth})`;
+        addInboxItem(machine.name, `queue: offer work to ${target.machine}`, body.join("\n"));
+        recordSent({ kind: "offer", machine: target.machine, at: now().toISOString() }, ids);
+        return `queue: offered work to ${target.machine} (${machine.name} ${depth}, ${target.machine} ${target.queue.depth})`;
     }
     if (depth !== 0 || deepest.queue.depth < gap) return null;
     const verifyOnly = entries.find((entry) => entry.local)?.resources?.verifyOnly ?? [];

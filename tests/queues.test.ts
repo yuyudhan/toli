@@ -239,9 +239,12 @@ describe("balancePass", () => {
         expect(state.sent.map((sent) => [sent.kind, sent.machine])).toEqual([["offer", "m2"]]);
 
         expect(await pass(box, "2026-11-10T09:29:00.000Z")).toBeNull();
+        expect(await pass(box, "2026-11-10T09:30:00.000Z")).toBeNull();
         expect(queueItems(box)).toHaveLength(1);
-        expect(await pass(box, "2026-11-10T09:30:00.000Z")).toBe("queue: offered work to m2 (m1 4, m2 0)");
+        box.ok(["task", "add", "x", "task 5"]);
+        expect(await pass(box, "2026-11-10T10:00:00.000Z")).toBe("queue: offered work to m2 (m1 5, m2 0)");
         expect(queueItems(box)).toHaveLength(2);
+        expect(queueItems(box).filter((offer) => offer.includes("T5: bin/toli delegate m2 'task 5'"))).toHaveLength(1);
     });
 
     test("offers and counts only queued tasks no jawan works on and no other machine has", async () => {
