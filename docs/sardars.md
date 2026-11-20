@@ -213,7 +213,12 @@ owner (`<forwarder>/T<n> forwarded the work to <owner>/T<n>` in its notes, which
 jawan) and follows its done, held and handed-back reports, and any machine in the chain may answer its question.
 The forwarding lead may then drop its own copy: while a delegation it made is live, that drop reads
 `<forwarder>/T<n> forwarded to <owner>/T<n>` above it, never "dropped", and the originator's task stays active with
-the new owner. A delegation made while the task's own jawan works on it is a slice and carries no chain.
+the new owner. A delegation made while the task's own jawan works on it is a slice and carries no chain. A slice
+says so (`slice` on the new task's `delegatedBy`), and work it forwards on carries no chain either: the slice's
+delegator follows the slice's task, never the machine it forwarded to. A machine in the chain that records no
+delegation to the new task refuses its report (`no delegation of T<n> to <owner>/T<n> is recorded here`); the first
+such refusal stops that task's reports to it (`refusedBy`, and a note `... no longer reports to <machine>`) with one
+"not sent" inbox item, and later status changes send it nothing.
 
 ## The shared task list
 

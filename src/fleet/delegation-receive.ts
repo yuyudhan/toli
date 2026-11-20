@@ -44,6 +44,11 @@ export type Delegation = {
      * new task reports to each of them too (src/records/delegation-report.ts).
      */
     upstream?: Upstream[];
+    /**
+     * The delegator's own jawan keeps the `--for` task: this is a slice of it, which follows only that task, so work
+     * the new task forwards on carries no chain (src/records/delegation-sync.ts forwardChain).
+     */
+    slice?: true;
     /** `delegate --force`: ship work the target takes even for a project it marked verify-only. */
     force?: true;
 };
@@ -87,6 +92,9 @@ export function parseDelegation(text: string): Delegation {
     const verify = Reflect.get(value, "verify");
     if (verify !== undefined && verify !== true) throw new ToliError("delegation receive: verify must be true");
     if (verify === true && shape === "scout") throw new ToliError("delegation receive: verify work is ship shape");
+    const slice = Reflect.get(value, "slice");
+    if (slice !== undefined && slice !== true) throw new ToliError("delegation receive: slice must be true");
+    if (slice === true && fromTask === undefined) throw new ToliError("delegation receive: a slice needs fromTask");
     return {
         id,
         from: requireName("machine", field("from")),
@@ -100,6 +108,7 @@ export function parseDelegation(text: string): Delegation {
         ...(verify === true ? { verify } : {}),
         ...(tier === undefined ? {} : { tier }),
         ...(upstream.length === 0 ? {} : { upstream }),
+        ...(slice === true ? { slice } : {}),
         ...(force === true ? { force } : {}),
     };
 }
@@ -294,6 +303,7 @@ export function receiveDelegation(delegation: Delegation): { task: Task; created
                 key,
                 at,
                 ...(upstream.length === 0 ? {} : { upstream }),
+                ...(delegation.slice === true ? { slice: true as const } : {}),
             },
             createdAt: at,
             updatedAt: at,

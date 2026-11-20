@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { brief, inbox, type Task, type Trio, tasks, trio } from "./delegate-fixture.ts";
-import { type Sandbox, withProject } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, TOLI_BIN, withProject } from "./helpers.ts";
 
 function parent(box: Sandbox): Task {
     const task = tasks(box).find((entry) => entry.id === "T1");
@@ -70,5 +70,71 @@ describe("work forwarded on (m1 -> m2 -> m3)", () => {
         expect(task.status).toBe("queued");
         expect(task.agent).toBeUndefined();
         expect(task.notes).toContain("m3/T1 handed the work back: verifier only");
+    });
+});
+
+describe("a slice forwarded on (T2045)", () => {
+    test("reports only to the machine that forwarded it: the slice's delegator follows that machine's task", () => {
+        const { m1, m2, m3 } = trio();
+        withProject(m1, "app");
+        m1.ok(["task", "add", "app", "release"]);
+        m1.ok(["task", "start", "T1", "--agent", "ReleaseSub"]);
+        m1.ok(["delegate", "m2", "verify slice", "--brief", brief(m1), "--for", "T1"]);
+        expect(parent(m1)).toMatchObject({ slices: ["m2/T1"] });
+        expect(tasks(m2)[0]?.delegatedBy).toMatchObject({ machine: "m1", task: "T1", slice: true });
+        m2.ok(["delegate", "m3", "placed verify", "--brief", brief(m2), "--for", "T1"]);
+        const by = tasks(m3)[0]?.delegatedBy;
+        expect(by).toMatchObject({ machine: "m2", task: "T1" });
+        expect(by?.upstream).toBeUndefined();
+        m3.ok(["task", "start", "T1", "--agent", "VerifySub"]);
+        expect(tasks(m2)[0]?.delegates?.["m3/T1"]).toMatchObject({ status: "active" });
+        expect(parent(m1).delegates?.["m3/T1"]).toBeUndefined();
+    });
+});
+
+describe("a machine above that records no delegation of the task (T2045)", () => {
+    /** m3's ssh: m1 refuses every update as src/peer/envelope.ts does; m2 applies them. */
+    function refusingAbove({ m2, m3 }: Trio): void {
+        m3.stub(
+            "ssh",
+            [
+                SSH_STUB_ARGS,
+                'if [ "$host" = host1 ]; then cat >/dev/null; echo "toli: no delegation of T1 to m3/T1 is recorded here" >&2; exit 1; fi',
+                `[ "$host" = host2 ] || { echo "ssh: connect to host $host port 22: Connection refused" >&2; exit 255; }`,
+                `cmd=$(printf '%s' "$cmd" | sed "s#bin/toli #'${process.execPath}' '${TOLI_BIN}' #")`,
+                `TOLI_ROOT="${m2.root}" exec sh -c "$cmd"`,
+            ].join("\n"),
+        );
+    }
+
+    test("refuses once: the task stops reporting there, with one alert, and still reports to its delegator", () => {
+        const machines = trio();
+        const { m1, m2, m3 } = machines;
+        withProject(m1, "app");
+        m1.ok(["task", "add", "app", "parent work"]);
+        m1.ok(["delegate", "m2", "the work", "--brief", brief(m1), "--for", "T1"]);
+        m2.ok(["delegate", "m3", "forwarded work", "--brief", brief(m2), "--for", "T1"]);
+        expect(tasks(m3)[0]?.delegatedBy?.upstream).toEqual([{ machine: "m1", task: "T1" }]);
+        refusingAbove(machines);
+
+        const started = m3.toli(["task", "start", "T1", "--agent", "OwnSub"]);
+        expect(started.code).toBe(0);
+        expect(started.stderr).toContain("T1: m1 refused its report: no delegation of T1 to m3/T1 is recorded here");
+        expect(started.stderr).not.toContain("the minute tick retries");
+        const by = tasks(m3)[0]?.delegatedBy;
+        expect(by).toMatchObject({ machine: "m2", task: "T1", refusedBy: ["m1"] });
+        m3.ok(["task", "hold", "T1", "--question", "Which?", "--option", "a => fast", "--option", "b => slow"]);
+        m3.ok(["task", "answer", "T1", "a"]);
+
+        const refused = JSON.parse(m3.ok(["outbox", "list", "--cancelled", "--json"])) as Array<{ reason: string }>;
+        expect(refused.map((item) => item.reason)).toEqual([
+            "m1 refused it: no delegation of T1 to m3/T1 is recorded here",
+        ]);
+        const alerts = inbox(m3).filter((item) => item.title.includes("not sent"));
+        expect(alerts).toHaveLength(1);
+        expect(readFileSync(alerts[0]?.path ?? "", "utf8")).toContain(
+            "m3/T1 no longer reports to m1: it records no delegation of T1 to m3/T1",
+        );
+        expect(tasks(m2)[0]?.notes).toContain("m3/T1 is held");
     });
 });

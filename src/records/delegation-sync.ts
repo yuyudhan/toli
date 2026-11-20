@@ -274,12 +274,23 @@ function ownJawan(task: Task): boolean {
 /**
  * The chain a delegation of `task` (`delegate --for`, `task link`) carries when it forwards work another machine
  * delegated here: that delegator's task and every one above it, origin first. Empty for this machine's own task, one
- * delegated without `--for`, and a slice (the task's own jawan keeps the work here).
+ * delegated without `--for`, and a slice (the task's own jawan keeps the work here). Empty too when `task` is itself
+ * a slice of its delegator's task (`delegatedBy.slice`): that task follows only `task`, records no delegation of the
+ * forwarded work, and would refuse its reports (T2045).
  */
 export function forwardChain(task: Task | undefined): Upstream[] {
     const by = task?.delegatedBy;
-    if (task === undefined || by?.task === undefined || ownJawan(task)) return [];
+    if (task === undefined || by?.task === undefined || by.slice === true || ownJawan(task)) return [];
     return [...(by.upstream ?? []), { machine: by.machine, task: by.task }];
+}
+
+/**
+ * Whether a delegation for `task` (`delegate --for`) is a slice of it: its own jawan works on it, so the delegation
+ * only reports back (recordDelegation). The delegation says so, and work the delegated task forwards on then reports
+ * to that task alone (forwardChain).
+ */
+export function delegatesSlice(task: Task | undefined): boolean {
+    return task !== undefined && ownJawan(task);
 }
 
 /**

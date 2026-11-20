@@ -10,7 +10,14 @@ export type Task = {
     shape?: string;
     agent?: string;
     notes: string[];
-    delegatedBy?: { machine: string; task?: string; id: string; upstream?: { machine: string; task: string }[] };
+    delegatedBy?: {
+        machine: string;
+        task?: string;
+        id: string;
+        upstream?: { machine: string; task: string }[];
+        slice?: true;
+        refusedBy?: string[];
+    };
     delegatedTo?: string[];
     delegates?: Record<string, { status: string; question?: string; options?: { choice: string }[]; commit?: string }>;
     heldFrom?: string;

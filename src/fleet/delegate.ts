@@ -15,7 +15,7 @@ import { bodyLimit, TITLE_MAX } from "../peer/envelope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { landSending, noteSending, splitFleetId } from "../records/delegation-report.ts";
-import { forwardChain, recordDelegation } from "../records/delegation-sync.ts";
+import { delegatesSlice, forwardChain, recordDelegation } from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { parseShape } from "../records/task-shape.ts";
 import { DEFAULT_PROJECT, type Delegation, delegationKey, parseDelegation } from "./delegation-receive.ts";
@@ -151,6 +151,7 @@ export async function delegateCommand(argv: string[]): Promise<number> {
     if (forTask !== undefined && forEntry === undefined)
         throw new ToliError(`unknown task "${forTask}" (--for names this machine's own task)`);
     const upstream = forwardChain(forEntry);
+    const slice = delegatesSlice(forEntry);
     const verify = args.bool("verify") || forEntry?.verify === true;
     const shape = parseShape(args.str("shape"), verify ? "ship" : (forEntry?.shape ?? "ship"));
     if (verify && shape !== "ship")
@@ -172,6 +173,7 @@ export async function delegateCommand(argv: string[]): Promise<number> {
         ...(verify ? { verify: true as const } : {}),
         ...(tier === undefined ? {} : { tier }),
         ...(upstream.length === 0 ? {} : { upstream }),
+        ...(slice ? { slice: true as const } : {}),
         ...(force ? { force: true as const } : {}),
     };
     const body = JSON.stringify(delegation);

@@ -2,7 +2,7 @@
 // tasks. This machine records it as a delegation (src/records/delegation-sync.ts `recordDelegation`) and sends the
 // owner a link; the owner's task then names this task as its delegator and reports to it. The owner refuses a link
 // from any machine other than the one that delegated its task. A link that forwards work delegated here carries the
-// chain above it (`upstream`), like `delegate --for`.
+// chain above it (`upstream`), like `delegate --for`; one recorded as a slice says so (`slice`), like a delegation.
 import { Args } from "../core/args.ts";
 import { fleetMachine, loadMachine } from "../core/config.ts";
 import { now, out, stamp, ToliError } from "../core/util.ts";
@@ -12,7 +12,7 @@ import { fleetId, parseUpstream, splitFleetId, type Upstream } from "./delegatio
 import { forwardChain, parseJson, recordDelegation } from "./delegation-sync.ts";
 
 /** What `task link` sends the owner (JSON on `delegation link`'s stdin). */
-export type DelegationLink = { from: string; task: string; id: string; upstream?: Upstream[] };
+export type DelegationLink = { from: string; task: string; id: string; upstream?: Upstream[]; slice?: true };
 
 /** `task link`; returns whether `sub` was it. */
 export function linkTaskCommand(sub: string, rest: string[]): boolean {
@@ -35,6 +35,7 @@ export function receiveLink(link: DelegationLink): string {
             ...(by?.key === undefined ? {} : { key: by.key }),
             at: by?.at ?? now().toISOString(),
             ...(link.upstream === undefined || link.upstream.length === 0 ? {} : { upstream: link.upstream }),
+            ...(link.slice === true ? { slice: true as const } : {}),
         };
         // A new note is a change the delegator gets, so this sends the task back as it is now.
         entry.notes.push(`linked to ${link.from}/${link.task}`);
@@ -54,16 +55,18 @@ function link(argv: string[]): void {
     const target = fleetMachine(machine);
     const fid = fleetId(machine, id);
     let before: Task | undefined;
-    updateTask(local, (task) => {
+    const after = updateTask(local, (task) => {
         before = structuredClone(task);
         recordDelegation(task, fid, `linked to ${fid}`);
     });
     const upstream = forwardChain(before);
+    const slice = after.slices?.includes(fid) === true;
     const body = JSON.stringify({
         from: self,
         task: local,
         id,
         ...(upstream.length === 0 ? {} : { upstream }),
+        ...(slice ? { slice: true as const } : {}),
     } satisfies DelegationLink);
     const sent = sendNow(
         self,
@@ -94,5 +97,12 @@ export function parseLink(text: string): DelegationLink {
     if (typeof link.from !== "string" || typeof link.task !== "string" || typeof link.id !== "string")
         throw new ToliError("delegation link: needs from, task and id");
     const upstream = parseUpstream(link.upstream, "delegation link");
-    return { from: link.from, task: link.task, id: link.id, ...(upstream.length === 0 ? {} : { upstream }) };
+    if (link.slice !== undefined && link.slice !== true) throw new ToliError("delegation link: slice must be true");
+    return {
+        from: link.from,
+        task: link.task,
+        id: link.id,
+        ...(upstream.length === 0 ? {} : { upstream }),
+        ...(link.slice === true ? { slice: true as const } : {}),
+    };
 }

@@ -9,6 +9,7 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, readJson, ToliError, waited, withLock, writeJsonAtomic } from "../core/util.ts";
 import { addInboxItem } from "../records/inbox.ts";
+import { stopUnrecordedReports } from "../records/report-refusal.ts";
 import { type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
 
 const HOUR_MS = 60 * 60_000;
@@ -28,7 +29,9 @@ function ageOf(item: OutboxItem): number {
 
 /**
  * Move queued `<id>.json` files to cancelled/ with `reason` (a file being sent right now is skipped: it is not
- * queued), then post one inbox item here listing them. Returns the ids moved.
+ * queued), then post one inbox item here listing them. A delegated task's report refused as unrecorded stops its
+ * reports to that machine (src/records/report-refusal.ts); a repeat of that refusal is cancelled without a new alert.
+ * Returns the ids moved.
  */
 export function cancelItems(files: string[], reason: string): string[] {
     const moved: Array<{ id: string; item: OutboxItem }> = [];
@@ -51,20 +54,23 @@ export function cancelItems(files: string[], reason: string): string[] {
             rmSync(claimed, { force: true });
         }
     });
-    if (moved.length > 0) {
-        const lines = moved.map(
-            ({ id, item }) => `- ${id}: ${item.kind ?? "inbox"} to ${waitingFor(item)}: ${item.title.slice(0, 120)}`,
-        );
+    const alerts = moved.flatMap(({ id, item }) => {
+        const stopped = stopUnrecordedReports(item, reason);
+        if (stopped === "repeat") return [];
+        const line = `- ${id}: ${item.kind ?? "inbox"} to ${waitingFor(item)}: ${item.title.slice(0, 120)}`;
+        return [stopped === null ? [line] : [line, `  ${stopped}`]];
+    });
+    const count = alerts.length;
+    if (count > 0)
         addInboxItem(
             loadMachine().name,
-            `${moved.length} outbox item${moved.length === 1 ? "" : "s"} not sent: ${reason}`.slice(0, 200),
+            `${count} outbox item${count === 1 ? "" : "s"} not sent: ${reason}`.slice(0, 200),
             [
                 `These were not delivered and will not be retried (${reason}). They are kept in state/outbox/cancelled/.`,
                 "",
-                ...lines,
+                ...alerts.flat(),
             ].join("\n"),
         );
-    }
     return moved.map(({ id }) => id);
 }
 

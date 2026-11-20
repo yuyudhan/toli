@@ -13,6 +13,7 @@ import { refusalOf } from "../jobs/refusal.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { delegators, fleetId, splitFleetId } from "../records/delegation-report.ts";
 import { addInboxItem, listInbox } from "../records/inbox.ts";
+import { unrecordedReason } from "../records/report-refusal.ts";
 import { canonicalJson, type Identity, signWith, verifySignature } from "./identity.ts";
 import { markReceiving } from "./receiving.ts";
 import { type Peer, type Permission, peerByFingerprint } from "./store.ts";
@@ -201,7 +202,7 @@ export function senderClaimRefusal(peer: string, kind: EnvelopeKind, body: strin
             local?.delegatedTo?.includes(id) === true ||
             local?.slices?.includes(id) === true ||
             local?.sending?.some((sent) => sent.machine === peer && sent.id === value.delegation) === true;
-        return recorded ? null : `no delegation of ${String(value.forTask)} to ${id} is recorded here`;
+        return recorded ? null : unrecordedReason(String(value.forTask), id);
     }
     if (kind === "answer") {
         if (typeof value.id !== "string" || typeof value.answer !== "string") return "answer without id and answer";

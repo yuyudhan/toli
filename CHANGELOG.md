@@ -25,6 +25,16 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A delegated task no longer reports, on every status change, to a machine above it that refuses the report. A
+  slice (delegated while the `--for` task's own jawan works on it) forwarded on to a third machine carried the chain
+  above it, so the new task also reported to the slice's delegator, which records only the slice and refused each
+  report as `no delegation of T<n> to <owner>/T<n> is recorded here`, posting a new "outbox item not sent" inbox item
+  every time. A delegation or link now says when it is a slice, and work a slice forwards on reports only to the
+  machine that forwarded it. Any such refusal stops that task's reports to the refusing machine (`refusedBy` on its
+  `delegatedBy`, with a note) and posts one alert; `bin/toli delegate` and status changes print
+  `<machine> refused its report: <reason>` instead of "queued ... the minute tick retries" (docs/sardars.md
+  "Forwarding work on").
+
 - `bin/toli task hold` refuses a hold without `--question` and 2-4 `--option "<choice> => <what happens then>"`
   values, naming the format and how many it got. Holds with no options piled up in the Needs-you queue (8 of 26 in
   one fleet review) because the user could not answer them by number; a free-text `--recommend` without options is

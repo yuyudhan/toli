@@ -19,7 +19,10 @@ export type Upstream = { machine: string; task: string };
  * Who handed a task to this machine (`bin/toli delegate`, docs/sardars.md); results and questions go back there.
  * `key` is the delegated work's delegationKey (src/fleet/delegate.ts): a repeat of it while this task is open is this
  * task. `upstream` is the chain above `machine` when it forwarded its own delegated task here (origin first): each
- * of those tasks gets the same reports, so the work's originator follows it wherever it went.
+ * of those tasks gets the same reports, so the work's originator follows it wherever it went. `slice`: `machine`
+ * delegated this task as a slice (its own jawan keeps the `--for` task), so work this task forwards on reports to
+ * this task alone, never to the machines above. `refusedBy`: machines that refused this task's report because they
+ * record no delegation of their task to it (src/records/report-refusal.ts); no further report goes to them.
  */
 export type DelegatedBy = {
     machine: string;
@@ -28,6 +31,8 @@ export type DelegatedBy = {
     key?: string;
     at: string;
     upstream?: Upstream[];
+    slice?: true;
+    refusedBy?: string[];
 };
 
 /** The last state of one delegated task, as its owner sent it (`delegation update`). */
@@ -126,9 +131,16 @@ export function delegators(by: DelegatedBy | undefined): string[] {
     return by === undefined ? [] : [by.machine, ...(by.upstream ?? []).map((entry) => entry.machine)];
 }
 
-/** Every machine and task a delegated task reports to: its delegator, then the chain above it. */
+/**
+ * Every machine and task a delegated task reports to: its delegator, then the chain above it, less those that refused
+ * a report as unrecorded there.
+ */
 function reportTargets(by: DelegatedBy): Array<{ machine: string; task?: string }> {
-    return [{ machine: by.machine, ...(by.task === undefined ? {} : { task: by.task }) }, ...(by.upstream ?? [])];
+    const targets = [
+        { machine: by.machine, ...(by.task === undefined ? {} : { task: by.task }) },
+        ...(by.upstream ?? []),
+    ];
+    return targets.filter((target) => !(by.refusedBy ?? []).includes(target.machine));
 }
 
 /**
@@ -298,7 +310,10 @@ export function reportToDelegator(task: Task): void {
         const update = delegationUpdate(owner, task, to);
         const id = to.machine === by.machine ? `update-${task.id}-${at}` : `update-${task.id}-${to.machine}-${at}`;
         const sent = sendNow(owner, target, "update", update.message.title, JSON.stringify(update), id);
-        if (!sent.delivered && !sent.pulled)
-            warn(`${task.id}: report to ${to.machine} queued (${sent.error}); the minute tick retries`);
+        if (sent.delivered || sent.pulled) continue;
+        // A refusal is final: the item already sits in state/outbox/cancelled/, and src/records/report-refusal.ts
+        // stopped this task's reports to a machine that records no delegation of it.
+        if (sent.refused !== undefined) warn(`${task.id}: ${to.machine} refused its report: ${sent.refused}`);
+        else warn(`${task.id}: report to ${to.machine} queued (${sent.error}); the minute tick retries`);
     }
 }
