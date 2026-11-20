@@ -96,16 +96,31 @@ export function deliveryArgv(item: OutboxItem, verified?: string): string[] {
     if (item.kind === "share") return ["share", "receive"];
     if (item.kind === "answer") {
         const { id, answer, answerId } = parseAnswer(item.body);
-        // A receiver before T2151 lacks --answer-id: it fails as retryable (refusal.ts) and the item waits for it.
         const once = answerId === undefined ? [] : ["--answer-id", answerId];
         return ["task", "answer", id, answer, "--from", item.from, ...once];
     }
     return ["inbox", "add", "--from", item.from, "--title", item.title];
 }
 
-/** The remote command one item runs on its target. */
-function remoteCommand(item: OutboxItem, root: string): string {
-    return remoteToliCommand(root, deliveryArgv(item).map(shellQuote).join(" "));
+/** What a receiver from before T2151 prints for an answer's `--answer-id`: its Args refused it, so nothing ran there. */
+const NO_ANSWER_ID = /unknown option --answer-id/;
+
+/**
+ * Run one item on its target over ssh. Over ssh the sender builds the target's command, so it must match that toli:
+ * one from before T2151 refuses `--answer-id` (its own reply is the capability check, as ssh-only machines exchange
+ * no version), and the answer goes again at once without it, the old way, with no duplicate guard there. HTTPS,
+ * relayed and pulled answers need none of this: the receiver builds their command itself.
+ */
+function sshDeliver(target: { ssh: string; root: string }, item: OutboxItem, timeoutMs: number) {
+    const send = (argv: string[]) => {
+        const command = remoteToliCommand(target.root, argv.map(shellQuote).join(" "));
+        return run([...sshArgs(target.ssh, DELIVERY_CONNECT_SECONDS), command], { stdin: item.body, timeoutMs });
+    };
+    const argv = deliveryArgv(item);
+    const sent = send(argv);
+    const flag = argv.indexOf("--answer-id");
+    if (sent.code === 0 || flag < 0 || !NO_ANSWER_ID.test(sent.stderr)) return sent;
+    return send(argv.slice(0, flag));
 }
 
 /**
@@ -209,10 +224,7 @@ export function deliverOutbox(
         }
         const item = readJson<OutboxItem>(claimed, { from: machine.name, title: file, body: "" });
         const started = performance.now();
-        const sent = run([...sshArgs(target.ssh, DELIVERY_CONNECT_SECONDS), remoteCommand(item, target.root)], {
-            stdin: item.body,
-            timeoutMs: DELIVERY_TIMEOUT_MS,
-        });
+        const sent = sshDeliver(target, item, DELIVERY_TIMEOUT_MS);
         recordSsh(target.name, file.replace(/\.json$/, ""), item, started, sent.code);
         if (sent.code === 0) {
             reach.success(target.ssh);
@@ -339,10 +351,7 @@ export function sendNow(
     const claimed = `${queued}.sending-${process.pid}`;
     if (peer === undefined) writeJsonAtomic(claimed, item);
     const started = performance.now();
-    const sent = run([...sshArgs(to.ssh, DELIVERY_CONNECT_SECONDS), remoteCommand(item, to.root)], {
-        stdin: body,
-        timeoutMs: SEND_NOW_MS,
-    });
+    const sent = sshDeliver(to, item, SEND_NOW_MS);
     recordSsh(to.name, id, item, started, sent.code);
     if (sent.code === 0) {
         rmSync(claimed, { force: true });

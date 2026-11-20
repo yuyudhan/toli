@@ -151,4 +151,16 @@ describe("a delegated task's question goes to the delegating lead", () => {
         expect(owned?.status).toBe("queued");
         expect(owned?.notes.at(-1)).toBe("Q: Which again?\nA: b (= b) (recorded by m1's lead)");
     });
+
+    test("an answer to a machine on a toli before T2151 is delivered now, without its id (T2151)", () => {
+        const { m1, m2, older } = delegated();
+        m2.ok(["task", "hold", "T1", "--question", "Which?", ...CHOICES]);
+        older();
+        expect(m1.ok(["task", "answer", "m2/T1", "a"])).toContain("m2 recorded the answer for m2/T1:");
+        expect(outboxFiles(m1)).toEqual([]);
+        expect(cancelled(m1)).toEqual([]);
+        const [owned] = tasks(m2);
+        expect(owned?.status).toBe("queued");
+        expect(owned?.notes.at(-1)).toBe("Q: Which?\nA: a (= a) (recorded by m1's lead)");
+    });
 });

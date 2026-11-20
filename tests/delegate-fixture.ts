@@ -40,13 +40,15 @@ export type InboxItem = { title: string; path: string };
 /**
  * Two real machines, m1 and m2, each a sandbox of its own, and m3 that never answers. Their `ssh` stub runs the
  * remote `bin/toli ...` command against the named machine's sandbox, so a delegation really crosses machines.
- * `down(machine)` makes that machine unreachable (m2 by default) until `up(machine)`.
+ * `down(machine)` makes that machine unreachable (m2 by default) until `up(machine)`. `older(machine)` makes it run a
+ * toli from before T2151 for answers: it refuses `--answer-id` as an unknown option, as that toli's Args does.
  */
 export type Pair = {
     m1: Sandbox;
     m2: Sandbox;
     down: (machine?: string) => void;
     up: (machine?: string) => void;
+    older: (machine?: string) => void;
 };
 
 /** A Pair whose m3 is a real machine too. */
@@ -72,6 +74,7 @@ function machines(count: 2 | 3): Pair & { m3?: Sandbox } {
             [
                 SSH_STUB_ARGS,
                 `if [ -e "${m1.root}/.m$(printf '%s' "$host" | sed 's/^host//')-down" ]; then echo "ssh: connect to host $host: Connection refused" >&2; exit 255; fi`,
+                `if [ -e "${m1.root}/.m$(printf '%s' "$host" | sed 's/^host//')-older" ]; then case "$cmd" in *--answer-id*) echo "toli: unknown option --answer-id" >&2; exit 1 ;; esac; fi`,
                 'case "$host" in',
                 ...Object.entries(roots).map(([host, root]) => `  ${host}) root="${root}" ;;`),
                 '  *) echo "ssh: connect to host $host port 22: Connection refused" >&2; exit 255 ;;',
@@ -87,6 +90,7 @@ function machines(count: 2 | 3): Pair & { m3?: Sandbox } {
         ...(m3 === undefined ? {} : { m3 }),
         down: (machine = "m2") => writeFileSync(flag(machine), "1"),
         up: (machine = "m2") => rmSync(flag(machine), { force: true }),
+        older: (machine = "m2") => writeFileSync(join(m1.root, `.${machine}-older`), "1"),
     };
 }
 
