@@ -6,13 +6,16 @@
 // it. A process runs when any of its threads (/proc/<pid>/task/<tid>/stat) does. And a slot lent to a build beside it
 // while its command really ran nothing stays lent: its command's next build waits for that one to end.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { idleSlots } from "../src/fleet/idle-slots.ts";
 import { processTable } from "../src/fleet/outside-builds.ts";
 import type { Resources } from "../src/fleet/resources.ts";
 import { holdSlot, runs, type Started, slotBox, spinUntil, start, toliArgs, until } from "./build-slot-fixture.ts";
 import { tempDir } from "./helpers.ts";
+
+/** How long the lent-slot test waits for any one of its events before it calls it missed. */
+const EVENT_MS = 60_000;
 
 /** A process table in `ps -o pid=,ppid=,stat=,args=` format. */
 const table = (rows: [number, number, string, string][]): string =>
@@ -108,62 +111,78 @@ describe("at most capacity.buildSlots heavy builds at once (T2050)", () => {
         expect(idleSlots(awake, [slot], processTable())).toEqual([]);
     });
 
-    test("a slot's command woken after a build was lent its slot waits for that build before it builds again", async () => {
-        const { box, log } = slotBox(1, 3);
-        const wake = join(box.root, ".wake");
-        const stop = join(box.root, ".stop");
-        // The real process table, so the slot's sleeping command reads as idle to the build lent its slot, over a short
-        // window. The gate's own wait for that build keeps the minute's window: over a second, sampled every half
-        // second, one look at the lent build's last step starting up (its shell waiting on a child) on a loaded machine
-        // reads as idle and lets the gate through early, as the escape from a deadlock should after a real minute.
-        const real = { TOLI_PROCESS_TABLE: "", TOLI_SLOT_IDLE_MS: "1000" };
-        const started: Started[] = [];
-        try {
-            // A gate's recipe: a step that runs nothing for a while (a service starting, a lock), then its next cargo.
-            const gate = start(
-                box,
-                toliArgs(
-                    "build-slot",
-                    "--",
-                    "sh",
-                    "-c",
-                    `until [ -e "${wake}" ]; do kill -0 ${process.pid} 2>/dev/null || exit 1; sleep 0.3; done; cargo build`,
-                ),
-                { ...real, TOLI_SLOT_IDLE_MS: "60000", STUB_LABEL: "a" },
-            );
-            started.push(gate);
-            await until(
-                "the gate holding the slot",
-                () => (JSON.parse(box.ok(["resources", "--json"])) as Resources).buildSlotsBusy === 1,
-            );
-            // A build that waits a window, takes a slot beside the idle one, and works until told to stop.
-            const beside = start(box, toliArgs("build-slot", "--", "sh", "-c", `${spinUntil(stop)}; cargo build`), {
-                ...real,
-                STUB_LABEL: "b",
-            });
-            started.push(beside);
-            await until("the build beside the idle slot", () => beside.stderr.join("").includes("building beside it"));
-            mkdirSync(wake);
-            await until("the gate's cargo waiting", () => gate.stderr.join("").includes("lent to a build beside it"));
-            // Real processes: only wall time shows the gate's cargo staying put past two of the beside build's windows.
-            await Bun.sleep(2500);
-            expect(runs(log)).toEqual([]);
-            mkdirSync(stop);
-            const [ran, lent] = await Promise.all([gate.done, beside.done]);
-            expect([ran.code, lent.code]).toEqual([0, 0]);
-            expect(ran.stderr).not.toContain("has run nothing");
-            const [first, second] = runs(log);
-            expect(first).toMatchObject({ label: "b", slot: "2" });
-            expect(second).toMatchObject({ label: "a", slot: "1" });
-            // The lent build ended before the gate's started: its end comes before the gate's start in the log.
-            expect(
-                readFileSync(log, "utf8")
-                    .trim()
-                    .split("\n")
-                    .map((line) => line.split(" ").slice(0, 2).join(" ")),
-            ).toEqual(["start b", "end b", "start a", "end a"]);
-        } finally {
-            for (const proc of started) proc.proc.kill("SIGKILL");
-        }
-    }, 40_000);
+    test(
+        "a slot's command woken after a build was lent its slot waits for that build before it builds again",
+        async () => {
+            const { box, log } = slotBox(1, 3);
+            const wake = join(box.root, ".wake");
+            const stop = join(box.root, ".stop");
+            // The real process table, so the slot's sleeping command reads as idle to the build lent its slot, over a short
+            // window. The gate's own wait for that build keeps the minute's window: over a second, sampled every half
+            // second, one look at the lent build's last step starting up (its shell waiting on a child) on a loaded machine
+            // reads as idle and lets the gate through early, as the escape from a deadlock should after a real minute.
+            const real = { TOLI_PROCESS_TABLE: "", TOLI_SLOT_IDLE_MS: "1000" };
+            const started: Started[] = [];
+            try {
+                // A gate's recipe: a step that runs nothing for a while (a service starting, a lock), then its next cargo.
+                const gate = start(
+                    box,
+                    toliArgs(
+                        "build-slot",
+                        "--",
+                        "sh",
+                        "-c",
+                        `until [ -e "${wake}" ]; do kill -0 ${process.pid} 2>/dev/null || exit 1; sleep 0.3; done; cargo build`,
+                    ),
+                    { ...real, TOLI_SLOT_IDLE_MS: "60000", STUB_LABEL: "a" },
+                );
+                started.push(gate);
+                // Events, each bounded only by the test's own limit: on a loaded machine (a full `just check` at load 25)
+                // starting each `build-slot` alone can take longer than `until`'s default 15 s.
+                const slotOne = join(box.root, "state", "build-slots", "1.lock");
+                await until(
+                    "the gate holding the slot",
+                    () => existsSync(slotOne) && readFileSync(slotOne, "utf8").includes(`"pid":${gate.proc.pid},`),
+                    EVENT_MS,
+                );
+                // A build that waits a window, takes a slot beside the idle one, and works until told to stop.
+                const beside = start(box, toliArgs("build-slot", "--", "sh", "-c", `${spinUntil(stop)}; cargo build`), {
+                    ...real,
+                    STUB_LABEL: "b",
+                });
+                started.push(beside);
+                await until(
+                    "the build beside the idle slot",
+                    () => beside.stderr.join("").includes("building beside it"),
+                    EVENT_MS,
+                );
+                mkdirSync(wake);
+                await until(
+                    "the gate's cargo waiting",
+                    () => gate.stderr.join("").includes("lent to a build beside it"),
+                    EVENT_MS,
+                );
+                // Real processes: only wall time shows the gate's cargo staying put past two of the beside build's windows.
+                await Bun.sleep(2500);
+                expect(runs(log)).toEqual([]);
+                mkdirSync(stop);
+                const [ran, lent] = await Promise.all([gate.done, beside.done]);
+                expect([ran.code, lent.code]).toEqual([0, 0]);
+                expect(ran.stderr).not.toContain("has run nothing");
+                const [first, second] = runs(log);
+                expect(first).toMatchObject({ label: "b", slot: "2" });
+                expect(second).toMatchObject({ label: "a", slot: "1" });
+                // The lent build ended before the gate's started: its end comes before the gate's start in the log.
+                expect(
+                    readFileSync(log, "utf8")
+                        .trim()
+                        .split("\n")
+                        .map((line) => line.split(" ").slice(0, 2).join(" ")),
+                ).toEqual(["start b", "end b", "start a", "end a"]);
+            } finally {
+                for (const proc of started) proc.proc.kill("SIGKILL");
+            }
+        },
+        3 * EVENT_MS,
+    );
 });
