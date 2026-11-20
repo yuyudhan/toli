@@ -187,7 +187,9 @@ lead_panes() {
  *
  * `harness_drawn <pane> <binary>`: whether the harness has drawn its status bar (a `────────` line) below the
  * shell's echo of the command line that started it. A powerline prompt draws such a line too, and keys typed while
- * only the prompt shows go to the shell's line buffer and land unsent in the harness's editor (T2086).
+ * only the prompt shows go to the shell's line buffer and land unsent in the harness's editor (T2086). With no such
+ * echo on screen (scrolled off, or started as `omp -c`), only the harness's own bottom counts: its `drawnInput` line
+ * last, right under a bar line that is no two-line prompt's `╭─` top; never a bar line anywhere in the pane.
  *
  * `submit_text <pane> <key> <text> <deadline>`: type the text, then press the submit key until the text has left the
  * input at the bottom of the pane, every 3 s until `<deadline>` (epoch seconds); fails when it is still there. omp
@@ -195,9 +197,19 @@ lead_panes() {
  */
 export const TYPE_INTO_LEAD_SH = `
 harness_drawn() {
-  tmux capture-pane -p -t "$1" 2>/dev/null |
-    awk -v cmd="$2" '{ line[NR] = $0 } $NF == cmd || $NF ~ ("/" cmd "$") { last = NR } END { for (i = last + 1; i <= NR; i++) print line[i] }' |
-    grep -q '────────'
+  case "$2" in
+${Object.values(SPECS)
+    .map((spec) => `    ${shellQuote(spec.binary)}) input=${shellQuote(spec.drawnInput ?? "")} ;;`)
+    .join("\n")}
+    *) input= ;;
+  esac
+  tmux capture-pane -p -t "$1" 2>/dev/null | awk -v cmd="$2" -v input="$input" '
+    NF { line[++n] = $0; if ($NF == cmd || $NF ~ ("/" cmd "$")) last = n }
+    END {
+      if (last) { for (i = last + 1; i <= n; i++) if (line[i] ~ /────────/) exit 0; exit 1 }
+      if (input != "" && n >= 2 && line[n] ~ input && line[n - 1] ~ /────────/ && line[n - 1] !~ /^[[:space:]]*╭/) exit 0
+      exit 1
+    }'
 }
 submit_text() {
   tmux send-keys -t "$1" -l "$3"

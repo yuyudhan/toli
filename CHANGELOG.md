@@ -21,7 +21,9 @@ one. See docs/releasing.md.
   without patching toli. `bin/toli project set <p> --hook-timeout <seconds>|none|default` sets it per project
   (`none`: no limit), and `capacity.commitHookTimeoutSeconds` in `config/machine.json` (seconds or `"none"`) sets the
   machine's default, still 300 s when unset. A hook stopped at its limit now says so, naming both settings, instead of
-  reporting a failed check (docs/projects.md "Git hooks").
+  reporting a failed check. Each machine that commits to a slow project sets its own limit, e.g.
+  `bin/toli project set <p> --hook-timeout 900`; toli's `local/hooks/` scripts keep their separate 5-minute
+  limit (docs/projects.md "Git hooks", T2013, T2091).
 
 ### Fixed
 
@@ -114,8 +116,9 @@ one. See docs/releasing.md.
   leads still submit with Enter, and `--key` still overrides. `fleet say --steer` is gone: the one key already steers.
   A pane counted as ready as soon as it showed a `────────` line, which a powerline shell prompt draws too, so on a
   slow omp start (about 20 s) the message was typed into the shell and sat unsent in omp's editor. A pane is now ready
-  once the harness draws its bar below the shell's echo of its command line, and the submit key is pressed again every
-  3 s while the text still sits in the input, as omp keeps it while it finishes starting. `fleet say` no longer seems
+  once the harness draws its bar below the shell's echo of its command line (with that line off screen, as for a lead
+  started as `omp -c`, only omp's own bar-over-input bottom counts), and the submit key is pressed again every 3 s
+  while the text still sits in the input, as omp keeps it while it finishes starting. `fleet say` no longer seems
   to hang: each machine gets `--wait` seconds in all (default 60, was 300 plus 40 to wait and type), and each
   machine's `ok`/`skip`/`fail` line prints as soon as that machine answers instead of after the slowest one; it exits
   1 when any machine failed (docs/fleet.md).

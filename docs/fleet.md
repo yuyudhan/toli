@@ -221,9 +221,11 @@ submits it with that harness's submit key, the one key `fleet start` uses too (`
 yuyudhan-dotfiles `omp/keybindings.yml`, where Enter is a newline), which sends at once when the lead is idle and
 steers into its running turn when it is busy. Claude Code, Codex, Cursor, Grok and pi leads submit on `Enter`.
 `--key` (a tmux key name) overrides it. A pane counts as ready once the harness has drawn its status bar below the
-shell's echo of the command that started it (a powerline prompt draws a bar line of its own), and the key is pressed
-again every 3 seconds while the text still sits in the input at the bottom of the pane, as omp keeps it while it is
-still starting. Each machine has `--wait` seconds in all (default 60): waiting for a ready lead, typing, submitting
+shell's echo of the command that started it (a powerline prompt draws a bar line of its own); with that line off
+screen (scrolled off, or a lead started as `omp -c`) only omp's own bottom counts, its bar line right above its `╰─`
+input line, and a lead on another harness is not typed into. The key is pressed again every 3 seconds while the
+text still sits in the input at the bottom of the pane, as omp keeps it while it is still starting. Each machine has
+`--wait` seconds in all (default 60): waiting for a ready lead, typing, submitting
 and reading back; the last 15 of them are kept for the ssh connection, the last press and reading back. Each
 machine's line prints as soon as that machine answers: `ok received`, `skip` (another `--os`, or no inbound ssh),
 or `fail` with why (unreachable or no answer within `--wait`, no lead in tmux, typed but not submitted, typed but not

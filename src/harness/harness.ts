@@ -37,6 +37,12 @@ export type HarnessSpec = {
      * omp/keybindings.yml), where Enter is a newline and Ctrl+Q is the follow-up key (T1960, T2086).
      */
     submitKey: string;
+    /**
+     * Awk regex for the pane's last non-blank line, right under the harness's status-bar line, once it is drawn: how
+     * `fleet say` tells a lead whose command line is off screen (scrolled off, or `omp -c`) from a shell prompt's own
+     * bar line. Null: such a pane never counts as ready (T2086).
+     */
+    drawnInput: string | null;
 };
 
 export const SPECS: Record<Harness, HarnessSpec> = {
@@ -48,6 +54,7 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         login: "omp login",
         asyncSubagents: true,
         submitKey: "C-s",
+        drawnInput: "^╰─([[:space:]]|$)",
     },
     claude: {
         name: "claude",
@@ -57,6 +64,7 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         login: "claude auth login (or ANTHROPIC_API_KEY)",
         asyncSubagents: true,
         submitKey: "Enter",
+        drawnInput: null,
     },
     codex: {
         name: "codex",
@@ -66,6 +74,7 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         login: "codex login (or CODEX_API_KEY)",
         asyncSubagents: false,
         submitKey: "Enter",
+        drawnInput: null,
     },
     cursor: {
         name: "cursor",
@@ -75,6 +84,7 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         login: "cursor-agent login (or CURSOR_API_KEY)",
         asyncSubagents: false,
         submitKey: "Enter",
+        drawnInput: null,
     },
     grok: {
         name: "grok",
@@ -84,6 +94,7 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         login: "grok login (or XAI_API_KEY)",
         asyncSubagents: true,
         submitKey: "Enter",
+        drawnInput: null,
     },
     pi: {
         name: "pi",
@@ -93,6 +104,7 @@ export const SPECS: Record<Harness, HarnessSpec> = {
         login: "provider API keys (e.g. ANTHROPIC_API_KEY) or /login inside pi",
         asyncSubagents: false,
         submitKey: "Enter",
+        drawnInput: null,
     },
 };
 

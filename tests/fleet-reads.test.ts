@@ -191,6 +191,8 @@ describe("fleet say and start", () => {
     // same pane once omp has drawn its status bar below it.
     const SHELL_SCREEN = " ~/code/toli ────────────────\n❯ omp";
     const OMP_SCREEN = `${SHELL_SCREEN}\n Opus · ~/code/toli ──────────────── 5%\n╰─`;
+    // A Claude Code lead started by its command line (no `drawnInput`: that echo is how its pane counts as drawn).
+    const CLAUDE_SCREEN = " ~/code/toli ────────────────\n❯ claude\n╭────────────────╮\n│ >              │";
 
     // A fake tmux: one lead pane running `harness` in the toli root, or none. The pane shows `initial` (OMP_SCREEN
     // with a harness, SHELL_SCREEN without), which becomes `launched` once a command line is submitted with Enter
@@ -265,7 +267,10 @@ describe("fleet say and start", () => {
     });
 
     test("say keeps Enter for a harness that submits on it, and --key overrides any default (T1960)", () => {
-        expect(fakeTmux("claude").run(sayScript(say({})))).toEqual(["-t %1 -l hello", "-t %1 Enter"]);
+        expect(fakeTmux("claude", { initial: CLAUDE_SCREEN }).run(sayScript(say({})))).toEqual([
+            "-t %1 -l hello",
+            "-t %1 Enter",
+        ]);
         expect(fakeTmux("omp").run(sayScript(say({ key: "M-Enter" })))).toEqual(["-t %1 -l hello", "-t %1 M-Enter"]);
     });
 
@@ -283,7 +288,7 @@ describe("fleet say and start", () => {
             "-t toli:lead -l hi",
             "-t toli:lead C-s",
         ]);
-        expect(fakeTmux(null).run(startScript(start({ harness: "claude" })))).toEqual([
+        expect(fakeTmux(null, { launched: CLAUDE_SCREEN }).run(startScript(start({ harness: "claude" })))).toEqual([
             "-t toli:lead claude Enter",
             "-t toli:lead -l hi",
             "-t toli:lead Enter",
@@ -311,6 +316,30 @@ describe("fleet say and start", () => {
         const tmux = fakeTmux("omp", { launched: null, initial: SHELL_SCREEN });
         expect(tmux.run(sayScript(say({})))).toEqual([]);
         expect(tmux.output()).toBe("@@none\n");
+    });
+
+    // No pane line ends in the bare word `omp`: the lead was started as `omp -c`, or its command line scrolled off.
+    // Only omp's own bottom (its bar line, then its input line `╰─`) counts then, never a bar line anywhere.
+    test("say without the harness's command line on screen never takes a prompt's bar for omp's (T2086)", () => {
+        const prompts = [
+            " ~/code/toli ────────────────\n❯ omp -c",
+            "╭─ ~/code/toli ────────────────\n╰─❯ omp -c",
+            " ~/code/toli ────────────────\n❯",
+        ];
+        for (const initial of prompts) {
+            const tmux = fakeTmux("omp", { launched: null, initial });
+            expect(tmux.run(sayScript(say({})))).toEqual([]);
+            expect(tmux.output()).toBe("@@none\n");
+        }
+        const drawn = [
+            "❯ omp -c\n Opus · ~/code/toli ──────────────── 5%\n╰─",
+            " earlier output\n Opus · ~/code/toli ──────────────── 5%\n╰─ half-typed",
+        ];
+        for (const initial of drawn)
+            expect(fakeTmux("omp", { launched: null, initial }).run(sayScript(say({})))).toEqual([
+                "-t %1 -l hello",
+                "-t %1 C-s",
+            ]);
     });
 
     test("say presses the submit key until the text leaves the input, and fails when it never does (T2086)", () => {
