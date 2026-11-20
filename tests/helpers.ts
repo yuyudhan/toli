@@ -6,12 +6,12 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
-    rmSync,
     symlinkSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { removeTemp, tempPrefix } from "./temp-dirs.ts";
 
 export const TOLI_BIN = resolve(import.meta.dir, "..", "bin", "toli");
 
@@ -31,18 +31,42 @@ export const GIT_ENV: Record<string, string> = {
  */
 export const SSH_STUB_ARGS = 'for arg in "$@"; do host="$cmd"; cmd="$arg"; done';
 
-const temps: string[] = [];
+/** Every dir this run made, removed or not: a process a test left running may write into one after it is removed. */
+const made: string[] = [];
+/** Dirs made while a test runs (its beforeEach included); null between tests. */
+let testTemps: string[] | null = null;
 
-/** A fresh `toli-<prefix>-*` dir under the OS temp dir, removed after the whole run (tests/setup.ts). */
-export function tempDir(prefix: string): string {
-    const dir = mkdtempSync(join(tmpdir(), `toli-${prefix}-`));
-    temps.push(dir);
+/**
+ * A fresh `toli-<prefix>-p<pid>-*` dir under the OS temp dir (or `base`). One made while a test runs is removed when
+ * that test ends; any other, or one with `scope: "run"` (a template built once and copied into later tests), when the
+ * run ends (tests/setup.ts). A run killed before either leaves its dirs to the next run (tests/temp-dirs.ts).
+ */
+export function tempDir(prefix: string, options: { scope?: "run"; base?: string } = {}): string {
+    const dir = mkdtempSync(join(options.base ?? tmpdir(), tempPrefix(prefix)));
+    made.push(dir);
+    if (options.scope !== "run") testTemps?.push(dir);
     return dir;
 }
 
-/** Removes every dir made by `tempDir`. */
+/** Starts collecting the dirs the next test makes (a global beforeEach in tests/setup.ts). */
+export function beginTestTemps(): void {
+    testTemps = [];
+}
+
+/** Removes the dirs the test that just ended made (a global afterEach in tests/setup.ts). */
+export function endTestTemps(): void {
+    const dirs = testTemps ?? [];
+    testTemps = null;
+    for (const dir of dirs) removeTemp(dir);
+}
+
+/**
+ * Removes every dir `tempDir` made: at the end of the run, or when the test process exits early. A test's dirs are
+ * removed again, as a background process it started (a tick's fleet check, a disk keeper) may have written one back.
+ */
 export function removeTempDirs(): void {
-    for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
+    testTemps = null;
+    for (const dir of made.splice(0)) removeTemp(dir);
 }
 
 export type ToliRun = { code: number; stdout: string; stderr: string };
@@ -283,7 +307,7 @@ let seedOrigin: string | null = null;
  */
 export function withProject(box: Sandbox, name: string): string {
     if (seedOrigin === null) {
-        const dir = tempDir("seed-origin");
+        const dir = tempDir("seed-origin", { scope: "run" });
         const bare = join(dir, "origin.git");
         const seed = join(dir, "seed");
         mkdirSync(bare);

@@ -1,26 +1,11 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import {
-    appendFileSync,
-    cpSync,
-    existsSync,
-    mkdtempSync,
-    readFileSync,
-    realpathSync,
-    rmSync,
-    writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { appendFileSync, cpSync, existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { runtimeCommand } from "../src/release/runtime.ts";
-import { commandIn, GIT_ENV } from "./helpers.ts";
+import { commandIn, GIT_ENV, tempDir } from "./helpers.ts";
 import { livePid, until } from "./peer-serve-fixture.ts";
 
 const REPO = resolve(import.meta.dir, "..");
-const temps: string[] = [];
-
-afterAll(() => {
-    for (const dir of temps) rmSync(dir, { recursive: true, force: true });
-});
 
 type Checkout = {
     dir: string;
@@ -31,8 +16,7 @@ type Checkout = {
 
 /** A git checkout holding this working tree's bin/ and src/, as a live toli checkout would, with its own runtime home. */
 function checkout(): Checkout {
-    const base = realpathSync(mkdtempSync(join(tmpdir(), "toli-runtime-")));
-    temps.push(base);
+    const base = realpathSync(tempDir("runtime"));
     const dir = join(base, "toli");
     for (const part of ["bin", "src", "package.json"]) cpSync(join(REPO, part), join(dir, part), { recursive: true });
     const runtimeHome = join(base, "runtime-home");

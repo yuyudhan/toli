@@ -2,9 +2,10 @@
 // GIT_DIR, so every `git init`/`commit` in a temp dir wrote into the real repository: 64 commits and a v1.2.3 tag).
 // isolateGit() runs first in the preload, before any test file loads; realRefs() snapshots the real repository's refs
 // then, and the preload fails the run at the end when refProblems() finds a test touched them.
-import { mkdtempSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { tempDir } from "./helpers.ts";
 
 /** The checkout these tests belong to. */
 export const REAL_REPO = resolve(import.meta.dir, "..");
@@ -25,7 +26,7 @@ export function isolateGit(): string {
     process.env.GIT_CEILING_DIRECTORIES = [temp, tmpdir()].join(":");
     process.env.GIT_CONFIG_GLOBAL = "/dev/null";
     process.env.GIT_CONFIG_NOSYSTEM = "1";
-    const home = mkdtempSync(join(temp, "toli-home-"));
+    const home = tempDir("home", { base: temp });
     // rustup's cargo proxy finds its toolchains under HOME; keep the real ones (read only) for the cargo checks.
     if (process.env.RUSTUP_HOME === undefined && process.env.HOME !== undefined)
         process.env.RUSTUP_HOME = join(process.env.HOME, ".rustup");

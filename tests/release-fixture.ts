@@ -25,7 +25,7 @@ const templates = new Map<string, string>();
  */
 function releaseOrigin(box: Sandbox): string {
     if (origin !== null) return origin;
-    const dir = tempDir("release-origin");
+    const dir = tempDir("release-origin", { scope: "run" });
     const bare = join(dir, "toli.git");
     const seed = join(dir, "seed");
     mkdirSync(bare);
@@ -59,7 +59,7 @@ export function releaseInstall(box: Sandbox, installed: string): void {
     const remote = releaseOrigin(box);
     let template = templates.get(installed);
     if (template === undefined) {
-        template = tempDir("release-install");
+        template = tempDir("release-install", { scope: "run" });
         box.git(template, ["init", "--initial-branch=main"]);
         box.git(template, ["remote", "add", "origin", remote]);
         box.git(template, ["fetch", "--quiet", "origin", `refs/tags/${installed}:refs/tags/${installed}`]);

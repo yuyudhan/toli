@@ -248,6 +248,16 @@ commits and tags into the real one), sets `GIT_CEILING_DIRECTORIES` to the OS te
 tag was created, moved or deleted, a branch deleted, or a branch gained a commit by the test author
 (`test@example.com`); commits other agents land on `develop` meanwhile are not counted.
 
+Tests leave nothing in the OS temp dir. Every temp dir a test needs comes from `tempDir(prefix)` in `tests/helpers.ts`
+(`sandbox()` uses it), never `mkdtempSync`: its name is `toli-<prefix>-p<pid>-*`; one made while a test runs (its
+`beforeEach` included) is removed when that test ends, any other (module level, `beforeAll`, or `scope: "run"` for a
+template built once and copied into later tests) when the run ends, a `process.exit` in a test, SIGINT, SIGTERM or
+SIGHUP included; then every dir the run made is removed again, as a process a test left running (a tick's background
+fleet check) may have written one back. Removal is best effort: a read-only dir is made writable first. A run killed
+outright, or a process still writing after the run, leaves its dirs to the next run, whose preload removes every
+`toli-*-p<pid>-*` dir whose process is gone. `tests/temp-cleanup.test.ts` runs a sample of the suite and each of those
+endings as its own `bun test` with a private `TMPDIR` and checks none is left (T2150).
+
 ## File layout
 
 Tracked (shared by all machines):

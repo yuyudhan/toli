@@ -1,15 +1,14 @@
 // A pid lock or record that outlived a reboot (T1771): the pid in it may now belong to another program, or to a
 // process started after it was written; neither holds it.
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tryPidLock } from "../src/core/pid-lock.ts";
 import { liveListener } from "../src/peer/supervise.ts";
-import { inProcess, sandbox } from "./helpers.ts";
+import { inProcess, sandbox, tempDir } from "./helpers.ts";
 
 function lockPath(): string {
-    return join(mkdtempSync(join(tmpdir(), "toli-pid-lock-")), "x.lock");
+    return join(tempDir("pid-lock"), "x.lock");
 }
 
 /** A live process whose command line names toli (`sh -c ... toli-holder`; the `; :` keeps sh from exec'ing sleep). */

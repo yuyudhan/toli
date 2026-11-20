@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
 import { leadBuildEnv } from "../src/jawans/env.ts";
 import { CARGO_SHIM, holdSlot, runs, slotBox, start, until } from "./build-slot-fixture.ts";
-import { withProject } from "./helpers.ts";
+import { tempDir, withProject } from "./helpers.ts";
 
 // The lead's calls clear the jawan markers themselves: these tests may run inside a jawan or a gate agent.
 const LEAD = { TOLI_ROLE: "", NO_MISTAKES_GATE: "" };
@@ -33,7 +32,7 @@ describe("a lead session's build variables, inherited by its native subagents", 
         expect(leadBuildEnv({ ...home, RUSTC_WRAPPER: "sccache" }, 4).TOLI_RUSTC_WRAPPER_NEXT).toBe("sccache");
         const again = { ...home, RUSTC_WRAPPER: wrapper, TOLI_RUSTC_WRAPPER_NEXT: "sccache" };
         expect(leadBuildEnv(again, 4)).toMatchObject({ RUSTC_WRAPPER: wrapper, TOLI_RUSTC_WRAPPER_NEXT: "sccache" });
-        const cargoHome = mkdtempSync(join(tmpdir(), "toli-cargo-home-"));
+        const cargoHome = tempDir("cargo-home");
         writeFileSync(join(cargoHome, "config.toml"), '[build]\nrustc-wrapper = "/opt/bin/sccache"\njobs = 4\n');
         expect(leadBuildEnv({ CARGO_HOME: cargoHome }, 4).TOLI_RUSTC_WRAPPER_NEXT).toBe("/opt/bin/sccache");
     });

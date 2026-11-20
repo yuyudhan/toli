@@ -1,14 +1,14 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { sshArgs, sshArgsAsync } from "../src/core/config.ts";
 import { run, runAsync } from "../src/core/util.ts";
+import { tempDir } from "./helpers.ts";
 
 // A control socket path must stay under ~100 bytes, which the OS temp dir on macOS leaves no room for; /tmp does.
-const root = mkdtempSync("/tmp/toli-ssh-");
+const root = tempDir("ssh", { base: "/tmp" });
 const dir = join(root, "state", "ssh");
-afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 /** Run `fn` with this file's short TOLI_ROOT, restoring the previous one after. */
 async function inRoot<T>(fn: () => T | Promise<T>): Promise<T> {

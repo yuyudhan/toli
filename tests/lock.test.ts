@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { withLock } from "../src/core/util.ts";
+import { tempDir } from "./helpers.ts";
 
 function lockPath(): string {
-    return join(mkdtempSync(join(tmpdir(), "toli-lock-")), "x.lock");
+    return join(tempDir("lock"), "x.lock");
 }
 
 /** The pid of a process that has already exited. */
