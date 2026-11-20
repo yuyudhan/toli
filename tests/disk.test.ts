@@ -106,9 +106,11 @@ describe("disk keeper", () => {
         },
     );
 
-    // T1905: a done task's worktree lost its node_modules to step 2 while its in-session subagent did a follow-up there.
+    // T1905: an open task's worktree lost its node_modules to step 2 while its in-session subagent worked there between
+    // two commands. T2107: a done task's worktree stayed held by its old jawan tag for as long as the lead session
+    // lived (one subagent id, reused task after task, held a dozen worktrees at 96% full); a follow-up reopens it.
     keeperTest(
-        "keeps the build output of a task worktree whose native jawan is live, even after the task is done",
+        "keeps the build output of an open task's worktree whose native jawan is live, never a done one's",
         () => {
             const box = keeperBox();
             box.ok(["init", "--name", "m1", "--role", "coordinator"]);
@@ -122,14 +124,17 @@ describe("disk keeper", () => {
             writeFileSync(join(tree, "web", "node_modules", "pkg", "index.js"), "1\n");
             const backlogFile = join(box.root, "data", "backlog.json");
             const backlog = JSON.parse(readFileSync(backlogFile, "utf8")) as { tasks: Record<string, unknown>[] };
-            Object.assign(backlog.tasks[0] ?? {}, {
-                status: "done",
+            const record = (fields: Record<string, unknown>): void => {
+                Object.assign(backlog.tasks[0] ?? {}, fields);
+                writeFileSync(backlogFile, JSON.stringify(backlog));
+            };
+            record({
+                status: "active",
                 agent: "T1Follow",
                 agentSession: { agent: "T1Follow", pid: process.pid },
                 dispatchedAt: new Date().toISOString(),
                 workspace: { strategy: "worktree-per-task", path: copy, branch: null, base: "main" },
             });
-            writeFileSync(backlogFile, JSON.stringify(backlog));
             box.stub("docker", "exit 1");
             box.stub("sccache", "exit 2");
             const keep = (): string =>
@@ -139,11 +144,11 @@ describe("disk keeper", () => {
             const lines = keep();
             expect(lines).toContain(`skipped ${join(tree, "web", "node_modules")}: T1's jawan T1Follow works in it`);
             expect(lines).not.toContain(`would delete ${join(tree, "web", "node_modules")}`);
-            // Once its subagent's session is gone, the worktree is idle output again.
-            Object.assign(backlog.tasks[0] ?? {}, {
-                agentSession: { agent: "T1Follow", pid: Bun.spawnSync(["true"]).pid },
-            });
-            writeFileSync(backlogFile, JSON.stringify(backlog));
+            // Done, its subagent's session still alive: the old tag holds nothing.
+            record({ status: "done", doneAt: new Date().toISOString() });
+            expect(keep()).toContain(`would delete ${join(tree, "web", "node_modules")} (`);
+            // Open again, but its subagent's session is gone: idle output too.
+            record({ status: "active", agentSession: { agent: "T1Follow", pid: Bun.spawnSync(["true"]).pid } });
             expect(keep()).toContain(`would delete ${join(tree, "web", "node_modules")} (`);
         },
     );

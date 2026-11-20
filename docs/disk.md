@@ -105,9 +105,10 @@ X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0
 
 1. Build output finished no-mistakes runs left in their worktrees, then whole `target/` folders of project checkouts
    that nothing uses. A checkout is all registered projects' clones plus their git worktrees. Nothing uses it when no
-   running jawan works in it (or, for a main clone, on its project), no live native subagent's task records it as its
-   workspace (whatever the task's status: a follow-up in a done task's worktree runs no process there between two
-   commands; `skipped <dir>: T<n>'s jawan <id> works in it`), no running gate checks it (`bin/toli gate run`, `push
+   running jawan works in it (or, for a main clone, on its project), no live native subagent's open task records it as
+   its workspace (a jawan between two commands runs no process there; `skipped <dir>: T<n>'s jawan <id> works in
+it`; a done or dropped task's old jawan tag holds nothing, since that subagent lives on in the lead session and
+   moves to other tasks: a follow-up reopens the task first), no running gate checks it (`bin/toli gate run`, `push
 --gate`, the pre-push hook; `skipped <dir>: a gate of <project> (pid N) runs in it`), and no process has its working
    directory inside it. The same check holds `node_modules/` and `dist/` in step 2. The wipe still takes cargo's locks
    and checks that no process and no live build uses the target (below and
@@ -247,8 +248,10 @@ A live build is a running `cargo` (`cargo`, `cargo-clippy`, `cargo-nextest`, ...
 slot ([fleet.md](fleet.md), "Heavy-build slots"), or a running gate (`bin/toli gate run`, `push --gate`, the pre-push
 hook: a `running` record in `state/gates/<project>/` whose runner is alive, building in the checkout it names). It
 compiles into the `CARGO_TARGET_DIR` in its environment when one is set (relative to its working directory, as cargo
-reads it), else into the target of the workspace it works in or above (a `just` recipe or a gate runs cargo from a
-checkout's top); an argument naming a path in a target (`--target-dir`, rustc's `--out-dir`) or a workspace's
+reads it), else into the target of the workspace it works in, or above it within the same git checkout (a `just`
+recipe or a gate runs cargo from a checkout's top); a build above the checkout holding the workspace, such as a slot
+held from toli's own checkout above every task worktree under `projects/`, builds none of that checkout's targets.
+An argument naming a path in a target (`--target-dir`, rustc's `--out-dir`) or a workspace's
 `Cargo.toml` (`--manifest-path` from elsewhere) uses that target too. The keeper reads cargo and rustc processes from
 `/proc/<pid>/comm`, `cwd`, `environ` and `cmdline` on Linux, and from `ps -E` and `lsof -d cwd` on macOS; a slot's
 holder writes its working directory and `CARGO_TARGET_DIR` into the slot's lock file (`state/build-slots/<n>.lock`)

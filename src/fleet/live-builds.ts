@@ -64,14 +64,17 @@ function pathArgs(args: readonly string[], cwd: string | null): string[] {
 
 /**
  * Why a live build uses `target`, naming it, or null when none does. A build told a CARGO_TARGET_DIR uses that folder
- * only; any other builds into the target of the workspace it works in (the folder holding `target`), or above it, as
- * `just` and a gate run cargo from a checkout's top. Either way an argument naming a path under `target`, or the
- * workspace's Cargo.toml (`--manifest-path` from elsewhere), uses it too.
+ * only; any other builds into the target of the workspace it works in (the folder holding `target`), or above it within
+ * the same git checkout, as `just` and a gate run cargo from a checkout's top. A build above the checkout holding the
+ * workspace (one held from toli's own checkout, above every task worktree under `projects/`) builds none of its
+ * targets (T2107). Either way an argument naming a path under `target`, or the workspace's Cargo.toml
+ * (`--manifest-path` from elsewhere), uses it too.
  */
 export function liveBuildUse(target: string, builds: readonly LiveBuild[]): string | null {
     const dir = real(target);
     const workspace = dirname(dir);
     const manifest = join(workspace, "Cargo.toml");
+    const checkout = checkoutTop(workspace);
     const roots = new Set(["/", real(homedir())]);
     for (const build of builds) {
         const arg = build.args.find((path) => within(real(path), dir) || real(path) === manifest);
@@ -83,10 +86,18 @@ export function liveBuildUse(target: string, builds: readonly LiveBuild[]): stri
         }
         if (build.cwd === null) continue;
         const cwd = real(build.cwd);
-        if (within(cwd, workspace) || (!roots.has(cwd) && within(workspace, cwd)))
-            return `${build.label} builds in ${cwd}`;
+        const above = !roots.has(cwd) && within(workspace, cwd) && (checkout === null || within(cwd, checkout));
+        if (within(cwd, workspace) || above) return `${build.label} builds in ${cwd}`;
     }
     return null;
+}
+
+/** The top of the git checkout or worktree holding `dir` (the nearest folder with a `.git`), or null outside git. */
+function checkoutTop(dir: string): string | null {
+    for (let at = dir; ; at = dirname(at)) {
+        if (existsSync(join(at, ".git"))) return at;
+        if (dirname(at) === at) return null;
+    }
 }
 
 /** Each of `targets` still on disk that a live build uses, with why (the disk keeper's `left in use`). */

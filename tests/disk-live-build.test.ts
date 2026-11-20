@@ -84,6 +84,26 @@ describe("a live build's target", () => {
         });
         expect(slotHolder(backend, {})).toEqual({ cwd: backend, targetDir: null });
     });
+
+    // T2107: a build slot held from toli's own checkout marked every task worktree's target under projects/ in use.
+    test("from above, is only the target of a workspace in the checkout it works in, never a nested checkout's", () => {
+        const root = realpathSync(tempDir("builds"));
+        mkdirSync(join(root, ".git"));
+        const tree = join(root, "projects", ".worktrees", "alpha", "T1");
+        const target = join(tree, "apps", "backend", "target");
+        mkdirSync(target, { recursive: true });
+        writeFileSync(join(tree, ".git"), "gitdir: /elsewhere\n");
+        const slot = (cwd: string): LiveBuild[] => [
+            { label: "heavy-build slot 1 (pid 7)", cwd, targetDir: null, args: [] },
+        ];
+        expect(liveBuildUse(target, slot(root))).toBeNull();
+        expect(liveBuildUse(target, slot(join(root, "projects")))).toBeNull();
+        expect(liveBuildUse(target, slot(tree))).toBe(`heavy-build slot 1 (pid 7) builds in ${tree}`);
+        expect(liveBuildUse(target, slot(join(tree, "apps")))).toBe(
+            `heavy-build slot 1 (pid 7) builds in ${join(tree, "apps")}`,
+        );
+        expect(liveBuildUse(join(root, "target"), slot(root))).toBe(`heavy-build slot 1 (pid 7) builds in ${root}`);
+    });
 });
 
 describe("the disk keeper beside live builds", () => {

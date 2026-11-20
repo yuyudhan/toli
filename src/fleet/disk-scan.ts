@@ -152,15 +152,20 @@ export function currentHolders(): Holders {
 }
 
 /**
- * The recorded workspace of every task whose native subagent is live (agentState, as the jawan count reads it),
- * whatever the task's status: a jawan doing a follow-up in a done task's worktree runs no process there between two
- * commands, and the run records cover only `bin/toli spawn` jawans (T1905).
+ * The recorded workspace of every open task whose native subagent is live (agentState, as the jawan count reads it):
+ * a jawan between two commands runs no process there, and the run records cover only `bin/toli spawn` jawans (T1905).
+ * A done or dropped task's tag holds nothing: its subagent lives on in the lead session and moves to other tasks, so
+ * the tag would hold the worktree for as long as that session lives (T2107); a follow-up reopens the task first.
  */
 function subagentWorkspaces(): Holders["tasks"] {
     const at = now();
     const grace = staleTaskMinutes();
     return loadBacklog().tasks.flatMap((task) =>
-        task.workspace !== undefined && nativeAgent(task) && agentState(task, at, grace).state === "live"
+        task.workspace !== undefined &&
+        task.status !== "done" &&
+        task.status !== "dropped" &&
+        nativeAgent(task) &&
+        agentState(task, at, grace).state === "live"
             ? [{ path: real(task.workspace.path), why: `${task.id}'s jawan ${task.agent} works in it` }]
             : [],
     );
@@ -186,7 +191,7 @@ function processCwds(): Map<string, string> {
 
 /**
  * Why `checkout` is in use, or null when nothing uses it: a running jawan whose directory is inside it (or, for the
- * main clone, a running jawan of its project working elsewhere), a live native subagent whose task's recorded
+ * main clone, a running jawan of its project working elsewhere), a live native subagent whose open task's recorded
  * workspace is this worktree (never the main clone, whose build output has rules of its own), a running gate checking
  * it, or a process whose working directory is inside it.
  */
