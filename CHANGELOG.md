@@ -27,6 +27,14 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli delegate` and `bin/toli talk` no longer hang on a peer that stops answering. Behind a flapping VPN a
+  delegate tried HTTPS for up to 60 s then ssh for up to 120 s with no output, so `timeout` killed it; each killed run
+  left its item locked for 10 minutes, `outbox list` said "the outbox is empty", and every rerun queued another copy.
+  A send someone waits for now gets a few seconds (5 s per HTTPS request including the verify-only check, 5 s to
+  connect and 10 s in all over ssh), then says `queued for <machine>` and leaves the item to the minute tick, which
+  sends it with the full timeouts. An item whose sending process is gone goes back to the queue at once (pid check),
+  `outbox list` shows items being sent with `sending (pid N)` (`state` and `pid` in `--json`), and a rerun of the
+  same delegation sends the copy already queued instead of making another (docs/peers.md "The queue", T2126).
 - A queued jawan run for a task that is dropped or done never starts. Tasks dropped as duplicates still had their
   queued `bin/toli spawn` runs start hours later. `bin/toli task drop`, `task done` and `task handback` now cancel the
   task's queued runs (`T<n>: cancelled queued run <id>; it never started`), and the queue drain reads each run's

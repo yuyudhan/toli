@@ -215,12 +215,20 @@ its own active peers, and only a sender's own items.
 
 ## The queue
 
-`bin/toli outbox list [--to <m>]` shows what waits, to whom and for how long; `fleet status` and the digest add a
-"waiting to send: 3 to beta, oldest 2 d" line per machine. When a machine's oldest item has waited 1 hour, 1 day and
-then each further day, the tick posts one inbox item here per machine and threshold. `outbox cancel <id>|--to <m>`
-and `outbox expire --older <N>d` give up on items; they move to `state/outbox/cancelled/` (`outbox list
---cancelled`) with an inbox note. Nothing expires by itself and nothing is dropped silently. `peer remove` cancels
-what waits for that peer the same way.
+`bin/toli outbox list [--to <m>]` shows what waits, to whom and for how long, and what a live process is sending
+right now (`sending (pid N)`); `fleet status` and the digest add a "waiting to send: 3 to beta, oldest 2 d" line per
+machine. When a machine's oldest item has waited 1 hour, 1 day and then each further day, the tick posts one inbox
+item here per machine and threshold. `outbox cancel <id>|--to <m>` and `outbox expire --older <N>d` give up on items;
+they move to `state/outbox/cancelled/` (`outbox list --cancelled`) with an inbox note. Nothing expires by itself and
+nothing is dropped silently. `peer remove` cancels what waits for that peer the same way.
+
+A send someone waits for (`talk`, `delegate`, `share`) is written to the queue first and tried for a few seconds: 5 s
+per HTTPS request (`peer flush --quick`; `delegate`'s verify-only check too), and over ssh 5 s to connect and 10 s in
+all. A peer that does not answer in time gets `queued for <peer>` and the item from the minute tick, with the full
+timeouts. While an item is being sent it is renamed `<id>.json.sending-<pid>`; when that process is gone (killed
+mid-send) the next read of the queue puts it back at once, and a claim older than 10 minutes is put back too. Running
+the same `delegate` again (same sender, `--for` task, project, title and brief) while a copy waits sends that copy,
+under its id, instead of queueing another; while a live process sends it, the rerun only says so.
 
 ## Finding peers
 

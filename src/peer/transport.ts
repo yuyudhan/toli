@@ -40,11 +40,13 @@ export function sshFallback(): boolean {
 
 /**
  * Flush `target` (a peer's name, or every peer) over HTTPS in a subprocess and return what it did. `own` names an item
- * whose sender records its answer itself (`sendNow`'s caller), so the delegation hook skips it.
+ * whose sender records its answer itself (`sendNow`'s caller), so the delegation hook skips it; `quick` bounds each
+ * request to QUICK_MS (`peer flush --quick`), for a send someone waits for.
  */
-export function flushSync(target: string | null, own?: string): Flush[] {
+export function flushSync(target: string | null, own?: string, quick = false): Flush[] {
     const argv = [process.execPath, paths.codeBin(), "peer", "flush", ...(target === null ? ["--all"] : [target])];
     if (own !== undefined) argv.push("--own", own);
+    if (quick) argv.push("--quick");
     const result = run([...argv, "--json"], {
         cwd: paths.root(),
         env: { TOLI_ROOT: paths.root() },

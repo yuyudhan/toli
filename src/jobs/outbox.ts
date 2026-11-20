@@ -6,7 +6,7 @@
 // other (src/peer/relay.ts); other machines, and a peer HTTPS cannot reach while `peer.sshFallback` is on, get them
 // over ssh. Items for a machine that takes no inbound ssh (`inbound: false`) and no HTTPS wait here until it pulls
 // them (src/jobs/pull.ts, or /v1/outbox/pending).
-import { existsSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
     type Fleet,
@@ -24,6 +24,7 @@ import { recordStat } from "../peer/client.ts";
 import { flushSync, httpPeer, pullingPeer, relayedPeer, sendRelayed, sshFallback } from "../peer/transport.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { cancelItems } from "./outbox-admin.ts";
+import { queuedItems } from "./outbox-queue.ts";
 import { Reach } from "./reach.ts";
 import { refusalOf } from "./refusal.ts";
 
@@ -59,10 +60,14 @@ export function queueOutbox(machine: Machine, title: string, body: string, id: s
     } satisfies OutboxItem);
 }
 
-const SENDING_STALE_MS = 10 * 60 * 1000;
 const DELIVERY_TIMEOUT_MS = 120_000;
 /** A queued item's delivery waits this long for a connection; one the tick could not make, it retries later. */
 const DELIVERY_CONNECT_SECONDS = 5;
+/**
+ * An ssh send someone waits for (`sendNow`) ends here: a shared connection over a link that went dead takes no new
+ * connection, so ConnectTimeout alone never ends it. The tick sends what it left queued, with DELIVERY_TIMEOUT_MS.
+ */
+const SEND_NOW_MS = 10_000;
 
 function parseAnswer(body: string): AnswerBody {
     const value: unknown = JSON.parse(body);
@@ -120,32 +125,6 @@ export function itemTarget(
     return item?.to ?? (machine.role === "worker" ? machine.coordinator : undefined);
 }
 
-/** One queued file and its item. */
-export type Queued = { file: string; item: OutboxItem };
-
-/** Queued items (`<id>.json`, never one claimed for sending), oldest first: by `queuedAt`, then mtime, then name. */
-export function queuedItems(): Queued[] {
-    const dir = paths.outboxDir();
-    if (!existsSync(dir)) return [];
-    const entries: Array<Queued & { at: number }> = [];
-    for (const file of readdirSync(dir).filter((entry) => entry.endsWith(".json"))) {
-        const path = join(dir, file);
-        const item = readJson<OutboxItem | null>(path, null);
-        if (item === null) continue;
-        let at = item.queuedAt;
-        if (at === undefined) {
-            try {
-                at = statSync(path).mtimeMs;
-            } catch {
-                continue;
-            }
-        }
-        entries.push({ file, item, at });
-    }
-    entries.sort((a, b) => a.at - b.at || a.file.localeCompare(b.file));
-    return entries.map(({ file, item }) => ({ file, item }));
-}
-
 /** `held`: items left queued without an ssh call, as their host failed earlier in the pass or is backed off. */
 export type DeliveryResult = {
     delivered: number;
@@ -172,12 +151,6 @@ export function deliverOutbox(
     const dir = paths.outboxDir();
     const result: DeliveryResult = { delivered: 0, pending: 0, awaitingPull: 0, held: 0, errors: [] };
     if (!existsSync(dir)) return result;
-    for (const file of readdirSync(dir)) {
-        const sending = /^(.*\.json)\.sending-\d+$/.exec(file);
-        if (sending && Date.now() - statSync(join(dir, file)).mtimeMs > SENDING_STALE_MS) {
-            renameSync(join(dir, file), join(dir, sending[1] as string));
-        }
-    }
     const fleet = loadFleet();
     const held = new Map<string, { items: number; why: string }>();
     // Paired peers first, over HTTPS (one subprocess for all of them); what it could not reach may go over ssh.
@@ -297,9 +270,10 @@ export function queuedText(name: string, sent: { pulled: boolean; refused?: stri
 }
 
 /**
- * Send one item to a fleet machine now. It is written to the outbox already claimed by this process, so the tick
- * never sends it at the same time; when the target is unreachable it is released into the queue and the minute tick
- * retries it. For a target that takes no inbound ssh it is only queued: that machine pulls it.
+ * Send one item to a fleet machine now, within a few seconds (QUICK_MS over HTTPS, SEND_NOW_MS over ssh): its caller
+ * waits. It is written to the outbox already claimed by this process, so the tick never sends it at the same time;
+ * when the target does not answer in time it is released into the queue and the minute tick retries it, with the full
+ * timeouts. For a target that takes no inbound ssh it is only queued: that machine pulls it.
  */
 export function sendNow(
     from: string,
@@ -318,7 +292,7 @@ export function sendNow(
     let httpsFailed: string | null = null;
     if (peer !== undefined) {
         writeJsonAtomic(queued, item);
-        const flushed = flushSync(peer.name, id)[0];
+        const flushed = flushSync(peer.name, id, true)[0];
         const receipt = flushed?.receipts.find((entry) => entry.id === id);
         if (receipt?.status === "applied" || receipt?.status === "duplicate")
             return { delivered: true, stdout: receipt.stdout };
@@ -350,9 +324,9 @@ export function sendNow(
     const claimed = `${queued}.sending-${process.pid}`;
     if (peer === undefined) writeJsonAtomic(claimed, item);
     const started = performance.now();
-    const sent = run([...sshArgs(to.ssh), remoteCommand(item, to.root)], {
+    const sent = run([...sshArgs(to.ssh, DELIVERY_CONNECT_SECONDS), remoteCommand(item, to.root)], {
         stdin: body,
-        timeoutMs: DELIVERY_TIMEOUT_MS,
+        timeoutMs: SEND_NOW_MS,
     });
     recordSsh(to.name, id, item, started, sent.code);
     if (sent.code === 0) {
@@ -366,7 +340,9 @@ export function sendNow(
         return { delivered: false, pulled: false, refused, error: `${to.name ?? to.ssh} refused it: ${refused}` };
     }
     renameSync(claimed, queued);
-    const sshError = `ssh ${to.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`;
+    const sshError = sent.timedOut
+        ? `ssh ${to.ssh}: no answer within ${SEND_NOW_MS / 1000} s`
+        : `ssh ${to.ssh} exited ${sent.code}: ${(sent.stderr || sent.stdout).trim()}`;
     return { delivered: false, pulled: false, error: httpsFailed === null ? sshError : `${httpsFailed}; ${sshError}` };
 }
 

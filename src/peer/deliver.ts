@@ -10,8 +10,9 @@ import { join } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, now, runAsync, warn } from "../core/util.ts";
-import type { OutboxItem, Queued } from "../jobs/outbox.ts";
+import type { OutboxItem } from "../jobs/outbox.ts";
 import { cancelItems, itemsFor } from "../jobs/outbox-admin.ts";
+import type { Queued } from "../jobs/outbox-queue.ts";
 import { notePuller } from "../jobs/pull.ts";
 import { controlEnvelope, postPeer, recordStat, Unreachable } from "./client.ts";
 import { type Envelope, type Receipt, sealEnvelope } from "./envelope.ts";
@@ -81,9 +82,10 @@ function release(items: Claimed[]): void {
 /**
  * Send what waits for `peer`, batch after batch, until the queue is empty or a batch stops (unreachable, deferred,
  * failed). `onDelivered` sees every applied or duplicate item and what the receiver printed. A peer with no address
- * and a relay (`via`) gets its items through that relay instead (src/peer/relay.ts).
+ * and a relay (`via`) gets its items through that relay instead (src/peer/relay.ts). `budgetMs` bounds each batch's
+ * request (postPeer): a send someone waits for passes QUICK_MS.
  */
-export async function flushPeer(peer: Peer, onDelivered?: OnDelivered): Promise<Flush> {
+export async function flushPeer(peer: Peer, onDelivered?: OnDelivered, budgetMs?: number): Promise<Flush> {
     if (!pushable(peer) && peer.via !== undefined) return await flushRelayed(peer, onDelivered);
     const flush: Flush = { peer: peer.name, sent: 0, receipts: [] };
     for (;;) {
@@ -92,7 +94,7 @@ export async function flushPeer(peer: Peer, onDelivered?: OnDelivered): Promise<
         const envelopes = batch.map(({ file, item }) => itemEnvelope(peer, file, item));
         let answer: Awaited<ReturnType<typeof postPeer>>;
         try {
-            answer = await postPeer(peer, "/v1/messages", { envelopes });
+            answer = await postPeer(peer, "/v1/messages", { envelopes }, budgetMs);
         } catch (error) {
             release(batch);
             if (!(error instanceof Unreachable)) throw error;
@@ -234,9 +236,12 @@ routes.set("POST /v1/status", async (request, context) => {
     return new Response(result.stdout, { headers: { "content-type": "application/json" } });
 });
 
-/** `bin/toli peer ask <peer> status`: that machine's `resources --json`, over HTTPS. */
-export async function askStatus(peer: Peer): Promise<{ value: Record<string, unknown>; ms: number }> {
-    const answer = await postPeer(peer, "/v1/status", controlEnvelope(peer, "status", {}));
+/** `bin/toli peer ask <peer> status`: that machine's `resources --json`, over HTTPS, within `budgetMs` if given. */
+export async function askStatus(
+    peer: Peer,
+    budgetMs?: number,
+): Promise<{ value: Record<string, unknown>; ms: number }> {
+    const answer = await postPeer(peer, "/v1/status", controlEnvelope(peer, "status", {}), budgetMs);
     recordStat({
         peer: peer.name,
         id: "status",

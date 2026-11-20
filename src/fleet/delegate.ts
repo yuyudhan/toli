@@ -3,14 +3,16 @@
 // `delegatedBy` naming this machine), saves the brief, and posts it to that machine's inbox, which wakes its lead; that
 // lead dispatches its own jawans. The task's results and questions come back by themselves
 // (src/records/delegation-report.ts).
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
 import { type FleetMachine, fleetMachine, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { out, readJson, requireName, stamp, ToliError, warn } from "../core/util.ts";
+import { out, requireName, stamp, ToliError, warn } from "../core/util.ts";
 import { parseOptionalTier } from "../harness/models.ts";
-import { type Delivered, type OutboxItem, queuedText, sendNow } from "../jobs/outbox.ts";
+import { type Delivered, queuedText, sendNow } from "../jobs/outbox.ts";
+import { queuedItems, sendingItems } from "../jobs/outbox-queue.ts";
+import { QUICK_MS } from "../peer/client.ts";
 import { bodyLimit, TITLE_MAX } from "../peer/envelope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
@@ -76,7 +78,7 @@ export function onOutboxDelivered({ item, stdout }: Delivered): void {
  * receive` then hands the work back).
  */
 async function verifyOnlyRefusal(target: FleetMachine, project: string): Promise<string | null> {
-    const entry = await probeMachine(target);
+    const entry = await probeMachine(target, QUICK_MS);
     if (entry.resources === null || !refusesShip(entry.resources, project)) return null;
     const pick = await pickMachine(project, "ship");
     const next =
@@ -90,24 +92,25 @@ async function verifyOnlyRefusal(target: FleetMachine, project: string): Promise
 }
 
 /**
- * The id of a delegation of the same work (delegationKey) already waiting in this machine's outbox for `target`,
- * queued or being sent; null when there is none. A lead that runs `delegate` again while the target is unreachable
- * (or takes no inbound ssh) gets that copy instead of queueing another.
+ * A delegation of the same work (delegationKey) already waiting in this machine's outbox for `target`: `sending` when
+ * a live process is sending it right now (a claim whose process died is back in the queue first,
+ * src/jobs/outbox-queue.ts); null when there is none. A lead that runs `delegate` again (the target was unreachable,
+ * or a run was killed mid-send) sends that copy instead of queueing another.
  */
-function queuedCopy(target: string, key: string): string | null {
-    const dir = paths.outboxDir();
-    if (!existsSync(dir)) return null;
-    for (const file of readdirSync(dir)) {
-        if (!/\.json(\.sending-\d+)?$/.test(file)) continue;
-        const item = readJson<OutboxItem | null>(join(dir, file), null);
-        if (item?.kind !== "delegation" || item.to?.name !== target) continue;
+function queuedCopy(target: string, key: string): { delegation: Delegation; sending: boolean } | null {
+    const copies = [
+        ...sendingItems().map(({ item }) => ({ item, sending: true })),
+        ...queuedItems().map(({ item }) => ({ item, sending: false })),
+    ];
+    for (const { item, sending } of copies) {
+        if (item.kind !== "delegation" || item.to?.name !== target) continue;
         let delegation: Delegation;
         try {
             delegation = parseDelegation(item.body);
         } catch {
             continue;
         }
-        if (delegationKey(delegation) === key) return delegation.id;
+        if (delegationKey(delegation) === key) return { delegation, sending };
     }
     return null;
 }
@@ -187,36 +190,46 @@ export async function delegateCommand(argv: string[]): Promise<number> {
         if (refusal !== null) throw new ToliError(refusal);
     }
     const earlier = queuedCopy(target.name, delegationKey(delegation));
-    const outboxId = `delegation-${delegation.id}`;
-    if (forTask !== undefined) updateTask(forTask, (task) => noteSending(task, target.name, delegation.id));
-    const sent = sendNow(self, target, "delegation", `${TITLE_PREFIX}${title}`, body, outboxId);
-    const unsent = (): void => {
-        if (forTask !== undefined) updateTask(forTask, (task) => landSending(task, target.name, delegation.id));
-    };
+    if (earlier?.sending === true) {
+        out(
+            `already queued for ${target.name} (${earlier.delegation.id}) and being sent now: its task id arrives here as a wake; do not delegate it again`,
+        );
+        return 0;
+    }
+    // The same work already queued goes now as that copy, under its id: never a second one for the target to receive.
+    const sending = earlier?.delegation ?? delegation;
+    const outboxId = `delegation-${sending.id}`;
+    if (earlier !== null) rmSync(join(paths.outboxDir(), `${outboxId}.json`), { force: true });
+    if (forTask !== undefined) updateTask(forTask, (task) => noteSending(task, target.name, sending.id));
+    const sent = sendNow(
+        self,
+        target,
+        "delegation",
+        `${TITLE_PREFIX}${sending.title}`,
+        JSON.stringify(sending),
+        outboxId,
+    );
     if (!sent.delivered) {
         // A refusal is final and the item already sits in state/outbox/cancelled/: nothing is queued to retry.
         if (sent.refused !== undefined) {
-            unsent();
+            if (forTask !== undefined) updateTask(forTask, (task) => landSending(task, target.name, sending.id));
             throw new ToliError(queuedText(target.name, sent));
         }
         if (!sent.pulled) warn(sent.error);
         if (earlier !== null) {
-            // The same work already waits in the outbox: keep that copy, never a second one for the target to receive.
-            rmSync(join(paths.outboxDir(), `${outboxId}.json`), { force: true });
-            unsent();
             out(
-                `already queued for ${target.name} (${earlier}): that copy goes when it can, and its task id arrives here as a wake; do not delegate it again`,
+                `already queued for ${target.name} (${sending.id}): that copy goes when it can, and its task id arrives here as a wake; do not delegate it again`,
             );
             return 0;
         }
         out(
             sent.pulled
-                ? `${queuedText(target.name, sent)}; its task id arrives here as a wake (${delegation.id}); do not delegate it again`
-                : `queued: ${target.name} is unreachable; the minute tick retries, and its task id arrives here as a wake (${delegation.id}); do not delegate it again`,
+                ? `${queuedText(target.name, sent)}; its task id arrives here as a wake (${sending.id}); do not delegate it again`
+                : `queued: ${target.name} is unreachable; the minute tick retries, and its task id arrives here as a wake (${sending.id}); do not delegate it again`,
         );
         return 0;
     }
-    const id = acceptDelegation(delegation, sent.stdout);
+    const id = acceptDelegation(sending, sent.stdout);
     const existing = ACCEPTED.exec(sent.stdout)?.[2] === "existing";
     const handedBack = HANDED_BACK.exec(sent.stdout)?.[1];
     if (handedBack !== undefined) {

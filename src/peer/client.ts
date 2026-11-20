@@ -13,6 +13,11 @@ import { DEFAULT_PORT, type Peer, updatePeers } from "./store.ts";
 
 const CONNECT_MS = 5_000;
 const REQUEST_MS = 120_000;
+/**
+ * The whole budget of a send someone waits for (`talk`, `delegate`, the checks before them): a peer that does not
+ * answer within it gets the item from the queue later (the minute tick, with REQUEST_MS), not by holding the caller.
+ */
+export const QUICK_MS = 5_000;
 
 export type Answer = { status: number; value: Record<string, unknown>; addr: string; ms: number };
 
@@ -24,14 +29,14 @@ export class Unreachable extends Error {}
  * is destroyed, never just ended: `end()` only half-closes it, and against a peer that never closes its side (a
  * firewall that drops the reset) the socket sat in FIN-WAIT-2 and kept the process alive for good (T1339).
  */
-async function opens(addr: string): Promise<string | null> {
+async function opens(addr: string, connectMs: number): Promise<string | null> {
     const { host, port } = splitHostPort(addr, DEFAULT_PORT);
     const { promise, resolve } = Promise.withResolvers<string | null>();
     const socket = connect({ host, port });
     const timer = setTimeout(() => {
         socket.destroy();
-        resolve(`no answer within ${CONNECT_MS / 1000} s`);
-    }, CONNECT_MS);
+        resolve(`no answer within ${connectMs / 1000} s`);
+    }, connectMs);
     socket.once("connect", () => {
         clearTimeout(timer);
         socket.destroy();
@@ -47,24 +52,32 @@ async function opens(addr: string): Promise<string | null> {
 
 /**
  * POST `body` to `path` on `peer`, trying each address until one answers (any HTTP status is an answer). The address
- * that answered moves first in config/peers.json. Throws Unreachable when none does.
+ * that answered moves first in config/peers.json. Throws Unreachable when none does. `budgetMs` bounds the whole call,
+ * every address included; without it each address gets CONNECT_MS to connect and REQUEST_MS to answer.
  */
-export async function postPeer(peer: Peer, path: string, body: unknown): Promise<Answer> {
+export async function postPeer(peer: Peer, path: string, body: unknown, budgetMs?: number): Promise<Answer> {
     const errors: string[] = [];
+    const deadline = budgetMs === undefined ? undefined : performance.now() + budgetMs;
     for (const addr of peer.addrs) {
+        const left = deadline === undefined ? REQUEST_MS : Math.round(deadline - performance.now());
+        if (left <= 0) {
+            errors.push(`${addr}: not tried, ${budgetMs} ms spent`);
+            continue;
+        }
         const started = performance.now();
-        const closed = await opens(addr);
+        const closed = await opens(addr, Math.min(CONNECT_MS, left));
         if (closed !== null) {
             errors.push(`${addr}: ${closed}`);
             continue;
         }
+        const answerMs = deadline === undefined ? REQUEST_MS : Math.max(1, Math.round(deadline - performance.now()));
         try {
             const response = await fetch(`https://${addr}${path}`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify(body),
                 tls: { ca: peer.cert, serverName: TLS_NAME },
-                signal: AbortSignal.timeout(REQUEST_MS),
+                signal: AbortSignal.timeout(answerMs),
             });
             const value: unknown = await response.json().catch(() => ({}));
             const ms = Math.round(performance.now() - started);

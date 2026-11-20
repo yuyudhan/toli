@@ -4,14 +4,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError } from "../core/util.ts";
-import type { Stat } from "./client.ts";
+import { QUICK_MS, type Stat } from "./client.ts";
 import { askStatus, delegationHook, type Flush, flushAll, flushPeer, type OnDelivered } from "./deliver.ts";
 import { type PeerPull, pullPeers } from "./pull-peers.ts";
 import { requirePeer } from "./store.ts";
 
-/** `peer flush <peer>|--all [--own <id>] [--json]`: deliver now over HTTPS (the outbox runs this as a subprocess). */
+/**
+ * `peer flush <peer>|--all [--own <id>] [--quick] [--json]`: deliver now over HTTPS (the outbox runs this as a
+ * subprocess). `--quick`: each request gets QUICK_MS, for a send someone waits for (src/jobs/outbox.ts `sendNow`).
+ */
 export async function flushCommand(argv: string[]): Promise<void> {
-    const args = new Args(argv, { booleans: ["all", "json"], values: ["own"] });
+    const args = new Args(argv, { booleans: ["all", "json", "quick"], values: ["own"] });
     args.maxPositional(1);
     const own = args.str("own");
     const hook = await delegationHook();
@@ -20,7 +23,10 @@ export async function flushCommand(argv: string[]): Promise<void> {
     };
     let flushes: Flush[];
     if (args.bool("all")) flushes = await flushAll(onDelivered);
-    else flushes = [await flushPeer(requirePeer(args.pos(0, "peer")), onDelivered)];
+    else
+        flushes = [
+            await flushPeer(requirePeer(args.pos(0, "peer")), onDelivered, args.bool("quick") ? QUICK_MS : undefined),
+        ];
     if (args.bool("json")) {
         printJson(flushes);
         return;

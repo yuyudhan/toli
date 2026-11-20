@@ -1,10 +1,13 @@
 // Delivery to paired peers over HTTPS and the one outbox (docs/peers.md "Delivery"): two real installations, the
 // receiver's listener on 127.0.0.1, the sender's `talk` and outbox. An offline peer keeps its items in order and gets
 // each exactly once (a lost receipt included); a refused item moves to cancelled/ with a note; an announce delivers
-// at once, as one wake; a peer without a listener pulls; status is asked over HTTPS; waiting alerts fire once.
+// at once, as one wake; a peer without a listener pulls; status is asked over HTTPS; waiting alerts fire once. A peer
+// that accepts the connection and never answers costs a sender a few seconds, not minutes; a claim left by a dead
+// process goes back to the queue at once, and `outbox list` shows a claim still held.
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pidAlive } from "../src/core/util.ts";
 import { postWaitingAlerts } from "../src/jobs/outbox-admin.ts";
 import type { Permission } from "../src/peer/store.ts";
 import { inProcess } from "./helpers.ts";
@@ -12,9 +15,25 @@ import { type PeerBox, peerBox, pin } from "./peer-fixture.ts";
 import { type Listening, serve } from "./peer-serve-fixture.ts";
 
 const running: Listening[] = [];
+const stalls: Array<{ stop(closeActive?: boolean): void }> = [];
 afterEach(async () => {
     for (const listening of running.splice(0)) await listening.stop();
+    for (const stall of stalls.splice(0)) stall.stop(true);
 });
+
+/** A port that accepts connections and never answers on them, as a peer behind a flapping VPN did (T2126). */
+function stallingPort(): number {
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    stalls.push(server);
+    return server.port;
+}
+
+/** The pid of a process that has already exited. */
+function deadPid(): number {
+    const pid = Bun.spawnSync(["true"]).pid;
+    if (pidAlive(pid)) throw new Error(`pid ${pid} is still alive`);
+    return pid;
+}
 
 async function start(box: PeerBox, env: Record<string, string> = {}): Promise<Listening> {
     const listening = await serve(box, env);
@@ -65,8 +84,10 @@ function talks(box: PeerBox, from: string): string[] {
         .map((item) => /\n\n([^\n]+)\n/.exec(item.body.split("- received:")[1] ?? "")?.[1] ?? item.body);
 }
 
-function queued(box: PeerBox): Array<{ id: string; to: string; title: string }> {
-    return JSON.parse(box.box.ok(["outbox", "list", "--json"])) as Array<{ id: string; to: string; title: string }>;
+type Row = { id: string; to: string; kind: string; title: string; state: string; pid?: number };
+
+function queued(box: PeerBox): Row[] {
+    return JSON.parse(box.box.ok(["outbox", "list", "--json"])) as Row[];
 }
 
 async function until(check: () => boolean, ms = 20_000): Promise<void> {
@@ -226,5 +247,64 @@ describe("delivery to a paired peer over HTTPS", () => {
         const outbox = join(alpha.box.root, "state", "outbox", "cancelled");
         expect(readdirSync(outbox).filter((file) => file.endsWith(".json"))).toHaveLength(1);
         renameSync(outbox, `${outbox}-seen`);
+    });
+});
+
+describe("a peer that does not answer (T2126)", () => {
+    test("talk to a peer that accepts and never answers is queued within seconds", () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        link(alpha, beta, { bAddr: `127.0.0.1:${stallingPort()}` });
+        const started = Date.now();
+        const sent = alpha.box.toli(["talk", "beta", "are you there?"]);
+        expect(Date.now() - started).toBeLessThan(15_000);
+        expect(sent.code).toBe(0);
+        expect(sent.stdout).toContain("queued for beta");
+        expect(queued(alpha).map((item) => [item.to, item.state])).toEqual([["beta", "queued"]]);
+    });
+
+    test("delegate to a peer that accepts and never answers is queued within seconds", () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        link(alpha, beta, { bAddr: `127.0.0.1:${stallingPort()}` });
+        const brief = join(alpha.box.root, "brief.md");
+        writeFileSync(brief, "TOLI_BRIEF v1\n# no-op\nReply done.\n");
+        const started = Date.now();
+        const sent = alpha.box.toli(["delegate", "beta", "later", "--brief", brief]);
+        expect(Date.now() - started).toBeLessThan(20_000);
+        expect(sent.code).toBe(0);
+        expect(sent.stdout).toContain("queued for beta");
+        expect(queued(alpha).map((item) => [item.to, item.kind, item.state])).toEqual([
+            ["beta", "delegation", "queued"],
+        ]);
+    });
+
+    test("an item claimed by a process that died goes back to the queue at once and is delivered", async () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        const port = freePort();
+        link(alpha, beta, { bAddr: `127.0.0.1:${port}` });
+        expect(alpha.box.ok(["talk", "beta", "left behind"])).toContain("queued for beta");
+        const id = queued(alpha)[0]?.id ?? "";
+        const outbox = join(alpha.box.root, "state", "outbox");
+        renameSync(join(outbox, `${id}.json`), join(outbox, `${id}.json.sending-${deadPid()}`));
+        expect(queued(alpha).map((entry) => [entry.id, entry.state])).toEqual([[id, "queued"]]);
+        expect(readdirSync(outbox)).toEqual([`${id}.json`]);
+        await start(beta, { TOLI_PEER_PORT: String(port) });
+        expect(alpha.box.ok(["peer", "flush", "beta"])).toBe("beta: sent 1");
+        expect(talks(beta, "alpha")).toEqual(["left behind"]);
+    });
+
+    test("outbox list shows an item a live process is sending, with its state", () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        link(alpha, beta, { bAddr: `127.0.0.1:${freePort()}` });
+        alpha.box.ok(["talk", "beta", "in flight"]);
+        const [item] = queued(alpha);
+        const outbox = join(alpha.box.root, "state", "outbox");
+        renameSync(join(outbox, `${item?.id}.json`), join(outbox, `${item?.id}.json.sending-${process.pid}`));
+        expect(queued(alpha)).toEqual([expect.objectContaining({ id: item?.id, state: "sending", pid: process.pid })]);
+        expect(alpha.box.ok(["outbox", "list"])).toContain(`sending (pid ${process.pid})`);
+        expect(readdirSync(outbox)).toEqual([`${item?.id}.json.sending-${process.pid}`]);
     });
 });

@@ -41,8 +41,9 @@ import {
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { fleetExport, takePullerExport } from "../fleet/fleet-sync.ts";
 import { activePeer, peerSettings } from "../peer/store.ts";
-import { deliveryArgv, itemTarget, type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
+import { deliveryArgv, itemTarget, type OutboxItem } from "./outbox.ts";
 import { cancelItems, outboxAdminCommand } from "./outbox-admin.ts";
+import { type Queued, queuedItems } from "./outbox-queue.ts";
 import { Reach } from "./reach.ts";
 import { refusalOf } from "./refusal.ts";
 

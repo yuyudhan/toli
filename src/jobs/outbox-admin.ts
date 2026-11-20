@@ -10,7 +10,8 @@ import { paths } from "../core/paths.ts";
 import { now, out, printJson, readJson, ToliError, waited, withLock, writeJsonAtomic } from "../core/util.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { stopUnrecordedReports } from "../records/report-refusal.ts";
-import { type OutboxItem, type Queued, queuedItems } from "./outbox.ts";
+import type { OutboxItem } from "./outbox.ts";
+import { type Queued, queuedItems, sendingItems } from "./outbox-queue.ts";
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -158,14 +159,20 @@ function list(argv: string[]): void {
         else for (const entry of kept) out(`${entry.id}\t${waitingFor(entry)}\t${entry.cancelledAt}\t${entry.reason}`);
         return;
     }
-    const items = queuedItems().filter(({ item }) => to === undefined || item.to?.name === to);
-    const rows = items.map(({ file, item }) => ({
-        id: file.replace(/\.json$/, ""),
-        to: waitingFor(item),
-        kind: item.kind ?? "inbox",
-        title: item.title,
-        queuedAt: item.queuedAt === undefined ? null : new Date(item.queuedAt).toISOString(),
-        age: waited(ageOf(item)),
+    // What a live process is sending right now first (a dead one's claim is back in the queue), then the queue.
+    const items = [
+        ...sendingItems().map((entry) => ({ ...entry, state: "sending" as const })),
+        ...queuedItems().map((entry) => ({ ...entry, state: "queued" as const })),
+    ].filter(({ item }) => to === undefined || item.to?.name === to);
+    const rows = items.map((entry) => ({
+        id: entry.file.replace(/\.json$/, ""),
+        to: waitingFor(entry.item),
+        kind: entry.item.kind ?? "inbox",
+        title: entry.item.title,
+        queuedAt: entry.item.queuedAt === undefined ? null : new Date(entry.item.queuedAt).toISOString(),
+        age: waited(ageOf(entry.item)),
+        state: entry.state,
+        pid: "pid" in entry ? entry.pid : undefined,
     }));
     if (args.bool("json")) {
         printJson(rows);
@@ -175,7 +182,10 @@ function list(argv: string[]): void {
         out("the outbox is empty");
         return;
     }
-    for (const row of rows) out(`${row.id}\t${row.to}\t${row.kind}\t${row.age}\t${row.title.slice(0, 80)}`);
+    for (const row of rows) {
+        const state = row.pid === undefined ? row.state : `${row.state} (pid ${row.pid})`;
+        out(`${row.id}\t${row.to}\t${row.kind}\t${row.age}\t${state}\t${row.title.slice(0, 80)}`);
+    }
 }
 
 function cancel(argv: string[]): void {

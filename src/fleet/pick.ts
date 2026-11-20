@@ -170,8 +170,11 @@ export function parseResources(text: string): Resources {
     };
 }
 
-/** Probe one other fleet machine for its `resources --json` (HTTPS when paired, else ssh); never throws. */
-export async function probeMachine(machine: FleetMachine): Promise<FleetEntry> {
+/**
+ * Probe one other fleet machine for its `resources --json` (HTTPS when paired, else ssh); never throws. `budgetMs`
+ * bounds each transport's try, for a caller someone waits for (`delegate`'s verify-only check).
+ */
+export async function probeMachine(machine: FleetMachine, budgetMs?: number): Promise<FleetEntry> {
     const unreachable = (detail: string): FleetEntry => ({
         machine: machine.name,
         local: false,
@@ -196,21 +199,20 @@ export async function probeMachine(machine: FleetMachine): Promise<FleetEntry> {
             // Loaded here, not at the top: deliver.ts registers with the listener when it loads, and the listener's
             // own imports reach this module (envelope -> backlog -> ... -> resources -> pick).
             const { askStatus } = await import("../peer/deliver.ts");
-            return reached(parseResources(JSON.stringify((await askStatus(peer)).value)));
+            return reached(parseResources(JSON.stringify((await askStatus(peer, budgetMs)).value)));
         } catch (error) {
             httpsError = `HTTPS: ${firstLine(error instanceof Error ? error.message : String(error))}; `;
         }
     }
     // Never probed over ssh, and never picked: work for it goes by `delegate`, which it pulls.
     if (inboundOff(machine)) return { ...unreachable(""), reasons: [`${httpsError}${inboundOffText(machine)}`] };
+    const capMs = budgetMs ?? PROBE_CAP_MS;
+    const connectSeconds = Math.min(PROBE_CONNECT_SECONDS, Math.ceil(capMs / 1000));
     const result = await runAsync(
-        [...sshArgs(machine.ssh, PROBE_CONNECT_SECONDS), remoteToliCommand(machine.root, "resources --json")],
-        {
-            timeoutMs: PROBE_CAP_MS,
-        },
+        [...sshArgs(machine.ssh, connectSeconds), remoteToliCommand(machine.root, "resources --json")],
+        { timeoutMs: capMs },
     );
-    if (result.timedOut)
-        return unreachable(`${httpsError}no answer from ${machine.ssh} within ${PROBE_CAP_MS / 1000}s`);
+    if (result.timedOut) return unreachable(`${httpsError}no answer from ${machine.ssh} within ${capMs / 1000}s`);
     if (result.code !== 0)
         return unreachable(
             `${httpsError}ssh ${machine.ssh} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`,
@@ -228,7 +230,7 @@ export async function probeMachine(machine: FleetMachine): Promise<FleetEntry> {
 export async function fleetStatus(): Promise<FleetEntry[]> {
     const local = localResources();
     const others = loadFleet().machines.filter((machine) => machine.name !== local.machine);
-    const remote = await Promise.all(others.map(probeMachine));
+    const remote = await Promise.all(others.map((machine) => probeMachine(machine)));
     return [
         {
             machine: local.machine,

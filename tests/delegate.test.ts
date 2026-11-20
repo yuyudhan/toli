@@ -141,21 +141,22 @@ describe("delegate", () => {
 });
 
 describe("one open delegation per piece of work", () => {
-    test("a queued copy that lands after a retry went through makes no second task", () => {
+    test("a retry while the first copy waits sends that copy: one task, and nothing left to land later", () => {
         const { m1, m2, down, up } = pair();
         withProject(m1, "app");
         m1.ok(["task", "add", "app", "parent work"]);
         down();
         expect(m1.ok(["delegate", "m2", "same work", "--brief", brief(m1), "--for", "T1"])).toContain("queued");
+        const [first = ""] = readdirSync(join(m1.root, "state", "outbox"));
         up();
         expect(m1.ok(["delegate", "m2", "same work", "--brief", brief(m1), "--for", "T1"])).toContain(
             "delegated to m2/T1",
         );
-        m1.ok(["job", "tick"]);
         expect(readdirSync(join(m1.root, "state", "outbox"))).toHaveLength(0);
+        m1.ok(["job", "tick"]);
         expect(tasks(m2).map((task) => task.id)).toEqual(["T1"]);
-        const landed = inbox(m1).filter((item) => item.title === "delegated m2/T1: same work");
-        expect(readFileSync(landed.at(-1)?.path ?? "", "utf8")).toContain("no second task was made");
+        expect(tasks(m2)[0]?.delegatedBy?.id).toBe(first.replace(/^delegation-|\.json$/g, ""));
+        expect(tasks(m1)[0]?.sending).toBeUndefined();
         // Other work for the same task, or the same work once the first is done, is a new delegation.
         expect(m1.ok(["delegate", "m2", "other work", "--brief", brief(m1), "--for", "T1"])).toContain("m2/T2");
         m2.ok(["task", "done", "T1"]);

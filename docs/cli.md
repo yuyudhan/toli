@@ -237,9 +237,10 @@ Details: [harnesses.md](harnesses.md).
   what every other machine queued for it (`outbox pending` there), applies it here and acknowledges it (`outbox ack`
   there), so each item is applied once ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)). Run by hand, it also
   tries the machines the tick backs off ([fleet.md](fleet.md#unreachable-machines)).
-- `outbox list` shows what waits to be sent (to whom, kind, age; `--cancelled` what was given up and why); `outbox
-cancel` and `outbox expire` move items to `state/outbox/cancelled/` with an inbox note. Nothing is dropped
-  silently, and nothing expires by itself ([peers.md](peers.md#the-queue)).
+- `outbox list` shows what waits to be sent and what a live process is sending now (to whom, kind, age, state;
+  `--cancelled` what was given up and why); `outbox cancel` and `outbox expire` move items to
+  `state/outbox/cancelled/` with an inbox note. Nothing is dropped silently, and nothing expires by itself
+  ([peers.md](peers.md#the-queue)).
 
 Details: [jobs.md](jobs.md).
 
