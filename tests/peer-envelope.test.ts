@@ -145,6 +145,27 @@ describe("applyEnvelope refusals", () => {
         expect(receipt?.reason).toBe("update for alice's task sent by mallory");
     });
 
+    test("an update whose title is over 200 characters is applied, and any other kind is refused (T2119)", () => {
+        const recv = peerBox("recv");
+        const alice = sender();
+        pin(recv.box, [{ name: "alice", identity: alice }]);
+        const title = `alice/T1 done: ${"a very long delegated task title ".repeat(8)}`;
+        const update = {
+            owner: "alice",
+            id: "T1",
+            task: { status: "active", updatedAt: new Date().toISOString(), notes: [] },
+            message: { title, body: "working" },
+            report: null,
+        };
+        const receipts = applyIn(recv.box, [
+            envelope(alice, "alice", recv.fingerprint, { kind: "update", title, body: JSON.stringify(update) }),
+            envelope(alice, "alice", recv.fingerprint, { title }),
+        ]);
+        expect(title.length).toBeGreaterThan(200);
+        expect(receipts.map((receipt) => receipt.status)).toEqual(["applied", "refused"]);
+        expect(receipts[1]?.reason).toBe("title over 200 characters");
+    });
+
     test("a message the receiving command refuses gets a refused receipt with its reason, and the batch goes on", () => {
         const recv = peerBox("recv");
         const alice = sender();

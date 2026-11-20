@@ -36,7 +36,9 @@ JSON. The receiver checks, in order:
    of one request (a sender that sent the same signed batch again, say to its next address after the first stopped
    answering): it gets the stored receipt as a `duplicate` when its id was applied, else `failed`, so the sender keeps
    it and signs it afresh; such a copy is never `refused`, so a slow or restarting receiver never cancels a message;
-7. sizes: title at most 200 characters, an `inbox` body 16 KiB, a delegation 256 KiB, anything else 64 KiB;
+7. sizes: title at most 200 characters (except an `update`'s, which is only a label: it applies by the owner and id in
+   its body, and its sender clips the label to 200 anyway), an `inbox` body 16 KiB, a delegation 256 KiB, anything
+   else 64 KiB;
 8. the peer has the permission the kind needs (`talk` for inbox items, `delegate`, `share`, `answer`);
 9. what the message claims: a delegation, link or share speaks only for its sender; an update comes only from the
    task's owner (and, when it names a task here, only for a delegation recorded on it); an answer goes only to a task

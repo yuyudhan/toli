@@ -78,6 +78,31 @@ describe("delegated tasks write back to the --for task", () => {
         expect(inbox(m1).filter((item) => item.title.startsWith("m2/T1"))).toHaveLength(1);
     });
 
+    test("a delegation at the longest title reports back with an envelope title any receiver takes (T2119)", () => {
+        const { m1, m2, down, up } = pair();
+        withProject(m1, "app");
+        m1.ok(["task", "add", "app", "parent work"]);
+        const long = "w".repeat(191);
+        m1.ok(["delegate", "m2", long, "--brief", brief(m1), "--for", "T1"]);
+        down("m1");
+        m2.ok(["task", "done", "T1", "--commit", "c0ffee"]);
+        const dir = join(m2.root, "state", "outbox");
+        const items = outboxFiles(m2).map(
+            (file) => JSON.parse(readFileSync(join(dir, file), "utf8")) as { title: string; body: string },
+        );
+        expect(items).toHaveLength(1);
+        const [item] = items;
+        expect(item?.title.length).toBeLessThanOrEqual(200);
+        expect(item?.title).toStartWith("m2/T1 done: www");
+        // The stored title is never cut: the update carries it whole.
+        const update = JSON.parse(item?.body ?? "{}") as { task: { title: string }; message: { title: string } };
+        expect(update.task.title).toBe(long);
+        expect(update.message.title).toBe(`m2/T1 done: ${long}`);
+        up("m1");
+        m2.ok(["job", "tick"]);
+        expect(parent(m1)).toMatchObject({ status: "done", commit: "c0ffee" });
+    });
+
     test("a task delegated twice is done only when both are", () => {
         const { m1, m2 } = delegated();
         m1.ok(["delegate", "m2", "more work", "--brief", brief(m1), "--for", "T1"]);

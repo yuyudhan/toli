@@ -56,6 +56,7 @@ export const NONCE_KEEP_MS = 10 * 60_000;
 export const RELAYED_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 /** A received id is remembered this long, with its receipt, so a resend is answered without applying it again. */
 const RECEIVED_KEEP_MS = 30 * 24 * 60 * 60_000;
+/** The longest envelope title; an update's is only a label (its body carries the task, keyed by owner and id). */
 export const TITLE_MAX = 200;
 const BODY_MAX: Partial<Record<EnvelopeKind, number>> = { inbox: 16 * 1024, delegation: 256 * 1024 };
 const BODY_DEFAULT_MAX = 64 * 1024;
@@ -127,6 +128,14 @@ export function bodyLimit(kind: EnvelopeKind): number {
 }
 
 /**
+ * `title` as an envelope label within TITLE_MAX, clipped with an ellipsis: for a label whose full text also travels in
+ * the body (an update's), so a receiver still enforcing TITLE_MAX on it takes it.
+ */
+export function fitTitle(title: string): string {
+    return title.length <= TITLE_MAX ? title : `${title.slice(0, TITLE_MAX - 1)}…`;
+}
+
+/**
  * Check one envelope addressed to `self` (this machine's fingerprint), in this order: the key belongs to an active
  * peer, the signature verifies, it is addressed here, `from` is that peer's name, `sentAt` is within five minutes,
  * the nonce is new, the sizes are within limits, and the peer has the permission its kind needs. The nonce is
@@ -156,7 +165,9 @@ export function verifyEnvelope(value: unknown, self: string, relayed = false): V
         if (!freshNonce(envelope.fromKey, envelope.nonce))
             return { ok: false, code: 409, reason: "replayed nonce", replay: { peer, envelope } };
     }
-    if (envelope.title.length > TITLE_MAX)
+    // An update is applied by the owner and id in its body, so a long task title never stops its status reaching the
+    // delegator (T2119); every other kind's title is what the receiver records.
+    if (envelope.kind !== "update" && envelope.title.length > TITLE_MAX)
         return { ok: false, code: 413, reason: `title over ${TITLE_MAX} characters` };
     if (Buffer.byteLength(envelope.body) > bodyLimit(envelope.kind))
         return { ok: false, code: 413, reason: `${envelope.kind} body over ${bodyLimit(envelope.kind)} bytes` };

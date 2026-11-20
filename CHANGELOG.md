@@ -27,6 +27,13 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A delegated task with a long title reports back again. Its status update's envelope title is the owner's id, the
+  status and the title (`m2/T1 done: <title>`), so a title near the 191-character delegation limit made it longer
+  than 200 and the delegator refused every done or held update ("title over 200 characters"): the chain broke
+  silently. The receiver no longer holds an update's title to the limit (it applies by owner and id; the full title
+  travels in the body), and the sender clips the label to 200 characters so a delegator not yet upgraded takes it
+  too. Stored task titles are never cut, and `bin/toli delegate` still refuses a title over 191 characters
+  (docs/peers.md, T2119).
 - `bin/toli commit --patch` now leaves the patched files in the working tree at the new commit. It committed the
   hunks but left the files at their old content, so the clone showed the change as an uncommitted revert until the
   same patch was applied by hand. A patched file still holding the version the commit replaced is checked out from

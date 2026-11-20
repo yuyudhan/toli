@@ -9,6 +9,7 @@ import { loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, requireName, stamp, ToliError, warn } from "../core/util.ts";
 import { sendNow } from "../jobs/outbox.ts";
+import { fitTitle } from "../peer/envelope.ts";
 import type { Status, Task } from "./backlog.ts";
 import type { HoldOption } from "./hold-options.ts";
 
@@ -309,7 +310,10 @@ export function reportToDelegator(task: Task): void {
         }
         const update = delegationUpdate(owner, task, to);
         const id = to.machine === by.machine ? `update-${task.id}-${at}` : `update-${task.id}-${to.machine}-${at}`;
-        const sent = sendNow(owner, target, "update", update.message.title, JSON.stringify(update), id);
+        // The envelope title is a label within TITLE_MAX (a receiver before T2119 refuses a longer one); the update
+        // carries the task's whole title, and the receiver's inbox item is its message.title.
+        const label = fitTitle(update.message.title);
+        const sent = sendNow(owner, target, "update", label, JSON.stringify(update), id);
         if (sent.delivered || sent.pulled) continue;
         // A refusal is final: the item already sits in state/outbox/cancelled/, and src/records/report-refusal.ts
         // stopped this task's reports to a machine that records no delegation of it.
