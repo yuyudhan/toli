@@ -80,6 +80,35 @@ describe("a closed task's queued runs never start", () => {
         });
     }, 60_000);
 
+    test("task handback cancels only that task's queued run and says so", async () => {
+        const { box, release, brief } = setup();
+        // T2 came from another machine (`delegation receive`), so it can be handed back.
+        const file = join(box.root, "data", "backlog.json");
+        const backlog = JSON.parse(readFileSync(file, "utf8")) as { tasks: Array<{ id: string } & object> };
+        backlog.tasks = backlog.tasks.map((task) =>
+            task.id === "T2"
+                ? { ...task, delegatedBy: { machine: "m0", id: "m0-1", at: new Date().toISOString() } }
+                : task,
+        );
+        writeFileSync(file, JSON.stringify(backlog));
+        const first = spawnFor(box, brief, "T1");
+        const handed = spawnFor(box, brief, "T2");
+        const other = spawnFor(box, brief, "T3");
+        expect([handed.status, other.status]).toEqual(["queued", "queued"]);
+
+        const output = box.ok(["task", "handback", "T2", "--reason", "wrong machine"]);
+        expect(output).toContain("T2\thanded back to m0: wrong machine");
+        expect(output).toContain(`T2: cancelled queued run ${handed.id}; it never started`);
+        expect(output).not.toContain(other.id);
+        expect(status(box, handed.id)).toMatchObject({ status: "killed", inbox: null });
+        expect(status(box, other.id).status).toBe("queued");
+        expect(["starting", "running"]).toContain(status(box, first.id).status);
+
+        box.ok(["task", "drop", "T3"]);
+        writeFileSync(release, "");
+        expect((await waitFor(box, first.id, (run) => run.inbox !== null)).status).toBe("done");
+    }, 60_000);
+
     test("the queue drain cancels a run whose task was closed elsewhere, and logs it", async () => {
         const { box, release, brief } = setup();
         const first = spawnFor(box, brief, "T1");

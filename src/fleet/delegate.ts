@@ -73,22 +73,36 @@ export function onOutboxDelivered({ item, stdout }: Delivered): void {
 }
 
 /**
- * Why ship work for `project` must not go to `target`: it marked the project verify-only (its `resources`), with the
- * machine `pick` would choose instead. Null when it takes the work, or cannot be asked now (its own `delegation
- * receive` then hands the work back).
+ * The verify-only check of `target` for ship work on `project`. `refusal`: why the work must not go there (it marked
+ * the project verify-only, its `resources`), with the machine `pick` would choose instead; null when it takes the
+ * work, or cannot be asked now (its own `delegation receive` then hands the work back). The check and the send share
+ * one wait of QUICK_MS: `unanswered` says why the target did not answer in all of it, and the send then only queues.
  */
-async function verifyOnlyRefusal(target: FleetMachine, project: string): Promise<string | null> {
+async function verifyOnlyCheck(
+    target: FleetMachine,
+    project: string,
+): Promise<{ refusal: string | null; unanswered?: string }> {
+    const deadline = performance.now() + QUICK_MS;
     const entry = await probeMachine(target, QUICK_MS);
-    if (entry.resources === null || !refusesShip(entry.resources, project)) return null;
+    if (entry.resources === null) {
+        if (performance.now() < deadline) return { refusal: null };
+        return {
+            refusal: null,
+            unanswered: `${target.name} gave no answer within ${QUICK_MS / 1000} s (${entry.reasons.join("; ")})`,
+        };
+    }
+    if (!refusesShip(entry.resources, project)) return { refusal: null };
     const pick = await pickMachine(project, "ship");
     const next =
         pick.machine === null
             ? "no other machine qualifies"
             : `next by queue: ${pick.machine}${pick.local ? ", this machine" : ""}`;
-    return [
-        `not sent: ${target.name} is verify-only for ${project} (it takes no ship work for it);`,
-        `${next} (bin/toli pick --project ${project}); verify work goes with --verify; --force sends it anyway`,
-    ].join(" ");
+    return {
+        refusal: [
+            `not sent: ${target.name} is verify-only for ${project} (it takes no ship work for it);`,
+            `${next} (bin/toli pick --project ${project}); verify work goes with --verify; --force sends it anyway`,
+        ].join(" "),
+    };
 }
 
 /**
@@ -185,9 +199,11 @@ export async function delegateCommand(argv: string[]): Promise<number> {
         throw new ToliError(
             `the delegation is ${size} bytes; a delegation takes at most ${bodyLimit("delegation")} (the receiver refuses larger ones): shorten the brief`,
         );
+    let unanswered: string | undefined;
     if (shape === "ship" && !verify && !force) {
-        const refusal = await verifyOnlyRefusal(target, project ?? DEFAULT_PROJECT);
-        if (refusal !== null) throw new ToliError(refusal);
+        const check = await verifyOnlyCheck(target, project ?? DEFAULT_PROJECT);
+        if (check.refusal !== null) throw new ToliError(check.refusal);
+        unanswered = check.unanswered;
     }
     const earlier = queuedCopy(target.name, delegationKey(delegation));
     if (earlier?.sending === true) {
@@ -208,6 +224,7 @@ export async function delegateCommand(argv: string[]): Promise<number> {
         `${TITLE_PREFIX}${sending.title}`,
         JSON.stringify(sending),
         outboxId,
+        unanswered,
     );
     if (!sent.delivered) {
         // A refusal is final and the item already sits in state/outbox/cancelled/: nothing is queued to retry.

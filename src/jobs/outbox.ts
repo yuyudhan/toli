@@ -273,7 +273,9 @@ export function queuedText(name: string, sent: { pulled: boolean; refused?: stri
  * Send one item to a fleet machine now, within a few seconds (QUICK_MS over HTTPS, SEND_NOW_MS over ssh): its caller
  * waits. It is written to the outbox already claimed by this process, so the tick never sends it at the same time;
  * when the target does not answer in time it is released into the queue and the minute tick retries it, with the full
- * timeouts. For a target that takes no inbound ssh it is only queued: that machine pulls it.
+ * timeouts. For a target that takes no inbound ssh it is only queued: that machine pulls it. `unanswered`: why the
+ * caller already waited on this target in vain just now (`delegate`'s verify-only check, which shares the send's
+ * budget); the item is then only queued, with that as the error, so the caller never waits twice.
  */
 export function sendNow(
     from: string,
@@ -282,12 +284,17 @@ export function sendNow(
     title: string,
     body: string,
     id: string,
+    unanswered?: string,
 ): SendResult {
     const item: OutboxItem = { from, title, body, to, kind, queuedAt: Date.now() };
     const queued = join(paths.outboxDir(), `${id}.json`);
     const relayed = relayedPeer(to.name);
     if (relayed !== undefined) return sendRelayed(relayed, item, queued, id);
     const pulled = pullOnly(to);
+    if (unanswered !== undefined) {
+        writeJsonAtomic(queued, item);
+        return { delivered: false, pulled: pulled !== null, error: unanswered };
+    }
     const peer = httpPeer(to.name);
     let httpsFailed: string | null = null;
     if (peer !== undefined) {

@@ -263,7 +263,7 @@ describe("a peer that does not answer (T2126)", () => {
         expect(queued(alpha).map((item) => [item.to, item.state])).toEqual([["beta", "queued"]]);
     });
 
-    test("delegate to a peer that accepts and never answers is queued within seconds", () => {
+    test("delegate to a peer that accepts and never answers is queued as fast as talk", () => {
         const alpha = peerBox("alpha");
         const beta = peerBox("beta");
         link(alpha, beta, { bAddr: `127.0.0.1:${stallingPort()}` });
@@ -271,7 +271,9 @@ describe("a peer that does not answer (T2126)", () => {
         writeFileSync(brief, "TOLI_BRIEF v1\n# no-op\nReply done.\n");
         const started = Date.now();
         const sent = alpha.box.toli(["delegate", "beta", "later", "--brief", brief]);
-        expect(Date.now() - started).toBeLessThan(20_000);
+        // talk's budget over HTTPS (QUICK_MS, 5 s) + 1 s, + ~1 s to start bun: the verify-only check and the send
+        // share that budget, so a check that got no answer leaves the item queued without a second wait.
+        expect(Date.now() - started).toBeLessThan(7_000);
         expect(sent.code).toBe(0);
         expect(sent.stdout).toContain("queued for beta");
         expect(queued(alpha).map((item) => [item.to, item.kind, item.state])).toEqual([

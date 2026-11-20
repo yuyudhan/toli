@@ -172,9 +172,11 @@ export function parseResources(text: string): Resources {
 
 /**
  * Probe one other fleet machine for its `resources --json` (HTTPS when paired, else ssh); never throws. `budgetMs`
- * bounds each transport's try, for a caller someone waits for (`delegate`'s verify-only check).
+ * bounds the whole probe, HTTPS and the ssh fallback together, for a caller someone waits for (`delegate`'s
+ * verify-only check): an HTTPS try that used it all leaves no ssh try.
  */
 export async function probeMachine(machine: FleetMachine, budgetMs?: number): Promise<FleetEntry> {
+    const deadline = budgetMs === undefined ? undefined : performance.now() + budgetMs;
     const unreachable = (detail: string): FleetEntry => ({
         machine: machine.name,
         local: false,
@@ -199,20 +201,24 @@ export async function probeMachine(machine: FleetMachine, budgetMs?: number): Pr
             // Loaded here, not at the top: deliver.ts registers with the listener when it loads, and the listener's
             // own imports reach this module (envelope -> backlog -> ... -> resources -> pick).
             const { askStatus } = await import("../peer/deliver.ts");
-            return reached(parseResources(JSON.stringify((await askStatus(peer, budgetMs)).value)));
+            // Loading it counts against the budget: on a loaded machine it takes a noticeable part of a second.
+            const left = deadline === undefined ? undefined : Math.max(1, deadline - performance.now());
+            return reached(parseResources(JSON.stringify((await askStatus(peer, left)).value)));
         } catch (error) {
             httpsError = `HTTPS: ${firstLine(error instanceof Error ? error.message : String(error))}; `;
         }
     }
     // Never probed over ssh, and never picked: work for it goes by `delegate`, which it pulls.
     if (inboundOff(machine)) return { ...unreachable(""), reasons: [`${httpsError}${inboundOffText(machine)}`] };
-    const capMs = budgetMs ?? PROBE_CAP_MS;
-    const connectSeconds = Math.min(PROBE_CONNECT_SECONDS, Math.ceil(capMs / 1000));
+    const capMs = deadline === undefined ? PROBE_CAP_MS : Math.ceil(deadline - performance.now());
+    if (capMs <= 0) return unreachable(`${httpsError}no time left to try ssh ${machine.ssh}`);
+    const capSeconds = Math.ceil(capMs / 1000);
+    const connectSeconds = Math.min(PROBE_CONNECT_SECONDS, capSeconds);
     const result = await runAsync(
         [...sshArgs(machine.ssh, connectSeconds), remoteToliCommand(machine.root, "resources --json")],
         { timeoutMs: capMs },
     );
-    if (result.timedOut) return unreachable(`${httpsError}no answer from ${machine.ssh} within ${capMs / 1000}s`);
+    if (result.timedOut) return unreachable(`${httpsError}no answer from ${machine.ssh} within ${capSeconds}s`);
     if (result.code !== 0)
         return unreachable(
             `${httpsError}ssh ${machine.ssh} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`,

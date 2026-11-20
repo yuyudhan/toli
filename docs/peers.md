@@ -223,8 +223,10 @@ they move to `state/outbox/cancelled/` (`outbox list --cancelled`) with an inbox
 nothing is dropped silently. `peer remove` cancels what waits for that peer the same way.
 
 A send someone waits for (`talk`, `delegate`, `share`) is written to the queue first and tried for a few seconds: 5 s
-per HTTPS request (`peer flush --quick`; `delegate`'s verify-only check too), and over ssh 5 s to connect and 10 s in
-all. A peer that does not answer in time gets `queued for <peer>` and the item from the minute tick, with the full
+per HTTPS request (`peer flush --quick`), and over ssh 5 s to connect and 10 s in all. `delegate`'s verify-only check
+of ship work shares that wait: it asks the target for 5 s in all (HTTPS, then ssh with what is left), and a target
+that gave no answer in that time gets the item queued without a second try, so `delegate` returns as fast as `talk`.
+A peer that does not answer in time gets `queued for <peer>` and the item from the minute tick, with the full
 timeouts. While an item is being sent it is renamed `<id>.json.sending-<pid>`; when that process is gone (killed
 mid-send) the next read of the queue puts it back at once, and a claim older than 10 minutes is put back too. Running
 the same `delegate` again (same sender, `--for` task, project, title and brief) while a copy waits sends that copy,
