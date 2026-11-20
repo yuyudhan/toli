@@ -18,8 +18,9 @@ import { loadMachine } from "../core/config.ts";
 import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
-import { run, ToliError, warn, withLock } from "../core/util.ts";
+import { run, ToliError, withLock } from "../core/util.ts";
 import { loadBacklog, type Task, type TaskWorkspace, updateTask } from "../records/backlog.ts";
+import { baseBranch, baseRef, refExists } from "./base-branch.ts";
 import { excludeFromIndexing } from "./indexing.ts";
 import { findProject, type Project, projectCloneDir } from "./projects.ts";
 import { DEFAULT_TASK_BRANCH, perTask } from "./strategy.ts";
@@ -46,45 +47,6 @@ export function taskBranch(task: Pick<Task, "id" | "title">, project: Pick<Proje
     if (run(["git", "check-ref-format", "--branch", branch]).code !== 0)
         throw new ToliError(`cannot derive a valid branch name for ${task.id} (got "${branch}")`);
     return branch;
-}
-
-export function refExists(dir: string, ref: string): boolean {
-    return git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).code === 0;
-}
-
-/**
- * The branch task branches start from and PR/MRs target: the project's `baseBranch`, else its `branch`, else origin's
- * default branch.
- */
-export function baseBranch(project: Project, clone: string): string {
-    if (project.baseBranch) return project.baseBranch;
-    if (project.branch) return project.branch;
-    const originHead = git(clone, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
-    if (originHead.code === 0) return originHead.stdout.trim().replace(/^origin\//, "");
-    const head = currentBranch(clone);
-    if (head !== null && !head.startsWith("toli/")) return head;
-    throw new ToliError(
-        `cannot tell the base branch of ${project.name}: set it with bin/toli project set ${project.name} --branch <b>`,
-    );
-}
-
-/**
- * Start point for a new task branch: origin's base branch, fetched first, so a task starts from what the fleet has
- * pushed even when this clone's own base branch is behind; the local base branch only when origin has none (no
- * remote, offline before its first fetch).
- */
-function baseRef(clone: string, base: string): string {
-    const fetched = git(clone, ["fetch", "--quiet", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`]);
-    if (fetched.code !== 0)
-        warn(
-            `warning: git fetch origin ${base} failed in ${clone} (${(fetched.stderr || fetched.stdout).trim()}); the task branch starts from the last fetched base`,
-        );
-    if (refExists(clone, `refs/remotes/origin/${base}`)) return `refs/remotes/origin/${base}`;
-    if (refExists(clone, `refs/heads/${base}`)) {
-        warn(`warning: origin has no ${base} in ${clone}; the task branch starts from the local ${base}`);
-        return `refs/heads/${base}`;
-    }
-    throw new ToliError(`base branch ${base} exists neither locally nor on origin in ${clone}`);
 }
 
 /** `git status --porcelain` of a checkout: "" when clean. */

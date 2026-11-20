@@ -3,16 +3,10 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { baseBranch } from "../src/projects/base-branch.ts";
 import { findProject } from "../src/projects/projects.ts";
 import { projectSetCommand } from "../src/projects/set.ts";
-import {
-    baseBranch,
-    gitWorktrees,
-    holdersText,
-    prepareWorkspace,
-    taskBranch,
-    workDir,
-} from "../src/projects/workspace.ts";
+import { gitWorktrees, holdersText, prepareWorkspace, taskBranch, workDir } from "../src/projects/workspace.ts";
 import { workspaceBrief } from "../src/projects/workspace-brief.ts";
 import { workspaceCommand } from "../src/projects/workspace-command.ts";
 import { type TaskWorkspace, taskCommand } from "../src/records/backlog.ts";
@@ -169,6 +163,42 @@ describe("workspace in process", () => {
             branch: "main",
             base: null,
         });
+    });
+
+    test("cuts task branches from origin's fetched default branch, never the clone's checked-out branch", () => {
+        const box = coordinator();
+        const clone = withProject(box, "app");
+        const set = commandIn(box.root, projectSetCommand);
+        const task = commandIn(box.root, taskCommand);
+        const workspace = commandIn(box.root, workspaceCommand);
+        set(["app", "--workspace", "worktree-per-task"]);
+        // The clone sits on a nightly branch of its own, with no record of origin's HEAD.
+        box.git(clone, ["switch", "-c", "nightly"]);
+        writeFileSync(join(clone, "nightly.txt"), "nightly\n");
+        box.git(clone, ["add", "nightly.txt"]);
+        box.git(clone, ["commit", "-m", "nightly work"]);
+        box.git(clone, ["push", "origin", "nightly"]);
+        box.git(clone, ["remote", "set-head", "origin", "--delete"]);
+        // Origin's main moves on after this clone last fetched it.
+        const other = join(box.root, "other");
+        box.git(box.root, ["clone", "--quiet", join(box.root, ".origin", "app.git"), other]);
+        writeFileSync(join(other, "fleet.txt"), "fleet\n");
+        box.git(other, ["add", "fleet.txt"]);
+        box.git(other, ["commit", "-m", "fleet work"]);
+        box.git(other, ["push", "origin", "main"]);
+        const originMain = box.git(other, ["rev-parse", "HEAD"]);
+
+        task(["add", "app", "Build API"]);
+        expect(JSON.parse(workspace(["prepare", "T1", "--json"]))).toMatchObject({ base: "main" });
+        const worktree = join(box.root, "projects", ".worktrees", "app", "T1");
+        expect(box.git(worktree, ["rev-parse", "HEAD"])).toBe(originMain);
+
+        // Without origin's HEAD it falls back to origin's main, here as last fetched (origin unreachable).
+        box.git(clone, ["remote", "set-head", "origin", "--delete"]);
+        box.git(clone, ["remote", "set-url", "origin", join(box.root, "gone.git")]);
+        task(["add", "app", "Draft docs"]);
+        expect(JSON.parse(workspace(["prepare", "T2", "--json"]))).toMatchObject({ base: "main" });
+        expect(box.git(join(box.root, "projects", ".worktrees", "app", "T2"), ["rev-parse", "HEAD"])).toBe(originMain);
     });
 
     test("holdersText names each holder's status and branch", () => {

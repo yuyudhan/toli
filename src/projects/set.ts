@@ -5,11 +5,12 @@ import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { now, out, run, ToliError, withLock } from "../core/util.ts";
+import { refExists } from "./base-branch.ts";
 import { parseHookTimeout } from "./commit-hooks.ts";
 import { overrideLabels } from "./list.ts";
 import { FORGES, type Forge, loadProjects, type Project, parseMode, updateProjects } from "./projects.ts";
 import { parseTaskBranchPattern, parseWorkspace, perTask, type Workspace } from "./strategy.ts";
-import { cloneHolders, dirty, holdersText, refExists, workspaceLock } from "./workspace.ts";
+import { cloneHolders, dirty, holdersText, workspaceLock } from "./workspace.ts";
 import { liveUnder } from "./workspace-toggle.ts";
 
 /** `--forge`: one of FORGES, or `none` (null) to clear the override. */

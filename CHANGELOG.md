@@ -25,6 +25,23 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- The lead service no longer runs a headless turn beside a live interactive Sardar. A session that had left a wake
+  unread for `lead.idleSessionMinutes` (one sitting at a permission prompt, say) was taken over by a headless turn,
+  which then acted on the same inbox items as the session once someone typed into it, so the same tasks were
+  delegated twice. The inbox now has one claim at a time, held by whichever starts first: a headless turn in
+  progress, else the live interactive session, else a `lead attach`, each only while its pid is alive. No headless
+  turn starts while a session holds it, however long its wakes stay unread (the digest and doctor still flag it); a
+  session opened during a headless turn takes no wake until the turn ends; and a second interactive omp in toli's
+  root takes none (`bin/toli wake --pid`, which the omp extension now passes) (docs/sardars.md "The lead on each
+  machine", T2087).
+
+- `bin/toli workspace prepare` (and `spawn --task`) no longer cuts a task branch from whatever branch the project
+  clone is checked out on when the project names no `--branch` or `--base-branch` and the clone has no record of
+  origin's HEAD. It asks origin for its default branch (`git remote set-head origin --auto`), else uses `main` or
+  `master`, and starts the task from origin's copy, fetched first. A project whose fixed `--branch` is a per-machine
+  nightly branch still starts tasks from that branch, as documented; `bin/toli project set <p> --base-branch main`
+  starts them from the mainline (docs/projects.md "Workspace strategy", T2085).
+
 - Toli's git calls ignore a `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` (or another repository-locating git
   variable: `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`,
   `GIT_PREFIX`) inherited from the shell. A jawan's shell left `GIT_INDEX_FILE` exported for hours, so

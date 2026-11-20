@@ -68,11 +68,14 @@ toli itself never uses worktrees.
 - `bin/toli spawn --task T<n>` prepares the workspace (or `bin/toli workspace prepare T<n>` for native subagents)
   and records it on the task; the brief carries the strategy, path, and branch, and the verifier reuses it.
   Task branches start from the base branch: the project's `--base-branch`, else its `--branch`, else origin's default
-  branch, as origin has it: `git fetch origin <base>` runs first and the branch starts from `origin/<base>` with no
-  upstream, so a clone whose own base is behind never seeds a stale task (without that ref on origin it starts from
-  the local base, with a warning). A live task prepared under an earlier strategy keeps its recorded workspace when
-  the project switches strategy; the new one applies to tasks prepared afterwards, and switching never touches the
-  clone. A live task with no recorded workspace (dispatched before the switch) whose clone is checked out on a branch
+  branch (origin/HEAD, asked of origin when the clone has no record of it, else `main` or `master`; never the branch
+  the clone happens to be checked out on), as origin has it: `git fetch origin <base>` runs first and the branch
+  starts from `origin/<base>` with no upstream, so a clone whose own base is behind never seeds a stale task (without
+  that ref on origin it starts from the local base, with a warning). A project whose fixed `--branch` is a per-machine
+  nightly or release branch whose tasks should start from the mainline sets `--base-branch main`. A live task prepared
+  under an earlier strategy keeps its recorded workspace when the project switches strategy; the new one applies to
+  tasks prepared afterwards, and switching never touches the clone. A live task with no recorded workspace (dispatched
+  before the switch) whose clone is checked out on a branch
   naming it (`T375` in `shop/m1/T375-e2e-proof`) keeps the clone: `workspace prepare`, `commit --task` and
   `push --task` record it as its workspace on that branch, unless another live task records the clone.
   Never toggle a project's strategy to land such a task: nothing needs it. A switch from a per-task strategy to

@@ -30,12 +30,13 @@ import { persona } from "../core/persona.ts";
 import { out, ToliError, warn } from "../core/util.ts";
 import { DEVELOP_BRANCH } from "../release/release.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
+import { refExists } from "./base-branch.ts";
 import { buildCommit } from "./commit-build.ts";
 import { type HookLimit, hookLimit } from "./commit-hooks.ts";
 import { adoptsMerge } from "./commit-merge.ts";
 import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
 import { perTask } from "./strategy.ts";
-import { refExists, samePath, workDir } from "./workspace.ts";
+import { samePath, workDir } from "./workspace.ts";
 
 // Word boundaries keep human sign-offs such as "<dev@gmail.com>" (contains "ai") intact.
 const AI_TRAILER = /^(Co-authored-by|Co-Authored-By|Generated-by|Signed-off-by: .*\b(Claude|GPT|AI|omp|Oh My Pi)\b).*/i;
