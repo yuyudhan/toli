@@ -1,5 +1,5 @@
 // `bin/toli project set`: record the user's delivery, base branch, forge, workspace strategy, task-branch pattern,
-// standing-grant, live-stack, role, release-priority and commit-hook time-limit answers.
+// standing-grant, live-stack, role, release-priority, commit-hook time-limit and release catch-up answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
@@ -68,6 +68,21 @@ function parseRole(value: string | undefined): (typeof ROLES)[number] | undefine
     const role = ROLES.find((entry) => entry === value);
     if (role === undefined) throw new ToliError(`--role must be one of ${ROLES.join(", ")}, got "${value}"`);
     return role;
+}
+
+/** `--catch-up`: yes or no, or `default` (null) for on (docs/projects.md "Release catch-up"). */
+function parseCatchUp(value: string | undefined): boolean | null | undefined {
+    if (value === "default") return null;
+    if (value !== undefined && value !== "yes" && value !== "no")
+        throw new ToliError(`--catch-up must be yes, no or default, got "${value}"`);
+    return parseYesNo(value, "--catch-up");
+}
+
+/** `--catch-up-checks`: the catch-up jawan's quick-check command, or `none` (null) for the notes' checks. */
+function parseCatchUpChecks(value: string | undefined): string | null | undefined {
+    if (value === "none") return null;
+    if (value?.trim() === "") throw new ToliError('--catch-up-checks needs a command, or "none"');
+    return value?.trim();
 }
 
 /**
@@ -158,6 +173,9 @@ function setAll(args: Args): void {
         "role",
         "release-priority",
         "hook-timeout",
+        "catch-up",
+        "catch-up-checks",
+        "catch-up-push",
     ].filter((flag) => args.str(flag) !== undefined);
     if (others.length > 0)
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
@@ -192,6 +210,9 @@ export function projectSetCommand(argv: string[]): void {
             "role",
             "release-priority",
             "hook-timeout",
+            "catch-up",
+            "catch-up-checks",
+            "catch-up-push",
         ],
     });
     args.maxPositional(1);
@@ -214,6 +235,9 @@ export function projectSetCommand(argv: string[]): void {
     const role = parseRole(args.str("role"));
     const releasePriority = parseYesNo(args.str("release-priority"), "--release-priority");
     const hookTimeout = parseHookTimeout(args.str("hook-timeout"));
+    const catchUp = parseCatchUp(args.str("catch-up"));
+    const catchUpChecks = parseCatchUpChecks(args.str("catch-up-checks"));
+    const catchUpPush = parseYesNo(args.str("catch-up-push"), "--catch-up-push");
     if (args.bool("keep") && workspace === undefined)
         throw new ToliError("--keep goes with --workspace: it keeps a switch to same-branch for new tasks too");
     if (
@@ -231,13 +255,18 @@ export function projectSetCommand(argv: string[]): void {
             role,
             releasePriority,
             hookTimeout,
+            catchUp,
+            catchUpChecks,
+            catchUpPush,
         ].every((value) => value === undefined)
     )
         throw new ToliError(
             "nothing to set: pass --mode <m>, --branch <b>|none, --base-branch <b>|none, --task-branch <pattern>|none, --forge <f>|none, " +
                 "--forge-host <h>|none, --workspace <s>, --standing-push yes|no, --standing-pr yes|no, " +
                 "--live-stack yes|no, --role full|verify-only, --release-priority yes|no or " +
-                "--hook-timeout <seconds>|none|default (or --all --workspace <s>)",
+                "--hook-timeout <seconds>|none|default, --catch-up yes|no|default, --catch-up-checks <command>|none, " +
+                "--catch-up-push yes|no " +
+                "(or --all --workspace <s>)",
         );
     const at = now().toISOString();
     const { updated, note } = underWorkspaceLocks(workspace === undefined ? [] : [name], () =>
@@ -277,6 +306,12 @@ export function projectSetCommand(argv: string[]): void {
             else if (releasePriority === false) delete project.releasePriority;
             if (hookTimeout === null) delete project.hookTimeoutSeconds;
             else if (hookTimeout !== undefined) project.hookTimeoutSeconds = hookTimeout;
+            if (catchUp === null) delete project.catchUp;
+            else if (catchUp !== undefined) project.catchUp = catchUp;
+            if (catchUpChecks === null) delete project.catchUpChecks;
+            else if (catchUpChecks !== undefined) project.catchUpChecks = catchUpChecks;
+            if (catchUpPush === false) project.catchUpPush = false;
+            else if (catchUpPush === true) delete project.catchUpPush;
             return { updated: { ...project }, note };
         }),
     );

@@ -100,6 +100,9 @@ export const paths = {
     staleTasksState: () => join(repoRoot(), "state", "stale-tasks.json"),
     /** The tasks the tick re-dispatched once after their jawan died (src/records/redispatch.ts). */
     redispatchState: () => join(repoRoot(), "state", "redispatched.json"),
+    /** Each project's last release catch-up: tag, sha, run, branches already handed to it (src/projects/catch-up.ts). */
+    catchUpState: () => join(repoRoot(), "state", "catch-up.json"),
+    catchUpLog: () => join(repoRoot(), "logs", "catch-up.log"),
     /** Questions for the user's word already held, by sender and question, and inbox items read (word-holds.ts). */
     wordHolds: () => join(repoRoot(), "state", "word-holds.json"),
     /** Every `talk` this machine sent, one JSON line each: a reply quoting a message answers it (word-holds.ts). */

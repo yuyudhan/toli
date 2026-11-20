@@ -256,6 +256,47 @@ bin/toli delegate --verify`: its task is dropped there with the reason, and the 
   that task even when it arrives (by peer message) before the delegation's own receipt: the task records the
   delegation as `sending` from the moment it is sent ([sardars.md](sardars.md)).
 
+## Release catch-up
+
+Every machine works on its projects' latest release. When a project's main carries a new `vX.Y.Z` tag, each machine
+with the clone merges that release into its long-lived branches, so work in flight never drifts hundreds of commits
+behind main between releases.
+
+- **Trigger.** The tick starts `bin/toli catch-up scan` in the background every 10 minutes (log:
+  `logs/catch-up.log`). It fetches each project's main and tags from origin and takes the newest `vX.Y.Z` tag on
+  `origin/<main>` (main: the project's `--base-branch`, else origin's default branch). A Sardar that hears of a
+  release (another machine's notice) can run `bin/toli catch-up scan <project>` at once.
+- **Branches.** The project's fixed `--branch` (a same-branch project without one: the branch its clone is on), and
+  the branch of each active or held task of the project (branch-per-task, worktree-per-task, a task pinned to the
+  clone). Never main itself. A branch that already contains the tag needs nothing.
+- **One jawan.** For the branches behind the tag, the scan writes `data/projects/<p>/briefs/catch-up-<tag>.md` and
+  starts one catch-up jawan through the normal `bin/toli spawn` path (queued while every jawan slot is busy; on a
+  machine whose `lead.dispatch` is `subagents`, the brief goes to the lead's inbox instead). While that run is live
+  no second one starts, whatever new tag appears; each branch is handed to one run per release. A machine marked
+  full starts none until it is not. state/catch-up.json keeps what was handed out.
+- **Held checkouts.** A checkout another live jawan works in (a spawn run's directory, or a live subagent's task
+  workspace) is skipped, by the scan and again by the jawan, and tried on the next scan.
+- **The merge.** The jawan runs `bin/toli catch-up merge <p> --tag <tag>`: per branch, a `git merge-tree` dry run
+  first; a conflict merges nothing, leaves the work as it was, notes the conflicting files on the branch's task (its
+  owner merges before the next push), and is in the jawan's report to this machine's Sardar. A clean merge lands
+  through `bin/toli commit`'s `--merge` with the project's commit hooks (rule 6), in the branch's own checkout.
+- **Checks and push.** The jawan then runs the quick checks, `bin/toli project set <p> --catch-up-checks "<command>"`
+  (else the ones the project's notes name; heavy commands under `bin/toli build-slot`). It pushes a branch only when
+  the plan prints a `push` line for it: the branch is already on origin, it is not main, and the project has a
+  standing push grant on this machine (`--standing-push yes`); the push is `bin/toli push`, with the normal hooks,
+  never forced. Otherwise, or when a check fails, the merge stays local and the report says why. The scan and the
+  tick never merge or push.
+- **Boxes that cannot run the push gate.** A catch-up push runs the project's pre-push hook like any push. Where that
+  hook checks everything main changed in the merge (heavy builds and tests a small machine's capacity forbids), the
+  catch-up must not depend on it: declare the merge-in push light in the hook (`# toli-light-push: NAME=VALUE`,
+  [delivery.md](delivery.md#gates-long-checks-run-once-per-tree)) when the project has a quick mode for it, or set
+  `bin/toli project set <p> --catch-up-push no` on that machine. Then every catch-up merge stays local and is
+  reported; the branch takes the release at its own next push, or the machine that lands it re-merges. Scoping a merge
+  commit's checks to the branch's own changes belongs in the project's hook.
+- **Opt out.** On by default (a project without release tags has nothing to catch up to).
+  `bin/toli project set <p> --catch-up no` turns it off on this machine; `--catch-up default` turns it on again.
+  `project list` shows `catch-up=no` and the checks (`catchUp`, `catchUpChecks` in `--json`).
+
 ## Setting up an existing project
 
 Projects registered before the interview, imported clones, and notes that drifted get the same treatment:

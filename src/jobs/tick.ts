@@ -20,6 +20,7 @@ import { hasIdentity } from "../peer/identity.ts";
 import { pullPeers } from "../peer/pull-peers.ts";
 import { peerSettings } from "../peer/store.ts";
 import { pullLine } from "../peer/transport-command.ts";
+import { startDueCatchUpScan } from "../projects/catch-up.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
 import { redispatchDeadRuns } from "../records/redispatch.ts";
@@ -232,6 +233,9 @@ export async function tick(): Promise<void> {
     logStep("stale task check failed", () => surfaceStaleTasks(loadBacklog().tasks));
     // A question another machine asked for the user's word goes into the Needs-you queue (records/word-holds.ts).
     logStep("questions for the user's word not held", holdInboxWords);
+    // A project whose main carries a new vX.Y.Z tag gets one catch-up jawan here (src/projects/catch-up.ts); the scan
+    // fetches, so it runs detached and the tick never waits on the network.
+    logStep("release catch-up scan not started", () => startDueCatchUpScan());
     try {
         const fleet = await runDueFleetCheck();
         if (fleet) log(fleet);

@@ -60,7 +60,7 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     project set <name> [--mode <m>] [--branch <b>|none] [--base-branch <b>|none] [--task-branch <pattern>|none]
                 [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
                 [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
-                [--hook-timeout <seconds>|none|default] [--keep]
+                [--hook-timeout <seconds>|none|default] [--catch-up yes|no|default] [--catch-up-checks <command>|none] [--catch-up-push yes|no] [--keep]
     project set --all --workspace <strategy> [--keep]
     project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
     project setup <name> [--json] | setup --all [--json]
@@ -76,7 +76,11 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
   other projects' heavy builds on this machine wait while the project's `--work release` run runs
   ([fleet.md](fleet.md#release-priority)). `--hook-timeout <seconds>|none|default` sets how long each of the
   project's commit hooks may run under `bin/toli commit` (`none`: no limit; `default`: back to the machine's
-  `capacity.commitHookTimeoutSeconds`, 300 s when unset; [projects.md](projects.md#git-hooks)). Switching a per-task
+  `capacity.commitHookTimeoutSeconds`, 300 s when unset; [projects.md](projects.md#git-hooks)). `--catch-up no` stops
+  the release catch-up for the project on this machine (`default`: on again), and `--catch-up-checks "<command>"` names
+  the quick checks its jawan runs after each merge (`none`: the ones the project's notes name); `--catch-up-push no`
+  keeps every catch-up merge local on this machine, for a box that cannot run the project's push gate
+  ([projects.md](projects.md#release-catch-up)). Switching a per-task
   project to `same-branch` while a live task still works in its per-task workspace records a toggle:
   `workspace prepare` refuses new tasks until it switches back, or `--keep` keeps the switch for them too
   ([projects.md](projects.md#workspace-strategy)).
@@ -141,6 +145,7 @@ the interactive Sardar's subagents.
     commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
       (--resolved -- <conflicted paths> [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers)
     branch <project> <branch>
+    catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--json]
     workspace prepare T<n> [--reset | --same-branch] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
     push <project> [--task T<n>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
@@ -159,6 +164,11 @@ the interactive Sardar's subagents.
   `toli` as the project commits toli itself on `develop`
   ([development.md](development.md#working-on-toli-itself-in-place-landed-with-bintoli-commit)).
 - `branch` creates a new branch in the clone and switches to it.
+- `catch-up scan` fetches each project's main and tags and, for a new `vX.Y.Z` release, starts one catch-up jawan for
+  the branches behind it (the tick runs it every 10 minutes; run it by hand on a release notice). `catch-up merge` is
+  that jawan's step: it merges the tag into each long-lived branch's checkout and prints the checks to run and, per
+  branch, the one push it may make or why the merge stays local; it never pushes itself
+  ([projects.md](projects.md#release-catch-up)).
 - `workspace` prepares, lists, and prunes per-task branches and worktrees
   ([projects.md](projects.md#workspace-strategy)).
 - `forge`, `push`, `pr`: GitHub, GitLab, and Bitbucket Cloud; never forced, and only on your word or a standing

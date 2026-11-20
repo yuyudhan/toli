@@ -25,6 +25,7 @@ import { outboxCommand } from "./jobs/pull.ts";
 import { scheduleCommand } from "./jobs/schedule.ts";
 import { jobCommand } from "./jobs/tick.ts";
 import { peerCommand } from "./peer/command.ts";
+import { catchUpCommand } from "./projects/catch-up-merge.ts";
 import { branchCommand, commitCommand } from "./projects/commit.ts";
 import { projectCommand } from "./projects/projects.ts";
 import { workspaceCommand } from "./projects/workspace-command.ts";
@@ -56,7 +57,7 @@ const USAGE = `usage: bin/toli <command> [args]
   project set <name> [--mode <m>] [--branch <b>|none] [--base-branch <b>|none] [--task-branch <pattern>|none]
               [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
               [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
-              [--hook-timeout <seconds>|none|default] [--keep]
+              [--hook-timeout <seconds>|none|default] [--catch-up yes|no|default] [--catch-up-checks <command>|none] [--catch-up-push yes|no] [--keep]
   project set --all --workspace <strategy> [--keep]
   project drop <name> [--delete-clone] [--delete-data] | import [--dir projects]
   project setup <name> [--json] | setup --all [--json]
@@ -78,6 +79,7 @@ const USAGE = `usage: bin/toli <command> [args]
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
     (--resolved -- <conflicted paths> [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers)
+  catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--json]
   branch <project> <branch>
   workspace prepare T<n> [--reset | --same-branch] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
   self sync [--json] | status [--json]
@@ -194,6 +196,7 @@ const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = {
         branchCommand(argv);
         return 0;
     },
+    "catch-up": catchUpCommand,
     workspace: (argv) => {
         workspaceCommand(argv);
         return 0;

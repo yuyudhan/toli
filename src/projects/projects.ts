@@ -43,6 +43,9 @@ export type HookTimeout = number | "none";
  * for it (docs/fleet.md "Release priority", src/fleet/release-priority.ts).
  * `hookTimeoutSeconds`: how long each of the project's commit hooks may run under `bin/toli commit` (`none`: no
  * limit); absent, the machine's capacity.commitHookTimeoutSeconds applies (src/projects/commit-hooks.ts).
+ * `catchUp`: whether a new release tag starts a catch-up jawan here (absent: on; docs/projects.md "Release catch-up");
+ * `catchUpChecks`: the quick checks that jawan runs after each merge (absent: the ones the project's notes name);
+ * `catchUpPush`: false keeps every catch-up merge local on this machine (a box that cannot run the push gate).
  */
 export type Project = {
     name: string;
@@ -67,6 +70,9 @@ export type Project = {
     role?: "verify-only";
     releasePriority?: true;
     hookTimeoutSeconds?: HookTimeout;
+    catchUp?: boolean;
+    catchUpChecks?: string;
+    catchUpPush?: false;
     /** Set for `project link`: the user's own checkout that projects/<name> is a symlink to (never deleted by toli). */
     linkedTo?: string;
 };
@@ -99,6 +105,9 @@ export function loadProjects(): Project[] {
             role,
             releasePriority,
             hookTimeoutSeconds,
+            catchUp,
+            catchUpChecks,
+            catchUpPush,
             linkedTo,
         }) => ({
             name,
@@ -119,6 +128,9 @@ export function loadProjects(): Project[] {
             ...(role === "verify-only" ? { role } : {}),
             ...(releasePriority === true ? { releasePriority: true as const } : {}),
             ...(hookTimeoutSeconds === undefined ? {} : { hookTimeoutSeconds }),
+            ...(typeof catchUp === "boolean" ? { catchUp } : {}),
+            ...(catchUpChecks ? { catchUpChecks } : {}),
+            ...(catchUpPush === false ? { catchUpPush } : {}),
             ...(linkedTo ? { linkedTo } : {}),
         }),
     );

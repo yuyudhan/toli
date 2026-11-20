@@ -26,7 +26,7 @@ export function baseBranch(project: Project, clone: string): string {
  * Origin's default branch: origin/HEAD, asking origin when the clone has no record of it (`git remote set-head
  * --auto`), else `main` or `master` as origin has it, else as the clone has it (no remote); null when none exists.
  */
-function originDefault(clone: string): string | null {
+export function originDefault(clone: string): string | null {
     const originHead = ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"];
     let head = git(clone, originHead);
     if (head.code !== 0 && git(clone, ["remote", "set-head", "origin", "--auto"]).code === 0)

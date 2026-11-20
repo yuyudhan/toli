@@ -1,0 +1,236 @@
+// T2142: after a project's release (a new vX.Y.Z tag on origin's main), each machine with the clone starts one
+// catch-up jawan that merges the new main into its long-lived branches (docs/projects.md "Release catch-up").
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ROOMY } from "./fleet-fixture.ts";
+import { type Sandbox, sandbox, tempDir, withProject } from "./helpers.ts";
+
+type RunRecord = { id: string; project: string | null; status: string; briefPath: string; cwd: string };
+type TaskRecord = { id: string; notes: string[] };
+
+const BLOCKER = "j-20261120-080000-aaaa";
+
+/** A jawan run record; `running` under this test process holds its slot and stays live. */
+function runRecord(box: Sandbox, id: string, fields: Record<string, unknown>): void {
+    const dir = join(box.root, "state", "jawans");
+    const runDir = join(dir, id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "brief.md"), "TOLI_BRIEF v1\n");
+    writeFileSync(
+        join(dir, `${id}.json`),
+        JSON.stringify({
+            id,
+            harness: "omp",
+            task: null,
+            project: null,
+            work: null,
+            model: null,
+            cwd: box.root,
+            runDir,
+            briefPath: join(runDir, "brief.md"),
+            logPath: join(runDir, "output.log"),
+            command: "omp",
+            maxMinutes: null,
+            status: "running",
+            supervisorPid: process.pid,
+            pid: process.pid,
+            exitCode: null,
+            signal: null,
+            startedAt: "2026-11-20T08:00:00.000Z",
+            endedAt: null,
+            inbox: null,
+            error: null,
+            ...fields,
+        }),
+    );
+}
+
+function runs(box: Sandbox): RunRecord[] {
+    const dir = join(box.root, "state", "jawans");
+    return readdirSync(dir)
+        .filter((file) => file.endsWith(".json"))
+        .map((file) => JSON.parse(readFileSync(join(dir, file), "utf8")) as RunRecord)
+        .filter((run) => run.id !== BLOCKER);
+}
+
+/**
+ * Machine m1 with project alpha, its clone on the fixed working branch `nightly` (one commit past main), and one jawan
+ * slot held by a live run outside the clone, so a catch-up spawn stays queued and nothing runs.
+ */
+function machine(): { box: Sandbox; clone: string; origin: string } {
+    const box = sandbox();
+    box.ok(["init", "--name", "m1", "--role", "coordinator"]);
+    const clone = withProject(box, "alpha");
+    const config = join(box.root, "config", "machine.json");
+    const current = JSON.parse(readFileSync(config, "utf8")) as Record<string, unknown>;
+    writeFileSync(config, JSON.stringify({ ...current, capacity: { ...ROOMY, maxRuns: 1 } }));
+    box.stub("omp", "true");
+    runRecord(box, BLOCKER, {});
+    box.git(clone, ["switch", "--quiet", "-c", "nightly"]);
+    commitFile(box, clone, "work.txt", "nightly work\n");
+    box.ok(["project", "set", "alpha", "--branch", "nightly"]);
+    return { box, clone, origin: join(box.root, ".origin", "alpha.git") };
+}
+
+function commitFile(box: Sandbox, dir: string, file: string, text: string): string {
+    writeFileSync(join(dir, file), text);
+    box.git(dir, ["add", file]);
+    box.git(dir, ["commit", "--quiet", "-m", `edit ${file}`]);
+    return box.git(dir, ["rev-parse", "HEAD"]);
+}
+
+/** Cut release `tag` on origin's main from a separate releaser clone; returns the tagged sha. */
+function release(box: Sandbox, origin: string, tag: string, file = "CHANGES", text = `${tag}\n`): string {
+    const dir = tempDir("releaser");
+    box.git(dir, ["clone", "--quiet", origin, "."]);
+    const sha = commitFile(box, dir, file, text);
+    box.git(dir, ["tag", tag]);
+    box.git(dir, ["push", "--quiet", "origin", "main", tag]);
+    return sha;
+}
+
+describe("catch-up scan", () => {
+    test("a new tag queues one catch-up run per project, never a second while it is live", () => {
+        const { box, origin } = machine();
+        expect(box.ok(["catch-up", "scan"])).toContain("alpha: no vX.Y.Z tag on origin/main");
+        expect(runs(box)).toEqual([]);
+
+        const sha = release(box, origin, "v1.0.0");
+        const first = box.ok(["catch-up", "scan"]);
+        expect(first).toContain(`alpha: v1.0.0 (${sha.slice(0, 12)}): catch-up run`);
+        expect(first).toContain("for nightly");
+        const queued = runs(box);
+        expect(queued).toHaveLength(1);
+        expect(queued[0]).toMatchObject({
+            project: "alpha",
+            status: "queued",
+            cwd: join(box.root, "projects", "alpha"),
+        });
+        const brief = readFileSync(join(box.root, "data", "projects", "alpha", "briefs", "catch-up-v1.0.0.md"), "utf8");
+        expect(brief.startsWith("TOLI_BRIEF v1\n")).toBe(true);
+        expect(brief).toContain("## Goal");
+        expect(brief).toContain("bin/toli catch-up merge alpha --tag v1.0.0");
+        expect(brief).toContain("- nightly");
+
+        expect(box.ok(["catch-up", "scan"])).toContain(`catch-up run ${queued[0]?.id} is still queued`);
+        release(box, origin, "v1.1.0");
+        expect(box.ok(["catch-up", "scan"])).toContain(`catch-up run ${queued[0]?.id} is still queued`);
+        expect(runs(box)).toHaveLength(1);
+    });
+
+    test("a held checkout is skipped and tried again on a later scan", () => {
+        const { box, clone, origin } = machine();
+        runRecord(box, "j-20261120-080100-bbbb", { cwd: clone, project: "alpha" });
+        release(box, origin, "v1.0.0");
+        expect(box.ok(["catch-up", "scan"])).toContain(
+            "nightly: held (jawan run j-20261120-080100-bbbb works in it), tried again next scan",
+        );
+        expect(runs(box).filter((run) => run.briefPath.includes("catch-up"))).toEqual([]);
+
+        runRecord(box, "j-20261120-080100-bbbb", { cwd: clone, project: "alpha", status: "done" });
+        expect(box.ok(["catch-up", "scan"])).toContain("for nightly");
+        expect(runs(box).filter((run) => run.status === "queued")).toHaveLength(1);
+    });
+
+    test("opt-out is honoured, and a clone with no branch past main needs nothing", () => {
+        const { box, origin } = machine();
+        expect(box.ok(["project", "set", "alpha", "--catch-up", "no"])).toContain("catch-up=no");
+        release(box, origin, "v1.0.0");
+        expect(box.ok(["catch-up", "scan"])).toContain("alpha: catch-up is off");
+        expect(runs(box)).toEqual([]);
+        const listed = JSON.parse(box.ok(["project", "list", "--json"])) as { catchUp: boolean | null }[];
+        expect(listed[0]?.catchUp).toBe(false);
+
+        box.ok(["project", "set", "alpha", "--catch-up", "default", "--branch", "none"]);
+        box.git(join(box.root, "projects", "alpha"), ["switch", "--quiet", "main"]);
+        expect(box.ok(["catch-up", "scan"])).toContain("alpha: v1.0.0");
+        expect(box.ok(["catch-up", "scan"])).toContain("every long-lived branch has it");
+        expect(runs(box)).toEqual([]);
+    });
+});
+
+describe("catch-up merge", () => {
+    test("merges into an unpushed branch and keeps it local", () => {
+        const { box, clone, origin } = machine();
+        box.ok(["project", "set", "alpha", "--standing-push", "yes"]);
+        const sha = release(box, origin, "v1.0.0");
+        box.ok(["catch-up", "scan"]);
+        const self = { env: { TOLI_RUN_ID: runs(box)[0]?.id ?? "" } };
+        const text = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self);
+        expect(text).toMatch(/^nightly \(.*projects\/alpha\): merged v1\.0\.0 as [0-9a-f]{12}$/m);
+        expect(text).toContain("keep local: nightly is not on origin");
+        expect(text).not.toContain("push:");
+        expect(box.git(clone, ["merge-base", "--is-ancestor", sha, "nightly"])).toBe("");
+        expect(box.git(clone, ["log", "-1", "--format=%P", "nightly"]).split(" ")).toContain(sha);
+        expect(box.git(origin, ["branch", "--list", "nightly"])).toBe("");
+        expect(box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self)).toContain("nightly: up to date");
+    });
+
+    test("a pushed branch gets a push line only with the standing grant; the command itself never pushes", () => {
+        const { box, clone, origin } = machine();
+        box.git(clone, ["push", "--quiet", "origin", "nightly"]);
+        const before = box.git(origin, ["rev-parse", "nightly"]);
+        release(box, origin, "v1.0.0");
+        box.ok(["catch-up", "scan"]);
+        const self = { env: { TOLI_RUN_ID: runs(box)[0]?.id ?? "" } };
+        expect(box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self)).toContain(
+            "keep local: no standing push grant for alpha",
+        );
+        box.ok(["project", "set", "alpha", "--standing-push", "yes", "--catch-up-checks", "just lint"]);
+        release(box, origin, "v1.1.0");
+        box.ok(["catch-up", "scan"]);
+        const text = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.1.0"], self);
+        expect(text).toContain("checks: just lint");
+        expect(text).toContain("push (after the checks pass): bin/toli push alpha");
+        expect(box.git(origin, ["rev-parse", "nightly"])).toBe(before);
+
+        // A box that cannot run the project's push gate keeps every catch-up merge local.
+        expect(box.ok(["project", "set", "alpha", "--catch-up-push", "no"])).toContain("catch-up-push=no");
+        release(box, origin, "v1.2.0");
+        box.ok(["catch-up", "scan"]);
+        const local = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.2.0"], self);
+        expect(local).toContain("keep local: catch-up pushes are off for alpha on this machine");
+        expect(local).not.toContain("push (after");
+    });
+
+    test("a conflict is reported, the tree left clean, and the task owner told", () => {
+        const { box, clone, origin } = machine();
+        box.ok(["project", "set", "alpha", "--branch", "none", "--workspace", "worktree-per-task"]);
+        box.git(clone, ["switch", "--quiet", "main"]);
+        box.ok(["task", "add", "alpha", "Build API"]);
+        box.ok(["task", "start", "T1"]);
+        box.ok(["workspace", "prepare", "T1"]);
+        const worktree = join(box.root, "projects", ".worktrees", "alpha", "T1");
+        const head = commitFile(box, worktree, "CHANGES", "mine\n");
+        release(box, origin, "v1.0.0", "CHANGES", "theirs\n");
+        expect(box.ok(["catch-up", "scan"])).toContain("for toli/m1/T1-build-api");
+
+        const text = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"]);
+        expect(text).toContain("toli/m1/T1-build-api (T1");
+        expect(text).toContain("conflict in CHANGES: nothing merged, the work left as it was");
+        expect(box.git(worktree, ["rev-parse", "HEAD"])).toBe(head);
+        expect(box.git(worktree, ["status", "--porcelain"])).toBe("");
+        expect(existsSync(join(clone, ".git", "worktrees", "T1", "MERGE_HEAD"))).toBe(false);
+        const tasks = JSON.parse(box.ok(["task", "list", "--json"])) as TaskRecord[];
+        expect(tasks.find((task) => task.id === "T1")?.notes.join("\n")).toContain(
+            "catch-up v1.0.0: merging it into toli/m1/T1-build-api conflicts in CHANGES",
+        );
+    });
+
+    test("a checkout another live jawan holds is skipped and handed back to the next scan", () => {
+        const { box, clone, origin } = machine();
+        release(box, origin, "v1.0.0");
+        box.ok(["catch-up", "scan"]);
+        const catchUp = runs(box)[0]?.id ?? "";
+        runRecord(box, "j-20261120-080100-bbbb", { cwd: clone, project: "alpha" });
+        const head = box.git(clone, ["rev-parse", "HEAD"]);
+        const text = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], { env: { TOLI_RUN_ID: catchUp } });
+        expect(text).toContain("nightly: held (jawan run j-20261120-080100-bbbb works in it)");
+        const state = JSON.parse(readFileSync(join(box.root, "state", "catch-up.json"), "utf8")) as {
+            projects: Record<string, { attempted: string[] }>;
+        };
+        expect(state.projects.alpha?.attempted).toEqual([]);
+        expect(box.git(clone, ["rev-parse", "HEAD"])).toBe(head);
+    });
+});

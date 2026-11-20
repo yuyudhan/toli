@@ -24,9 +24,26 @@ one. See docs/releasing.md.
   reporting a failed check. Each machine that commits to a slow project sets its own limit, e.g.
   `bin/toli project set <p> --hook-timeout 900`; toli's `local/hooks/` scripts keep their separate 5-minute
   limit (docs/projects.md "Git hooks", T2013, T2091).
+- Every machine now catches up with each project release. When a project's main carries a new `vX.Y.Z` tag, the
+  tick's background `bin/toli catch-up scan` (every 10 minutes; by hand on a release notice) starts one catch-up jawan
+  for that project on each machine with the clone, through the normal spawn path. It merges the release into the
+  project's working branch and the branches of its active or held tasks with `bin/toli commit`'s `--merge`
+  (`bin/toli catch-up merge`), skips a checkout another live jawan holds until the next scan, and on a conflict merges
+  nothing, leaves the work as it was and notes the files on the task. It runs the project's quick checks
+  (`bin/toli project set <p> --catch-up-checks "<command>"`, else the notes' checks) and pushes only a branch already
+  on origin, never main, with the project's standing push grant and the normal hooks; anything else stays local and
+  is reported. A machine that cannot run the project's push gate sets `bin/toli project set <p> --catch-up-push no`
+  and keeps every catch-up merge local. On by default; `bin/toli project set <p> --catch-up no` turns it off on that
+  machine
+  (docs/projects.md "Release catch-up", T2142).
 
 ### Fixed
 
+- toli's own test runs no longer fill the temp dir with `toli-*` folders (3,458 on one machine, some holding
+  `projects/*/target` that `bin/toli disk keep` then flagged). Each test's temp dirs are now removed when it ends, the
+  rest when the run ends, a test calling `process.exit` or a run stopped by SIGINT/SIGTERM/SIGHUP included; the next
+  run removes what a run killed outright left; and the lock, pid-lock, runtime, ssh and cargo-home tests that made
+  their own temp dirs use the shared `tempDir` too (docs/development.md "Git hooks and CI", T2150).
 - `bin/toli delegate` and `bin/toli talk` no longer hang on a peer that stops answering. Behind a flapping VPN a
   delegate tried HTTPS for up to 60 s then ssh for up to 120 s with no output, so `timeout` killed it; each killed run
   left its item locked for 10 minutes, `outbox list` said "the outbox is empty", and every rerun queued another copy.

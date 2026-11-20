@@ -9,7 +9,7 @@ import { standingText } from "./strategy.ts";
 
 /**
  * `branch=`, `base-branch=`, `task-branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=`, `role=`,
- * `release-priority=`, `hook-timeout=` labels for the fields that are set.
+ * `release-priority=`, `hook-timeout=`, `catch-up=`, `catch-up-checks=`, `catch-up-push=` labels for the fields set.
  */
 export function overrideLabels(project: Project): string[] {
     return [
@@ -25,6 +25,9 @@ export function overrideLabels(project: Project): string[] {
         ...(project.hookTimeoutSeconds === undefined
             ? []
             : [`hook-timeout=${project.hookTimeoutSeconds === "none" ? "none" : `${project.hookTimeoutSeconds}s`}`]),
+        ...(project.catchUp === undefined ? [] : [`catch-up=${project.catchUp ? "yes" : "no"}`]),
+        ...(project.catchUpChecks ? [`catch-up-checks=${JSON.stringify(project.catchUpChecks)}`] : []),
+        ...(project.catchUpPush === false ? ["catch-up-push=no"] : []),
     ];
 }
 
@@ -43,6 +46,9 @@ export function projectListCommand(argv: string[]): void {
                 liveStack: entry.liveStack === true,
                 releasePriority: entry.releasePriority === true,
                 hookTimeoutSeconds: entry.hookTimeoutSeconds ?? null,
+                catchUp: entry.catchUp ?? null,
+                catchUpChecks: entry.catchUpChecks ?? null,
+                catchUpPush: entry.catchUpPush !== false,
                 path: paths.projectDir(entry.name),
                 cloned: isGitRepo(paths.projectDir(entry.name)),
                 linkedTo: entry.linkedTo ?? null,
