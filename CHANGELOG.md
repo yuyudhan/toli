@@ -25,6 +25,11 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- The "N queued messages from <peer> arrived" notice counts only the inbox items its batch wrote. It counted every
+  applied message, so a batch of delegation updates (which record status on the task and write no inbox item) posted
+  "13 messages <peer> queued for this machine arrived ... They are the items just before this one in the inbox"
+  with nothing before it. Nothing was lost; a batch that writes 5 or fewer inbox items now posts no notice (T2049).
+
 - A delegated task no longer reports, on every status change, to a machine above it that refuses the report. A
   slice (delegated while the `--for` task's own jawan works on it) forwarded on to a third machine carried the chain
   above it, so the new task also reported to the slice's delegator, which records only the slice and refused each

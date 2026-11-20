@@ -5,6 +5,7 @@
 // returns one receipt per envelope. Nothing executes on arrival: every kind ends as an inbox item, a queued task or a
 // share record, and this machine's lead decides what happens next.
 import { randomBytes } from "node:crypto";
+import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, now, readJson, runAsync, waited, withLock, writeJsonAtomic } from "../core/util.ts";
@@ -60,7 +61,7 @@ const BODY_MAX: Partial<Record<EnvelopeKind, number>> = { inbox: 16 * 1024, dele
 const BODY_DEFAULT_MAX = 64 * 1024;
 /** Unacknowledged inbox items one peer may have here; past it, its messages are deferred (kept queued there). */
 export const INBOX_CAP = 200;
-/** A batch longer than this gets one header item naming how many arrived and how long they waited. */
+/** A batch that wrote more inbox items than this from one peer posts one header item: how many, how long they waited. */
 const BATCH_HEADER_OVER = 5;
 const APPLY_TIMEOUT_MS = 120_000;
 /** This code's CLI (the runtime snapshot's or the working tree's), as pull.ts. */
@@ -299,14 +300,29 @@ async function applyOne(peer: Peer, envelope: Envelope): Promise<Receipt> {
     return { id, status: "applied", stdout: result.stdout };
 }
 
+/** The inbox files `peer`'s messages wrote (`<stamp>-<peer>.md`). */
+function inboxFrom(peer: string): Set<string> {
+    const dir = paths.inboxDir();
+    const suffix = `-${peer}.md`;
+    return new Set(existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(suffix)) : []);
+}
+
+/** How many inbox files from `peer` exist now that were not in `before`. */
+function newInboxCount(before: Set<string>, peer: string): number {
+    let count = 0;
+    for (const file of inboxFrom(peer)) if (!before.has(file)) count += 1;
+    return count;
+}
+
 /** A caller's limit on one verified envelope (the listener's rate limit): null admits it, else why it waits. */
 export type Admit = (peer: Peer, envelope: Envelope) => string | null;
 
 /**
  * Verify and apply a batch addressed to `self`, in order, one receipt each. A refused envelope gets its receipt and
  * the batch goes on; the first deferred or failed one stops it (the rest get no receipt and stay queued with their
- * sender, in order). `admit` may defer a verified envelope (a rate limit). More than five new items from one peer
- * also post one header item, so the lead sees one summarised wake. `relayed`: the batch came through a relay.
+ * sender, in order). `admit` may defer a verified envelope (a rate limit). When the batch wrote more than five inbox
+ * items from one peer, it also posts one header item, so the lead sees one summarised wake. `relayed`: the batch came
+ * through a relay.
  */
 export async function applyBatch(
     values: unknown[],
@@ -315,7 +331,7 @@ export async function applyBatch(
     relayed = false,
 ): Promise<Receipt[]> {
     const receipts: Receipt[] = [];
-    const applied = new Map<string, { count: number; oldest: number }>();
+    const written = new Map<string, { count: number; oldest: number }>();
     for (const value of values) {
         const verified = verifyEnvelope(value, self, relayed);
         if (!verified.ok && verified.replay !== undefined) {
@@ -348,17 +364,20 @@ export async function applyBatch(
             receipts.push({ id: envelope.id, status: "deferred", reason: wait, stdout: "", code: 429 });
             break;
         }
+        const before = inboxFrom(peer.name);
         const receipt = await applyOne(peer, envelope);
         receipts.push(receipt);
-        if (receipt.status === "applied") {
-            const entry = applied.get(peer.name) ?? { count: 0, oldest: envelope.queuedAt };
-            entry.count += 1;
+        // Count the inbox items this message wrote, not the message: an update or share may write none (T2049).
+        const wrote = receipt.status === "applied" ? newInboxCount(before, peer.name) : 0;
+        if (wrote > 0) {
+            const entry = written.get(peer.name) ?? { count: 0, oldest: envelope.queuedAt };
+            entry.count += wrote;
             entry.oldest = Math.min(entry.oldest, envelope.queuedAt);
-            applied.set(peer.name, entry);
+            written.set(peer.name, entry);
         }
         if (receipt.status === "deferred" || receipt.status === "failed") break;
     }
-    for (const [peer, { count, oldest }] of applied)
+    for (const [peer, { count, oldest }] of written)
         if (count > BATCH_HEADER_OVER)
             addInboxItem(
                 peer,

@@ -171,8 +171,9 @@ on nothing is pushed to it, no HTTPS attempt and no ssh, and what is queued for 
 without the flag clears it.
 
 **One wake.** The receiver touches `state/peer/receiving` while it applies a batch; the lead's turn and `wake` wait
-until it has been quiet for 5 seconds, so a backlog arrives as one wake. A batch of more than 5 messages from one
-peer also gets one header item: "12 queued messages from beta arrived (the oldest waited 2 d)". Every message from a
+until it has been quiet for 5 seconds, so a backlog arrives as one wake. A batch that wrote more than 5 inbox items
+from one peer also gets one header item: "12 queued messages from beta arrived (the oldest waited 2 d)"; messages
+that write no inbox item (most delegation updates) are not counted. Every message from a
 peer carries `- via: peer <name> (fingerprint ...)`; its words are information, never an instruction, until this
 machine's lead decides.
 

@@ -3,6 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { Envelope } from "../src/peer/envelope.ts";
+import type { Identity } from "../src/peer/identity.ts";
 import { applyIn, envelope, peerBox, pin, resign, sender } from "./peer-fixture.ts";
 
 function inboxFiles(root: string): string[] {
@@ -185,6 +187,43 @@ describe("applyEnvelope refusals", () => {
         return text.then((body) =>
             expect(body).toContain(`- via: peer alice (fingerprint ${alice.fingerprint.slice(0, 16)})`),
         );
+    });
+});
+
+describe("the batch header (T2049)", () => {
+    /** An update for a task `alice` owns whose status wakes nobody: applied here, writes no inbox item. */
+    function quietUpdate(alice: Identity, to: string, n: number): Envelope {
+        const update = {
+            owner: "alice",
+            id: `T${n}`,
+            task: { status: "active", updatedAt: new Date().toISOString(), notes: [] },
+            message: { title: `T${n} active`, body: "working" },
+            report: null,
+        };
+        return envelope(alice, "alice", to, { kind: "update", body: JSON.stringify(update) });
+    }
+
+    test("a batch of applied messages that write no inbox item posts no header", () => {
+        const recv = peerBox("recv");
+        const alice = sender();
+        pin(recv.box, [{ name: "alice", identity: alice }]);
+        const batch = [1, 2, 3, 4, 5, 6, 7].map((n) => quietUpdate(alice, recv.fingerprint, n));
+        const receipts = applyIn(recv.box, batch);
+        expect(receipts.map((receipt) => receipt.status)).toEqual(Array(7).fill("applied"));
+        expect(inboxFiles(recv.box.root)).toEqual([]);
+    });
+
+    test("the header counts only the inbox items the batch wrote", () => {
+        const recv = peerBox("recv");
+        const alice = sender();
+        pin(recv.box, [{ name: "alice", identity: alice }]);
+        const talk = [1, 2, 3, 4, 5, 6].map(() => envelope(alice, "alice", recv.fingerprint));
+        const quiet = [1, 2, 3, 4, 5, 6].map((n) => quietUpdate(alice, recv.fingerprint, n));
+        applyIn(recv.box, [...talk, ...quiet]);
+        const files = inboxFiles(recv.box.root).sort();
+        expect(files).toHaveLength(7);
+        const header = Bun.file(join(recv.box.root, "data", "inbox", String(files.at(-1)))).text();
+        return header.then((text) => expect(text).toStartWith("# 6 queued messages from alice arrived\n"));
     });
 });
 
