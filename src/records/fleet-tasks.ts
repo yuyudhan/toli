@@ -2,10 +2,8 @@
 // state/fleet-tasks/<machine>.json. The owner is the only writer of its tasks; a copy here is replaced only by a copy
 // taken later, so overlapping refreshes never put an older list back. Fleet-wide ids are `<machine>/T<n>`.
 import { existsSync } from "node:fs";
-import { Args } from "../core/args.ts";
 import {
     type FleetMachine,
-    fleetMachine,
     inboundOff,
     inboundOffText,
     loadMachine,
@@ -21,14 +19,12 @@ import {
     readJson,
     requireName,
     runAsync,
-    stamp,
     ToliError,
-    warn,
     withLock,
     writeJsonAtomic,
 } from "../core/util.ts";
-import { type AnswerBody, queuedText, sendNow } from "../jobs/outbox.ts";
 import { loadBacklog, type Status, type Task } from "./backlog.ts";
+import { forwardAnswer } from "./delegated-answer.ts";
 import { fleetId, splitFleetId } from "./delegation-report.ts";
 
 /** One machine's task list as last read: `fetchedAt` is when that machine answered; `error` when this refresh failed. */
@@ -195,30 +191,6 @@ export async function listFleet(options: {
         out(`## ${copy.machine} (${state}): ${shown.length} task${shown.length === 1 ? "" : "s"}`);
         for (const task of shown) out(line(task));
     }
-}
-
-/**
- * `task answer <machine>/T<n> "<answer>"` for another machine's task: the owner records it (rule 2). It travels as
- * an `answer` outbox item, over HTTPS to a paired peer or ssh otherwise; an owner that cannot be reached now gets it
- * when it is back (or with its next pull).
- */
-export function forwardAnswer(owner: string, argv: string[]): void {
-    const args = new Args(argv);
-    args.maxPositional(2);
-    const id = splitFleetId(args.pos(0, "id")).id;
-    const reply = args.pos(1, "answer");
-    const target = fleetMachine(owner);
-    const self = loadMachine().name;
-    const fid = fleetId(owner, id);
-    const body = JSON.stringify({ id, answer: reply } satisfies AnswerBody);
-    const sent = sendNow(self, target, "answer", `answer ${fid}`, body, `answer-${id}-${self}-${stamp()}`);
-    if (sent.delivered) {
-        out(`${owner} recorded the answer for ${fid}:`);
-        out(sent.stdout.trimEnd());
-        return;
-    }
-    if (!sent.pulled) warn(sent.error);
-    out(`answer for ${fid} ${queuedText(owner, sent)}`);
 }
 
 /** Subcommands that change one task: they take its id first, and only its owner may run them. */

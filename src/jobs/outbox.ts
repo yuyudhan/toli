@@ -45,8 +45,11 @@ export type OutboxItem = {
     queuedAt?: number;
 };
 
-/** An `answer` item's body: the owner's task id and the answer to record there. */
-export type AnswerBody = { id: string; answer: string };
+/**
+ * An `answer` item's body: the owner's task id and the answer to record there. `answerId` is the item's own id, the
+ * same on every attempt: the owner records it (`task answer --answer-id`) and drops a copy it already applied (T2151).
+ */
+export type AnswerBody = { id: string; answer: string; answerId?: string };
 
 /** What a delivered item's target printed, handed to the caller's `onDelivered`. */
 export type Delivered = { item: OutboxItem; stdout: string };
@@ -69,12 +72,15 @@ const DELIVERY_CONNECT_SECONDS = 5;
  */
 const SEND_NOW_MS = 10_000;
 
-function parseAnswer(body: string): AnswerBody {
+export function parseAnswer(body: string): AnswerBody {
     const value: unknown = JSON.parse(body);
-    const id = typeof value === "object" && value !== null ? Reflect.get(value, "id") : undefined;
-    const answer = typeof value === "object" && value !== null ? Reflect.get(value, "answer") : undefined;
+    const field = (key: string): unknown =>
+        typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+    const id = field("id");
+    const answer = field("answer");
+    const answerId = field("answerId");
     if (typeof id !== "string" || typeof answer !== "string") throw new Error("answer item without id and answer");
-    return { id, answer };
+    return typeof answerId === "string" ? { id, answer, answerId } : { id, answer };
 }
 
 /**
@@ -89,8 +95,10 @@ export function deliveryArgv(item: OutboxItem, verified?: string): string[] {
     if (item.kind === "link") return ["delegation", "link", ...from];
     if (item.kind === "share") return ["share", "receive"];
     if (item.kind === "answer") {
-        const { id, answer } = parseAnswer(item.body);
-        return ["task", "answer", id, answer, "--from", item.from];
+        const { id, answer, answerId } = parseAnswer(item.body);
+        // A receiver before T2151 lacks --answer-id: it fails as retryable (refusal.ts) and the item waits for it.
+        const once = answerId === undefined ? [] : ["--answer-id", answerId];
+        return ["task", "answer", id, answer, "--from", item.from, ...once];
     }
     return ["inbox", "add", "--from", item.from, "--title", item.title];
 }

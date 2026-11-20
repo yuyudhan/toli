@@ -55,6 +55,12 @@ export type DelegateState = {
      * those delegations, so this one no longer counts for the `--for` task either way.
      */
     forwarded?: true;
+    /**
+     * This machine answered the owner's current question (`task answer <owner>/T<n>`): the answer item's id and when.
+     * A second answer is refused until the owner reports another state, so a lead that sees the question again before
+     * the owner's update lands never sends it twice (T2151).
+     */
+    answered?: { id: string; at: string };
 };
 
 /** The delegation fields of a task (src/records/backlog.ts `Task`). */
@@ -85,6 +91,11 @@ export type DelegationFields = {
      * for the project takes it (docs/projects.md "Verify-only machines"). Its jawan is a verifier (`--work verify`).
      */
     verify?: true;
+    /**
+     * On a delegated task: the delegator's answers applied here (`task answer --from <m> --answer-id <id>`). A copy of
+     * one already applied (a retried delivery) is dropped, never noted again (T2151).
+     */
+    answerIds?: string[];
 };
 
 /** What travels to the delegator (JSON on `delegation update`'s stdin). */

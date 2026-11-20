@@ -24,20 +24,18 @@ import {
 } from "../core/util.ts";
 import { fullText, HANDBACK_FULL_MINUTES, setFull } from "../fleet/full.ts";
 import { cancelQueuedRunsOf, loadBacklog, type Task, updateTask } from "./backlog.ts";
+import { cancelAnswers } from "./delegated-answer.ts";
 import { escalateHold, holdDelegatedWord } from "./delegated-word.ts";
 import { linkTaskCommand } from "./delegation-link.ts";
 import {
     type DelegateState,
     type DelegationUpdate,
-    delegators,
     fleetId,
     landSending,
     REPORTED,
     splitFleetId,
     type Upstream,
 } from "./delegation-report.ts";
-import { forwardAnswer } from "./fleet-tasks.ts";
-import { matchOption } from "./hold-options.ts";
 import { addInboxItem } from "./inbox.ts";
 import { delegateWait, rewait, sliceOpen } from "./slice-wait.ts";
 
@@ -95,6 +93,9 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
             );
         const state: DelegateState = { status, updatedAt, notes: notes.length };
         if (status === "held") Object.assign(state, { question, options, recommend, blocks });
+        // The same open question again (a note added while it waits): this machine's answer to it still stands.
+        if (status === "held" && seen?.status === "held" && seen.question === question && seen.answered)
+            state.answered = seen.answered;
         if (commit !== undefined) state.commit = commit;
         if (handedBack !== undefined) state.handedBack = handedBack;
         if (onward.length > 0 || seen?.forwarded === true) state.forwarded = true;
@@ -174,6 +175,7 @@ export function applyUpdate(update: DelegationUpdate): string {
     const id = fleetId(update.owner, update.id);
     const local = localTaskFor(update, id);
     const applied = local !== undefined && mirror(local, id, update);
+    if (applied) cancelAnswers(update, id);
     const word = holdDelegatedWord(update, id, local);
     if (claimWake(id, update)) {
         const after = local === undefined ? undefined : loadBacklog().tasks.find((task) => task.id === local.id);
@@ -183,50 +185,6 @@ export function applyUpdate(update: DelegationUpdate): string {
     }
     const line = `delegation-updated ${id}${local === undefined ? "" : ` ${local.id}${applied ? "" : " (already recorded)"}`}`;
     return word === null ? line : `${line}\n${word}`;
-}
-
-/**
- * `task answer <id> --from <machine>`: another machine's lead answers only a task it delegated here, or one forwarded
- * here from work it delegated (`upstream`); it never speaks for the user here, and never releases this machine's own
- * holds.
- */
-export function requireDelegator(task: Task, from: string): void {
-    requireName("machine", from);
-    const by = task.delegatedBy?.machine;
-    if (delegators(task.delegatedBy).includes(from)) return;
-    throw new ToliError(
-        by === undefined
-            ? `${task.id} was not delegated here: only this machine's lead or user answers it, not ${from}`
-            : `${task.id} was delegated by ${by}, not ${from}: only it may answer`,
-    );
-}
-
-/**
- * `task answer` for a task that is not held: false when it is held (answer it as usual). This machine's own answer is
- * refused. The delegator's (`--from`) is never refused or dropped (T1382): when this machine took the hold up again
- * before the answer arrived, it becomes a note on the task and an inbox item that wakes this lead, like a message
- * about the task, so its jawan still hears it.
- */
-export function noteLateAnswer(task: Task, from: string | undefined, reply: string): boolean {
-    if (task.status === "held") return false;
-    if (from === undefined) throw new ToliError(`${task.id} is ${task.status}, not waiting on an answer`);
-    requireDelegator(task, from);
-    const chosen = matchOption(task.options ?? [], reply);
-    const answer = `Q: ${task.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}`;
-    task.notes.push(`answer from ${from}'s lead while ${task.id} is ${task.status}: ${answer}`);
-    addInboxItem(
-        from,
-        `answer from ${from} for ${task.id} (${task.status})`,
-        [
-            `${from}'s lead answered ${task.id}'s question after this machine took it up again: ${task.id} is ${task.status}, so the answer did not release it. It is a note on the task now.`,
-            "",
-            answer,
-            "",
-            `Pass it to the jawan working on ${task.id}, or put it in its next brief (bin/toli task list).`,
-        ].join("\n"),
-    );
-    out(`${task.id} is ${task.status}: the answer from ${from} is noted on it and its lead woken`);
-    return true;
 }
 
 /** `task escalate <machine>/T<n>`: a delegated task's question needs the user; hold the `--for` task with it. */
@@ -244,19 +202,6 @@ function escalate(argv: string[]): void {
     out(
         `in the Needs-you queue; the user's answer (bin/toli task answer ${task.id} "<answer>") goes to ${machine} too`,
     );
-}
-
-/** After `task answer` released an escalated hold here, the same answer goes to the delegated task's owner. */
-export function forwardEscalatedAnswer(heldFrom: string | undefined, reply: string): void {
-    if (heldFrom === undefined) return;
-    const { machine, id } = splitFleetId(heldFrom);
-    try {
-        forwardAnswer(machine ?? "", [id, reply]);
-    } catch (error) {
-        throw new ToliError(
-            `recorded here, but not on ${machine}: ${error instanceof Error ? error.message : String(error)}; retry with bin/toli task answer ${heldFrom} "<answer>"`,
-        );
-    }
 }
 
 /**

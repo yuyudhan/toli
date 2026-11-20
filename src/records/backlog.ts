@@ -7,8 +7,9 @@ import { findProject } from "../projects/projects.ts";
 import type { Workspace } from "../projects/strategy.ts";
 import { answerWake } from "./answer-wake.ts";
 import { recordDecision } from "./decisions.ts";
+import { forwardEscalatedAnswer, noteLateAnswer, requireDelegator } from "./delegated-answer.ts";
 import { type DelegationFields, reportDue, reportToDelegator } from "./delegation-report.ts";
-import { delegationTaskCommand, forwardEscalatedAnswer, noteLateAnswer, requireDelegator } from "./delegation-sync.ts";
+import { delegationTaskCommand } from "./delegation-sync.ts";
 import { listFleet, routeToOwner } from "./fleet-tasks.ts";
 import {
     HOLD_OPTIONS_MAX,
@@ -289,19 +290,27 @@ function hold(argv: string[]): void {
 }
 
 /**
- * `task answer <id> "<answer>" [--from <machine>]`: record the user's words verbatim, release the task and name every
- * task waiting on it, so the lead that ran this dispatches them in the same turn (no wake: it would dispatch them
- * twice). `--from`: the delegator's lead forwarded it, so a wake is posted; noteLateAnswer when it is not held.
+ * `task answer <id> "<answer>" [--from <machine> [--answer-id <id>]]`: record the user's words verbatim, release the
+ * task and name every task waiting on it, so the lead that ran this dispatches them in the same turn (no wake: it would
+ * dispatch them twice). `--from`: the delegator's lead forwarded it, so a wake is posted; noteLateAnswer when it is not
+ * held. `--answer-id`: the delivered item's id; a copy of an answer already applied here is dropped (T2151).
  */
 function answer(argv: string[]): void {
-    const args = new Args(argv, { values: ["from"] });
+    const args = new Args(argv, { values: ["from", "answer-id"] });
     args.maxPositional(2);
     const reply = args.pos(1, "answer");
     const from = args.str("from");
+    const answerId = args.str("answer-id");
     let heldFrom: string | undefined;
     let late = false;
+    let repeat = false;
     const task = updateTask(args.pos(0, "id"), (entry) => {
+        if (answerId !== undefined && entry.answerIds?.includes(answerId)) {
+            repeat = true;
+            return;
+        }
         late = noteLateAnswer(entry, from, reply);
+        if (answerId !== undefined) entry.answerIds = [...(entry.answerIds ?? []), answerId];
         if (late) return;
         if (from !== undefined) requireDelegator(entry, from);
         const chosen = matchOption(entry.options ?? [], reply);
@@ -313,6 +322,10 @@ function answer(argv: string[]): void {
         heldFrom = entry.heldFrom;
         delete entry.heldFrom;
     });
+    if (repeat) {
+        out(`${task.id}: answer ${answerId} is already applied here; this copy is dropped`);
+        return;
+    }
     out(describeTask(task));
     if (late) return;
     if (isValidName(task.project)) recordDecision(task, reply);

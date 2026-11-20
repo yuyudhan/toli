@@ -160,10 +160,15 @@ task (or one above it, for work forwarded on) may answer it, and only the task's
 else is refused there. The answer releases the task and wakes the owner's lead, who resumes the work at once. An
 answer that reaches the owner after it took the hold up again itself (the task is no longer held) is never refused or
 dropped: it becomes a note on the task and an inbox item (`answer from <machine> for T<n> (<status>)`) that wakes the
-owner's lead, which passes it to the jawan. A question only the user can decide (push, merge, release, money,
-security, a destructive step, his taste) goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task
-with `<owner>/T<n> asks: <question>` and its options, so it sits in this machine's Needs-you queue; his `task answer
-T<n> "<words>"` there is recorded here and forwarded to the owner too.
+owner's lead, which passes it to the jawan. An answer reaches the owner once: its item carries its id, and the owner
+drops a copy it already applied (a delivery retried after its exit or receipt was lost). The delegator sends one
+answer per question: a second `task answer` before the owner reports again is refused, as is any answer to a task the
+owner reported done or dropped, and an answer still queued when that report lands is cancelled
+(`state/outbox/cancelled/`). A task the owner takes up again reports a new state, so its new question takes a new
+answer. A question only the user can decide (push, merge, release, money, security, a destructive step, his taste)
+goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task with `<owner>/T<n> asks: <question>` and
+its options, so it sits in this machine's Needs-you queue; his `task answer T<n> "<words>"` there is recorded here
+and forwarded to the owner too, unless the owner already reported the task done or dropped.
 
 ### Questions for the user
 

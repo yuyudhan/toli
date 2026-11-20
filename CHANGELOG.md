@@ -39,6 +39,13 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A delegator's answer to a delegated task reaches its owner once. A delivery retried after its exit or receipt
+  was lost re-ran `task answer` there, so an owner that had already finished the task got the same answer as a new
+  "after this machine took it up again" note and wake each time. The answer item now carries its id, and the owner
+  drops a copy it already applied (`task answer --answer-id`). The delegator refuses a second answer to a question it
+  already answered until the owner reports again, refuses any answer to a task the owner reported done or dropped,
+  and cancels an answer still queued when that report lands; a task the owner takes up again reports a new state, so
+  its new question gets a new answer through (docs/sardars.md "Results and questions go back", T2151).
 - The lead's balancing offers (`queue: offer work to <machine>`) no longer go to a machine that cannot take the
   work, nor repeat every period. A task is offered only to a machine that publishes its project's clone (its
   `resources --json` `projects`), so a machine that registered one project is not offered the others; when the

@@ -1,7 +1,8 @@
-// Two real machines for delegation tests (tests/delegate.test.ts, tests/delegation-sync.test.ts).
-import { rmSync, writeFileSync } from "node:fs";
+// Two real machines for delegation tests (tests/delegate.test.ts, tests/delegation-sync.test.ts,
+// tests/delegated-answer.test.ts).
+import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, SSH_STUB_ARGS, sandbox, TOLI_BIN } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS, sandbox, TOLI_BIN, withProject } from "./helpers.ts";
 
 export type Task = {
     id: string;
@@ -112,4 +113,31 @@ export function brief(box: Sandbox, text = "TOLI_BRIEF v1\n# no-op\nReply done.\
     const file = join(box.root, "brief.md");
     writeFileSync(file, text);
     return file;
+}
+
+/** m1's T1, the `--for` task of a delegation. */
+export function parent(box: Sandbox): Task {
+    const task = tasks(box).find((entry) => entry.id === "T1");
+    if (task === undefined) throw new Error("no T1");
+    return task;
+}
+
+/** m1's T1 delegated to m2 as m2/T1 (`--for T1`). */
+export function delegated(): Pair {
+    const machines = pair();
+    withProject(machines.m1, "app");
+    machines.m1.ok(["task", "add", "app", "parent work"]);
+    machines.m1.ok(["delegate", "m2", "the work", "--brief", brief(machines.m1), "--for", "T1"]);
+    return machines;
+}
+
+/** The queued items in a machine's outbox, by file name. */
+export function outboxFiles(box: Sandbox): string[] {
+    const dir = join(box.root, "state", "outbox");
+    return existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : [];
+}
+
+/** The items a machine's outbox gave up, with their reasons. */
+export function cancelled(box: Sandbox): Array<{ kind?: string; reason: string }> {
+    return JSON.parse(box.ok(["outbox", "list", "--cancelled", "--json"])) as Array<{ kind?: string; reason: string }>;
 }

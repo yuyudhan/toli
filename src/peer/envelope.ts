@@ -240,7 +240,8 @@ export function applyArgv(peer: Peer, envelope: Envelope): string[] {
             return ["share", "receive"];
         case "answer": {
             const value = parseBody(envelope.body) ?? {};
-            return ["task", "answer", splitFleetId(String(value.id)).id, String(value.answer), "--from", from];
+            const id = splitFleetId(String(value.id)).id;
+            return ["task", "answer", id, String(value.answer), "--from", from, "--answer-id", envelope.id];
         }
         default:
             return [

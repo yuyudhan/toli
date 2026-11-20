@@ -1,23 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { brief, inbox, type Pair, pair, type Task, tasks } from "./delegate-fixture.ts";
+import { brief, cancelled, delegated, inbox, outboxFiles, pair, parent, tasks } from "./delegate-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
-
-function parent(box: Sandbox): Task {
-    const task = tasks(box).find((entry) => entry.id === "T1");
-    if (task === undefined) throw new Error("no T1");
-    return task;
-}
-
-/** m1's T1 delegated to m2 as m2/T1 (`--for T1`). */
-function delegated(): Pair {
-    const machines = pair();
-    withProject(machines.m1, "app");
-    machines.m1.ok(["task", "add", "app", "parent work"]);
-    machines.m1.ok(["delegate", "m2", "the work", "--brief", brief(machines.m1), "--for", "T1"]);
-    return machines;
-}
 
 /** An outbox file as src/jobs/outbox.ts writes it; only its body is read here. */
 type OutboxFile = { body: string };
@@ -28,15 +13,6 @@ function outboxBodies(box: Sandbox): string[] {
         const item: OutboxFile = JSON.parse(readFileSync(join(dir, file), "utf8"));
         return item.body;
     });
-}
-
-function outboxFiles(box: Sandbox): string[] {
-    const dir = join(box.root, "state", "outbox");
-    return existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : [];
-}
-
-function cancelled(box: Sandbox): Array<{ kind?: string; reason: string }> {
-    return JSON.parse(box.ok(["outbox", "list", "--cancelled", "--json"])) as Array<{ kind?: string; reason: string }>;
 }
 
 describe("delegated tasks write back to the --for task", () => {
@@ -191,75 +167,6 @@ describe("delegated tasks write back to the --for task", () => {
         expect(m1.ok(["digest"], { now: later })).toContain(
             "T1 (app) is active but its agent ReleaseSub never reported running",
         );
-    });
-});
-
-describe("a delegated task's question goes to the delegating lead", () => {
-    test("it wakes the delegator, which answers it; the owner releases the task at once", () => {
-        const { m1, m2 } = delegated();
-        m2.ok(["task", "hold", "T1", "--question", "Which?", "--option", "a => fast", "--option", "b => slow"]);
-        const task = parent(m1);
-        expect(task.status).toBe("active");
-        expect(task.delegates?.["m2/T1"]).toMatchObject({ status: "held", question: "Which?" });
-        const wake = inbox(m1).find((item) => item.title === "m2/T1 held: the work");
-        const body = readFileSync(wake?.path ?? "", "utf8");
-        expect(body).toContain("You delegated this work, so you answer it");
-        expect(body).toContain("bin/toli task escalate m2/T1");
-
-        expect(m1.ok(["task", "answer", "m2/T1", "a"])).toContain("m2 recorded the answer for m2/T1:");
-        expect(tasks(m2)[0]?.status).toBe("queued");
-        expect(inbox(m2).at(-1)?.title).toBe("answer recorded for T1: dispatch it");
-        const after = parent(m1);
-        expect(after.status).toBe("active");
-        expect(after.delegates?.["m2/T1"]?.status).toBe("queued");
-        expect(after.notes).toContain("m2/T1: Q: Which?\nA: a (= a) (recorded by m1's lead)");
-    });
-
-    test("escalated, it holds the --for task in the Needs-you queue; the user's answer goes to the owner", () => {
-        const { m1, m2 } = delegated();
-        m2.ok(["task", "hold", "T1", "--question", "Ship it?", "--option", "yes => push", "--option", "no => wait"]);
-        expect(m1.toli(["task", "escalate", "m2/T9"]).stderr).toContain("m2/T9 has no open question here");
-        expect(m1.ok(["task", "escalate", "m2/T1"])).toContain("in the Needs-you queue");
-        expect(parent(m1)).toMatchObject({
-            status: "held",
-            question: "m2/T1 asks: Ship it?",
-            options: [
-                { choice: "yes", outcome: "push" },
-                { choice: "no", outcome: "wait" },
-            ],
-            heldFrom: "m2/T1",
-        });
-
-        expect(m1.ok(["task", "answer", "T1", "no"])).toContain("m2 recorded the answer for m2/T1:");
-        const [owned] = tasks(m2);
-        expect(owned?.status).toBe("queued");
-        expect(owned?.notes.at(-1)).toBe("Q: Ship it?\nA: no (= no) (recorded by m1's lead)");
-        const after = parent(m1);
-        expect(after.status).toBe("active");
-        expect(after.heldFrom).toBeUndefined();
-    });
-
-    test("an answer for a hold its owner already reactivated becomes a note that wakes the owner's lead", () => {
-        // T1382: the answer was refused ("T1 is active, not waiting on an answer") and dropped to state/outbox/cancelled.
-        const { m1, m2, down, up } = delegated();
-        m2.ok(["task", "hold", "T1", "--question", "Ship it?", "--option", "yes => push", "--option", "no => wait"]);
-        m1.ok(["task", "escalate", "m2/T1"]);
-        // The owner takes the hold up again while its update to m1 is still queued, and m1's user answers the hold.
-        down("m1");
-        m2.ok(["task", "start", "T1", "--agent", "OwnSub"]);
-        up("m1");
-
-        const answered = m1.ok(["task", "answer", "T1", "yes"]);
-        expect(answered).toContain("m2 recorded the answer for m2/T1:");
-        expect(answered).toContain("T1 is active: the answer from m1 is noted on it and its lead woken");
-        expect(cancelled(m1)).toEqual([]);
-        expect(outboxFiles(m1)).toEqual([]);
-        const [owned] = tasks(m2);
-        expect(owned).toMatchObject({ status: "active", agent: "OwnSub" });
-        expect(owned).not.toHaveProperty("answer");
-        expect(owned?.notes.at(-1)).toBe("answer from m1's lead while T1 is active: Q: Ship it?\nA: yes (= yes)");
-        const wake = inbox(m2).find((item) => item.title === "answer from m1 for T1 (active)");
-        expect(readFileSync(wake?.path ?? "", "utf8")).toContain("T1 is active, so the answer did not release it");
     });
 });
 
