@@ -33,6 +33,8 @@ function doctorLines(box: Sandbox, name: string): string[] {
         .filter((line) => line.split(" ")[1] === name);
 }
 
+// Every test spawns bin/toli several times (the fixture alone runs three inits, the doctor tests run doctor two or
+// three times), so each gets a per-test timeout sized for a loaded machine rather than bun's 5 s default.
 describe("a machine marked pull-only in its own config/machine.json pulls (T1331)", () => {
     test("the tick pulls even when its own fleet entry lacks the flag, and the pull carries the flag", () => {
         const { m1, m2, m3 } = fixture();
@@ -46,7 +48,7 @@ describe("a machine marked pull-only in its own config/machine.json pulls (T1331
         // m3's list lacked the flag; m1's pull told it, so m3 never ssh-es into m1 again.
         const fleet = JSON.parse(readFileSync(join(m3.root, "config", "fleet.json"), "utf8")) as Fleet;
         expect(fleet.machines.find((machine) => machine.name === "m1")?.inbound).toBe(false);
-    });
+    }, 60_000);
 
     test("init --inbound off marks it, a rerun keeps it, --inbound on clears it", () => {
         const { m1 } = fixture();
@@ -58,7 +60,7 @@ describe("a machine marked pull-only in its own config/machine.json pulls (T1331
         m1.ok(["init", "--name", "m1", "--role", "coordinator", "--inbound", "on"]);
         expect(machine().inbound).toBeUndefined();
         expect(m1.toli(["init", "--name", "m1", "--role", "coordinator", "--inbound", "maybe"]).code).not.toBe(0);
-    });
+    }, 60_000);
 
     test("doctor warns on a pull-only machine that has never pulled, until it pulls", () => {
         const { m1 } = fixture();
@@ -68,7 +70,7 @@ describe("a machine marked pull-only in its own config/machine.json pulls (T1331
         expect(doctorLines(m1, "pull").join("\n")).toMatch(/^warn pull .*never pulled/);
         m1.ok(["outbox", "pull"]);
         expect(doctorLines(m1, "pull").join("\n")).toMatch(/^ok pull /);
-    });
+    }, 60_000);
 
     test("a sender's doctor names a puller that has never pulled from it", () => {
         const { m1, m2 } = fixture();
@@ -83,7 +85,7 @@ describe("a machine marked pull-only in its own config/machine.json pulls (T1331
         const line = doctorLines(m2, "outbox").join("\n");
         expect(line).toMatch(/^warn outbox /);
         expect(line).not.toContain("never pulled");
-    });
+    }, 60_000);
 
     test("a sender's doctor suggests pull-only for an unmarked machine its items pile up for", () => {
         const { m2 } = fixture();
@@ -92,5 +94,5 @@ describe("a machine marked pull-only in its own config/machine.json pulls (T1331
         expect(doctorLines(m2, "outbox").join("\n")).toMatch(
             /^warn outbox .*if m9 takes no inbound ssh.*--inbound off/,
         );
-    });
+    }, 60_000);
 });
