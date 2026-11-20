@@ -3,7 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Sandbox, sandbox, withProject } from "./helpers.ts";
+import { hookLimit } from "../src/projects/commit-hooks.ts";
+import { inProcess, type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 /** Install an executable `name` hook (`body` is bash) in the clone's .git/hooks. */
 function installHook(dir: string, name: string, body: string): void {
@@ -82,5 +83,24 @@ describe("bin/toli commit: the commit-hook time limit", () => {
         expect(other.toli(["commit", "app", "-m", "Add a", "--", "a.txt"]).stderr).toContain(
             "capacity.commitHookTimeoutSeconds must be",
         );
+    });
+
+    test("with nothing set the limit stays 300 s; a project's own setting replaces it for that project only", () => {
+        const { box } = setup();
+        withProject(box, "other");
+        const limits = (): [unknown, unknown] => {
+            let pair: [unknown, unknown] = [null, null];
+            inProcess(box.root, () => {
+                pair = [hookLimit("app"), hookLimit("other")];
+            });
+            return pair;
+        };
+        const unset = { seconds: 300, project: "app", source: "the default" };
+        expect(limits()[0]).toEqual(unset);
+        box.ok(["project", "set", "app", "--hook-timeout", "900"]);
+        expect(limits()).toEqual([
+            { seconds: 900, project: "app", source: "bin/toli project set app --hook-timeout 900" },
+            { ...unset, project: "other" },
+        ]);
     });
 });

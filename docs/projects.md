@@ -318,7 +318,11 @@ warns about each clone whose declared hooks are not installed.
 project whose hooks take longer sets its own limit with `bin/toli project set <p> --hook-timeout <seconds>|none`
 (`none`: no limit; `default` goes back to the machine's), shown as `hook-timeout=` in `bin/toli project list`
 (`hookTimeoutSeconds` in `--json`). The machine's default for every project is `capacity.commitHookTimeoutSeconds` in
-`config/machine.json` (seconds or `"none"`). The refusal names both settings.
+`config/machine.json` (seconds or `"none"`). The refusal names both settings. A project's limit is kept in this
+machine's `data/projects.json`, so each machine that commits to a slow project sets it there: for example
+`bin/toli project set <p> --hook-timeout 900` gives that project's pre-commit 15 minutes. This limit is only
+for a project's commit hooks: toli's own `local/hooks/` scripts (post-init, pre-tick, post-tick, task-end;
+[helpers.md](helpers.md)) keep their separate fixed 5-minute limit and never block a commit.
 
 `bin/toli push` refuses when the repo declares a `pre-push` hook git would not run: the project's own pre-push check
 would otherwise skip without a word, which is how pushes went out unverified before. `--no-hooks-ok` pushes anyway,
