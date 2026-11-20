@@ -160,24 +160,46 @@ it runs only <recipe>, which passed on <sha> (tree ..., proof ...)` and logs a `
   scan, a second check), runs another command, is not a shell script, or comes through a hook manager, a moved HEAD,
   a dirty checkout, or no sealed pass. A failed gate pushes nothing, so the hook never runs.
 
-A project whose own pre-push hook runs the same long check can skip it when toli already passed it on the tree it is
-about to push. Put this at the top of the hook, before the check (`project` is the project's toli name, `toli` the
-path to toli's `bin/toli`, and the recipe the exact text given to `gate run` / `push --gate`):
+A project whose own pre-push hook runs the same long check can skip it when toli already passed it on the trees the
+push lands. git feeds the hook one line per pushed ref (`<local ref> <local sha> <remote ref> <remote sha>`); put this
+at the top of the hook, before the check (`app` is the project's toli name, the recipe the exact text given to
+`gate run` / `push --gate`):
 
 ```sh
-toli=/path/to/toli/bin/toli
-if [ -x "$toli" ] && "$toli" gate check <project> --recipe "just verify all" >/dev/null 2>&1; then
-    echo "pre-push: just verify all already passed on this tree (bin/toli gate); skipping it"
+# bin/toli of the install this clone (<toli>/projects/app) or task worktree (<toli>/projects/.worktrees/app/<task>)
+# belongs to: both share the clone's git directory, <toli>/projects/app/.git.
+common="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+toli="${common%/projects/*}/bin/toli"
+zero=0000000000000000000000000000000000000000
+refs=0
+passed=0
+while read -r _ sha _ _; do
+    [ -n "$sha" ] || continue
+    refs=$((refs + 1))
+    if [ "$sha" = "$zero" ] ||
+        { [ -x "$toli" ] && "$toli" gate check app --sha "$sha" --recipe "just verify all" >/dev/null 2>&1; }; then
+        passed=$((passed + 1))
+    fi
+done
+if [ "$refs" -gt 0 ] && [ "$passed" -eq "$refs" ]; then
+    echo "pre-push: just verify all already passed on every pushed tip (bin/toli gate); skipping it"
     exit 0
 fi
 ```
 
-The hook keeps working outside toli: without `bin/toli` (or with a failed check) it falls through to the full check.
-`gate check` without `--sha` also requires the checkout to be exactly HEAD, since the hook tests the working tree;
-a changed or untracked file, or a tree that never passed, runs the check in full. A hook that decides per pushed ref
-(git's stdin lines) passes `--sha <local sha>`, which names that commit's tree and ignores the checkout, as toli's own
-hook does. A passing check logs one `proof` line (recipe, tree, the commit it passed at, the proof's first 12 hex
-digits) in `logs/gates.log`, so every skipped re-run can be traced to a gate that really ran.
+The hook keeps working outside toli: without `bin/toli`, with no ref lines, or with a failed check it falls through
+to the full check. Find `bin/toli` through the git common directory as above, never from the checkout's own path
+(`$(git rev-parse --show-toplevel)/../../bin/toli`): that path is right only in the clone, and in a task worktree it
+names no toli, so every push from a worktree silently reruns the check. `--sha` names that commit's tree and ignores
+the checkout. A pass on a ref's new tip covers the whole push of that ref, however many commits it carries (a fix and
+a merge of main): the tip's tree is exactly what the branch holds after the push, and `push --gate` gates exactly that
+tree. The commits between the remote's old sha and the tip are not checked one by one, by design; none of them is what
+lands, and the gate passes only trees it ran on, so a hook that asks for a pass on every commit in the range reruns
+the check for any push of two or more commits. A hook that checks the checkout instead (no stdin, no `--sha`) runs
+`gate check <project> --recipe ...` without `--sha`, which also requires the checkout to be exactly HEAD: a changed
+or untracked file, or a tree that never passed, runs the check in full. A passing check logs one `proof` line
+(recipe, tree, the commit it passed at, the proof's first 12 hex digits) in `logs/gates.log`, so every skipped re-run
+can be traced to a gate that really ran.
 
 toli's own pre-push hook (`.githooks/pre-push`) works this way for `bun run check`: a pushed commit that already
 passed is not checked again, and a checkout that is exactly the pushed commit runs the checks as a gate, so the

@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { commitFile, type GateRecord, gatesLog, recipe, records, runs, setup } from "./gate-fixture.ts";
 import { TOLI_BIN } from "./helpers.ts";
@@ -111,6 +111,61 @@ describe("gate proofs", () => {
         commitFile(box, dir, "b.txt");
         box.ok(["push", "app"]);
         expect(readFileSync(seen, "utf8").trim().split("\n")).toEqual(["skipped", "skipped", "ran"]);
+        expect(runs(box)).toBe(1);
+    });
+
+    test("a hook in a task worktree skips a fix + merge push whose tip tree passed, and runs for an ungated tip", () => {
+        const { box, dir } = setup();
+        box.ok(["project", "set", "app", "--standing-push", "yes", "--workspace", "worktree-per-task"]);
+        box.ok(["task", "add", "app", "Fix the bug"]);
+        box.ok(["workspace", "prepare", "T1"]);
+        const worktree = join(box.root, "projects", ".worktrees", "app", "T1");
+        const verify = recipe(box, "verify", "echo ok");
+        const seen = join(box.root, "hook-log");
+        // The install's bin/toli, which the hook finds from the clone's layout.
+        mkdirSync(join(box.root, "bin"));
+        writeFileSync(join(box.root, "bin", "toli"), `#!/bin/sh\nexec "${process.execPath}" "${TOLI_BIN}" "$@"\n`, {
+            mode: 0o755,
+        });
+        // The hook docs/delivery.md gives a project: a pass on each pushed ref's new tip skips the check.
+        writeFileSync(
+            join(dir, ".git", "hooks", "pre-push"),
+            [
+                "#!/bin/sh",
+                'common="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"',
+                `toli="\${common%/projects/*}/bin/toli"`,
+                "zero=0000000000000000000000000000000000000000",
+                "refs=0",
+                "passed=0",
+                "while read -r _ sha _ _; do",
+                '    [ -n "$sha" ] || continue',
+                "    refs=$((refs + 1))",
+                '    if [ "$sha" = "$zero" ] ||',
+                `        { [ -x "$toli" ] && "$toli" gate check app --sha "$sha" --recipe '${verify}' >/dev/null 2>&1; }; then`,
+                "        passed=$((passed + 1))",
+                "    fi",
+                "done",
+                'if [ "$refs" -gt 0 ] && [ "$passed" -eq "$refs" ]; then',
+                `    echo skipped >> ${seen}`,
+                "    exit 0",
+                "fi",
+                `echo ran >> ${seen}`,
+                "",
+            ].join("\n"),
+            { mode: 0o755 },
+        );
+        // main moves on origin while the task works: a fix, then a merge of main, two new commits in one push.
+        commitFile(box, dir, "main.txt");
+        box.git(dir, ["push", "--no-verify", "origin", "main"]);
+        commitFile(box, worktree, "fix.txt");
+        box.git(worktree, ["fetch", "origin"]);
+        box.git(worktree, ["merge", "--no-ff", "-m", "merge main", "origin/main"]);
+        expect(Number(box.git(worktree, ["rev-list", "--count", "origin/main..HEAD"]))).toBe(2);
+        box.ok(["push", "app", "--task", "T1", "--gate", verify]);
+        // A tip whose tree no gate ran on: the hook runs its check.
+        commitFile(box, worktree, "more.txt");
+        box.ok(["push", "app", "--task", "T1"]);
+        expect(readFileSync(seen, "utf8").trim().split("\n")).toEqual(["skipped", "ran"]);
         expect(runs(box)).toBe(1);
     });
 
