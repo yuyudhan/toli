@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sshArgs } from "../src/core/config.ts";
 import { BACKOFF_FIRST_MS, BACKOFF_MAX_MS, backoffMs } from "../src/jobs/reach.ts";
@@ -12,6 +12,7 @@ import {
     inbox,
     messageCalls,
     outbox,
+    type PullReport,
     pull,
     queue,
     queueFor,
@@ -223,30 +224,38 @@ describe("the tick's messaging pass with machines that are down (T979)", () => {
         expect(reachState(m1)).toEqual({});
     });
 
-    test("a machine that takes its whole ConnectTimeout does not hold up the others' items", () => {
+    test("a machine that takes its whole ConnectTimeout does not hold up the others' items", async () => {
         const { m1, m2, m3, flag } = fixture();
         m2.ok(["talk", "m1", "from m2"]);
         m3.ok(["talk", "m1", "from m3"]);
+        // m3 ahead of m2 in m1's fleet: a pull that took the machines one at a time would wait on m3 first.
+        const fleetFile = join(m1.root, "config", "fleet.json");
+        const fleet = JSON.parse(readFileSync(fleetFile, "utf8")) as Fleet;
+        writeFileSync(fleetFile, JSON.stringify({ machines: [...fleet.machines].reverse() }));
         writeFileSync(flag("m3-timeout"), "1");
-        const start = Date.now();
-        const report = pull(m1);
-        const end = Date.now();
+        const running = m1.toliAsync(["outbox", "pull", "--json"]);
+        try {
+            // m3's connection hangs until its ConnectTimeout runs out, which only this test ends: m2's message lands
+            // in m1's inbox while it still waits.
+            // Real processes on both ends, so this polls m1's inbox; the test's own timeout bounds the wait.
+            while (!inbox(m1).some((entry) => entry.from === "m2")) await Bun.sleep(50);
+        } finally {
+            writeFileSync(flag("m3-timed-out"), "1");
+        }
+        const run = await running;
+        expect(run.code).toBe(0);
+        const report = JSON.parse(run.stdout) as PullReport;
         expect(report).toMatchObject({ pulled: 1, applied: 1, acked: 1 });
         expect(report.errors.join("\n")).toContain("m3: ssh host3 exited 255");
-        // The pull's ConnectTimeout is short (5 s, not 15 s).
-        expect(end - start).toBeGreaterThanOrEqual(5000);
-        expect(end - start).toBeLessThan(15_000);
-        // m2's message was in m1's inbox while m3's connection still waited.
-        const item = inbox(m1).find((entry) => entry.from === "m2");
-        expect(item).toBeDefined();
-        expect(end - statSync(item?.path ?? "").mtimeMs).toBeGreaterThan(2000);
+        // The pull's ConnectTimeout is short (5 s, not ssh's 15 s default).
+        expect(readFileSync(flag("m3-connect-timeouts"), "utf8")).toBe("5\n");
         expect(outbox(m3)).toHaveLength(1);
-        // The tick backs m3 off: after one tick that waits on it, the next pulls m2 without waiting on m3 again.
+        // The tick backs m3 off: after one tick that tries it, the next pulls m2 without trying m3 again.
         m1.ok(["job", "tick"]);
+        expect(messageCalls(m1, "host3")).toHaveLength(2);
         m2.ok(["talk", "m1", "again from m2"]);
-        const next = Date.now();
         m1.ok(["job", "tick"]);
-        expect(Date.now() - next).toBeLessThan(5000);
+        expect(messageCalls(m1, "host3")).toHaveLength(2);
         expect(bodies(m1).join("\n")).toContain("again from m2");
         expect(tickLog(m1)).toContain("1 machine(s) held back");
     }, 60_000);

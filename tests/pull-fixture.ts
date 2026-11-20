@@ -10,8 +10,11 @@ export type PullReport = { pulled: number; applied: number; acked: number; held:
 /**
  * m1, the coordinator, takes no inbound ssh; m2 and m3 are its workers. Every machine's `ssh` stub appends
  * `<host> <command>` to its own `.ssh.log` and runs the remote `bin/toli ...` against the named machine's sandbox.
- * A `.<machine>-down` file in m1's root makes that machine unreachable at once, `.<machine>-timeout` only after the
- * call's ConnectTimeout (as a machine that is off is), and `.ack-down` makes `outbox ack` fail.
+ * A `.<machine>-down` file in m1's root makes that machine unreachable at once. `.<machine>-timeout` makes its calls
+ * hang as a machine that is off does until the call's ConnectTimeout runs out: each call appends the ConnectTimeout it
+ * carries to `.<machine>-connect-timeouts` and hangs until the test, standing in for the clock, creates
+ * `.<machine>-timed-out` (or this test process is gone, so a failed test leaves no stub behind). `.ack-down` makes
+ * `outbox ack` fail.
  */
 export type Fixture = { m1: Sandbox; m2: Sandbox; m3: Sandbox; flag: (name: string) => string };
 
@@ -55,7 +58,7 @@ export function fixture(options: { flagOnWorkers?: boolean } = {}): Fixture {
                 `printf '%s %s\\n' "$host" "$cmd" >> "${join(box.root, ".ssh.log")}"`,
                 `name=m$(printf '%s' "$host" | sed 's/^host//')`,
                 `if [ -e "${m1.root}/.$name-down" ]; then echo "ssh: connect to host $host: Connection refused" >&2; exit 255; fi`,
-                `if [ -e "${m1.root}/.$name-timeout" ]; then delay=15; for arg in "$@"; do case "$arg" in ConnectTimeout=*) delay="\${arg#ConnectTimeout=}" ;; esac; done; sleep "$delay"; echo "ssh: connect to host $host port 22: Operation timed out" >&2; exit 255; fi`,
+                `if [ -e "${m1.root}/.$name-timeout" ]; then for arg in "$@"; do case "$arg" in ConnectTimeout=*) printf '%s\\n' "\${arg#ConnectTimeout=}" >> "${m1.root}/.$name-connect-timeouts" ;; esac; done; while [ ! -e "${m1.root}/.$name-timed-out" ] && kill -0 ${process.pid} 2>/dev/null; do sleep 0.05; done; echo "ssh: connect to host $host port 22: Operation timed out" >&2; exit 255; fi`,
                 `case "$cmd" in *"outbox ack"*) if [ -e "${flag("ack-down")}" ]; then echo "ssh: broken pipe" >&2; exit 255; fi ;; esac`,
                 'case "$host" in',
                 ...Object.entries(roots).map(([host, root]) => `  ${host}) root="${root}" ;;`),
