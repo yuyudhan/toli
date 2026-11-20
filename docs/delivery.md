@@ -158,37 +158,51 @@ it runs only <recipe>, which passed on <sha> (tree ..., proof ...)` and logs a `
   `logs/gates.log`. Otherwise it prints
   `push: running the pre-push hook: <why>` and the hook runs as usual: a hook that does more than the gate (a secret
   scan, a second check), runs another command, is not a shell script, or comes through a hook manager, a moved HEAD,
-  a dirty checkout, or no sealed pass. A failed gate pushes nothing, so the hook never runs.
+  a dirty checkout, or no sealed pass. A failed gate pushes nothing, so the hook never runs. For a hook that is not
+  only the gate, the reason also says what happens to its gate step: when the hook asks `gate check`, it is skipped
+  where the hook asks `bin/toli gate check <project> --sha <pushed sha> --recipe "<recipe>"`; when it never asks, the
+  reason says `so a gate step in it reruns` and names that guard.
 
-A project whose own pre-push hook runs the same long check can skip it when toli already passed it on the trees the
-push lands. git feeds the hook one line per pushed ref (`<local ref> <local sha> <remote ref> <remote sha>`); put this
-at the top of the hook, before the check (`app` is the project's toli name, the recipe the exact text given to
-`gate run` / `push --gate`):
+A project whose own pre-push hook runs the same long check skips that step, and only that step, when toli already
+passed it on the trees the push lands; the hook's other steps (a secret scan, a quick lint) run on every push. toli
+cannot skip part of a hook itself: it would have to rewrite or partly run the project's script, and only the hook
+knows which of its steps is the gate. So the hook guards its gate step with `gate check`, which answers from the
+sealed pass alone, whoever runs the push (`bin/toli push`, plain `git push`, another tool). git feeds the hook one
+line per pushed ref (`<local ref> <local sha> <remote ref> <remote sha>`) on stdin, which the hook reads once; put
+the guard around the check (`app` is the project's toli name, the recipe the exact text given to `gate run` /
+`push --gate`):
 
 ```sh
+refs=$(cat)
+# ... the hook's other steps, which always run (they may read "$refs" too)
 # bin/toli of the install this clone (<toli>/projects/app) or task worktree (<toli>/projects/.worktrees/app/<task>)
 # belongs to: both share the clone's git directory, <toli>/projects/app/.git.
 common="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 toli="${common%/projects/*}/bin/toli"
 zero=0000000000000000000000000000000000000000
-refs=0
+total=0
 passed=0
 while read -r _ sha _ _; do
     [ -n "$sha" ] || continue
-    refs=$((refs + 1))
+    total=$((total + 1))
     if [ "$sha" = "$zero" ] ||
         { [ -x "$toli" ] && "$toli" gate check app --sha "$sha" --recipe "just verify all" >/dev/null 2>&1; }; then
         passed=$((passed + 1))
     fi
-done
-if [ "$refs" -gt 0 ] && [ "$passed" -eq "$refs" ]; then
+done <<EOF
+$refs
+EOF
+if [ "$total" -gt 0 ] && [ "$passed" -eq "$total" ]; then
     echo "pre-push: just verify all already passed on every pushed tip (bin/toli gate); skipping it"
-    exit 0
+else
+    just verify all
 fi
 ```
 
-The hook keeps working outside toli: without `bin/toli`, with no ref lines, or with a failed check it falls through
-to the full check. Find `bin/toli` through the git common directory as above, never from the checkout's own path
+The hook keeps working outside toli: without `bin/toli`, with no ref lines, or with a failed check it runs the full
+check. A hook whose only step is the check may `exit 0` where this one skips it. Ask `gate check` with the exact
+recipe text the push gates with (`push --gate "just verify push --piece"` is a different recipe from `just verify
+push`), and find `bin/toli` through the git common directory as above, never from the checkout's own path
 (`$(git rev-parse --show-toplevel)/../../bin/toli`): that path is right only in the clone, and in a task worktree it
 names no toli, so every push from a worktree silently reruns the check. `--sha` names that commit's tree and ignores
 the checkout. A pass on a ref's new tip covers the whole push of that ref, however many commits it carries (a fix and

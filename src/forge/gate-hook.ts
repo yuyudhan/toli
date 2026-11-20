@@ -2,7 +2,9 @@
 // exactly the gate's recipe and nothing else would repeat a run that just passed, so the push skips it, but only when
 // the gate's sealed pass (src/forge/gate-record.ts) is for the tree of exactly the commit being pushed, the checkout is
 // exactly that commit, and the hook's one command is the recipe's text. Anything else keeps the hook: another command,
-// a hook doing more (a secret scan, a second check), a hook in another language, a moved HEAD, a dirty checkout.
+// a hook doing more (a secret scan, a second check), a hook in another language, a moved HEAD, a dirty checkout. A
+// hook doing more skips only its own gate step, by asking `bin/toli gate check --sha` for it (T598): toli cannot run
+// part of a hook, and only the hook knows which of its steps is the gate, so the reason says whether it asks.
 import { readFileSync } from "node:fs";
 import { headSha, treeSha } from "../core/git.ts";
 import { out } from "../core/util.ts";
@@ -42,15 +44,10 @@ export function pushHookDecision(input: { project: string; dir: string; recipe: 
     const { project, dir, recipe, sha } = input;
     const hook = activeHookPath(dir, "pre-push");
     if (hook === null) return { skip: false, reason: "no pre-push hook is active" };
-    const command = hookCommand(readFileSync(hook, "utf8"));
-    if (command !== recipe.trim())
-        return {
-            skip: false,
-            reason:
-                command === null
-                    ? `${hook} does more than one command, so it is not only the gate ${recipe}`
-                    : `${hook} runs ${command}, not the gate ${recipe}`,
-        };
+    const script = readFileSync(hook, "utf8");
+    const command = hookCommand(script);
+    if (command === null) return { skip: false, reason: moreThanTheGate(hook, script, project, recipe) };
+    if (command !== recipe.trim()) return { skip: false, reason: `${hook} runs ${command}, not the gate ${recipe}` };
     const head = headSha(dir);
     if (head !== sha) return { skip: false, reason: `HEAD is now ${short(head)}, not the gated ${short(sha)}` };
     const changes = checkoutChanges(dir);
@@ -65,6 +62,24 @@ export function pushHookDecision(input: { project: string; dir: string; recipe: 
             `skipping the pre-push hook ${hook}: it runs only ${recipe}, which passed on ${short(sha)} (tree ` +
             `${short(tree)}, proof ${short(record.proof ?? "")}); pushing exactly that commit with --no-verify`,
     };
+}
+
+/** `bin/toli gate check` in a hook's text: the documented way a hook skips its own gate step on a passed tree. */
+const ASKS_GATE_CHECK = /\bgate\s+check\b/;
+
+/**
+ * Why a hook that is not just the gate (more than one command, or not a plain shell script) still runs, and what
+ * happens to its gate step: skipped when that step asks `gate check` for the pushed sha and recipe (a sealed pass
+ * answers it), rerun when the hook never asks.
+ */
+function moreThanTheGate(hook: string, script: string, project: string, recipe: string): string {
+    const check = `bin/toli gate check ${project} --sha <pushed sha> --recipe "${recipe}"`;
+    if (ASKS_GATE_CHECK.test(script))
+        return `${hook} is not only the gate ${recipe}, so it runs; its gate step is skipped where it asks ${check}`;
+    return (
+        `${hook} is not only the gate ${recipe} and never asks bin/toli gate check, so a gate step in it reruns; ` +
+        `guard that step with ${check} (docs/delivery.md, Gates)`
+    );
 }
 
 /**

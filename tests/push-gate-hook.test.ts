@@ -3,11 +3,11 @@
 // pushed from a clean checkout, the push skips that hook's identical run, says so, and pushes exactly that commit. Any
 // other sha, a dirty checkout, another command, or a hook that does more keeps the hook.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { hookCommand, pushHookDecision } from "../src/forge/gate-hook.ts";
 import { commitFile, gatesLog, recipe, runs, setup } from "./gate-fixture.ts";
-import type { Sandbox } from "./helpers.ts";
+import { type Sandbox, TOLI_BIN } from "./helpers.ts";
 
 // Each push runs a real detached gate runner and a real git push.
 setDefaultTimeout(60_000);
@@ -75,9 +75,70 @@ describe("push --gate and an identical pre-push hook", () => {
         const verify = recipe(box, "verify", "echo ok");
         const seen = join(box.root, "secret-scan");
         writeHook(dir, `#!/bin/sh\necho scanned > ${seen}\n${verify}\n`);
-        box.ok(["push", "app", "--gate", verify]);
+        const pushed = box.ok(["push", "app", "--gate", verify]);
         expect(runs(box)).toBe(2);
         expect(existsSync(seen)).toBe(true);
+        // It never asks gate check, so its gate step reran; the push names the guard that would skip it.
+        expect(pushed).toContain("never asks bin/toli gate check, so a gate step in it reruns");
+        expect(pushed).toContain(
+            `guard that step with bin/toli gate check app --sha <pushed sha> --recipe "${verify}"`,
+        );
+    });
+
+    test("a hook that does more than the gate skips only its gate step, by gate check, on the passed tree", () => {
+        const { box, dir } = pushable();
+        box.ok(["project", "set", "app", "--workspace", "worktree-per-task"]);
+        box.ok(["task", "add", "app", "Fix the bug"]);
+        box.ok(["workspace", "prepare", "T1"]);
+        const worktree = join(box.root, "projects", ".worktrees", "app", "T1");
+        const verify = recipe(box, "verify", "echo ok");
+        const scans = join(box.root, "secret-scan");
+        mkdirSync(join(box.root, "bin"));
+        writeFileSync(join(box.root, "bin", "toli"), `#!/bin/sh\nexec "${process.execPath}" "${TOLI_BIN}" "$@"\n`, {
+            mode: 0o755,
+        });
+        // The multi-command hook docs/delivery.md gives: its other steps always run, its gate step asks gate check.
+        writeHook(
+            dir,
+            [
+                "#!/bin/sh",
+                "set -eu",
+                "refs=$(cat)",
+                `echo scanned >> ${scans}`,
+                'common="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"',
+                `toli="\${common%/projects/*}/bin/toli"`,
+                "zero=0000000000000000000000000000000000000000",
+                "total=0",
+                "passed=0",
+                "while read -r _ sha _ _; do",
+                '    [ -n "$sha" ] || continue',
+                "    total=$((total + 1))",
+                '    if [ "$sha" = "$zero" ] ||',
+                `        { [ -x "$toli" ] && "$toli" gate check app --sha "$sha" --recipe '${verify}' >/dev/null 2>&1; }; then`,
+                "        passed=$((passed + 1))",
+                "    fi",
+                "done <<EOF",
+                "$refs",
+                "EOF",
+                'if [ "$total" -gt 0 ] && [ "$passed" -eq "$total" ]; then',
+                `    echo "pre-push: '${verify}' already passed on every pushed tip; skipping it"`,
+                "else",
+                `    ${verify}`,
+                "fi",
+                "",
+            ].join("\n"),
+        );
+        commitFile(box, worktree, "fix.txt");
+        const pushed = box.ok(["push", "app", "--task", "T1", "--gate", verify]);
+        expect(pushed).toContain(`is not only the gate ${verify}, so it runs; its gate step is skipped where it asks`);
+        // The gate ran once, the hook's gate step not at all, and its other step still ran.
+        expect(runs(box)).toBe(1);
+        expect(readFileSync(scans, "utf8").trim().split("\n")).toEqual(["scanned"]);
+        // A tree no gate passed on: the gate step runs, and so does the other step.
+        commitFile(box, worktree, "more.txt");
+        box.ok(["push", "app", "--task", "T1"]);
+        expect(runs(box)).toBe(2);
+        expect(readFileSync(scans, "utf8").trim().split("\n")).toEqual(["scanned", "scanned"]);
     });
 
     test("a different sha, a dirty checkout, another recipe or no proof keeps the hook", () => {
