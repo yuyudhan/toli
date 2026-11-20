@@ -25,6 +25,14 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- Toli's git calls ignore a `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` (or another repository-locating git
+  variable: `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`,
+  `GIT_PREFIX`) inherited from the shell. A jawan's shell left `GIT_INDEX_FILE` exported for hours, so
+  `bin/toli commit` updated a scratch index instead of the checkout's (a clean checkout looked broken) and a
+  `GIT_DIR` would have sent it to another repository altogether. Every program toli runs now starts without them,
+  except the private index toli sets itself, and `bin/toli commit` / `bin/toli push` print one warning naming the
+  variables so the shell gets fixed (T2052).
+
 - The "N queued messages from <peer> arrived" notice counts only the inbox items its batch wrote. It counted every
   applied message, so a batch of delegation updates (which record status on the task and write no inbox item) posted
   "13 messages <peer> queued for this machine arrived ... They are the items just before this one in the inbox"

@@ -51,13 +51,6 @@ const HOME_PROTECTED_FOLDERS: Readonly<Record<string, true>> = {
 };
 /** Submodules nest; past this many superprojects the outermost one found counts. */
 const MAX_SUPERPROJECTS = 8;
-/** Variables a git hook sets that would point git at the hook's repository instead of the folder asked about. */
-const HOOK_GIT_ENV: Record<string, undefined> = {
-    GIT_DIR: undefined,
-    GIT_WORK_TREE: undefined,
-    GIT_COMMON_DIR: undefined,
-    GIT_INDEX_FILE: undefined,
-};
 
 /** The places a build may run in, every path resolved. */
 type Places = {
@@ -84,9 +77,9 @@ function knownPlaces(): Places {
     return { checkouts, taskWorktrees, runWorktrees: real(join(noMistakesHome(), "worktrees")) };
 }
 
-/** git in `dir`, never steered elsewhere by a hook's environment. */
+/** git in `dir`; main() dropped a hook's GIT_DIR and the like, so nothing steers it elsewhere. */
 function gitIn(dir: string, args: string[]): string | null {
-    const result = run(["git", "-C", dir, ...args], { env: HOOK_GIT_ENV });
+    const result = run(["git", "-C", dir, ...args]);
     return result.code === 0 ? result.stdout.trim() : null;
 }
 

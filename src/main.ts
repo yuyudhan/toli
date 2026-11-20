@@ -1,3 +1,4 @@
+import { dropInheritedGitEnv } from "./core/git-env.ts";
 import { out, ToliError, warn } from "./core/util.ts";
 import { buildSlotCommand } from "./fleet/build-slots.ts";
 import { delegateCommand } from "./fleet/delegate.ts";
@@ -143,6 +144,9 @@ const USAGE = `usage: bin/toli <command> [args]
   version [--json]
   upgrade [vX.Y.Z|--latest] [--check]
   update check [--due] [--json] | status [--json] | snooze <vX.Y.Z> | off | on`;
+
+/** The commands that name a repository for git to change, and so warn when the shell points git elsewhere. */
+const GIT_WRITING_COMMANDS: Readonly<Record<string, true>> = { commit: true, push: true };
 
 /** Every command, by its first word; each resolves to the process exit code. */
 const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = {
@@ -346,9 +350,21 @@ function wantsHelp(argv: readonly string[]): boolean {
     return (end === -1 ? argv : argv.slice(0, end)).some((word) => word === "--help" || word === "-h");
 }
 
-/** Dispatch one CLI invocation; resolves to the process exit code. */
+/**
+ * Dispatch one CLI invocation; resolves to the process exit code. Toli finds every repository by its path, so it first
+ * drops the repository-locating git variables (GIT_DIR, GIT_INDEX_FILE, ...) it inherited: no git call or program it
+ * starts sees them (T2052). `commit` and `push` say so once, since the shell that exported one still misleads its own
+ * git.
+ */
 export async function main(argv: string[]): Promise<number> {
+    const inherited = dropInheritedGitEnv();
     const [command, ...rest] = argv;
+    if (inherited.length > 0 && command !== undefined && Object.hasOwn(GIT_WRITING_COMMANDS, command)) {
+        const them = inherited.length === 1 ? "it" : "them";
+        warn(
+            `toli: ignoring ${inherited.join(", ")} inherited from this shell: toli finds each repository by its path. Unset ${them}, or this shell's own git commands keep using ${them}.`,
+        );
+    }
     if (command === undefined || command === "help" || command === "--help" || command === "-h") {
         out(USAGE);
         return command === undefined ? 2 : 0;
