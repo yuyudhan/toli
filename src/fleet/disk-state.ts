@@ -153,6 +153,7 @@ export const REDELETE_AFTER_MS = 6 * 60 * 60_000;
 export class RecentDeletions {
     private readonly recent = RecentDeletions.read();
     private readonly deleted: string[] = [];
+    private readonly waiting: (() => void)[] = [];
 
     private static read(): Map<string, number> {
         let saved: unknown;
@@ -168,12 +169,24 @@ export class RecentDeletions {
         return recent;
     }
 
-    /** Why `path`, deleted lately and back since, stays this run; null when it may go (free disk is read only then). */
-    regrown(path: string, freeGB: () => number, emergencyGB: number): string | null {
+    /**
+     * Why `path`, deleted lately and back since, stays for now; null when it may go (free disk is read only then).
+     * A folder left alone gets `later` (its deletion under the emergency rule) through `underEmergency`.
+     */
+    regrown(path: string, freeGB: () => number, emergencyGB: number, later: () => void): string | null {
         const at = this.recent.get(path);
         if (at === undefined || freeGB() < emergencyGB) return null;
+        this.waiting.push(later);
         const minutes = Math.floor((now().getTime() - at) / 60_000);
         return `the keeper deleted it ${minutes} min ago and it grew back; left alone for ${REDELETE_AFTER_MS / 3_600_000} h while free disk is over the emergency level ${gb(emergencyGB)}`;
+    }
+
+    /**
+     * Free disk fell under the emergency level after a folder was left alone: delete each such folder like any idle
+     * one, until free disk is over that level again. A folder left alone never counts as one in use (disk-hold.ts).
+     */
+    underEmergency(over: () => boolean): void {
+        for (const later of this.waiting.splice(0)) if (!over()) later();
     }
 
     /** Pass a deletion's refusal through, noting `path` as deleted when there is none and it was no dry run. */

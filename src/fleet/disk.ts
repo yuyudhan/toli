@@ -273,32 +273,32 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                 dry ? null : removeTree(leftover),
             );
         const recent = new RecentDeletions();
-        const idleTier = (
-            step: number,
-            kinds: BuildDir["kind"][],
-            deleteIt: (dir: BuildDir, dryRun: boolean) => string | null,
-        ): void => {
+        type DeleteIt = (dir: BuildDir, dryRun: boolean) => string | null;
+        /** Delete an idle folder of step 1 or 2; its checkout's use is checked again just before a real deletion. */
+        const idle = (dir: BuildDir, step: string, deleteIt: DeleteIt, holders = currentHolders()): void => {
+            let reason = checkoutUse(dir.checkout, holders, checkouts);
+            if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
+            if (reason === null) remove(dir.path, step, (dry) => recent.note(dir.path, dry, deleteIt(dir, dry)));
+            else {
+                kept.set(dir.path, { reason, tried: false });
+                say(`skipped ${dir.path}: ${reason}`);
+            }
+        };
+        const idleTier = (step: number, kinds: BuildDir["kind"][], deleteIt: DeleteIt): void => {
             const holders = currentHolders();
             for (const dir of dirs) {
                 if (enough()) return;
                 if (!kinds.includes(dir.kind)) continue;
-                // A main clone's dependencies are never idle output. Use is checked again just before a real
-                // deletion: a run may have started in that checkout meanwhile.
+                // A main clone's dependencies are never idle output; a run may start in a checkout meanwhile.
                 if (dir.kind === "node_modules" && dir.checkout.main) {
                     say(`kept ${dir.path}: a main clone's dependencies (its builds cannot reinstall them)`);
                     continue;
                 }
-                let reason =
-                    recent.regrown(dir.path, free, report.emergencyGB) ?? checkoutUse(dir.checkout, holders, checkouts);
-                if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
-                if (reason === null)
-                    remove(dir.path, `step ${step}: idle ${dir.kind}`, (dry) =>
-                        recent.note(dir.path, dry, deleteIt(dir, dry)),
-                    );
-                else {
-                    kept.set(dir.path, { reason, tried: false });
-                    say(`skipped ${dir.path}: ${reason}`);
-                }
+                const label = `step ${step}: idle ${dir.kind}`;
+                const emergency = (): void => idle(dir, `${label}, under the emergency level`, deleteIt);
+                const regrown = recent.regrown(dir.path, free, report.emergencyGB, emergency);
+                if (regrown === null) idle(dir, label, deleteIt, holders);
+                else say(`skipped ${dir.path}: ${regrown}`);
             }
         };
         freeRunWorktrees({ dryRun, checkouts, enough, remove, say });
@@ -309,8 +309,6 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             if (open.length > 0) return `open files, e.g. ${open.join(", ")}`;
             return dry ? null : removeTree(dir.path);
         });
-        const unsaved = recent.save();
-        if (unsaved !== null) say(unsaved);
         // 3 and 4: machine-wide caches.
         if (!enough()) {
             const freeNow = free();
@@ -321,6 +319,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         // the incident that made this a step lost a push gate's target while a stopped stack's 23 GB target volume
         // stayed. Only until free disk is over the emergency level, like 6 and 7.
         const over = (): boolean => free() >= report.emergencyGB;
+        // 1 and 2 again: a regrown folder left alone over the emergency level goes now that free disk is under it.
+        recent.underEmergency(over);
         if (!enough() && !over()) {
             const simulate = (size: number): void => {
                 simulated += size;
@@ -346,6 +346,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                         return dry ? null : removeTree(path);
                     });
         }
+        const unsaved = recent.save();
+        if (unsaved !== null) say(unsaved);
         report.freeAfterGB = free();
         if (report.freeAfterGB < floorGB) report.inUseLeft = foldersInUse(dirs, done, kept);
         const inUse = report.inUseLeft.map((left) => `${left.path} (${left.reason})`).join(", ");

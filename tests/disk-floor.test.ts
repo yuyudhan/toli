@@ -112,6 +112,25 @@ describe("the disk keeper's floor", () => {
             // Under the emergency level a regrown folder goes again: low free disk is never a reason to stop work.
             free(20);
             expect(keep(box, []).lines.join("\n")).toContain(`deleted ${target}, freed `);
+            // Free disk falls under the emergency level later in a run that left a regrown target alone (any docker
+            // call comes after steps 1 and 2): the target goes under the emergency rule then, never counted as a
+            // folder in use that pauses new jobs.
+            regrow();
+            const marker = join(box.root, "fell-under-emergency");
+            box.stub("docker", `touch "${marker}"; exit 1`);
+            box.stub(
+                "df",
+                `if [ -e "${marker}" ]; then kb=$((20 * 1048576)); else kb=${Math.round(33.7 * 1048576)}; fi\n${dfLine(1000)}`,
+            );
+            const fell = keep(box, []);
+            const fellLines = fell.lines.join("\n");
+            expect(fellLines).toContain(`skipped ${target}: the keeper deleted it 0 min ago and it grew back`);
+            expect(fellLines).toContain(
+                `deleted ${target}, freed 0.0 GB (step 1: idle target, under the emergency level)`,
+            );
+            expect(existsSync(target)).toBe(false);
+            expect(fell.inUseLeft.map((left) => left.path)).not.toContain(target);
+            expect(fell.jobsPaused).toBe(false);
         },
     );
 });

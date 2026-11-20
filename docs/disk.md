@@ -174,13 +174,14 @@ them (never sudo)`).
    reinstall dependencies on their own, while cargo rebuilds a wiped `target/` by itself.
 
     A `target/`, `node_modules/` or `dist/` folder steps 1 and 2 deleted within the last 6 h that has grown back
-    since is left alone while free disk is over the emergency level, and a run still under the floor names it among
-    the folders it left (`skipped <path>: the keeper deleted it N min ago and it grew back; ...`). A build that refills
-    a folder at once means deleting it frees next to nothing, so with free disk just under the floor the keeper would
-    otherwise delete the same folder every minute and cost that build its cache each time (T2122: a main clone's
-    0.6 GB `target/` went 71 times in one day, free disk 33.7 GB against a floor of 34). Each real deletion of those
-    steps is recorded with its time in `state/disk-keep.deleted.json` (entries drop after 6 h; a file that cannot be
-    read or written holds nothing back). Under the emergency level such a folder goes again like any idle one.
+    since is left alone while free disk is over the emergency level (`skipped <path>: the keeper deleted it N min ago
+ and it grew back; ...`). A build that refills a folder at once means deleting it frees next to nothing, so with
+    free disk just under the floor the keeper would otherwise delete the same folder every minute and cost that build
+    its cache each time (T2122: a main clone's 0.6 GB `target/` went 71 times in one day, free disk 33.7 GB against a
+    floor of 34). Each real deletion of those steps is recorded with its time in `state/disk-keep.deleted.json`
+    (entries drop after 6 h; a file that cannot be read or written holds nothing back). Such a folder is never one in
+    use: when free disk falls under the emergency level, in that run (before step 5) or a later one, it goes like any
+    idle folder (`(step 1: idle target, under the emergency level)`), and it never counts toward pausing new jobs.
 
 3. Docker: `docker builder prune -af`, then `docker image prune -f` (dangling images only); under the emergency level
    (see 6) `docker image prune -af`, every image no container uses. This step never touches volumes or containers
