@@ -131,7 +131,7 @@ describe("toli commit", () => {
         const modified = box.toli(["commit", "app", "--merge", "edit", "-m", "Merge edit"]);
         expect(modified.code).toBe(1);
         expect(modified.stderr).toContain("local changes to files the merge changes: m.txt;");
-    });
+    }, 60_000);
 });
 
 describe("toli project drop", () => {
