@@ -13,7 +13,6 @@ import { resolveModel } from "../harness/models.ts";
 import { headlessOmpFlags } from "../harness/omp-args.ts";
 import type { LeadDispatch } from "./dispatch.ts";
 import { currentFull, fullText, LEAD_TURN_ENV } from "./full.ts";
-import type { IdleSession } from "./idle-session.ts";
 import { type LeadState, leadLock, readLeadState } from "./lead-state.ts";
 
 /** What omp prints when a resumed conversation's model is no longer available; the group is that model. */
@@ -32,15 +31,9 @@ export function logLine(line: string): void {
 /**
  * The prompt of one headless turn: who and where the lead is, the per-turn lead guidance, the rules that differ when
  * nobody is watching (no questions, no waiting, dispatch only through `bin/toli spawn`, or under `lead.dispatch:
- * "subagents"` no dispatch at all, the work left unacknowledged for the interactive Sardar), the idle interactive
- * session this turn stands in for, if any, and the wake items.
+ * "subagents"` no dispatch at all, the work left unacknowledged for the interactive Sardar), and the wake items.
  */
-export function headlessPrompt(
-    machine: string,
-    wake: string,
-    dispatch: LeadDispatch,
-    idle: IdleSession | null = null,
-): string {
+export function headlessPrompt(machine: string, wake: string, dispatch: LeadDispatch): string {
     const user = persona().user;
     const full = currentFull();
     const subagents = dispatch === "subagents";
@@ -65,11 +58,6 @@ export function headlessPrompt(
         subagents
             ? "- Acknowledge only what you settled. Each ack command is a watermark that covers every older item of its stream, so run it `--through` the stamp of the last item before the first one you leave (`bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>`), and none for a stream whose first item you leave. What stays unacknowledged stays unread and wakes the interactive Sardar's next session."
             : "- After handling the items, run every ack command the wake text below ends with (`bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>`): each covers exactly the items it showed, and anything newer stays unread and wakes the next turn.",
-        ...(idle === null
-            ? []
-            : [
-                  `- The interactive session (pid ${idle.pid}) has left wakes unread since ${idle.unreadSince} (over ${idle.minutes} min), so this headless turn handles them, including any that session was already shown. It is ${user}'s session: never stop or kill it.`,
-              ]),
         "",
         wake,
     ].join("\n");
@@ -80,7 +68,6 @@ export type Claim = {
     resume: string | null;
     turn: number;
     dispatch: LeadDispatch;
-    idle: IdleSession | null;
 };
 
 function recordOmpPid(pid: number): void {
@@ -102,7 +89,7 @@ async function runOmp(claim: Claim, resume: string | null): Promise<{ code: numb
     const argv = [
         ...headlessOmpFlags(root, root, null, { dir: sessions, resume: resume ?? undefined }),
         ...(model === null ? [] : ["--model", model]),
-        headlessPrompt(machineName(), claim.wake, claim.dispatch, claim.idle),
+        headlessPrompt(machineName(), claim.wake, claim.dispatch),
     ];
     const logFd = openSync(paths.leadLog(), "a");
     let start = 0;

@@ -57,6 +57,26 @@ export function attachPidLocked(): number | null {
     return null;
 }
 
+/** Who holds this machine's inbox: a headless lead turn, the interactive session, or a `lead attach`, and its pid. */
+export type InboxHolder = { kind: "headless" | "session" | "attach"; pid: number };
+
+/**
+ * The one claim on this machine's inbox (docs/sardars.md "The lead on each machine"), so two Sardars never act on the
+ * same items: a headless turn in progress (its pid in state.json), else the live interactive session (session.json),
+ * else a `lead attach`. Each counts only while its pid is alive, and whichever starts first holds it: the service
+ * starts no turn while a session or attach holds it, however long that session leaves its wakes unread (it may be
+ * sitting at a prompt), and a session opened during a turn takes no wake until the turn ends. The caller holds the
+ * lead lock, so a turn's claim and a session's take never interleave.
+ */
+export function inboxHolderLocked(): InboxHolder | null {
+    const turn = turnPid(readLeadState());
+    if (turn !== null) return { kind: "headless", pid: turn };
+    const session = liveSession();
+    if (session !== null) return { kind: "session", pid: session.pid };
+    const attach = attachPidLocked();
+    return attach === null ? null : { kind: "attach", pid: attach };
+}
+
 /** The interactive lead session this machine has open, if any: the extension-registered session, else `lead attach`. */
 export function interactiveLeadPid(): number | null {
     const session = liveSession();

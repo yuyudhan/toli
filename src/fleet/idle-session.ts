@@ -1,8 +1,9 @@
-// A live interactive session that stopped attending (docs/sardars.md "The lead service"): an omp left open for days
-// keeps state/session.json alive, and while it does the lead service and the tick leave every wake and due job to it.
-// It counts as present only while it reads its wakes: once a wake has stayed unread (unacknowledged) for
-// `lead.idleSessionMinutes` of the session's life, the headless lead takes the turns and the digest and doctor flag
-// it. toli never stops the session itself.
+// A live interactive session that stopped attending (docs/sardars.md "The lead on each machine"): an omp left open
+// for days, or one sitting at a prompt, keeps state/session.json alive, and while it does it holds the inbox (no
+// headless lead turn runs beside it: src/fleet/lead-state.ts inboxHolderLocked). It counts as attending only while it
+// reads its wakes:
+// once a wake has stayed unread (unacknowledged) for `lead.idleSessionMinutes` of the session's life, the digest and
+// doctor flag it and the tick runs due jobs headless. toli never stops the session itself.
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { now, stamp, ToliError } from "../core/util.ts";
 import { liveSession, type SessionFile } from "../harness/session.ts";
@@ -11,7 +12,7 @@ import { listInbox } from "../records/inbox.ts";
 
 const DEFAULT_IDLE_SESSION_MINUTES = 60;
 
-/** `lead.idleSessionMinutes`: how long a live session may leave a wake unread before the headless lead steps in. */
+/** `lead.idleSessionMinutes`: how long a live session may leave a wake unread before it is flagged as idle. */
 export function idleSessionMinutes(machine: Machine): number {
     const raw: unknown = machine.lead?.idleSessionMinutes;
     if (raw === undefined) return DEFAULT_IDLE_SESSION_MINUTES;

@@ -192,7 +192,8 @@ export default function toliExtension(pi: ExtensionAPI): void {
                         ctx,
                         due.map((job) => job.name),
                     );
-                const wake = JSON.parse(await runToli(["wake", "--json"])) as Wake;
+                // Only the session holding the record takes wakes (never a second omp here, never during a headless turn).
+                const wake = JSON.parse(await runToli(["wake", "--json", "--pid", String(process.pid)])) as Wake;
                 if (wake.message !== "") {
                     if (ctx.isIdle()) pi.sendUserMessage(wake.message, { attribution: "agent" });
                     else pi.sendUserMessage(wake.message, { deliverAs: "followUp", attribution: "agent" });

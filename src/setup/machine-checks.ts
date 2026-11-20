@@ -166,6 +166,6 @@ export function idleSessionCheck(): Check | null {
     return {
         level: "warn",
         name: "lead-session",
-        detail: `interactive session ${idleSessionText(idle)}: the headless lead takes the turns meanwhile; attend or close that session (toli never stops it)`,
+        detail: `interactive session ${idleSessionText(idle)}: its wakes wait for it, since no headless lead turn runs beside it; attend or close that session (toli never stops it)`,
     };
 }

@@ -264,7 +264,7 @@ function render(digest: Digest, notices: readonly string[] = [], resurface: Read
     lines.push(...notices);
     if (digest.idleSession !== undefined)
         lines.push(
-            `idle session: ${idleSessionText(digest.idleSession)}; the headless lead takes the turns meanwhile (attend or close that session)`,
+            `idle session: ${idleSessionText(digest.idleSession)}; its wakes wait for it (attend or close that session)`,
         );
     lines.push("");
     // Fleet digests from machines on an older toli lack `needs`; their held tasks still form the queue.

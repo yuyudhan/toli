@@ -34,7 +34,7 @@ describe("doctor: an idle interactive session", () => {
         expect(idleSessionCheck()).toEqual({
             level: "warn",
             name: "lead-session",
-            detail: `interactive session pid ${process.pid} has left wakes unread since 2026-11-11T08-33-00-000Z (over 60 min): the headless lead takes the turns meanwhile; attend or close that session (toli never stops it)`,
+            detail: `interactive session pid ${process.pid} has left wakes unread since 2026-11-11T08-33-00-000Z (over 60 min): its wakes wait for it, since no headless lead turn runs beside it; attend or close that session (toli never stops it)`,
         });
         box.ok(["inbox", "ack", "--through", "2026-11-11T08-33-00-000Z"]);
         expect(idleSessionCheck()).toBeNull();

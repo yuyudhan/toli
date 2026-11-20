@@ -108,7 +108,7 @@ const USAGE = `usage: bin/toli <command> [args]
   peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
   peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
   peer scan [--netbird] [--tailscale] [--subnet <cidr>] [--port <n>] [--json]
-  wake [--json]
+  wake [--json] [--pid <n>]
   memory [--json] | stale [--json] | archive <file> <line-or-id> --reason "<text>" [--force]
   prune [--apply] [--json]
   migrate [--dry-run] [--json]

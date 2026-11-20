@@ -114,8 +114,8 @@ export type Machine = {
      * queue depths across the fleet and offers or asks for work when the gap is at least `balanceGap` (default 3).
      * `dispatch` (src/fleet/dispatch.ts): "spawn" (default) or "subagents", where only the interactive Sardar's
      * subagents run jawans and a headless lead turn starts none. `idleSessionMinutes` (default 60,
-     * src/fleet/idle-session.ts): a live interactive session that has left a wake unread this long no longer holds
-     * back headless lead turns and due jobs.
+     * src/fleet/idle-session.ts): a live interactive session that has left a wake unread this long is flagged by the
+     * digest and doctor and no longer holds back due jobs; it keeps the inbox, so no headless lead turn runs beside it.
      */
     lead?: { balanceMinutes?: number; balanceGap?: number; dispatch?: string; idleSessionMinutes?: number };
     /**

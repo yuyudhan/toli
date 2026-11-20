@@ -1,7 +1,7 @@
 // `bin/toli lead`: this machine's lead (docs/sardars.md). One long-lived omp conversation in state/lead/sessions/,
 // served by a service (launchd agent, systemd user service or a per-minute crontab line) that runs one headless turn
-// per batch of wake items while no interactive lead session is open (or the open one has left its wakes unread past
-// `lead.idleSessionMinutes`), and `lead attach` to open it in a terminal.
+// per batch of wake items while nothing else holds the inbox (no interactive lead session is open, attended or not),
+// and `lead attach` to open it in a terminal.
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { Args } from "../core/args.ts";
 import { codeRoot, paths } from "../core/paths.ts";
@@ -14,9 +14,16 @@ import { takeWake, wakeMessage } from "../records/wake.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
 import { machineDispatch } from "./dispatch.ts";
 import { fullCommand } from "./full.ts";
-import { idleSessionText, sessionPresence } from "./idle-session.ts";
 import { installLeadService, leadStatus, printStatus, uninstallLeadService } from "./lead-service.ts";
-import { attachPidLocked, type LeadAttach, type LeadState, leadLock, readLeadState, turnPid } from "./lead-state.ts";
+import {
+    attachPidLocked,
+    inboxHolderLocked,
+    type LeadAttach,
+    type LeadState,
+    leadLock,
+    readLeadState,
+    turnPid,
+} from "./lead-state.ts";
 import { type Claim, logLine, machineName, runTurn } from "./lead-turn.ts";
 import { balancePass } from "./queues.ts";
 
@@ -31,34 +38,29 @@ const LISTENER_POLL_MS = 5_000;
 const ATTACH_POLL_MS = 2_000;
 
 /**
- * Claim the next headless turn, or null when there is nothing to do: an interactive session is open and reading its
- * wakes (it takes them itself), a `lead attach` is open, a turn is already running, or no wake items and no pending
- * text. An interactive session that has left a wake unread past `lead.idleSessionMinutes` (src/fleet/idle-session.ts)
- * does not hold the turn back: the take then also covers what that session was shown but never acknowledged. The wake
- * is taken here, under the lead lock, so two passes never take the same items; the combined text is written to
- * pending.md before the turn so a turn that fails, or a service that dies mid-turn, leaves it for the next pass. Under
- * `lead.dispatch: "subagents"` the take moves only the headless marks, so the interactive session is still woken by
- * what this turn leaves unacknowledged.
+ * Claim the next headless turn, or null when there is nothing to do: something else holds the inbox (an interactive
+ * session, attended or sitting at a prompt, a `lead attach`, or a turn already running: inboxHolderLocked), or no wake
+ * items and no pending text. The wake is taken here, under the lead lock, so two passes never take the same items and
+ * a session's `toli wake` never takes them beside this turn; the combined text is written to pending.md before the
+ * turn so a turn that fails, or a service that dies mid-turn, leaves it for the next pass. Under `lead.dispatch:
+ * "subagents"` the take moves only the headless marks, so the interactive session is still woken by what this turn
+ * leaves unacknowledged.
  */
 function claimTurn(): Claim | null {
     return withLock(leadLock(), () => {
-        const presence = sessionPresence();
-        if ((presence !== null && presence.idle === null) || attachPidLocked() !== null) return null;
-        const state = readLeadState();
-        if (turnPid(state) !== null) return null;
+        if (inboxHolderLocked() !== null) return null;
         // A peer's batch is being applied: wait until it is all in, so it wakes this lead once.
         if (receivingNow()) return null;
+        const state = readLeadState();
         const dispatch = machineDispatch();
-        const idle = presence?.idle ?? null;
         const pendingPath = paths.leadPending();
         const pending = existsSync(pendingPath) ? readFileSync(pendingPath, "utf8").trim() : "";
-        const reader = idle !== null ? "takeover" : dispatch === "subagents" ? "headless" : "session";
-        const fresh = wakeMessage(takeWake(reader));
+        const fresh = wakeMessage(takeWake(dispatch === "subagents" ? "headless" : "session"));
         const wake = [pending, fresh].filter((text) => text !== "").join("\n\n");
         if (wake === "") return null;
         writeTextAtomic(pendingPath, `${wake}\n`);
         writeJsonAtomic(paths.leadState(), { ...state, pid: process.pid, ompPid: null } satisfies LeadState);
-        return { wake, resume: sessionFile(paths.leadSessionsDir()), turn: state.turns + 1, dispatch, idle };
+        return { wake, resume: sessionFile(paths.leadSessionsDir()), turn: state.turns + 1, dispatch };
     });
 }
 
@@ -82,10 +84,6 @@ function finishTurn(code: number): void {
 async function headlessPass(): Promise<string | null> {
     const claim = claimTurn();
     if (claim === null) return null;
-    if (claim.idle !== null)
-        logLine(
-            `lead turn ${claim.turn}: interactive session ${idleSessionText(claim.idle)}; this headless turn takes its wakes`,
-        );
     let code = 1;
     try {
         code = await runTurn(claim);

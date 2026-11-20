@@ -85,36 +85,24 @@ describe("lead run --once", () => {
         expect(wake.items).toHaveLength(1);
     });
 
-    test("an interactive session that leaves its wakes unread past lead.idleSessionMinutes no longer holds the lead back", () => {
+    test("an interactive session stuck at a prompt still holds the inbox: no headless turn, however long its wakes stay unread", () => {
         const setup = lead();
         const { box } = setup;
         const at = (minutes: number): string => new Date(Date.parse(T0) + minutes * 60_000).toISOString();
         const session = join(box.root, "state", "session.json");
         writeFileSync(session, JSON.stringify({ pid: process.pid, startedAt: T0 }));
         box.ok(["inbox", "add", "--from", "m2", "--title", "message from m2"], { stdin: "stuck body", now: at(1) });
-        // The session's extension took the item and pushed it into its chat, but the session never acted on it.
+        // The session's extension took the item and pushed it into its chat, but the session sits at a prompt.
         expect((JSON.parse(box.ok(["wake", "--json"], { now: at(2) })) as { items: unknown[] }).items).toHaveLength(1);
-        box.ok(["lead", "run", "--once"], { now: at(30) });
-        expect(calls(setup)).toHaveLength(0);
-
         const file = join(box.root, "config", "machine.json");
         writeFileSync(
             file,
             JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), lead: { idleSessionMinutes: 90 } }),
         );
-        box.ok(["lead", "run", "--once"], { now: at(62) });
+        for (const minutes of [30, 92, 600]) box.ok(["lead", "run", "--once"], { now: at(minutes) });
         expect(calls(setup)).toHaveLength(0);
-
-        box.ok(["lead", "run", "--once"], { now: at(92) });
-        const [turn] = calls(setup);
-        expect(turn).toContain("stuck body");
-        expect(turn).toContain(`The interactive session (pid ${process.pid}) has left wakes unread`);
-        expect(turn).toContain("never stop or kill it");
-        const log = readFileSync(join(box.root, "logs", "lead.log"), "utf8");
-        expect(log).toContain(
-            `interactive session pid ${process.pid} has left wakes unread since 2026-11-11T08-33-00-000Z (over 90 min)`,
-        );
-        // The session is flagged, never stopped: its record stays.
+        expect(existsSync(join(box.root, "state", "lead", "pending.md"))).toBe(false);
+        // The session is flagged for the user, never stopped and never stood in for: its record stays.
         expect(existsSync(session)).toBe(true);
         const digest = JSON.parse(box.ok(["digest", "--json"], { now: at(92) })) as { idleSession?: unknown };
         expect(digest.idleSession).toEqual({
@@ -124,12 +112,28 @@ describe("lead run --once", () => {
             minutes: 90,
         });
         expect(box.ok(["digest"], { now: at(92) })).toContain(
-            `idle session: pid ${process.pid} has left wakes unread since 2026-11-11T08-33-00-000Z (over 90 min)`,
+            `idle session: pid ${process.pid} has left wakes unread since 2026-11-11T08-33-00-000Z (over 90 min); its wakes wait for it (attend or close that session)`,
         );
 
-        // What the takeover turn left unacknowledged is not taken again.
-        box.ok(["lead", "run", "--once"], { now: at(93) });
-        expect(calls(setup)).toHaveLength(1);
+        // Once the session closes, the next new item wakes a headless turn.
+        rmSync(session);
+        box.ok(["inbox", "add", "--from", "m2", "--title", "later"], { stdin: "later body", now: at(601) });
+        box.ok(["lead", "run", "--once"], { now: at(602) });
+        expect(calls(setup)[0]).toContain("later body");
+    });
+
+    test("only the session holding the record takes wakes: a second interactive omp takes none", () => {
+        const setup = lead();
+        const { box } = setup;
+        writeFileSync(
+            join(box.root, "state", "session.json"),
+            JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+        );
+        deliver(box, "message from m2", "hello");
+        const take = (pid: number): unknown[] =>
+            (JSON.parse(box.ok(["wake", "--json", "--pid", String(pid)])) as { items: unknown[] }).items;
+        expect(take(process.ppid)).toHaveLength(0);
+        expect(take(process.pid)).toHaveLength(1);
     });
 
     test("a conversation pinned to a removed model is retired and a fresh one takes the pending wake", () => {
@@ -164,18 +168,25 @@ describe("lead run --once", () => {
         expect(log).toContain("lead turn 2 done");
     });
 
-    test("a turn already running elsewhere makes the pass skip", () => {
+    test("a turn already running elsewhere holds the inbox: the pass skips and the session's wake waits for it", () => {
         const setup = lead();
         const { box } = setup;
         mkdirSync(join(box.root, "state", "lead"), { recursive: true });
+        const state = join(box.root, "state", "lead", "state.json");
+        writeFileSync(state, JSON.stringify({ turns: 3, pid: process.pid, ompPid: null }));
+        // An interactive session opened while the headless turn runs.
         writeFileSync(
-            join(box.root, "state", "lead", "state.json"),
-            JSON.stringify({ turns: 3, pid: process.pid, ompPid: null }),
+            join(box.root, "state", "session.json"),
+            JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
         );
         deliver(box, "message from m2", "hello");
         once(box);
         expect(calls(setup)).toHaveLength(0);
-        expect((JSON.parse(box.ok(["wake", "--json"])) as { items: unknown[] }).items).toHaveLength(1);
+        const take = (): unknown[] =>
+            (JSON.parse(box.ok(["wake", "--json", "--pid", String(process.pid)])) as { items: unknown[] }).items;
+        expect(take()).toHaveLength(0);
+        writeFileSync(state, JSON.stringify({ turns: 4, pid: null, ompPid: null }));
+        expect(take()).toHaveLength(1);
     });
 
     test('under lead.dispatch "subagents" the turn starts no jawan, and what it leaves unacked wakes the interactive session', () => {

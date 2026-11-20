@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
-import { out, printJson, withLock } from "../core/util.ts";
+import { out, printJson, ToliError, withLock } from "../core/util.ts";
+import { inboxHolderLocked, leadLock } from "../fleet/lead-state.ts";
 import { listResults } from "../jobs/results.ts";
 import { receivingNow } from "../peer/receiving.ts";
 import { type AckStream, ackCommand, ackedThrough, ackThrough, markShown, type ResultStream } from "./acks.ts";
@@ -19,33 +20,23 @@ const BODY_LIMIT = 4000;
  * Whose delivery marks a take reads and moves. `session`: the live session's (`toli wake`, and a headless lead turn
  * under the default `lead.dispatch`). `headless`: a headless lead turn's own, under `lead.dispatch: "subagents"`: it
  * skips what any reader was already given, and what it leaves unacknowledged still wakes the interactive session.
- * `takeover`: a headless lead turn standing in for a live session that left its wakes unread
- * (src/fleet/idle-session.ts): it also takes what was delivered to that session but never acknowledged, and moves
- * only the headless marks.
  */
-export type WakeReader = "session" | "headless" | "takeover";
+export type WakeReader = "session" | "headless";
 
-const HEADLESS_DELIVERED: { inbox: AckStream; jobs: AckStream } = {
-    inbox: "inboxHeadlessDelivered",
-    jobs: "jobsHeadlessDelivered",
-};
 const DELIVERED: Record<WakeReader, { inbox: AckStream; jobs: AckStream }> = {
     session: { inbox: "inboxDelivered", jobs: "jobsDelivered" },
-    headless: HEADLESS_DELIVERED,
-    takeover: HEADLESS_DELIVERED,
+    headless: { inbox: "inboxHeadlessDelivered", jobs: "jobsHeadlessDelivered" },
 };
 
 /**
  * Items above the user's ack and the last delivery are new; acknowledged items never wake. A delivery counts only as
  * far as the shown mark reaches: items delivered before the shown marks existed (an upgrade from a toli without them)
  * were never recorded as shown, so they wake once more and then ack as usual. A headless reader also skips what it
- * took itself; a takeover skips only that and what was acknowledged.
+ * took itself.
  */
 function floor(stream: "inbox" | "jobs", reader: WakeReader): string {
     const shown: AckStream = stream === "inbox" ? "inboxShown" : "jobsShown";
-    const session = DELIVERED.session[stream];
-    const deliveredAndShown =
-        reader === "takeover" ? "" : ([ackedThrough(session), ackedThrough(shown)].sort()[0] ?? "");
+    const deliveredAndShown = [ackedThrough(DELIVERED.session[stream]), ackedThrough(shown)].sort()[0] ?? "";
     const own = reader === "session" ? "" : ackedThrough(DELIVERED[reader][stream]);
     return [ackedThrough(stream), deliveredAndShown, own].sort().at(-1) ?? "";
 }
@@ -146,12 +137,28 @@ export function wakeMessage(items: WakeItem[]): string {
     return lines.join("\n");
 }
 
-/** `toli wake [--json]`: take new results once; the session extension pushes the message into the chat. */
+/**
+ * The interactive session's take, only while nothing else holds the inbox (src/fleet/lead-state.ts
+ * inboxHolderLocked): never during a headless lead turn, and with `pid` (the extension's own) never for an omp other
+ * than the registered session, so a second interactive omp in toli's root never acts on the same items.
+ */
+function takeSessionWake(pid: number | null): WakeItem[] {
+    return withLock(leadLock(), () => {
+        const holder = inboxHolderLocked();
+        if (holder?.kind === "headless" || (pid !== null && holder !== null && holder.pid !== pid)) return [];
+        return takeWake("session");
+    });
+}
+
+/** `toli wake [--json] [--pid <n>]`: take new results once; the session extension pushes the message into the chat. */
 export function wakeCommand(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json"] });
+    const args = new Args(argv, { booleans: ["json"], values: ["pid"] });
     args.maxPositional(0);
+    const rawPid = args.str("pid");
+    const pid = rawPid === undefined ? null : Number(rawPid);
+    if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new ToliError("wake --pid needs a process id");
     // A peer's batch is still arriving: take it next time, whole, as one wake.
-    const items = receivingNow() ? [] : takeWake();
+    const items = receivingNow() ? [] : takeSessionWake(pid);
     const message = wakeMessage(items);
     if (args.bool("json")) {
         printJson({ items, message });

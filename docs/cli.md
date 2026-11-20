@@ -219,7 +219,7 @@ Details: [harnesses.md](harnesses.md).
     inbox add --from <machine> --title "<t>" [--via "<how it arrived>"] (body on stdin) | list [--json] [--unseen] | ack [--through <stamp>]
     outbox pull [--json] | pending --for <machine> (its fleet export on stdin) | ack --for <machine> (JSON on stdin)
     outbox list [--to <machine>] [--cancelled] [--json] | cancel <id>|--to <machine> [--why "..."] | expire --older <N>d
-    wake [--json]
+    wake [--json] [--pid <n>]
 
 - `job due` lists due jobs; `run-due` runs them (the live session); `tick` is the per-minute OS ticker; `begin` and
   `finish` claim a run and record its result. `finish --quiet` marks an idle run (nothing done, nothing found): it is
@@ -229,7 +229,9 @@ Details: [harnesses.md](harnesses.md).
   `bin/toli prune` removes it ([memory.md](memory.md#pruning)).
 - `schedule` installs the ticker (launchd on macOS; a systemd user timer on Linux when `systemctl --user` works,
   else crontab).
-- `inbox` holds messages from jawans and other machines; `wake` takes everything new once, for the chat.
+- `inbox` holds messages from jawans and other machines; `wake` takes everything new once, for the chat. It takes
+  nothing while a headless lead turn holds the inbox, and with `--pid` (the omp extension's own) nothing for an omp
+  other than the registered interactive session ([sardars.md](sardars.md#the-lead-on-each-machine)).
 - `outbox pull` is what the minute tick runs on a machine that takes no inbound ssh (`inbound: false`): it fetches
   what every other machine queued for it (`outbox pending` there), applies it here and acknowledges it (`outbox ack`
   there), so each item is applied once ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)). Run by hand, it also
