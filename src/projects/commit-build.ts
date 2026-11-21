@@ -11,9 +11,9 @@ import {
     checkResolved,
     checkReverts,
     isLockFile,
-    scanLeaks,
 } from "./commit-checks.ts";
 import { commitMsgHook, DEFAULT_HOOK_LIMIT, preCommitHook } from "./commit-hooks.ts";
+import { scanLeaks } from "./commit-leaks.ts";
 import { cleanMerge, type Merge } from "./commit-merge.ts";
 import { parseHunks } from "./diff-hunks.ts";
 

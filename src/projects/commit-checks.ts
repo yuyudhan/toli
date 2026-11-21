@@ -1,5 +1,5 @@
-// The private index and the refusals of `bin/toli commit` (src/projects/commit.ts): leaks, lock files and reverts.
-// The project's own hooks are in commit-hooks.ts.
+// The private index and the refusals of `bin/toli commit` (src/projects/commit.ts): lock files and reverts. The
+// secrets scan is in commit-leaks.ts, the project's own hooks in commit-hooks.ts.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -132,32 +132,6 @@ export class Attempt {
     dispose(): void {
         rmSync(this.scratch, { recursive: true, force: true });
     }
-}
-
-/** Refuse when the staged set holds a secret (gitleaks over the private index). */
-export function scanLeaks(attempt: Attempt): void {
-    const config = join(attempt.dir, ".gitleaks.toml");
-    const result = run(
-        [
-            "gitleaks",
-            "git",
-            "--staged",
-            "--redact",
-            "--no-banner",
-            "--log-level",
-            "warn",
-            ...(existsSync(config) ? ["--config", config] : []),
-        ],
-        { cwd: attempt.dir, env: { GIT_INDEX_FILE: attempt.index } },
-    );
-    if (result.code === 127)
-        throw new ToliError(
-            "refusing: gitleaks is not on PATH, so the staged set cannot be scanned for secrets (install it: just setup lists the command)",
-        );
-    if (result.code !== 0)
-        throw new ToliError(
-            `refusing: gitleaks found a secret in the staged set; nothing was committed. Remove it from the file:\n${tail(`${result.stdout}${result.stderr}`)}`,
-        );
 }
 
 /** A line git writes around a merge conflict. */

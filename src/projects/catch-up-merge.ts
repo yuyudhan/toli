@@ -13,6 +13,7 @@ import { now, out, printJson, ToliError } from "../core/util.ts";
 import { updateTask } from "../records/backlog.ts";
 import {
     catchUpTargets,
+    landedSkip,
     RELEASE_TAG,
     releaseBranch,
     scanCatchUp,
@@ -29,7 +30,7 @@ import { findProject, type Project, projectCloneDir } from "./projects.ts";
  * merge stays on this machine. Both are set only for a branch merged now.
  */
 export type CatchUpOutcome = Target & {
-    result: "up to date" | "not checked out" | "held" | "conflict" | "refused" | "merged";
+    result: "up to date" | "landed" | "not checked out" | "held" | "conflict" | "refused" | "merged";
     detail: string;
     merged?: string;
     checks?: string;
@@ -110,6 +111,8 @@ function mergeTarget(
     });
     if (git(clone, ["merge-base", "--is-ancestor", sha, head]).code === 0)
         return outcome("up to date", `up to date (has ${tag})`);
+    const landed = landedSkip(clone, base, sha, target);
+    if (landed !== null) return outcome("landed", `${landed}; nothing merged`);
     if (target.dir === null || currentBranch(target.dir) !== target.branch)
         return outcome("not checked out", "not checked out on this machine; nothing merged");
     const holder = targetHolder({ ...target, dir: target.dir }, clone, now());

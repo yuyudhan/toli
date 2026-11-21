@@ -31,9 +31,12 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Ca
    the named paths (deletions included) and the `--patch` hunks. Other jawans' staged or unstaged changes and a stale
    shared index cannot reach the commit.
 2. It refuses, committing nothing, when the staged set: changes a path that was not named; holds a secret (gitleaks
-   over the private index); stages a `Cargo.lock` or `bun.lock` that does not parse (merge markers, a TOML or JSONC
-   error, a `[[package]]` the parser dropped; for a `Cargo.lock` also `cargo metadata --locked`, run in a copy of the
-   staged tree, so the crates a merge adds count); or exactly undoes a hunk of one of the last 20 commits that touched
+   over the private index, at the checkout's top level; a finding the repository's `.gitleaksignore` fingerprints as
+   `<commit>:<file>:<rule>:<line>`, as a history scan writes it, is ignored when that commit holds exactly the same
+   lines in the file, so a merge bringing an ignored sample key lands); stages a `Cargo.lock` or `bun.lock` that does
+   not parse (merge markers, a TOML or JSONC error, a `[[package]]` the parser dropped; for a `Cargo.lock` also
+   `cargo metadata --locked`, run in a copy of the staged tree, so the crates a merge adds count); or exactly undoes
+   a hunk of one of the last 20 commits that touched
    those files, which is what a stale copy of a file looks like (`--allow-revert <sha>` when undoing that commit is
    the point). A pure insertion or removal counts only in the same place (the same lines border it), so adding back
    elsewhere a line a recent commit removed is not a revert. With `--merge` only the changes made on top of the merge

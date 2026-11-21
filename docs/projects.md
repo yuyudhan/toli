@@ -268,7 +268,9 @@ behind main between releases.
   release (another machine's notice) can run `bin/toli catch-up scan <project>` at once.
 - **Branches.** The project's fixed `--branch` (a same-branch project without one: the branch its clone is on), and
   the branch of each active or held task of the project (branch-per-task, worktree-per-task, a task pinned to the
-  clone). Never main itself. A branch that already contains the tag needs nothing.
+  clone). Never main itself. A branch that already contains the tag needs nothing. A branch whose tip is already on
+  `origin/<main>` (its task's work landed) is `skipped: already on origin/<main> (<tip>)` by the scan and by the
+  merge: no jawan starts and nothing is merged; once it gets new work it is caught up again.
 - **One jawan.** For the branches behind the tag, the scan writes `data/projects/<p>/briefs/catch-up-<tag>.md` and
   starts one catch-up jawan through the normal `bin/toli spawn` path (queued while every jawan slot is busy; on a
   machine whose `lead.dispatch` is `subagents`, the brief goes to the lead's inbox instead). While that run is live

@@ -67,6 +67,24 @@ function latestRelease(clone: string, ref: string): { tag: string; sha: string }
     return tag === undefined || sha === null ? null : { tag, sha };
 }
 
+/** Where the release branch `main` is read here: origin's copy when fetched, else the local branch. */
+export function mainRef(clone: string, main: string): string {
+    return refExists(clone, `refs/remotes/origin/${main}`) ? `refs/remotes/origin/${main}` : `refs/heads/${main}`;
+}
+
+/**
+ * Why `target` gets no catch-up though it lacks the release (`release`: the tagged commit), or null: every commit on
+ * it is already on the release branch (an ancestor of `main`'s ref or of the release), so its work has landed and
+ * merging the release would only bring main into a finished branch.
+ */
+export function landedSkip(clone: string, main: string, release: string, target: Target): string | null {
+    const tip = resolveSha(clone, `refs/heads/${target.branch}`);
+    if (tip === null) return null;
+    const ref = mainRef(clone, main);
+    const landed = [ref, release].some((into) => git(clone, ["merge-base", "--is-ancestor", tip, into]).code === 0);
+    return landed ? `skipped: already on ${ref.replace(/^refs\/(remotes|heads)\//, "")} (${tip.slice(0, 12)})` : null;
+}
+
 /** A long-lived branch of the project on this machine: where it is checked out, and the live task it belongs to. */
 export type Target = { branch: string; dir: string | null; task: string | null };
 /** A target whose branch is checked out on this machine: the only kind a catch-up jawan is handed. */
@@ -225,7 +243,7 @@ function scanProject(project: Project, fetch: boolean, at: Date): string[] {
         if (fetched.code !== 0)
             lines.push(`${name}: git fetch origin ${main} failed (${(fetched.stderr || fetched.stdout).trim()})`);
     }
-    const ref = refExists(clone, `refs/remotes/origin/${main}`) ? `refs/remotes/origin/${main}` : `refs/heads/${main}`;
+    const ref = mainRef(clone, main);
     const release = latestRelease(clone, ref);
     if (release === null) return [...lines, `${name}: no vX.Y.Z tag on origin/${main}`];
     const label = `${name}: ${release.tag} (${release.sha.slice(0, 12)})`;
@@ -241,11 +259,17 @@ function scanProject(project: Project, fetch: boolean, at: Date): string[] {
                 git(clone, ["merge-base", "--is-ancestor", release.sha, `refs/heads/${target.branch}`]).code !== 0,
         );
         if (lagging.length === 0) return [...lines, `${label}: every long-lived branch has it`];
-        const behind = lagging.filter((target) => !entry.attempted.includes(target.branch));
+        const open = lagging.filter((target) => {
+            const skip = landedSkip(clone, main, release.sha, target);
+            if (skip !== null) lines.push(`${label}: ${target.branch}: ${skip}`);
+            return skip === null;
+        });
+        if (open.length === 0) return lines;
+        const behind = open.filter((target) => !entry.attempted.includes(target.branch));
         if (behind.length === 0)
             return [
                 ...lines,
-                `${label}: ${lagging.map((target) => target.branch).join(", ")} already had a catch-up for this release (see its report)`,
+                `${label}: ${open.map((target) => target.branch).join(", ")} already had a catch-up for this release (see its report)`,
             ];
         const ready: CheckedOut[] = [];
         for (const target of behind) {
