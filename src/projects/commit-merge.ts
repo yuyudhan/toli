@@ -119,11 +119,14 @@ function mergeHeads(dir: string): string[] {
 
 /**
  * Whether a commit with `--merge <merge>` (or none) in `dir` adopts a `git merge` in progress there. It must name that
- * merge: a commit without it would record one parent and drop the merged one, and toli records only two parents.
+ * merge: a commit without it would record one parent and drop the merged one, and toli records only two parents. Both
+ * sides are peeled to commits: `git merge <annotated tag>` writes the tag object to MERGE_HEAD, and the tag's name,
+ * its sha and the commit it tags all name that merge (cleanMerge records the commit as the second parent, as git does).
  */
 export function adoptsMerge(dir: string, merge: string | undefined): boolean {
     const pending = mergeHeads(dir);
-    if (pending.length === 0) return false;
+    const [only] = pending;
+    if (only === undefined) return false;
     const shown = pending.map((sha) => sha.slice(0, 12)).join(" ");
     if (pending.length > 1)
         throw new ToliError(
@@ -133,7 +136,8 @@ export function adoptsMerge(dir: string, merge: string | undefined): boolean {
         throw new ToliError(
             `refusing: a git merge of ${shown} is in progress in ${dir}; a commit without it would record one parent and drop ${shown}. Land the merge with --merge ${shown} (add --resolved when it had conflicts, naming the conflicted paths), or wait for whoever runs that merge to land it`,
         );
-    if (resolveSha(dir, merge) !== pending[0])
+    const pendingCommit = resolveSha(dir, only);
+    if (pendingCommit === null || resolveSha(dir, merge) !== pendingCommit)
         throw new ToliError(
             `refusing: a git merge of ${shown} is in progress in ${dir}, not of ${merge}; land that merge first (--merge ${shown}) or end it (git merge --abort)`,
         );

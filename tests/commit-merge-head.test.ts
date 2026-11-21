@@ -26,9 +26,9 @@ function diverged(conflicting: boolean): { dir: string; before: string; upstream
     return { dir, before: head(dir), upstream };
 }
 
-/** `git merge --no-commit upstream` as a jawan runs it; a conflicted merge exits 1 and stays in progress. */
-function startMerge(dir: string): void {
-    const proc = Bun.spawnSync(["git", "-C", dir, "merge", "--no-ff", "--no-commit", "upstream"], {
+/** `git merge --no-commit <ref>` (default upstream) as a jawan runs it; a conflicted merge exits 1 and stays in progress. */
+function startMerge(dir: string, ref = "upstream"): void {
+    const proc = Bun.spawnSync(["git", "-C", dir, "merge", "--no-ff", "--no-commit", ref], {
         env: { ...process.env, ...GIT_ENV },
         stdout: "pipe",
         stderr: "pipe",
@@ -109,6 +109,25 @@ describe("bin/toli commit with a git merge in progress (MERGE_HEAD)", () => {
         expect(git(dir, ["show", `${merged.sha}:shared.txt`])).toBe("one upstream\ntwo\nthree main");
         expect(existsSync(join(dir, ".git", "MERGE_HEAD"))).toBe(false);
         expect(git(dir, ["status", "--porcelain"])).toBe("");
+    });
+
+    test("a merge of an annotated tag (MERGE_HEAD holds the tag object) lands by tag name, tag sha or commit sha", () => {
+        for (const spelling of ["name", "tag sha", "commit sha"] as const) {
+            const { dir, before, upstream } = diverged(false);
+            git(dir, ["tag", "-a", "-m", "release", "v1", "upstream"]);
+            const tag = git(dir, ["rev-parse", "v1"]);
+            expect(tag).not.toBe(upstream);
+            startMerge(dir, "v1");
+            expect(readFileSync(join(dir, ".git", "MERGE_HEAD"), "utf8").trim()).toBe(tag);
+            expect(() => safeCommit({ dir, paths: [], merge: before, message: "Merge" })).toThrow(
+                `refusing: a git merge of ${tag.slice(0, 12)} is in progress in ${dir}, not of ${before}`,
+            );
+            const merge = spelling === "name" ? "v1" : spelling === "tag sha" ? tag : upstream;
+            const merged = safeCommit({ dir, paths: [], merge, message: "Merge v1" });
+            expect(parents(dir, merged.sha)).toEqual([before, upstream]);
+            expect(existsSync(join(dir, ".git", "MERGE_HEAD"))).toBe(false);
+            expect(git(dir, ["status", "--porcelain"])).toBe("");
+        }
     });
 
     test("a merge that deletes a file commits without a warning, adopted or not, leaving index and tree at HEAD", () => {
