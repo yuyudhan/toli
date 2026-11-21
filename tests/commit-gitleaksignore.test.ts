@@ -70,6 +70,20 @@ function ignoredSample(): { dir: string; samples: string } {
     return { dir, samples };
 }
 
+/** Commit `files` on the checkout's current branch; returns the new tip. */
+function commitFiles(dir: string, files: Record<string, string>, message: string): string {
+    for (const [name, text] of Object.entries(files)) {
+        mkdirSync(join(dir, name, ".."), { recursive: true });
+        writeFileSync(join(dir, name), text);
+    }
+    git(dir, ["add", "--all"]);
+    git(dir, ["commit", "--quiet", "-m", message]);
+    return head(dir);
+}
+
+/** A plain `<file>:<rule>:<line>` entry, as a scan without git history writes it, for the sample key. */
+const PLAIN_ENTRY = "samples/key.txt:github-pat:1\n";
+
 describe("bin/toli commit's staged gitleaks scan and .gitleaksignore", () => {
     test("a merge staging a key .gitleaksignore fingerprints by commit is accepted", () => {
         const { dir, samples } = ignoredSample();
@@ -107,5 +121,50 @@ describe("bin/toli commit's staged gitleaks scan and .gitleaksignore", () => {
         expect(refusal(() => safeCommit({ dir, paths: [], merge: swapped, message: "Merge swapped" }))).toContain(
             "samples/key.txt:2: github-pat",
         );
+    });
+
+    test("a plain file:rule:line entry lets the reviewed line land, never another secret at that line", () => {
+        // Branch `samples` adds the key with its plain entry; main moved on meanwhile.
+        const dir = repo({ "app.txt": "app\n" });
+        git(dir, ["switch", "--quiet", "-c", "samples"]);
+        const samples = commitFiles(
+            dir,
+            { "samples/key.txt": `${token()}\n`, ".gitleaksignore": PLAIN_ENTRY },
+            "samples: a fake key, ignored",
+        );
+        git(dir, ["switch", "--quiet", "-c", "swapped"]);
+        const swapped = commitFiles(dir, { "samples/key.txt": `${token()}\n` }, "samples: another key in its place");
+        git(dir, ["switch", "--quiet", "main"]);
+        const before = commitFiles(dir, { "app.txt": "app on main\n" }, "main: app");
+
+        // Another key on the ignored file, rule and line: gitleaks alone would let it through on the plain entry.
+        expect(refusal(() => safeCommit({ dir, paths: [], merge: swapped, message: "Merge swapped" }))).toContain(
+            "samples/key.txt:1: github-pat",
+        );
+        expect(head(dir)).toBe(before);
+        // The very line the entry was committed with lands.
+        const merged = safeCommit({ dir, paths: [], merge: samples, message: "Merge samples" });
+        expect(git(dir, ["rev-parse", `${merged.sha}^2`])).toBe(samples);
+    });
+
+    test("a plain entry with no committed line to compare with is refused", () => {
+        const dir = repo({ "app.txt": "app\n" });
+        mkdirSync(join(dir, "samples"));
+        writeFileSync(join(dir, "samples", "key.txt"), `${token()}\n`);
+        writeFileSync(join(dir, ".gitleaksignore"), PLAIN_ENTRY);
+        const before = head(dir);
+        expect(
+            refusal(() => safeCommit({ dir, paths: ["samples/key.txt", ".gitleaksignore"], message: "Sample key" })),
+        ).toContain("samples/key.txt:1: github-pat");
+        expect(head(dir)).toBe(before);
+    });
+
+    test("gitleaks failing without a report refuses, saying the staged set was not scanned", () => {
+        const dir = repo({ ".gitleaks.toml": "not = [valid\n" });
+        writeFileSync(join(dir, "app.txt"), "app\n");
+        const message = refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" }));
+        expect(message).toContain("gitleaks failed and wrote no report");
+        expect(message).toContain("unable to load gitleaks config");
+        expect(message).not.toContain("found a secret");
     });
 });
