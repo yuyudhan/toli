@@ -45,7 +45,9 @@ export type HookTimeout = number | "none";
  * limit); absent, the machine's capacity.commitHookTimeoutSeconds applies (src/projects/commit-hooks.ts).
  * `catchUp`: whether a new release tag starts a catch-up jawan here (absent: on; docs/projects.md "Release catch-up");
  * `catchUpChecks`: the quick checks that jawan runs after each merge (absent: the ones the project's notes name);
- * `catchUpPush`: false keeps every catch-up merge local on this machine (a box that cannot run the push gate).
+ * `catchUpPush`: false keeps every catch-up merge local on this machine (a box that cannot run the push gate);
+ * `catchUpTrailer`: one `Key: text` trailer line (`{tag}`, `{base}`, `{branch}` filled in) added to each catch-up merge
+ * message, for a project whose commit-msg hook demands one on such commits.
  */
 export type Project = {
     name: string;
@@ -73,6 +75,7 @@ export type Project = {
     catchUp?: boolean;
     catchUpChecks?: string;
     catchUpPush?: false;
+    catchUpTrailer?: string;
     /** Set for `project link`: the user's own checkout that projects/<name> is a symlink to (never deleted by toli). */
     linkedTo?: string;
 };
@@ -108,6 +111,7 @@ export function loadProjects(): Project[] {
             catchUp,
             catchUpChecks,
             catchUpPush,
+            catchUpTrailer,
             linkedTo,
         }) => ({
             name,
@@ -131,6 +135,7 @@ export function loadProjects(): Project[] {
             ...(typeof catchUp === "boolean" ? { catchUp } : {}),
             ...(catchUpChecks ? { catchUpChecks } : {}),
             ...(catchUpPush === false ? { catchUpPush } : {}),
+            ...(catchUpTrailer ? { catchUpTrailer } : {}),
             ...(linkedTo ? { linkedTo } : {}),
         }),
     );

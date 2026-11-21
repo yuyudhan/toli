@@ -37,6 +37,22 @@ export type CatchUpOutcome = Target & {
     keepLocal?: string;
 };
 
+/** The placeholders a `--catch-up-trailer` may use, filled in per merge. */
+export const TRAILER_FIELDS = ["tag", "base", "branch"] as const;
+type TrailerFields = Record<(typeof TRAILER_FIELDS)[number], string>;
+const TRAILER_PLACEHOLDER = new RegExp(`\\{(${TRAILER_FIELDS.join("|")})\\}`, "g");
+
+/**
+ * The catch-up merge's message: the subject, then the project's trailer line (if set) with its placeholders filled in,
+ * so a commit-msg hook that demands a trailer on such a merge sees it. The hook still runs and judges the message.
+ */
+function catchUpMessage(project: Project, fields: TrailerFields): string {
+    const subject = `Merge ${fields.tag} into ${fields.branch}`;
+    if (project.catchUpTrailer === undefined) return subject;
+    const trailer = project.catchUpTrailer.replace(TRAILER_PLACEHOLDER, (_, key: keyof TrailerFields) => fields[key]);
+    return `${subject}\n\n${trailer}`;
+}
+
 /** origin's branch names (`git ls-remote --heads`), or null when origin cannot be read. */
 function originBranches(clone: string): Set<string> | null {
     const listed = git(clone, ["ls-remote", "--heads", "origin"]);
@@ -81,11 +97,11 @@ function pushPlan(project: Project, target: Target, remote: Set<string> | null):
 function mergeTarget(
     project: Project,
     clone: string,
-    release: { tag: string; sha: string },
+    release: { tag: string; sha: string; base: string },
     target: Target,
     remote: Set<string> | null,
 ): CatchUpOutcome {
-    const { tag, sha } = release;
+    const { tag, sha, base } = release;
     const head = `refs/heads/${target.branch}`;
     const outcome = (result: CatchUpOutcome["result"], detail: string): CatchUpOutcome => ({
         ...target,
@@ -109,7 +125,7 @@ function mergeTarget(
             dir: target.dir,
             paths: [],
             merge: sha,
-            message: `Merge ${tag} into ${target.branch}`,
+            message: catchUpMessage(project, { tag, base, branch: target.branch }),
             hookLimit: hookLimit(project.name),
         });
         return {
@@ -123,7 +139,12 @@ function mergeTarget(
     } catch (error) {
         if (!(error instanceof ToliError)) throw error;
         tellOwner(project.name, target, tag, `was refused (${error.message})`);
-        return outcome("refused", `${error.message}; the work left as it was`);
+        // A commit-msg hook that demands a trailer on such a merge is met by the project's setting, never bypassed.
+        const hint =
+            project.catchUpTrailer === undefined && error.message.includes("commit-msg hook")
+                ? `; if the hook needs a trailer line on this merge: bin/toli project set ${project.name} --catch-up-trailer '<Key>: <text>'`
+                : "";
+        return outcome("refused", `${error.message}; the work left as it was${hint}`);
     }
 }
 
@@ -142,7 +163,7 @@ export function mergeRelease(name: string, tag: string): CatchUpOutcome[] {
     if (main === null) throw new ToliError(`no release branch known for ${name} (project set --base-branch <b>)`);
     const remote = originBranches(clone);
     const outcomes = catchUpTargets(project, clone, main).map((target) =>
-        mergeTarget(project, clone, { tag, sha }, target, remote),
+        mergeTarget(project, clone, { tag, sha, base: main }, target, remote),
     );
     const handBack = outcomes
         .filter((entry) => entry.result === "held" || entry.result === "not checked out")

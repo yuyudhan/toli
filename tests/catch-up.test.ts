@@ -1,7 +1,7 @@
 // T2142: after a project's release (a new vX.Y.Z tag on origin's main), each machine with the clone starts one
 // catch-up jawan that merges the new main into its long-lived branches (docs/projects.md "Release catch-up").
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOMY } from "./fleet-fixture.ts";
 import { type Sandbox, sandbox, tempDir, withProject } from "./helpers.ts";
@@ -54,11 +54,14 @@ function runs(box: Sandbox): RunRecord[] {
         .filter((run) => run.id !== BLOCKER);
 }
 
+/** The machine fixture: its sandbox, alpha's clone, and alpha's bare origin. */
+type Machine = { box: Sandbox; clone: string; origin: string };
+
 /**
  * Machine m1 with project alpha, its clone on the fixed working branch `nightly` (one commit past main), and one jawan
  * slot held by a live run outside the clone, so a catch-up spawn stays queued and nothing runs.
  */
-function machine(): { box: Sandbox; clone: string; origin: string } {
+function machine(): Machine {
     const box = sandbox();
     box.ok(["init", "--name", "m1", "--role", "coordinator"]);
     const clone = withProject(box, "alpha");
@@ -233,6 +236,90 @@ describe("catch-up merge", () => {
         };
         expect(state.projects.alpha?.attempted).toEqual([]);
         expect(box.git(clone, ["rev-parse", "HEAD"])).toBe(head);
+    });
+});
+
+// T2207: a project's commit-msg hook may demand a trailer on a merge that touches its protected paths; the catch-up
+// merge carries the project's `--catch-up-trailer` line and the hook still judges it.
+describe("catch-up trailer", () => {
+    /** machine() with a commit-msg hook in the clone requiring `Quality-change:` when quality.toml changes. */
+    function guarded(): Machine {
+        const setup = machine();
+        const hook = setup.box.git(setup.clone, [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "hooks/commit-msg",
+        ]);
+        writeFileSync(
+            hook,
+            [
+                "#!/bin/sh",
+                "if git diff --cached --name-only HEAD | grep -qx quality.toml && ! grep -q '^Quality-change: .' \"$1\"; then",
+                '    echo "quality.toml changed: add a Quality-change: <reason> line" >&2',
+                "    exit 1",
+                "fi",
+                "",
+            ].join("\n"),
+        );
+        chmodSync(hook, 0o755);
+        return setup;
+    }
+
+    test("without the setting, a merge touching a protected path is still refused", () => {
+        const { box, clone, origin } = guarded();
+        const head = box.git(clone, ["rev-parse", "HEAD"]);
+        release(box, origin, "v1.0.0", "quality.toml", "strict = true\n");
+        box.ok(["catch-up", "scan"]);
+        const self = { env: { TOLI_RUN_ID: runs(box)[0]?.id ?? "" } };
+        const text = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self);
+        expect(text).toContain("rejected the message");
+        expect(text).toContain("quality.toml changed: add a Quality-change: <reason> line");
+        expect(text).toContain("bin/toli project set alpha --catch-up-trailer '<Key>: <text>'");
+        expect(box.git(clone, ["rev-parse", "HEAD"])).toBe(head);
+        expect(box.git(clone, ["status", "--porcelain"])).toBe("");
+
+        // A trailer of another key does not satisfy the hook either: it still judges the message.
+        box.ok(["project", "set", "alpha", "--catch-up-trailer", "Reviewed-by: catch-up of {tag}"]);
+        const other = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self);
+        expect(other).toContain("rejected the message");
+        expect(other).not.toContain("--catch-up-trailer '<Key>");
+        expect(box.git(clone, ["rev-parse", "HEAD"])).toBe(head);
+    });
+
+    test("with --catch-up-trailer the merge carries the line and the hook accepts it", () => {
+        const { box, clone, origin } = guarded();
+        const sha = release(box, origin, "v1.0.0", "quality.toml", "strict = true\n");
+        box.ok(["catch-up", "scan"]);
+        const self = { env: { TOLI_RUN_ID: runs(box)[0]?.id ?? "" } };
+
+        expect(box.toli(["project", "set", "alpha", "--catch-up-trailer", "no colon here"]).code).not.toBe(0);
+        expect(
+            box.toli(["project", "set", "alpha", "--catch-up-trailer", "Quality-change: {version}"]).stderr,
+        ).toContain("knows {tag}, {base}, {branch}, not {version}");
+        expect(
+            box.ok([
+                "project",
+                "set",
+                "alpha",
+                "--catch-up-trailer",
+                "Quality-change: release {tag} merged from {base}",
+            ]),
+        ).toContain('catch-up-trailer="Quality-change: release {tag} merged from {base}"');
+        const listed = JSON.parse(box.ok(["project", "list", "--json"])) as { catchUpTrailer: string | null }[];
+        expect(listed[0]?.catchUpTrailer).toBe("Quality-change: release {tag} merged from {base}");
+
+        const text = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self);
+        expect(text).toMatch(/^nightly \(.*projects\/alpha\): merged v1\.0\.0 as [0-9a-f]{12}$/m);
+        expect(box.git(clone, ["log", "-1", "--format=%P", "nightly"]).split(" ")).toContain(sha);
+        expect(box.git(clone, ["log", "-1", "--format=%B", "nightly"])).toBe(
+            "Merge v1.0.0 into nightly\n\nQuality-change: release v1.0.0 merged from main",
+        );
+        expect(readFileSync(join(clone, "quality.toml"), "utf8")).toBe("strict = true\n");
+
+        box.ok(["project", "set", "alpha", "--catch-up-trailer", "none"]);
+        const cleared = JSON.parse(box.ok(["project", "list", "--json"])) as { catchUpTrailer: string | null }[];
+        expect(cleared[0]?.catchUpTrailer).toBeNull();
     });
 });
 

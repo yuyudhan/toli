@@ -6,6 +6,7 @@ import { paths } from "../core/paths.ts";
 import { persona } from "../core/persona.ts";
 import { now, out, run, ToliError, withLock } from "../core/util.ts";
 import { refExists } from "./base-branch.ts";
+import { TRAILER_FIELDS } from "./catch-up-merge.ts";
 import { parseHookTimeout } from "./commit-hooks.ts";
 import { overrideLabels } from "./list.ts";
 import { FORGES, type Forge, loadProjects, type Project, parseMode, updateProjects } from "./projects.ts";
@@ -83,6 +84,26 @@ function parseCatchUpChecks(value: string | undefined): string | null | undefine
     if (value === "none") return null;
     if (value?.trim() === "") throw new ToliError('--catch-up-checks needs a command, or "none"');
     return value?.trim();
+}
+
+/**
+ * `--catch-up-trailer`: one `Key: text` git trailer line the catch-up merge message ends with, its text free to use
+ * `{tag}`, `{base}` and `{branch}`; or `none` (null) to drop it.
+ */
+function parseCatchUpTrailer(value: string | undefined): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === "none") return null;
+    const trailer = value.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]*: \S[^\r\n]*$/.test(trailer))
+        throw new ToliError(
+            `--catch-up-trailer must be one "<Key>: <text>" line (e.g. "Reviewed-by: catch-up of {tag}"), or "none", got "${value}"`,
+        );
+    const unknown = [...trailer.matchAll(/\{([^{}]*)\}/g)]
+        .map((match) => match[1] ?? "")
+        .filter((field) => !(TRAILER_FIELDS as readonly string[]).includes(field));
+    if (unknown.length > 0)
+        throw new ToliError(`--catch-up-trailer knows {${TRAILER_FIELDS.join("}, {")}}, not {${unknown.join("}, {")}}`);
+    return trailer;
 }
 
 /**
@@ -176,6 +197,7 @@ function setAll(args: Args): void {
         "catch-up",
         "catch-up-checks",
         "catch-up-push",
+        "catch-up-trailer",
     ].filter((flag) => args.str(flag) !== undefined);
     if (others.length > 0)
         throw new ToliError(`project set --all sets only --workspace; set --${others.join(", --")} per project`);
@@ -213,6 +235,7 @@ export function projectSetCommand(argv: string[]): void {
             "catch-up",
             "catch-up-checks",
             "catch-up-push",
+            "catch-up-trailer",
         ],
     });
     args.maxPositional(1);
@@ -238,6 +261,7 @@ export function projectSetCommand(argv: string[]): void {
     const catchUp = parseCatchUp(args.str("catch-up"));
     const catchUpChecks = parseCatchUpChecks(args.str("catch-up-checks"));
     const catchUpPush = parseYesNo(args.str("catch-up-push"), "--catch-up-push");
+    const catchUpTrailer = parseCatchUpTrailer(args.str("catch-up-trailer"));
     if (args.bool("keep") && workspace === undefined)
         throw new ToliError("--keep goes with --workspace: it keeps a switch to same-branch for new tasks too");
     if (
@@ -258,6 +282,7 @@ export function projectSetCommand(argv: string[]): void {
             catchUp,
             catchUpChecks,
             catchUpPush,
+            catchUpTrailer,
         ].every((value) => value === undefined)
     )
         throw new ToliError(
@@ -265,7 +290,7 @@ export function projectSetCommand(argv: string[]): void {
                 "--forge-host <h>|none, --workspace <s>, --standing-push yes|no, --standing-pr yes|no, " +
                 "--live-stack yes|no, --role full|verify-only, --release-priority yes|no or " +
                 "--hook-timeout <seconds>|none|default, --catch-up yes|no|default, --catch-up-checks <command>|none, " +
-                "--catch-up-push yes|no " +
+                "--catch-up-push yes|no, --catch-up-trailer '<Key>: <text>'|none " +
                 "(or --all --workspace <s>)",
         );
     const at = now().toISOString();
@@ -312,6 +337,8 @@ export function projectSetCommand(argv: string[]): void {
             else if (catchUpChecks !== undefined) project.catchUpChecks = catchUpChecks;
             if (catchUpPush === false) project.catchUpPush = false;
             else if (catchUpPush === true) delete project.catchUpPush;
+            if (catchUpTrailer === null) delete project.catchUpTrailer;
+            else if (catchUpTrailer !== undefined) project.catchUpTrailer = catchUpTrailer;
             return { updated: { ...project }, note };
         }),
     );

@@ -78,6 +78,7 @@ describe("fixed working branch", () => {
                 catchUp: null,
                 catchUpChecks: null,
                 catchUpPush: true,
+                catchUpTrailer: null,
                 path: join(box.root, "projects", "old"),
                 cloned: false,
                 linkedTo: null,

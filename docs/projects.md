@@ -283,7 +283,15 @@ behind main between releases.
 - **The merge.** The jawan runs `bin/toli catch-up merge <p> --tag <tag>`: per branch, a `git merge-tree` dry run
   first; a conflict merges nothing, leaves the work as it was, notes the conflicting files on the branch's task (its
   owner merges before the next push), and is in the jawan's report to this machine's Sardar. A clean merge lands
-  through `bin/toli commit`'s `--merge` with the project's commit hooks (rule 6), in the branch's own checkout.
+  through `bin/toli commit`'s `--merge` with the project's commit hooks (rule 6), in the branch's own checkout. Its
+  message is `Merge <tag> into <branch>`; a hook that refuses it is reported like a conflict, never bypassed.
+- **Hooks that demand a trailer.** A project whose commit-msg hook requires a trailer line on some commits (say, any
+  that touches its protected quality paths, which a release's main often does) sets the line once:
+  `bin/toli project set <p> --catch-up-trailer '<Key>: <text>'`. Every catch-up merge message then ends with it,
+  `{tag}`, `{base}` (the release branch) and `{branch}` filled in, e.g.
+  `--catch-up-trailer 'Quality-change: merge of release {tag} from {base}'`. The hook still runs on the message and
+  still judges it; `--catch-up-trailer none` drops the line. A merge the hook refuses while no trailer is set says so
+  in its report.
 - **Checks and push.** In each checkout it merged, the jawan then runs the quick checks,
   `bin/toli project set <p> --catch-up-checks "<command>"` (else the ones the project's notes name; heavy commands
   under `bin/toli build-slot`). It pushes a branch only when the plan prints a `push` line for it: the branch is
@@ -301,7 +309,8 @@ behind main between releases.
   commit's checks to the branch's own changes belongs in the project's hook.
 - **Opt out.** On by default (a project without release tags has nothing to catch up to).
   `bin/toli project set <p> --catch-up no` turns it off on this machine; `--catch-up default` turns it on again.
-  `project list` shows `catch-up=no` and the checks (`catchUp`, `catchUpChecks` in `--json`).
+  `project list` shows `catch-up=no`, the checks and the trailer (`catchUp`, `catchUpChecks`, `catchUpTrailer` in
+  `--json`).
 
 ## Setting up an existing project
 
