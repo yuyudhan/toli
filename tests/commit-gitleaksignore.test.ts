@@ -43,6 +43,20 @@ function refusal(land: () => unknown): string {
     throw new Error("expected a refusal, but the commit landed");
 }
 
+/** Run `fn` with a `gitleaks` on PATH that runs `body` (sh), restoring PATH after. */
+function withGitleaks<T>(body: string[], fn: () => T): T {
+    const stubs = tempDir("gitleaks-stub");
+    writeFileSync(join(stubs, "gitleaks"), ["#!/bin/sh", ...body, ""].join("\n"));
+    chmodSync(join(stubs, "gitleaks"), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${stubs}:${path ?? ""}`;
+    try {
+        return fn();
+    } finally {
+        process.env.PATH = path;
+    }
+}
+
 /**
  * main, and branch `samples` adding samples/key.txt with a sample key, then a commit that moves it a line down (so the
  * ignored text no longer sits on the fingerprinted line). main gets its own commit and a .gitleaksignore with the
@@ -163,22 +177,22 @@ describe("bin/toli commit's staged gitleaks scan and .gitleaksignore", () => {
     });
 
     test("gitleaks failing without a report refuses, saying the staged set was not scanned", () => {
-        const dir = repo({ ".gitleaks.toml": "not = [valid\n" });
-        writeFileSync(join(dir, "app.txt"), "app\n");
-        const message = refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" }));
+        const dir = repo({ "app.txt": "app\n" });
+        writeFileSync(join(dir, "app.txt"), "app changed\n");
+        const message = withGitleaks(["echo 'gitleaks: no config' >&2", "exit 1"], () =>
+            refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" })),
+        );
         expect(message).toContain("gitleaks failed and wrote no report");
-        expect(message).toContain("unable to load gitleaks config");
+        expect(message).toContain("gitleaks: no config");
         expect(message).not.toContain("found a secret");
     });
 
     test("a gitleaks exit other than 1 is a scanner failure, even with a report written", () => {
         const dir = repo({ "app.txt": "app\n" });
-        const stubs = tempDir("gitleaks-stub");
+        writeFileSync(join(dir, "app.txt"), "app changed\n");
         // Writes a report naming a finding, then exits 2: not gitleaks' "leaks found" exit.
-        writeFileSync(
-            join(stubs, "gitleaks"),
+        const message = withGitleaks(
             [
-                "#!/bin/sh",
                 'while [ "$#" -gt 0 ]; do',
                 '  if [ "$1" = "--report-path" ]; then',
                 `    printf '%s' '[{"RuleID":"github-pat","File":"app.txt","StartLine":1,"EndLine":1}]' > "$2"`,
@@ -187,22 +201,66 @@ describe("bin/toli commit's staged gitleaks scan and .gitleaksignore", () => {
                 "done",
                 "echo 'gitleaks: crashed' >&2",
                 "exit 2",
-                "",
-            ].join("\n"),
+            ],
+            () => refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" })),
         );
-        chmodSync(join(stubs, "gitleaks"), 0o755);
-        const path = process.env.PATH;
-        process.env.PATH = `${stubs}:${path ?? ""}`;
-        try {
-            writeFileSync(join(dir, "app.txt"), "app changed\n");
-            const message = refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" }));
-            expect(message).toContain("gitleaks failed (exit 2)");
-            expect(message).toContain("gitleaks: crashed");
-            expect(message).not.toContain("found a secret");
-        } finally {
-            process.env.PATH = path;
-        }
+        expect(message).toContain("gitleaks failed (exit 2)");
+        expect(message).toContain("gitleaks: crashed");
+        expect(message).not.toContain("found a secret");
     });
+
+    test("a staged .gitleaks.toml toli cannot read is refused before any scan", () => {
+        const dir = repo({ ".gitleaks.toml": "not = [valid\n" });
+        writeFileSync(join(dir, "app.txt"), "app\n");
+        expect(refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" }))).toContain(
+            ".gitleaks.toml does not parse as TOML",
+        );
+    });
+
+    test("an [extend] path naming the ignore file in any case is refused, and never read as one", () => {
+        // Valid TOML whose middle line is a fingerprint for the key: read as .gitleaksignore it would hide it.
+        const dir = repo({
+            ".gitleaks.toml": '[extend]\npath = ".GitLeaksIgnore"\n',
+            ".GitLeaksIgnore": "[extend]\nuseDefault = true\n\ndescription = '''\nkey.txt:github-pat:1\n'''\n",
+        });
+        writeFileSync(join(dir, "key.txt"), `${token()}\n`);
+        expect(refusal(() => safeCommit({ dir, paths: ["key.txt"], message: "Key" }))).toContain(
+            "extends .GitLeaksIgnore, the ignore file",
+        );
+    });
+
+    test("an absolute [extend] path is refused", () => {
+        const outside = join(tempDir("outside-config"), "permissive.toml");
+        writeFileSync(outside, 'title = "nothing"\n');
+        const dir = repo({ ".gitleaks.toml": `[extend]\npath = "${outside}"\n` });
+        writeFileSync(join(dir, "key.txt"), `${token()}\n`);
+        expect(refusal(() => safeCommit({ dir, paths: ["key.txt"], message: "Key" }))).toContain(
+            `extends ${outside}, outside the repository`,
+        );
+    });
+
+    const ruleless: Record<string, Record<string, string>> = {
+        "an empty config": { ".gitleaks.toml": 'title = "nothing"\n' },
+        "a chain whose only rules are past gitleaks' extend depth": {
+            ".gitleaks.toml": '[extend]\npath = "c1.toml"\n',
+            "c1.toml": '[extend]\npath = "c2.toml"\n',
+            "c2.toml": '[extend]\npath = "c3.toml"\n',
+            "c3.toml": EXTENDED_RULE,
+        },
+        "a cycle with no rules": {
+            ".gitleaks.toml": '[extend]\npath = "a.toml"\n',
+            "a.toml": '[extend]\npath = "b.toml"\n',
+            "b.toml": '[extend]\npath = "a.toml"\n',
+        },
+    };
+    for (const [name, files] of Object.entries(ruleless))
+        test(`${name} scans nothing, so the commit is refused`, () => {
+            const dir = repo({ ...files, "app.txt": "app\n" });
+            writeFileSync(join(dir, "key.txt"), `${token()}\n`);
+            expect(refusal(() => safeCommit({ dir, paths: ["key.txt"], message: "Key" }))).toContain(
+                "has no rules gitleaks would load",
+            );
+        });
 
     test("a relative [extend] path resolves to the staged files, chained, and their rules still fire", () => {
         // .gitleaks.toml extends base.toml, which extends rules/more.toml: the only config holding a rule for TOLIKEY.
