@@ -13,6 +13,11 @@
 # The gate is skipped only when at least one ref line was read, every count succeeded, and the total
 # is zero (e.g. a tag on an already-pushed commit). Zero ref lines means the input is unknown, not
 # empty, so the gate runs with a full-history secrets scan; so does any count that fails.
+#
+# Its one heavy step is the gate, guarded by `gate check` below; the working-tree fallback takes a heavy-build slot of
+# its own. So once `bun run check` passed on the pushed commit's tree, `bin/toli push` runs this hook without queueing
+# for a slot (docs/delivery.md, Gates):
+# toli-light-push-after-gate: bun run check
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -96,5 +101,5 @@ done
 if ((tree_check == 1)); then
     # One run covers every such commit: it tests the working tree, whichever commit is pushed.
     echo "pre-push: $recipe on the working tree (just check)"
-    bun run check
+    "$toli" build-slot -- bun run check
 fi

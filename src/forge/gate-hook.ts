@@ -7,7 +7,7 @@
 // part of a hook, and only the hook knows which of its steps is the gate, so the reason says whether it asks.
 import { readFileSync } from "node:fs";
 import { headSha, treeSha } from "../core/git.ts";
-import { out } from "../core/util.ts";
+import { out, warn } from "../core/util.ts";
 import { activeHookPath } from "../projects/hooks.ts";
 import { changesText, checkoutChanges, type GateRun, gateForPush } from "./gate.ts";
 import { logDecision, provenPass, readRecord, recordFile, short } from "./gate-record.ts";
@@ -80,6 +80,39 @@ function moreThanTheGate(hook: string, script: string, project: string, recipe: 
         `${hook} is not only the gate ${recipe} and never asks bin/toli gate check, so a gate step in it reruns; ` +
         `guard that step with ${check} (docs/delivery.md, Gates)`
     );
+}
+
+/** `# toli-light-push-after-gate: <recipe>`: a gate recipe (exact text) that is one of the hook's only heavy steps. */
+const LIGHT_AFTER_GATE = /^#\s*toli-light-push-after-gate:[ \t]*(\S[^\n]*?)\s*$/gm;
+
+/**
+ * The commit `bin/toli push` may push, running the pre-push `hook` of `dir` without a heavy-build slot, because every
+ * gate recipe the hook declares its only heavy steps (`# toli-light-push-after-gate: <recipe>` lines, each guarded in
+ * the hook by `bin/toli gate check`) has a sealed pass on the tree of HEAD, so the hook skips them: HEAD's sha, which
+ * the push must then push exactly. Null when the hook declares none or one has no pass there (said on stderr), and the
+ * push keeps its slot. Decided before the push queues, so it never waits for a slot only to skip its gate (T2211).
+ */
+export function slotFreePushSha(project: string, dir: string, hook: string): string | null {
+    const recipes = [...readFileSync(hook, "utf8").matchAll(LIGHT_AFTER_GATE)].map(([, recipe]) => recipe ?? "");
+    if (recipes.length === 0) return null;
+    const sha = headSha(dir);
+    const tree = treeSha(dir, sha);
+    const proofs: string[] = [];
+    for (const recipe of recipes) {
+        const record = readRecord(recordFile(project, tree, recipe));
+        if (record === null || !provenPass(record, project, tree, recipe)) {
+            warn(
+                `toli: the pre-push hook takes a heavy-build slot: no sealed pass of ${recipe} on tree ${short(tree)}`,
+            );
+            return null;
+        }
+        proofs.push(`${recipe} (proof ${short(record.proof ?? "")})`);
+    }
+    warn(
+        `toli: the pre-push hook ${hook} declares no heavy step once its gate passed, and ${proofs.join(", ")} passed ` +
+            `on tree ${short(tree)} (commit ${short(sha)}): pushing exactly that commit without a heavy-build slot`,
+    );
+    return sha;
 }
 
 /**

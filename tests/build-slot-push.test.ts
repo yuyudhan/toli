@@ -119,6 +119,48 @@ describe("a push check in one heavy-build slot", () => {
         expect(runs(log).find((run) => run.label === "p")).toMatchObject({ slot: "1", args: "test verify push" });
     });
 
+    // T2211: a push whose hook skips its gate step on a sealed pass waited ~50 min for a slot only to run cheap steps.
+    test("a push whose hook's declared gate passed on the pushed tree takes no slot; a stale pass still takes one", async () => {
+        const { box, dir, log } = slotProject();
+        box.ok(["project", "set", "app", "--standing-push", "yes"]);
+        const ran = join(box.root, ".hook-ran");
+        writeFileSync(
+            join(dir, ".git", "hooks", "pre-push"),
+            `#!/bin/sh\n# toli-light-push-after-gate: just verify\necho "$(git rev-parse HEAD)" >> ${ran}\n`,
+            { mode: 0o755 },
+        );
+        writeFileSync(join(dir, "gated.txt"), "gated\n");
+        box.git(dir, ["add", "gated.txt"]);
+        box.git(dir, ["commit", "-m", "gated"]);
+        box.ok(["gate", "run", "app", "--recipe", "just verify"], { env: { ...UNCAPPED, STUB_LABEL: "g" } });
+        const holder = await holdSlot(box, log);
+        const passed = await box.toliAsync(["push", "app"], { env: UNCAPPED });
+        expect(passed.code).toBe(0);
+        expect(passed.stderr).toContain("pushing exactly that commit without a heavy-build slot");
+        expect(passed.stderr).not.toContain("waiting for a heavy-build slot");
+        const gated = box.git(dir, ["rev-parse", "HEAD"]).trim();
+        expect(readFileSync(ran, "utf8").trim()).toBe(gated);
+        expect(box.git(dir, ["ls-remote", "origin", "refs/heads/main"]).split(/\s+/)[0]).toBe(gated);
+        writeFileSync(join(dir, "stale.txt"), "stale\n");
+        box.git(dir, ["add", "stale.txt"]);
+        box.git(dir, ["commit", "-m", "stale"]);
+        const stale = box.toliAsync(["push", "app"], { env: UNCAPPED });
+        const queue = join(box.root, "state", "build-slots", "queue");
+        await until(
+            "the stale-pass push waiting in line for the busy slot",
+            () => existsSync(queue) && readdirSync(queue).some((name) => name.endsWith(".wait")),
+        );
+        writeFileSync(`${log}.done-a`, "");
+        expect((await holder.done).code).toBe(0);
+        const result = await stale;
+        expect(result.code).toBe(0);
+        expect(result.stderr).toContain(
+            "toli: the pre-push hook takes a heavy-build slot: no sealed pass of just verify",
+        );
+        expect(result.stderr).toContain("waiting for a heavy-build slot (1 busy)");
+        expect(readFileSync(ran, "utf8").trim().split("\n")).toHaveLength(2);
+    });
+
     /** systemd-run's logged line for one scope: unit toli-build-1-<pid> capped at scopeBox's 512 MB. */
     const SCOPE_LINE =
         /^--user --scope --collect --quiet --unit=toli-build-1-\d+\.scope -p MemoryMax=512M -p MemorySwapMax=0 -- \/bin\/sh /;

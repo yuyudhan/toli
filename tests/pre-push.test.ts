@@ -12,8 +12,8 @@ type Pushed = { code: number; stdout: string; stderr: string; calls: string[] };
 
 /**
  * A clone carrying toli's real pre-push hook and a stub `bin/toli` (both committed, so the checkout is clean): the
- * stub logs each call and answers `gate check` / `gate run` with the exit codes in `<state>/check` and `<state>/run`.
- * A stub `bun` on PATH logs its calls the same way and exits with `<state>/bun`.
+ * stub logs each call, answers `gate check` / `gate run` with the exit codes in `<state>/check` and `<state>/run`, and
+ * runs the command after `build-slot --`. A stub `bun` on PATH logs its calls the same way and exits with `<state>/bun`.
  */
 function clone(): { dir: string; push: (check: number, run: number, bun?: number) => Pushed } {
     const root = tempDir("prepush");
@@ -40,6 +40,7 @@ function clone(): { dir: string; push: (check: number, run: number, bun?: number
             'case "$1 $2" in',
             `"gate check") exit "$(cat "${join(state, "check")}")" ;;`,
             `"gate run") exit "$(cat "${join(state, "run")}")" ;;`,
+            '"build-slot --") shift 2; exec "$@" ;;',
             "esac",
             "",
         ].join("\n"),
@@ -112,6 +113,7 @@ describe("pre-push hook", () => {
         expect(pushed.code).toBe(0);
         expect(pushed.stdout + pushed.stderr).toContain("not exactly the pushed commit");
         expect(pushed.stdout + pushed.stderr).toContain("wip.ts");
+        expect(pushed.calls).toContain("TOLI_DEV= build-slot -- bun run check");
         expect(pushed.calls).toContain("bun run check");
         expect(pushed.calls.some((call) => call.includes("gate run"))).toBe(false);
     });

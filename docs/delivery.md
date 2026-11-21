@@ -139,7 +139,14 @@ parents, message or author):
   `# toli-light-push: VERIFY_SKIP=1`. A push whose environment meets one (`VERIFY_SKIP=1 bin/toli push <p>`) prints
   `toli: the pre-push hook declares no heavy step with VERIFY_SKIP=1: pushing without a heavy-build slot` and never
   queues for a slot; every other push keeps its slot. The declaration is the project's word about its own hook, so
-  keep it next to the check it names.
+  keep it next to the check it names. A hook whose only heavy steps are gates it guards with `gate check` (below)
+  declares their recipes instead, one per line: `# toli-light-push-after-gate: <recipe>`, the recipe's exact text.
+  Before queueing, `bin/toli push` looks for a sealed pass of each on the tree of HEAD. When every one has one it
+  says so (`toli: the pre-push hook <path> declares no heavy step once its gate passed, ...`), pushes exactly that
+  commit's sha (setting the upstream as `-u` would) and runs the hook, every step of it, without a slot. A missing or
+  stale pass prints `toli: the pre-push hook takes a heavy-build slot: no sealed pass of <recipe> on tree ...` and
+  the push takes its slot as before. toli's own hook declares `bun run check` (its working-tree fallback takes a slot
+  itself).
 - A pass is sealed with an HMAC over its project, tree, recipe text and end time, keyed by `state/gate-key` (made once
   per installation, owner-only). Only the gate runner writes it, and `gate run` and `gate check` count a record only
   when its proof verifies for the tree and recipe asked about: a record edited to say `passed`, copied to another
