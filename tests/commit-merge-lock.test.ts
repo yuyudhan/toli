@@ -105,29 +105,43 @@ describe("bin/toli commit --merge of a clean merge that leaves Cargo.lock stale"
         expect(head(dir)).toBe(before);
     });
 
-    test("a fixed lock as a --patch on the clean merge lands in the merge commit", () => {
+    test("a fixed lock as a --patch on the clean merge lands in the merge commit; a broken one is refused", () => {
         const { dir, before, upstream, stale, fixed } = staleLockMerge();
         // The patch is made against the merge result, as `git diff` shows it after `git merge --no-commit`.
-        const scratch = tempDir("lock-patch");
-        mkdirSync(join(scratch, "a"));
-        mkdirSync(join(scratch, "b"));
-        writeFileSync(join(scratch, "a", "Cargo.lock"), stale);
-        writeFileSync(join(scratch, "b", "Cargo.lock"), fixed);
-        // Empty prefixes over the a/ and b/ directories give the repo's own a/Cargo.lock b/Cargo.lock headers.
-        const diff = Bun.spawnSync(
-            ["git", "diff", "--no-index", "--src-prefix=", "--dst-prefix=", "a/Cargo.lock", "b/Cargo.lock"],
-            { cwd: scratch, env: { ...process.env, ...GIT_ENV }, stdout: "pipe", stderr: "pipe" },
-        ).stdout.toString();
+        const lockPatch = (to: string): string => {
+            const scratch = tempDir("lock-patch");
+            mkdirSync(join(scratch, "a"));
+            mkdirSync(join(scratch, "b"));
+            writeFileSync(join(scratch, "a", "Cargo.lock"), stale);
+            writeFileSync(join(scratch, "b", "Cargo.lock"), to);
+            // Empty prefixes over the a/ and b/ directories give the repo's own a/Cargo.lock b/Cargo.lock headers.
+            return Bun.spawnSync(
+                ["git", "diff", "--no-index", "--src-prefix=", "--dst-prefix=", "a/Cargo.lock", "b/Cargo.lock"],
+                { cwd: scratch, env: { ...process.env, ...GIT_ENV }, stdout: "pipe", stderr: "pipe" },
+            ).stdout.toString();
+        };
+        const patched = (diff: string) =>
+            safeCommit({
+                dir,
+                paths: [],
+                patches: [{ name: "lock.diff", diff }],
+                merge: "upstream",
+                message: "Merge upstream",
+            });
+        // A patch that leaves the lock file wrong (the new crate at a version no manifest gives) is still refused.
+        const broken = fixed.replace('name = "piece"\nversion = "0.2.0"', 'name = "piece"\nversion = "0.9.0"');
+        expect(broken).not.toBe(fixed);
+        expect(() => patched(lockPatch(broken))).toThrow("cargo metadata --locked rejects the staged Cargo.lock");
+        expect(head(dir)).toBe(before);
+
+        const diff = lockPatch(fixed);
         expect(diff).toContain('+version = "0.2.0"');
-        const committed = safeCommit({
-            dir,
-            paths: [],
-            patches: [{ name: "lock.diff", diff }],
-            merge: "upstream",
-            message: "Merge upstream",
-        });
+        const committed = patched(diff);
         expect(parents(dir, committed.sha)).toEqual([before, upstream]);
         expect(committed.amended).toEqual(["Cargo.lock"]);
+        expect(git(dir, ["show", "--no-patch", "--format=%B", committed.sha])).toBe(
+            "Merge upstream\n\nMerge-amended: Cargo.lock",
+        );
         expect(git(dir, ["show", `${committed.sha}:Cargo.lock`])).toBe(fixed.trimEnd());
     });
 });
