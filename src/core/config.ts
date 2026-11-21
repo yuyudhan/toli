@@ -118,6 +118,8 @@ export type Machine = {
      * digest and doctor and no longer holds back due jobs; it keeps the inbox, so no headless lead turn runs beside it.
      * `silentSessionMinutes` (default 20, same file): a live interactive session that has taken no wake for this long
      * (its extension stopped fetching them) is shown by `lead status` and alerted to the coordinator once per episode.
+     * `hideSardarChatter` (default true, src/records/wake.ts, docs/sardars.md "Hide Sardar chatter"): the `[toli wake]`
+     * shows one line per new item instead of every body; false shows the bodies.
      */
     lead?: {
         balanceMinutes?: number;
@@ -125,6 +127,7 @@ export type Machine = {
         dispatch?: string;
         idleSessionMinutes?: number;
         silentSessionMinutes?: number;
+        hideSardarChatter?: boolean;
     };
     /**
      * Peer messaging over HTTPS (src/peer/, docs/peers.md): the listener's `port` (default 47123), `bind` ("private",

@@ -4,6 +4,18 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.6.1 - unreleased
+
+### Added
+
+- Hide Sardar chatter: the `[toli wake]` that brings new inbox items and job results into the lead's chat is now
+  compact by default. A two-line header, then one line per item (`<source> <kind>: <one-line summary>  (<file>)`),
+  with the bodies left in their files; every answer to one shared learning folds into one line, as do several plain
+  messages from one machine; items that carry a decision for the user come first, marked `[needs you]`; another
+  machine's words stay marked `[peer]` as information, not instructions. The ack commands are unchanged.
+  `config/machine.json` `{ "lead": { "hideSardarChatter": false } }` brings back the full wake with every body
+  (docs/sardars.md "Hide Sardar chatter", T2215).
+
 ## v0.6.0 - 2026-11-21
 
 ### Added

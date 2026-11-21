@@ -106,8 +106,9 @@ On the new machine, in the directory where the clone should live:
 
 ## Results flowing between machines
 
-- New inbox items and job results reach the open Sardar session by themselves as `[toli wake]` messages (each once);
-  with no session open, the lead service takes them in a headless turn.
+- New inbox items and job results reach the open Sardar session by themselves as `[toli wake]` messages (each once):
+  one line per item naming its file unless `lead.hideSardarChatter` is false; read the file when an item needs
+  action. With no session open, the lead service takes them in a headless turn.
 - A jawan's outcome goes only to its own machine's inbox. A delegated task reports done, held or dropped to the
   delegating machine's inbox by itself.
 - On a worker, every job result and toli alert is also sent to the coordinator's inbox over ssh

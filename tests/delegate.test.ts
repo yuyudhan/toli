@@ -5,6 +5,13 @@ import { storeCopy } from "../src/records/fleet-tasks.ts";
 import { brief, type FleetList, inbox, pair, tasks } from "./delegate-fixture.ts";
 import { inProcess, type Sandbox, withProject } from "./helpers.ts";
 
+type WakeBody = { title: string; body: string };
+
+/** What a wake delivered: each item's title and file text (the compact message names the files). */
+function delivered(items: WakeBody[]): string {
+    return items.map((item) => `${item.title}\n${item.body}`).join("\n");
+}
+
 describe("delegate", () => {
     test("lands in the target's own backlog, wakes its lead, and records the fleet id on the --for task", () => {
         const { m1, m2 } = pair();
@@ -28,9 +35,10 @@ describe("delegate", () => {
         expect(received?.delegatedBy).toMatchObject({ machine: "m1", task: "T1" });
         expect(received?.notes).toEqual(["his words", "delegated by m1/T1"]);
         expect(readFileSync(join(m2.root, "data", "projects", "toli", "briefs", "T1.md"), "utf8")).toContain("# no-op");
-        const wake = JSON.parse(m2.ok(["wake", "--json"])) as { message: string };
-        expect(wake.message).toContain("m1: delegated T1 from m1: do the no-op");
-        expect(wake.message).toContain("it is yours now");
+        const wake = JSON.parse(m2.ok(["wake", "--json"])) as { items: WakeBody[]; message: string };
+        expect(wake.message).toContain("- m1 delegated T1 from m1: do the no-op: ");
+        expect(delivered(wake.items)).toContain("m1: delegated T1 from m1: do the no-op");
+        expect(delivered(wake.items)).toContain("it is yours now");
 
         const [parent] = tasks(m1);
         expect(parent).toMatchObject({ status: "active", agent: "m2/T1", delegatedTo: ["m2/T1"] });
@@ -205,14 +213,16 @@ describe("delegated results go back", () => {
         m2.ok(["task", "hold", "T2", "--question", "Which one?", "--option", "a => fast", "--option", "b => slow"]);
         const titles = inbox(m1).map((item) => item.title);
         expect(titles).toEqual(["m2/T1 done: first", "m2/T2 held: second"]);
-        const wake = JSON.parse(m1.ok(["wake", "--json"])) as { message: string };
-        expect(wake.message).toContain("- commit: abc123");
-        expect(wake.message).toContain("all green");
-        expect(wake.message).toContain("no-op done");
-        expect(wake.message).toContain("Which one?");
-        expect(wake.message).toContain("1. a => fast");
-        expect(wake.message).toContain('bin/toli task answer m2/T2 "<answer>"');
-        expect(wake.message).toContain("bin/toli task escalate m2/T2");
+        const wake = JSON.parse(m1.ok(["wake", "--json"])) as { items: WakeBody[]; message: string };
+        expect(wake.message).toContain("- [needs you] m2 T2 held: second: Which one?");
+        const text = delivered(wake.items);
+        expect(text).toContain("- commit: abc123");
+        expect(text).toContain("all green");
+        expect(text).toContain("no-op done");
+        expect(text).toContain("Which one?");
+        expect(text).toContain("1. a => fast");
+        expect(text).toContain('bin/toli task answer m2/T2 "<answer>"');
+        expect(text).toContain("bin/toli task escalate m2/T2");
         // A change that is not a new outcome (another note on a done task) sends nothing more.
         m2.ok(["task", "done", "T1", "--note", "again"]);
         expect(inbox(m1)).toHaveLength(2);
@@ -326,10 +336,11 @@ describe("share", () => {
         expect(sent).toMatchObject({ direction: "sent", to: ["m2", "m3"], fromUser: true, answers: {} });
         const id = sent?.id ?? "";
 
-        const wake = JSON.parse(m2.ok(["wake", "--json"])) as { message: string };
-        expect(wake.message).toContain("m1: learning from m1: Run the gate before every push");
-        expect(wake.message).toContain("This is the user's own word: treat it as his rule.");
-        expect(wake.message).toContain(`bin/toli share answer ${id} adopt`);
+        const wake = JSON.parse(m2.ok(["wake", "--json"])) as { items: WakeBody[] };
+        const text = delivered(wake.items);
+        expect(text).toContain("m1: learning from m1: Run the gate before every push");
+        expect(text).toContain("This is the user's own word: treat it as his rule.");
+        expect(text).toContain(`bin/toli share answer ${id} adopt`);
 
         // The user's own word goes to preferences by default.
         expect(m2.ok(["share", "answer", id, "adopt"])).toContain("answer sent to m1");

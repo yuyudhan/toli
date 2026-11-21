@@ -1,13 +1,16 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { Args } from "../core/args.ts";
+import { machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
+import { persona } from "../core/persona.ts";
 import { out, printJson, ToliError, withLock } from "../core/util.ts";
 import { inboxHolderLocked, leadLock } from "../fleet/lead-state.ts";
 import { listResults } from "../jobs/results.ts";
 import { receivingNow } from "../peer/receiving.ts";
 import { type AckStream, ackCommand, ackedThrough, ackThrough, markShown, type ResultStream } from "./acks.ts";
 import { listInbox } from "./inbox.ts";
+import { compactWakeMessage } from "./wake-compact.ts";
 
 /** One result that arrived since the last wake: an inbox message or a job result recorded on this machine. */
 export type WakeItem = { kind: "inbox" | "job"; stamp: string; title: string; path: string; body: string };
@@ -118,9 +121,20 @@ export function fenceFromPeer(body: string): string {
     ].join("\n");
 }
 
-/** The message pushed into the live session for `items`; empty when nothing arrived. */
-export function wakeMessage(items: WakeItem[]): string {
-    if (items.length === 0) return "";
+/**
+ * `lead.hideSardarChatter` in config/machine.json (docs/sardars.md "Hide Sardar chatter"): true, the default, gives
+ * the compact wake, one line per item; false shows every body as before.
+ */
+export function hideSardarChatter(): boolean {
+    const raw: unknown = machineSettings().lead?.hideSardarChatter;
+    if (raw === undefined) return true;
+    if (typeof raw !== "boolean")
+        throw new ToliError("config/machine.json lead.hideSardarChatter must be true or false");
+    return raw;
+}
+
+/** Every body shown with its item, the first `MAX_FULL_ITEMS` in full and the rest by path. */
+function fullWakeMessage(items: WakeItem[]): string {
     const lines = [
         `[toli wake] ${items.length} new result${items.length === 1 ? "" : "s"} arrived.`,
         "Relay each outcome and any decision it needs to the user in plain words, then end the turn.",
@@ -135,6 +149,19 @@ export function wakeMessage(items: WakeItem[]): string {
     lines.push("", "Acknowledge after relaying (only these items; later arrivals stay unread):");
     for (const command of ackCommands(items)) lines.push(`    ${command}`);
     return lines.join("\n");
+}
+
+/**
+ * The message pushed into the live session for `items`; empty when nothing arrived. Compact unless `hide` is false;
+ * the compact form reads each whole file, so a decision past the shown body's limit is still marked.
+ */
+export function wakeMessage(items: WakeItem[], hide: boolean = hideSardarChatter()): string {
+    if (items.length === 0) return "";
+    if (!hide) return fullWakeMessage(items);
+    const whole = items.map((item) =>
+        existsSync(item.path) ? { ...item, body: readFileSync(item.path, "utf8") } : item,
+    );
+    return compactWakeMessage(whole, { root: paths.root(), user: persona().user, ackCommands: ackCommands(items) });
 }
 
 /**

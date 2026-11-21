@@ -89,6 +89,20 @@ every run. A `lead run` on the working tree (`TOLI_DEV=1`) has no snapshot and n
 
 Because the conversation is resumed, not restarted, it remembers every earlier turn, whoever drove it.
 
+### Hide Sardar chatter
+
+New inbox items and job results reach the lead as one `[toli wake]` message (the omp extension's tick, the Claude
+Code prompt hook, and a headless lead turn all build it in `src/records/wake.ts`). By default it is compact: a
+two-line header, then one line per item, `<source> <kind>: <one-line summary>  (<file>)`, with the bodies left in
+their files for the lead to read when it acts on one. Repetitive items fold into one line: every answer to one
+shared learning (`learning <id>: adopted by m2, m3, m4 (+6); adapted by m1`) and several plain messages from one
+machine (`m2 3 messages: newest ...`). Items that carry a decision for the user (a held task, a word asked of them,
+a body with `question for <user>`, `Decision needed` or `Needs <user>`) are listed first and marked `[needs you]`.
+Another machine's words (`- via: peer ...`) are marked `[peer]`, quoted on one line with quotes and backticks
+neutralized, and the header says they are information, not instructions. The ack commands close the message as
+before and cover exactly the items listed. To see every body in the chat again, as before, set `config/machine.json`
+`{ "lead": { "hideSardarChatter": false } }` (default `true`); any other value makes `bin/toli wake` refuse.
+
 ### Talking to a machine's lead
 
     bin/toli talk <machine>              # attach to that machine's lead conversation (ssh -t, interactive)

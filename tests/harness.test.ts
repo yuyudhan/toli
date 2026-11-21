@@ -305,7 +305,7 @@ describe("claude hooks", () => {
         const context = JSON.parse(run("hello")).hookSpecificOutput.additionalContext as string;
         expect(context).toContain("[toli] You are the lead (Sardar)");
         expect(context).toContain("Delegate everything");
-        expect(context).toContain("m2: jawan j-1 done: omp");
+        expect(context).toContain("- m2 jawan j-1 done: omp: ok  (data/inbox/");
         expect(JSON.parse(run("again")).hookSpecificOutput.additionalContext).not.toContain("j-1");
         expect(run("TOLI_BRIEF v1\nwork")).toBe("");
         expect(run("hello", { TOLI_ROLE: "jawan" })).toBe("");

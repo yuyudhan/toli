@@ -59,10 +59,12 @@ How jobs run, in plain words for the user:
 - Either way the output is saved to `data/jobs/<name>/<stamp>.md`, and a headless run counts as load on its machine
   (`bin/toli resources`) while it runs.
 - On a worker machine, results are also sent to the coordinator; undelivered ones retry every minute.
-- New results reach an open session as a `[toli wake]` message (each result once). Relay the outcome and any
-  decision to the user in plain words, dispatch follow-up work to jawans, then run the ack commands the wake ends with
-  (`bin/toli job ack --through <stamp>` / `bin/toli inbox ack --through <stamp>`; they cover only what it showed).
-  Results also appear in `/bearings` until acknowledged.
+- New results reach an open session as a `[toli wake]` message (each result once), by default one line per item
+  naming its file ("Hide Sardar chatter", docs/sardars.md): read the file before acting on an item or relaying its
+  detail. Relay the outcome and any decision (every `[needs you]` line) to the user in plain words, dispatch
+  follow-up work to jawans, then run the ack commands the wake ends with (`bin/toli job ack --through <stamp>` /
+  `bin/toli inbox ack --through <stamp>`; they cover only what it showed). Results also appear in `/bearings` until
+  acknowledged.
 
 ## Scheduled-run rules
 

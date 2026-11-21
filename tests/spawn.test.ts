@@ -27,7 +27,9 @@ describe("spawn", () => {
         expect(inbox).toContain("final answer");
         const wake = box.ok(["wake"]);
         expect(wake).toContain(`[toli wake] 1 new result arrived.`);
-        expect(wake).toContain(`m1: jawan ${started.id} done: omp`);
+        expect(wake).toContain(
+            `- m1 jawan ${started.id} done: omp: role=jawan run=${started.id} final answer  (data/inbox/`,
+        );
         expect(box.ok(["runs", "--active"])).toBe("no active jawan runs");
         // The load record (state/runs) is gone once the run ends.
         expect(existsSync(join(box.root, "state", "runs", `${started.id}.json`))).toBe(false);
