@@ -2,13 +2,15 @@
 // question, notes, commit or report, the owner sends the task as it is now to the delegating machine, where
 // `bin/toli delegation update` writes it back onto the `--for` task (src/records/delegation-sync.ts) and, for a new
 // outcome (done, held, dropped), wakes that machine's lead with `<owner>/T<n> <status>: <title>`. Delivery goes
-// through the outbox, so an unreachable delegator gets it from the minute tick; a repeat is applied once.
-import { existsSync, readFileSync } from "node:fs";
+// through the outbox, so an unreachable delegator gets it from the minute tick; a repeat is applied once. Each report
+// carries the whole task, so a new one replaces the one still waiting for that machine (T2226).
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { coordinatorName, loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, requireName, stamp, ToliError, warn } from "../core/util.ts";
-import { sendNow } from "../jobs/outbox.ts";
+import { type OutboxItem, sendNow } from "../jobs/outbox.ts";
+import { queuedItems } from "../jobs/outbox-queue.ts";
 import { fitTitle } from "../peer/envelope.ts";
 import type { Status, Task } from "./backlog.ts";
 import type { HoldOption } from "./hold-options.ts";
@@ -328,6 +330,35 @@ export function delegationUpdate(
     };
 }
 
+/** The task id and delegator task of a queued update item, or null for any other item. */
+function updateOf(item: OutboxItem): { id: string; forTask?: string } | null {
+    if (item.kind !== "update") return null;
+    let body: unknown;
+    try {
+        body = JSON.parse(item.body);
+    } catch {
+        return null;
+    }
+    if (typeof body !== "object" || body === null || Reflect.get(body, "forUser") === true) return null;
+    const id: unknown = Reflect.get(body, "id");
+    const forTask: unknown = Reflect.get(body, "forTask");
+    if (typeof id !== "string") return null;
+    return typeof forTask === "string" ? { id, forTask } : { id };
+}
+
+/**
+ * Drop the reports of task `id` to `to` still queued (T2226): the one about to go carries the task as it is now, all
+ * they had and more, so a delegator unreachable for hours gets one update, not one per change. One a process is
+ * sending right now is not queued and goes as it is.
+ */
+function dropWaitingReports(id: string, to: { machine: string; task?: string }): void {
+    for (const { file, item } of queuedItems()) {
+        if (item.to?.name !== to.machine) continue;
+        const update = updateOf(item);
+        if (update?.id === id && update.forTask === to.task) rmSync(join(paths.outboxDir(), file), { force: true });
+    }
+}
+
 /**
  * Send `task` as it is now to its delegator and every machine above it (`upstream`); a failure is a warning (the
  * outbox keeps it for the tick).
@@ -344,6 +375,7 @@ export function reportToDelegator(task: Task): void {
             continue;
         }
         const update = delegationUpdate(owner, task, to);
+        dropWaitingReports(task.id, to);
         const id = to.machine === by.machine ? `update-${task.id}-${at}` : `update-${task.id}-${to.machine}-${at}`;
         // The envelope title is a label within TITLE_MAX (a receiver before T2119 refuses a longer one); the update
         // carries the task's whole title, and the receiver's inbox item is its message.title.

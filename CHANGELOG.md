@@ -16,6 +16,14 @@ one. See docs/releasing.md.
   `config/machine.json` `{ "lead": { "hideSardarChatter": false } }` brings back the full wake with every body
   (docs/sardars.md "Hide Sardar chatter", T2215).
 
+### Fixed
+
+- A delegated task's reports no longer pile up while its delegator is unreachable. Every change to the task (a note
+  copied from the machine it was forwarded to, a new status) queued one more update, so a delegator away for an hour
+  got a dozen copies; each update carries the whole task, so a new one now replaces the one still queued for that
+  machine, and the delegator gets the latest once, with its wake (docs/sardars.md "Results and questions go back",
+  T2226).
+
 ## v0.6.0 - 2026-11-21
 
 ### Added

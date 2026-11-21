@@ -179,11 +179,13 @@ non-zero; nothing waits for the tick.
 A delegated task reports to its delegator by itself, and its delegator's `--for` task follows it. Whenever the
 owner's task changes status, question, notes, commit or report, the owner sends the task as it is now to the
 delegating machine (`bin/toli delegation update` there, through the outbox, so an unreachable delegator gets it from
-the owner's minute tick). The delegator writes it back onto the `--for` task: the owner's new notes are appended as
-`<owner>/T<n>: <note>`, its state is kept under `delegates`, and once a delegation finishes with every other one not
-dropped done too, the task is done, with that commit and the report saved in `data/reports/delegated/<owner>-T<n>.md`
-(all dropped: dropped). A dropped delegation never marks the task done: with the rest done, the task stays as it is
-for its lead. A repeat of an update (the owner's `updatedAt` is no newer) is applied once and wakes no one again.
+the owner's minute tick). Each update carries the whole task, so a new one replaces the one still queued for that
+machine: however long the delegator is away, one update per task waits for it. The delegator writes it back onto the
+`--for` task: the owner's new notes are appended as `<owner>/T<n>: <note>`, its state is kept under `delegates`, and
+once a delegation finishes with every other one not dropped done too, the task is done, with that commit and the
+report saved in `data/reports/delegated/<owner>-T<n>.md` (all dropped: dropped). A dropped delegation never marks the
+task done: with the rest done, the task stays as it is for its lead. A repeat of an update (the owner's `updatedAt` is
+no newer) is applied once and wakes no one again.
 
 A new outcome (done, held, dropped) also wakes the delegating lead with `<owner>/T<n> <status>: <title>`, the notes,
 commit, report text (truncated) and, for a hold, the question and its options. **The delegating lead answers its
