@@ -108,7 +108,7 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
             );
             checkResolved(attempt, conflicts, (file) => named.has(file) || listed.has(file) || deleted.includes(file));
         }
-        scanLeaks(attempt);
+        scanLeaks(attempt, merge === null ? [parent] : [parent, merge.commit]);
         checkLockFiles(
             attempt,
             files,

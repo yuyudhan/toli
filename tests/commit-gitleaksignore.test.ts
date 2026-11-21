@@ -2,7 +2,7 @@
 // fingerprints a finding as <commit>:<file>:<rule>:<line>, which gitleaks never matches in a staged scan (no commit),
 // so a merge bringing an already-ignored sample key was refused while `gitleaks git` over the same range found none.
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
 import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
@@ -166,5 +166,113 @@ describe("bin/toli commit's staged gitleaks scan and .gitleaksignore", () => {
         expect(message).toContain("gitleaks failed and wrote no report");
         expect(message).toContain("unable to load gitleaks config");
         expect(message).not.toContain("found a secret");
+    });
+
+    test("a gitleaks exit other than 1 is a scanner failure, even with a report written", () => {
+        const dir = repo({ "app.txt": "app\n" });
+        const stubs = tempDir("gitleaks-stub");
+        // Writes a report naming a finding, then exits 2: not gitleaks' "leaks found" exit.
+        writeFileSync(
+            join(stubs, "gitleaks"),
+            [
+                "#!/bin/sh",
+                'while [ "$#" -gt 0 ]; do',
+                '  if [ "$1" = "--report-path" ]; then',
+                `    printf '%s' '[{"RuleID":"github-pat","File":"app.txt","StartLine":1,"EndLine":1}]' > "$2"`,
+                "  fi",
+                "  shift",
+                "done",
+                "echo 'gitleaks: crashed' >&2",
+                "exit 2",
+                "",
+            ].join("\n"),
+        );
+        chmodSync(join(stubs, "gitleaks"), 0o755);
+        const path = process.env.PATH;
+        process.env.PATH = `${stubs}:${path ?? ""}`;
+        try {
+            writeFileSync(join(dir, "app.txt"), "app changed\n");
+            const message = refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" }));
+            expect(message).toContain("gitleaks failed (exit 2)");
+            expect(message).toContain("gitleaks: crashed");
+            expect(message).not.toContain("found a secret");
+        } finally {
+            process.env.PATH = path;
+        }
+    });
+
+    test("only the staged .gitleaks.toml applies, never an uncommitted working-tree one", () => {
+        const dir = repo({ "app.txt": "app\n" });
+        mkdirSync(join(dir, "samples"));
+        writeFileSync(join(dir, "samples", "key.txt"), `${token()}\n`);
+        writeFileSync(
+            join(dir, ".gitleaks.toml"),
+            "[extend]\nuseDefault = true\n\n[allowlist]\npaths = ['''^samples/''']\n",
+        );
+        expect(refusal(() => safeCommit({ dir, paths: ["samples/key.txt"], message: "Sample key" }))).toContain(
+            "samples/key.txt:1: github-pat",
+        );
+        const landed = safeCommit({
+            dir,
+            paths: ["samples/key.txt", ".gitleaks.toml"],
+            message: "Sample key, allowed",
+        });
+        expect(git(dir, ["show", `${landed.sha}:samples/key.txt`])).toContain("ghp_");
+    });
+});
+
+/**
+ * main has the sample key with its plain entry, reviewed; branch `evil` (from main) swaps in another key in one commit
+ * that also writes `ignore` as its .gitleaksignore, and main moves on. Returns the checkout on main and evil's tip.
+ */
+function swapAttack(ignore: (entry: string) => string): { dir: string; evil: string } {
+    const dir = repo({ "app.txt": "app\n" });
+    commitFiles(dir, { "samples/key.txt": `${token()}\n`, ".gitleaksignore": PLAIN_ENTRY }, "samples: reviewed key");
+    git(dir, ["switch", "--quiet", "-c", "evil"]);
+    const evil = commitFiles(
+        dir,
+        { "samples/key.txt": `${token()}\n`, ".gitleaksignore": ignore(PLAIN_ENTRY) },
+        "samples: another key",
+    );
+    git(dir, ["switch", "--quiet", "main"]);
+    commitFiles(dir, { "app.txt": "app on main\n" }, "main: app");
+    return { dir, evil };
+}
+
+describe("a plain .gitleaksignore entry is matched only to the commit that added it as a whole line", () => {
+    const decoys: Record<string, (entry: string) => string> = {
+        "the entry for another line": (entry) => `${entry}samples/key.txt:github-pat:10\n`,
+        "the entry for another path ending the same": (entry) => `${entry}x/samples/key.txt:github-pat:1\n`,
+        "a comment naming the entry": (entry) => `${entry}# samples/key.txt:github-pat:1 revoked\n`,
+    };
+    for (const [name, ignore] of Object.entries(decoys))
+        test(`a key swapped in beside ${name} is refused`, () => {
+            const { dir, evil } = swapAttack(ignore);
+            const before = head(dir);
+            expect(refusal(() => safeCommit({ dir, paths: [], merge: evil, message: "Merge evil" }))).toContain(
+                "samples/key.txt:1: github-pat",
+            );
+            expect(head(dir)).toBe(before);
+        });
+
+    test("a commit that removed the entry while swapping the key covers nothing", () => {
+        const dir = repo({ "app.txt": "app\n" });
+        commitFiles(
+            dir,
+            { "samples/key.txt": `${token()}\n`, ".gitleaksignore": PLAIN_ENTRY },
+            "samples: reviewed key",
+        );
+        const other = token();
+        // A side branch drops the entry with the swapped key in it; the merged branch swaps only the key.
+        git(dir, ["switch", "--quiet", "-c", "junk"]);
+        commitFiles(dir, { "samples/key.txt": `${other}\n`, ".gitleaksignore": "\n" }, "samples: drop the entry");
+        git(dir, ["switch", "--quiet", "-c", "evil", "main"]);
+        const evil = commitFiles(dir, { "samples/key.txt": `${other}\n` }, "samples: swap the key");
+        git(dir, ["switch", "--quiet", "main"]);
+        const before = commitFiles(dir, { "app.txt": "app on main\n" }, "main: app");
+        expect(refusal(() => safeCommit({ dir, paths: [], merge: evil, message: "Merge evil" }))).toContain(
+            "samples/key.txt:1: github-pat",
+        );
+        expect(head(dir)).toBe(before);
     });
 });

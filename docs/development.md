@@ -31,10 +31,12 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Ca
    the named paths (deletions included) and the `--patch` hunks. Other jawans' staged or unstaged changes and a stale
    shared index cannot reach the commit.
 2. It refuses, committing nothing, when the staged set: changes a path that was not named; holds a secret (gitleaks
-   over the private index; toli, not gitleaks, applies the staged `.gitleaksignore`, and only to reviewed text: a
+   over the private index with the staged `.gitleaks.toml`; only its exit 1 means findings, any other failure refuses
+   as an unscanned set; toli, not gitleaks, applies the staged `.gitleaksignore`, and only to reviewed text: a
    `<commit>:<file>:<rule>:<line>` entry when that commit holds exactly the found lines, a `<file>:<rule>:<line>`
-   entry at that line when the file held exactly them in a commit that added the entry; another secret at an ignored
-   place is refused, so a merge bringing an ignored sample key lands); stages a `Cargo.lock` or `bun.lock` that does
+   entry at that line when the file held exactly them in a commit (reachable from the parent or the merged commit)
+   whose `.gitleaksignore` gained the entry as a whole line; another secret at an ignored place is refused, so a merge
+   bringing an ignored sample key lands); stages a `Cargo.lock` or `bun.lock` that does
    not parse (merge markers, a TOML or JSONC error, a `[[package]]` the parser dropped; for a `Cargo.lock` also
    `cargo metadata --locked`, run in a copy of the staged tree, so the crates a merge adds count); or exactly undoes
    a hunk of one of the last 20 commits that touched

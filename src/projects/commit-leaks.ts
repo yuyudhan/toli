@@ -1,6 +1,5 @@
 // The secrets refusal of `bin/toli commit` (src/projects/commit.ts): gitleaks over the attempt's private index.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { run, ToliError } from "../core/util.ts";
 import { type Attempt, tail } from "./commit-checks.ts";
 
@@ -25,19 +24,50 @@ function holds(attempt: Attempt, commit: string, file: string, line: number, fou
     return known.length === found.length && known.every((text, at) => text === found[at]);
 }
 
+/** The entries of a `.gitleaksignore`'s lines: trimmed, without blanks and `#` comments. */
+function ignoreEntries(lines: string[]): string[] {
+    return lines.map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+}
+
+/** Whether `.gitleaksignore` at `rev` holds `entry` as a whole entry line. */
+function listsEntry(attempt: Attempt, rev: string, entry: string): boolean {
+    return ignoreEntries(blobLines(attempt, `${rev}:${IGNORE_FILE}`) ?? []).includes(entry);
+}
+
 /**
- * Whether `leak`, found in the staged set, is one `ignore` (the staged `.gitleaksignore`) covers, and only for the
- * text that was reviewed: gitleaks itself applies no ignore file here (see `scanLeaks`), since it would let any secret
- * through on a plain entry naming the same file, rule and line, and never matches a commit-keyed entry in a staged
- * scan. A `<commit>:<file>:<rule>:<line>` entry covers the leak when that commit holds exactly the leak's lines there
- * (wherever they start now). A `<file>:<rule>:<line>` entry covers it at that very line when the file held exactly
- * the leak's lines in a commit that added the entry to the ignore file; with no such commit, nothing was reviewed.
+ * The commits reachable from `roots` that added `entry` to `.gitleaksignore`: their file lists it as a whole line and
+ * none of their parents' does. `git log -S` only narrows the search (it also finds substrings, comments, removals).
  */
-function fingerprinted(attempt: Attempt, leak: Leak, ignore: string[]): boolean {
+function addingCommits(attempt: Attempt, roots: string[], entry: string): string[] {
+    const log = attempt.git(["log", "--format=%H", "-S", entry, ...roots, "--", IGNORE_FILE]);
+    if (log.code !== 0) return [];
+    return log.stdout
+        .split("\n")
+        .filter((sha) => sha !== "")
+        .filter((sha) => {
+            if (!listsEntry(attempt, sha, entry)) return false;
+            const parents = attempt.git(["rev-parse", `${sha}^@`]);
+            if (parents.code !== 0) return false;
+            return !parents.stdout
+                .split("\n")
+                .filter((parent) => parent !== "")
+                .some((parent) => listsEntry(attempt, parent, entry));
+        });
+}
+
+/**
+ * Whether `leak`, found in the staged set, is one `ignore` (the staged `.gitleaksignore` entries) covers, and only for
+ * the text that was reviewed: gitleaks itself applies no ignore file here (see `scanLeaks`), since it would let any
+ * secret through on a plain entry naming the same file, rule and line, and never matches a commit-keyed entry in a
+ * staged scan. A `<commit>:<file>:<rule>:<line>` entry covers the leak when that commit holds exactly the leak's lines
+ * there (wherever they start now). A `<file>:<rule>:<line>` entry covers it at that very line when the file held
+ * exactly the leak's lines in a commit reachable from `roots` (the parent, and a merged commit) that added the entry;
+ * with no such commit, nothing was reviewed.
+ */
+function fingerprinted(attempt: Attempt, leak: Leak, ignore: string[], roots: string[]): boolean {
     const found = blobLines(attempt, `:${leak.File}`)?.slice(leak.StartLine - 1, leak.EndLine) ?? [];
     if (found.length !== leak.EndLine - leak.StartLine + 1) return false;
-    return ignore.some((raw) => {
-        const entry = raw.trim();
+    return ignore.some((entry) => {
         const [, commit, keyedFile, keyedRule, keyedLine] = COMMIT_FINGERPRINT.exec(entry) ?? [];
         if (commit !== undefined)
             return (
@@ -47,28 +77,25 @@ function fingerprinted(attempt: Attempt, leak: Leak, ignore: string[]): boolean 
             );
         const [, file, rule, line] = PLAIN_FINGERPRINT.exec(entry) ?? [];
         if (file !== leak.File || rule !== leak.RuleID || Number(line) !== leak.StartLine) return false;
-        const added = attempt.git(["log", "--all", "--format=%H", "-S", entry, "--", IGNORE_FILE]);
-        return (
-            added.code === 0 &&
-            added.stdout
-                .split("\n")
-                .filter((sha) => sha !== "")
-                .some((sha) => holds(attempt, sha, leak.File, leak.StartLine, found))
+        return addingCommits(attempt, roots, entry).some((sha) =>
+            holds(attempt, sha, leak.File, leak.StartLine, found),
         );
     });
 }
 
 /**
- * Refuse when the staged set holds a secret: gitleaks over the private index (the repository's `.gitleaks.toml`
- * applies). It runs from an empty folder of the attempt, the repository named by GIT_DIR and GIT_WORK_TREE, so it
- * finds no `.gitleaksignore` of its own; the staged one is applied here, by `fingerprinted`, and any other finding
- * refuses the commit.
+ * Refuse when the staged set holds a secret: gitleaks over the private index, with the staged `.gitleaks.toml` (a
+ * working-tree edit to it is not what is committed). It runs from an empty folder of the attempt, the repository
+ * named by GIT_DIR and GIT_WORK_TREE, so it finds no `.gitleaksignore` of its own; the staged one is applied here, by
+ * `fingerprinted` (`roots`: the commits the new one is made of, whose history is reviewed), and any other finding
+ * refuses the commit. Only gitleaks' exit 1 means findings; any other failure is a scan that did not happen.
  */
-export function scanLeaks(attempt: Attempt): void {
-    const root = attempt.gitOk(["rev-parse", "--show-toplevel"]);
-    const config = join(root, ".gitleaks.toml");
+export function scanLeaks(attempt: Attempt, roots: string[]): void {
     const neutral = attempt.file("gitleaks");
     mkdirSync(neutral, { recursive: true });
+    const stagedConfig = attempt.git(["cat-file", "blob", ":.gitleaks.toml"]);
+    const config = attempt.file("gitleaks.toml");
+    if (stagedConfig.code === 0) writeFileSync(config, stagedConfig.stdout);
     const report = attempt.file("gitleaks.json");
     const result = run(
         [
@@ -85,14 +112,14 @@ export function scanLeaks(attempt: Attempt): void {
             "json",
             "--report-path",
             report,
-            ...(existsSync(config) ? ["--config", config] : []),
+            ...(stagedConfig.code === 0 ? ["--config", config] : []),
             neutral,
         ],
         {
             cwd: neutral,
             env: {
                 GIT_DIR: attempt.gitOk(["rev-parse", "--absolute-git-dir"]),
-                GIT_WORK_TREE: root,
+                GIT_WORK_TREE: attempt.gitOk(["rev-parse", "--show-toplevel"]),
                 GIT_INDEX_FILE: attempt.index,
             },
         },
@@ -102,13 +129,18 @@ export function scanLeaks(attempt: Attempt): void {
             "refusing: gitleaks is not on PATH, so the staged set cannot be scanned for secrets (install it: just setup lists the command)",
         );
     if (result.code === 0) return;
+    const output = tail(`${result.stdout}${result.stderr}`);
+    if (result.code !== 1)
+        throw new ToliError(
+            `refusing: gitleaks failed (exit ${result.code}), so the staged set was not scanned; nothing was committed:\n${output}`,
+        );
     const reported = existsSync(report) ? (JSON.parse(readFileSync(report, "utf8")) as Leak[]) : [];
     if (reported.length === 0)
         throw new ToliError(
-            `refusing: gitleaks failed and wrote no report, so the staged set was not scanned; nothing was committed:\n${tail(`${result.stdout}${result.stderr}`)}`,
+            `refusing: gitleaks failed and wrote no report, so the staged set was not scanned; nothing was committed:\n${output}`,
         );
-    const ignore = blobLines(attempt, `:${IGNORE_FILE}`) ?? [];
-    const leaks = reported.filter((leak) => !fingerprinted(attempt, leak, ignore));
+    const ignore = ignoreEntries(blobLines(attempt, `:${IGNORE_FILE}`) ?? []);
+    const leaks = reported.filter((leak) => !fingerprinted(attempt, leak, ignore, roots));
     if (leaks.length > 0)
         throw new ToliError(
             `refusing: gitleaks found a secret in the staged set; nothing was committed. Remove it from the file:\n${leaks.map((leak) => `${leak.File}:${leak.StartLine}: ${leak.RuleID}`).join("\n")}`,
