@@ -261,6 +261,12 @@ describe("the disk keeper in the minute tick", () => {
         expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain(
             "disk keeper: free 1.0 GB < floor 20.0 GB: started in the background",
         );
+        // The tick records the keeper it started, and that keeper skips the stray scan of the home folder (T2170).
+        const record = JSON.parse(readFileSync(join(box.root, "state", "disk-keep.background.json"), "utf8")) as {
+            pid: number;
+        };
+        const args = Bun.spawnSync(["ps", "-ww", "-o", "args=", "-p", String(record.pid)]).stdout.toString();
+        expect(args).toContain("disk keep --background");
         // The detached keeper does the work the tick did not wait for, with the same rules.
         const log = join(box.root, "logs", "disk.log");
         const deadline = Date.now() + 90_000;

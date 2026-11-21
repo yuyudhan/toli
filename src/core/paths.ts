@@ -193,6 +193,8 @@ export const paths = {
     diskKeepPause: () => join(repoRoot(), "state", "disk-keep.pause"),
     /** Why the disk keeper last did not run, so that reason reaches logs/disk.log once, not every minute. */
     diskKeepSkip: () => join(repoRoot(), "state", "disk-keep.skip"),
+    /** The background keeper the tick last started, pid and start time, so a live one holds the next off (T2170). */
+    diskKeepBackground: () => join(repoRoot(), "state", "disk-keep.background.json"),
     /** Build folders the disk keeper deleted lately, path -> ms, so one that grows back is not deleted every minute. */
     diskKeepDeleted: () => join(repoRoot(), "state", "disk-keep.deleted.json"),
     /** When the disk keeper last pruned Docker, with free disk then and what it reclaimed (src/fleet/docker-prune.ts). */

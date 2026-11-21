@@ -39,6 +39,13 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- The tick's background disk keeper always ends and never piles up. One stuck in a macOS privacy prompt (its
+  report-only scan of the home folder opened `~/Music`) had already released its lock, so every tick under the floor
+  started another: 140 hung keepers, about 6 GB of memory. The tick now starts `bin/toli disk keep --background`,
+  which skips that scan (by hand `disk keep` still flags builds outside the clones), records its pid in
+  `state/disk-keep.background.json`, starts no other while that keeper lives, and kills and replaces one still
+  running after 1 h. Only a pid ps shows is still that `toli disk keep` is ever killed (docs/disk.md, T2170).
+
 - A DNS outage no longer kills every working jawan. A run whose harness gave up on the model API with `EAI_AGAIN`,
   `ENOTFOUND` or `ECONNRESET` in its last lines (a non-zero exit) is recorded failed with `network fault: <line>` and
   continued through the resume chain in the same omp session, within `capacity.autoResume`, at most once per 10

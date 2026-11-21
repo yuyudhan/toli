@@ -30,17 +30,21 @@ compiling into it). When free space comes back over the floor while the keeper l
 nothing and says who freed it:
 `done: free A -> B, freed by another process meanwhile, not the keeper`.
 
-    bin/toli disk keep [--dry-run] [--floor <GB>] [--json]
+    bin/toli disk keep [--dry-run] [--floor <GB>] [--json] [--background]
 
 ## When it runs
 
 - Before every jawan starts (`bin/toli spawn`, queued runs a finishing run starts, automatic continuations) and
   before every `bin/toli exec`. It runs inline, and the run starts anyway.
 - Every minute from the tick (`bin/toli schedule install`), detached: the tick only reads free disk and, under the
-  floor, starts a background `bin/toli disk keep` to do all of it (every step below, the last resort included), then
-  goes on.
+  floor, starts a background `bin/toli disk keep --background` to do all of it (every step below, the last resort
+  included), then goes on. `--background` skips the scan for builds outside the clones (below).
   The tick's own queue drain runs no keeper. A slow keeper (on an I/O-starved disk one run can take an hour) so never
-  holds up a tick. Nothing starts while a keeper runs or a live pause holds it; in a dry run nothing starts.
+  holds up a tick. Nothing starts while a keeper runs or a live pause holds it; in a dry run nothing starts. The tick
+  records the keeper it started in `state/disk-keep.background.json` (pid, start time): while that pid is still that
+  `toli disk keep`, no other starts, its lock released or not; once it has run 1 h the tick kills it
+  (`disk keeper: killed background keeper pid <n>, running <m> min (limit 60 min)` in `logs/tick.log`) and starts
+  another. A pid ps cannot show to be that keeper (reused after it ended) is never killed (T2170).
 - By hand, with `bin/toli disk keep`. `--dry-run` (or `TOLI_DRY_RUN=1`) lists what would go and counts each folder's
   size as freed. It makes every check a real deletion makes (cargo's locks, taken and released at once, the processes,
   live builds and open files of a target wipe (step 1), open files under a `node_modules` or `dist`) and deletes
@@ -350,7 +354,8 @@ briefs. The known places are a registered project's clone (`data/projects.json`)
 - `TOLI_BUILD_PLACE_OVERRIDE="<why>"` lets one build through anyway, for an exception the user agreed to: it
   prints `building outside the clones` and appends `{at, tree, cwd, command, reason, pid}` to
   `logs/build-place.log`. An empty or blank value overrides nothing.
-- `bin/toli disk keep` (`flagged, not deleted:` lines; `outsideBuilds` and `outsideScanComplete` in `--json`) and
+- `bin/toli disk keep` by hand (`flagged, not deleted:` lines; `outsideBuilds` and `outsideScanComplete` in `--json`;
+  never the tick's background keeper, whose lines nobody reads) and
   `bin/toli doctor` (`build-place`, a warning per folder, the first 10) flag, never delete, folders outside those
   places under `/tmp`, `$TMPDIR` and the home folder that hold a `target/` or `node_modules/`, and every
   `git worktree list` entry of toli's checkout or a registered clone that toli did not make. The scan reads up to 3

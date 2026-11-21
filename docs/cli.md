@@ -277,7 +277,7 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
     sync [--all]
     resources [--json]
     build-slot -- <command...>
-    disk keep [--dry-run] [--floor <GB>] [--json]
+    disk keep [--dry-run] [--floor <GB>] [--json] [--background]
     disk alert
     fleet status [--json]
     fleet queues [--json]
@@ -326,9 +326,9 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   never waits on it), so low disk never stops work; a live pid in
   `state/disk-keep.pause` pauses it for up to 2 hours after the file was last written ([disk.md](disk.md)). With
   `capacity.diskKeep: false` it runs only by hand: before jawan starts and in the tick toli deletes nothing and only
-  alerts the inbox, once per 6 hours, when free disk is under 10 GB (or the emergency level). It also flags, never
-  deletes, build folders and worktrees outside the clones (`flagged, not deleted:`,
-  [disk.md](disk.md#builds-outside-the-clones)).
+  alerts the inbox, once per 6 hours, when free disk is under 10 GB (or the emergency level). By hand it also flags,
+  never deletes, build folders and worktrees outside the clones (`flagged, not deleted:`,
+  [disk.md](disk.md#builds-outside-the-clones)); `--background` (the tick's detached keeper) skips that scan.
 - `disk alert`: post that low-disk alert now, naming the biggest build folders.
 - `exec` runs a prompt in headless omp on this machine and refuses one from another machine; `remote` (any form)
   refuses and points to `pick` and `delegate` ([sardars.md](sardars.md)).

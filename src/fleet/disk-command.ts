@@ -9,7 +9,7 @@ import { describe, gb } from "./disk-state.ts";
 import { watchKeeper } from "./disk-watchdog.ts";
 import { fallbackSweep } from "./stale-sweep.ts";
 
-/** `toli disk keep [--dry-run] [--floor <GB>] [--json]`, `toli disk alert`. */
+/** `toli disk keep [--dry-run] [--floor <GB>] [--json] [--background]`, `toli disk alert`. */
 export function diskCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
     if (sub === "alert") {
@@ -17,9 +17,12 @@ export function diskCommand(argv: string[]): void {
         diskAlertCommand();
         return;
     }
-    if (sub !== "keep")
-        throw new ToliError("usage: toli disk keep [--dry-run] [--floor <GB>] [--json] | toli disk alert");
-    const args = new Args(rest, { booleans: ["dry-run", "json"], values: ["floor"] });
+    if (sub !== "keep") {
+        throw new ToliError(
+            "usage: toli disk keep [--dry-run] [--floor <GB>] [--json] [--background] | toli disk alert",
+        );
+    }
+    const args = new Args(rest, { booleans: ["dry-run", "json", "background"], values: ["floor"] });
     args.maxPositional(0);
     const number = (name: string): number | undefined => {
         const raw = args.str(name);
@@ -31,17 +34,23 @@ export function diskCommand(argv: string[]): void {
     const floorGB = number("floor");
     const json = args.bool("json");
     const dryRun = args.bool("dry-run");
+    // The tick's detached keeper (disk-state.ts keepDiskDetached): nobody reads its lines, so it skips the stray scan.
+    const background = args.bool("background");
     // Past its time limit a keeper stuck in a call that never returns is logged and stopped, never left hanging.
     const stopWatch = watchKeeper();
     try {
-        keepAndReport(floorGB, json, dryRun);
+        keepAndReport(floorGB, json, dryRun, background);
     } finally {
         stopWatch();
     }
 }
 
-/** `disk keep`'s run (by hand or the background keeper), its report and the build folders outside the clones. */
-function keepAndReport(floorGB: number | undefined, json: boolean, dryRun: boolean): void {
+/**
+ * `disk keep`'s run (by hand or the background keeper), its report and, unless `background`, the build folders outside
+ * the clones. The background keeper never scans: its stdout goes nowhere, and on macOS reading the home folder can
+ * block it for good (T2170).
+ */
+function keepAndReport(floorGB: number | undefined, json: boolean, dryRun: boolean, background: boolean): void {
     let report: KeepReport;
     try {
         report = keepDisk({
@@ -54,10 +63,15 @@ function keepAndReport(floorGB: number | undefined, json: boolean, dryRun: boole
         if (json) printJson({ error: describe(error), fallback: lines });
         throw new ToliError(`disk keeper failed: ${describe(error)}; swept stale artifacts instead`);
     }
-    const outside = outsideBuilds();
-    if (json) printJson({ ...report, outsideBuilds: outside.found, outsideScanComplete: outside.complete });
-    else if (report.lines.length === 0) out(`free ${gb(report.freeBeforeGB)}, ${floorText(report)}: nothing to do`);
-    if (!json) {
+    const outside = background ? null : outsideBuilds();
+    if (json) {
+        printJson(
+            outside === null
+                ? report
+                : { ...report, outsideBuilds: outside.found, outsideScanComplete: outside.complete },
+        );
+    } else if (report.lines.length === 0) out(`free ${gb(report.freeBeforeGB)}, ${floorText(report)}: nothing to do`);
+    if (!json && outside !== null) {
         for (const build of outside.found) out(`flagged, not deleted: ${outsideBuildLine(build)}`);
         if (!outside.complete) out(`flagged, not deleted: ${PARTIAL_SCAN}`);
     }

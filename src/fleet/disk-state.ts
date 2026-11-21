@@ -8,7 +8,8 @@ import { cpus } from "node:os";
 import { dirname, resolve } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, pidAlive, writeJsonAtomic } from "../core/util.ts";
+import { recordedProcessRuns } from "../core/pid-lock.ts";
+import { isJsonObject, now, pidAlive, writeJsonAtomic } from "../core/util.ts";
 import { capacityFor, diskKeepFloor, measureVolume } from "./resources.ts";
 
 export const KEEPER_LOCK = "disk-keep";
@@ -248,8 +249,9 @@ export class DiskLog {
 /**
  * Start `bin/toli disk <args>` detached (its lines reach logs/disk.log): the background keeper, or the low-disk alert
  * (src/fleet/disk-alert.ts). Bun's transpiler cache is off for it, as `bin/toli disk` does: the disk may still be full.
+ * Returns the child's pid (undefined when the spawn reported none).
  */
-export function startDetachedDisk(args: string[]): void {
+export function startDetachedDisk(args: string[]): number | undefined {
     let log: number | "ignore" = "ignore";
     try {
         mkdirSync(paths.logsDir(), { recursive: true });
@@ -265,35 +267,93 @@ export function startDetachedDisk(args: string[]): void {
             env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
         });
         child.unref();
+        return child.pid;
     } finally {
         if (log !== "ignore") closeSync(log);
     }
 }
 
 /**
- * The minute tick's keeper: it only reads free disk (one `df`) and, under the floor, starts the background keeper,
- * which runs every tier (the last resort included) with the usual rules. The tick never waits on a deletion, which on
- * an I/O-starved disk can take an hour. Nothing starts while a keeper runs or a pause holds it; when free disk cannot
- * be read the background keeper starts anyway (it falls back to sweeping). A dry run starts nothing. Never throws.
+ * How long a background keeper may run before the tick kills it and starts another. Its lock alone cannot stop a pile
+ * up: a keeper stuck after releasing it (a macOS privacy prompt in its last step) looked gone, so every tick under the
+ * floor started one more (T2170).
+ */
+export const BACKGROUND_KEEP_LIMIT_MS = 60 * 60_000;
+
+/**
+ * The background keeper recorded in state/disk-keep.background.json while it still runs: its pid and how long ago it
+ * started (by `now()`). Null when there is none: no record, an unreadable one, a dead pid, or a pid ps cannot show to
+ * be that same `toli disk keep` (a reuse after it ended), which toli never kills.
+ */
+function backgroundKeeper(): { pid: number; ageMs: number } | null {
+    const file = paths.diskKeepBackground();
+    let record: unknown;
+    try {
+        record = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+        return null;
+    }
+    if (!isJsonObject(record)) return null;
+    const { pid, startedAt } = record;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || typeof startedAt !== "string") return null;
+    const startedMs = Date.parse(startedAt);
+    if (Number.isNaN(startedMs) || !recordedProcessRuns(pid, file, /toli.* disk keep/)) return null;
+    return { pid, ageMs: now().getTime() - startedMs };
+}
+
+/**
+ * The minute tick's keeper: it only reads free disk (one `df`) and, under the floor, starts the background keeper
+ * (`disk keep --background`, which skips the stray-build scan), which runs every tier (the last resort included) with
+ * the usual rules. The tick never waits on a deletion, which on an I/O-starved disk can take an hour. Nothing starts
+ * while a keeper runs (its lock, or the background keeper the tick recorded) or a pause holds it; a recorded keeper
+ * running past BACKGROUND_KEEP_LIMIT_MS is killed first. When free disk cannot be read the background keeper starts
+ * anyway (it falls back to sweeping). A dry run kills and starts nothing. Never throws.
  */
 export function keepDiskDetached(dryRun: boolean): string | null {
+    const running = backgroundKeeper();
+    if (running !== null && running.ageMs < BACKGROUND_KEEP_LIMIT_MS) return null;
+    let killed: string | null = null;
+    if (running !== null) {
+        const what = `background keeper pid ${running.pid}, running ${Math.round(running.ageMs / 60_000)} min (limit ${BACKGROUND_KEEP_LIMIT_MS / 60_000} min)`;
+        if (dryRun) killed = `disk keeper: would kill ${what}`;
+        else {
+            try {
+                process.kill(running.pid, "SIGKILL");
+                killed = `disk keeper: killed ${what}`;
+            } catch (error) {
+                killed = `disk keeper: could not kill ${what}: ${describe(error)}`;
+            }
+        }
+    }
+    const lead = killed === null ? "" : `${killed}; `;
     let why: string;
     try {
         const volume = measureVolume(paths.root());
         if (typeof volume === "string") why = `cannot read free disk (${volume})`;
         else {
             const { floorGB } = machineFloor(loadMachine(), volume.totalGB);
-            if (volume.freeGB >= floorGB || keeperHolder() !== null || diskPause() !== null) return null;
+            // The keeper just killed may still read as alive for a moment, and holds its lock no longer.
+            const holder = keeperHolder();
+            const held = holder !== null && holder !== running?.pid;
+            if (volume.freeGB >= floorGB || held || diskPause() !== null) return killed;
             why = `free ${gb(volume.freeGB)} < floor ${gb(floorGB)}`;
         }
     } catch (error) {
         why = describe(error);
     }
-    if (dryRun) return `disk keeper: ${why}: would start in the background (dry run)`;
+    if (dryRun) return `${lead}disk keeper: ${why}: would start in the background (dry run)`;
+    let pid: number | undefined;
     try {
-        startDetachedDisk(["keep"]);
+        pid = startDetachedDisk(["keep", "--background"]);
     } catch (error) {
-        return `disk keeper: ${why}; background keeper not started: ${describe(error)}`;
+        return `${lead}disk keeper: ${why}; background keeper not started: ${describe(error)}`;
     }
-    return `disk keeper: ${why}: started in the background, so the tick does not wait on it (logs/disk.log)`;
+    if (pid !== undefined) {
+        try {
+            writeJsonAtomic(paths.diskKeepBackground(), { pid, startedAt: now().toISOString() });
+        } catch {
+            // A full disk: the keeper lock still holds the next tick off while this keeper works.
+        }
+    }
+    return `${lead}disk keeper: ${why}: started in the background, so the tick does not wait on it (logs/disk.log)`;
 }

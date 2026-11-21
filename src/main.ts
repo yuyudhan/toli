@@ -117,7 +117,7 @@ const USAGE = `usage: bin/toli <command> [args]
   sync [--all]
   resources [--json]
   build-slot -- <command...>
-  disk keep [--dry-run] [--floor <GB>] [--json]
+  disk keep [--dry-run] [--floor <GB>] [--json] [--background]
   disk alert
   fleet status [--json]
   fleet queues [--json]

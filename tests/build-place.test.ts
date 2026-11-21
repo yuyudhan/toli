@@ -141,6 +141,27 @@ describe("build place guard", () => {
         expect(existsSync(stray)).toBe(true);
     }, 60_000);
 
+    // T2170: the tick's detached keeper scanned $HOME too, hung in a macOS privacy prompt and piled up 140 strong.
+    test("the background keeper (`disk keep --background`, the tick's) never runs the stray scan", () => {
+        const { box } = placeBox();
+        const scan = tempDir("scan");
+        mkdirSync(join(scan, "export", "target", "debug"), { recursive: true });
+        const env = { TOLI_BUILD_SCAN_ROOTS: scan };
+        const flagged = join(realpathSync(scan), "export");
+        expect(box.ok(["disk", "keep", "--dry-run"], { env })).toContain(flagged);
+
+        const keep = box.toli(["disk", "keep", "--dry-run", "--background"], { env });
+        expect(keep.code).toBe(0);
+        expect(keep.stdout).not.toContain("flagged, not deleted");
+        const json = JSON.parse(box.ok(["disk", "keep", "--dry-run", "--background", "--json"], { env })) as Record<
+            string,
+            unknown
+        >;
+        expect(json.ran).toBeDefined();
+        expect(json).not.toHaveProperty("outsideBuilds");
+        expect(json).not.toHaveProperty("outsideScanComplete");
+    }, 60_000);
+
     test("doctor says ok when every build is in its place", () => {
         const { box } = placeBox();
         const scan = tempDir("scan");

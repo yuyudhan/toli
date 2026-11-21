@@ -49,6 +49,21 @@ export function toliHolds(pid: number, file: string): boolean {
     return info.startMs <= writtenMs + ELAPSED_SLACK_MS;
 }
 
+/**
+ * Whether `pid`, read from `file`, is certainly still the process `file` recorded, as one toli is about to kill must
+ * be: ps describes it, its command line matches `command`, and it started no later than the file was last written.
+ * Unlike toliHolds, a pid ps cannot describe is never presumed to be it.
+ */
+export function recordedProcessRuns(pid: number, file: string, command: RegExp): boolean {
+    const info = processInfo(pid);
+    if (info === null || !command.test(info.command)) return false;
+    try {
+        return info.startMs <= statSync(file).mtimeMs + ELAPSED_SLACK_MS;
+    } catch {
+        return false;
+    }
+}
+
 /** The pid written in `lockPath`, or 0 when it is absent or unreadable. */
 function lockHolder(lockPath: string): number {
     try {
