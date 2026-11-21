@@ -25,7 +25,8 @@ export function relayedPeer(name: string | undefined): Peer | undefined {
 
 /**
  * The active paired peer named `name` that accepts no inbound connection and has no relay: what is queued for it
- * waits here until it pulls (`/v1/outbox/pending`), never pushed.
+ * waits here until it pulls (`/v1/outbox/pending`), never pushed by a send; only the minute tick tries it over HTTPS
+ * (src/jobs/pull-peer-retry.ts).
  */
 export function pullingPeer(name: string | undefined): Peer | undefined {
     if (name === undefined) return undefined;

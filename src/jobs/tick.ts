@@ -42,8 +42,8 @@ import {
 import { jobModel, limitPauseFor, noticePause } from "./limit-pause.ts";
 import { dryRun as envDryRun } from "./os-scheduler.ts";
 import { deliverOutbox } from "./outbox.ts";
-import { postWaitingAlerts } from "./outbox-admin.ts";
 import { pullFleet, pullText } from "./pull.ts";
+import { retryThenAlert } from "./pull-peer-retry.ts";
 import { Reach } from "./reach.ts";
 
 function log(line: string): void {
@@ -96,7 +96,8 @@ async function exchangeMessages(machine: Machine): Promise<void> {
         const outbox = deliverOutbox(machine, onOutboxDelivered, reach);
         if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
         for (const error of outbox.errors) log(`outbox: pending ${error}`);
-        for (const alert of postWaitingAlerts()) log(`outbox: ${alert}`);
+        // A peer that only pulls is tried over HTTPS too, and only then are the waiting alerts posted.
+        for (const note of retryThenAlert(reach)) log(`outbox: ${note}`);
     } finally {
         rmSync(lock, { force: true });
     }

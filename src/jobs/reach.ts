@@ -3,7 +3,8 @@
 // host's remaining calls in the pass are skipped, so its later items keep their order and nobody waits on its ssh
 // timeout twice. A host the tick's ssh could not reach (ssh's own exit 255, or the call's timeout) is also backed off
 // across ticks in state/reach.json: 30 s after the first failure, doubling with each one after, at most 10 minutes.
-// Any call that reaches it clears that.
+// Any call that reaches it clears that. A paired peer that only pulls, which the tick still tries over HTTPS
+// (src/jobs/pull-peer-retry.ts), is backed off the same way under `peer:<name>`.
 import { paths } from "../core/paths.ts";
 import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 
@@ -57,9 +58,15 @@ export class Reach {
 
     /** A call to `host` failed: skip it for the rest of the pass; the tick backs it off when ssh did not reach it. */
     failure(host: string, error: string, result: { code: number; timedOut?: boolean }): void {
+        if (unreached(result)) this.unreachable(host, error);
+        else this.failed.set(host, error.split("\n")[0] ?? error);
+    }
+
+    /** `host` was not reached at all: skip it for the rest of the pass, and the tick backs it off. */
+    unreachable(host: string, error: string): void {
         const line = error.split("\n")[0] ?? error;
         this.failed.set(host, line);
-        if (!this.options.backoff || !unreached(result)) return;
+        if (!this.options.backoff) return;
         const at = now().getTime();
         updateReach((state) => {
             const failures = (state[host]?.failures ?? 0) + 1;

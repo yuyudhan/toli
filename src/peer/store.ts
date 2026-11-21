@@ -42,7 +42,8 @@ export type Peer = {
     via?: string;
     /**
      * false: the peer accepts no inbound connection (a firewall that resets them, `inbound: false` in its
-     * config/machine.json), so nothing is pushed to it: its items wait here and it pulls them. Learned from its own
+     * config/machine.json), so a send to it only queues: its items wait here for its pull, and the minute tick tries
+     * them once over HTTPS, backed off while it does not answer (src/jobs/pull-peer-retry.ts). Learned from its own
      * pulls (`/v1/outbox/pending` carries its setting).
      */
     inbound?: boolean;

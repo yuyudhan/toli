@@ -169,8 +169,11 @@ is reached this way only: over HTTPS, or by its pull.
 **A peer that takes no inbound connection.** A machine whose firewall resets every inbound connection can still pair
 (it connects out) and pull. Its pull says so (`inbound: false` in the `pending` body, from its `--inbound off` or a
 listener that is off), and each peer it pulls from records `inbound: false` on it in `config/peers.json`: from then
-on nothing is pushed to it, no HTTPS attempt and no ssh, and what is queued for it waits for its next pull. A pull
-without the flag clears it.
+on a send to it only queues, with no ssh, and what is queued for it waits for its next pull. The sender's minute tick
+still tries it once over HTTPS when it has an address (the same send as `bin/toli peer flush <peer>`), so an item
+for a peer that does answer goes out within a minute; one no address of which answers is backed off like an
+unreachable ssh host (30 s, doubling to 10 minutes, `peer:<name>` in `state/reach.json`). A pull without the flag
+clears it.
 
 **One wake.** The receiver touches `state/peer/receiving` while it applies a batch; the lead's turn and `wake` wait
 until it has been quiet for 5 seconds, so a backlog arrives as one wake. A batch that wrote more than 5 inbox items
@@ -218,7 +221,8 @@ its own active peers, and only a sender's own items.
 `bin/toli outbox list [--to <m>]` shows what waits, to whom and for how long, and what a live process is sending
 right now (`sending (pid N)`); `fleet status` and the digest add a "waiting to send: 3 to beta, oldest 2 d" line per
 machine. When a machine's oldest item has waited 1 hour, 1 day and then each further day, the tick posts one inbox
-item here per machine and threshold. `outbox cancel <id>|--to <m>` and `outbox expire --older <N>d` give up on items;
+item here per machine and threshold, after that pass's own delivery and retries: an item still waiting then is one
+they could not deliver. `outbox cancel <id>|--to <m>` and `outbox expire --older <N>d` give up on items;
 they move to `state/outbox/cancelled/` (`outbox list --cancelled`) with an inbox note. Nothing expires by itself and
 nothing is dropped silently. `peer remove` cancels what waits for that peer the same way.
 
