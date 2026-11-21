@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { hasMachine, loadFleet, loadMachine, type Machine } from "../core/config.ts";
 import { git } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { DEFAULT_PERSONA, persona } from "../core/persona.ts";
+import { addressName, DEFAULT_PERSONA, persona } from "../core/persona.ts";
+import { isJsonObject, readJson } from "../core/util.ts";
 import {
     configuredHarnesses,
     defaultHarness,
@@ -23,6 +24,7 @@ export const SETUP_ITEM_IDS = [
     "tools",
     "machine",
     "persona",
+    "first-name",
     "harness-sync",
     "harness-cli",
     "scheduler",
@@ -182,6 +184,22 @@ function personaItem(): SetupItem {
     } catch (error) {
         return { ...base, status: "missing", detail: message(error), fix };
     }
+}
+
+const FIRST_NAME_FIX =
+    'Question: what is your first name? The lead then calls you "<first name> <user>", and paired machines can name you. Then: bin/toli setup first-name <name> (a machine nobody sits at: bin/toli setup first-name --none)';
+
+function firstNameItem(): SetupItem {
+    const base = { id: "first-name" as const, title: "Your first name (config/persona.json)", who: "user" as const };
+    const raw = readJson<unknown>(paths.persona(), {});
+    if (!isJsonObject(raw) || !("userFirstName" in raw))
+        return { ...base, status: "missing", detail: "not asked yet", fix: FIRST_NAME_FIX };
+    const names = persona();
+    const detail =
+        names.userFirstName === ""
+            ? `no person at this machine (addressed as "${names.user}")`
+            : `addressed as "${addressName(names)}"`;
+    return { ...base, status: "done", detail, fix: "" };
 }
 
 function harnessSyncItem(): SetupItem {
@@ -362,6 +380,7 @@ export function setupChecklist(probe: SetupProbe = liveProbe()): SetupItem[] {
         guarded("tools", "Bun and git", () => toolsItem(probe)),
         guarded("machine", "Machine config", machineItem),
         guarded("persona", "Persona names", personaItem),
+        guarded("first-name", "Your first name", firstNameItem),
         guarded("harness-sync", "Harness shims in sync", harnessSyncItem),
         guarded("harness-cli", "A harness CLI installed and logged in", () => harnessCliItem(probe)),
         guarded("scheduler", "Scheduler tick", () => schedulerItem(probe)),

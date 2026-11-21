@@ -17,7 +17,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { run, ToliError, withLock } from "../core/util.ts";
 import { loadBacklog, type Task, type TaskWorkspace, updateTask } from "../records/backlog.ts";
 import { baseBranch, baseRef, refExists } from "./base-branch.ts";
@@ -100,7 +100,7 @@ function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspa
         throw new ToliError(
             `refusing to switch projects/${project.name} to ${branch}: ${holdersText(holders)}. ` +
                 `Wait for that task to land, or let parallel tasks share the clone: ` +
-                `bin/toli project set ${project.name} --workspace same-branch (on ${persona().user}'s word).`,
+                `bin/toli project set ${project.name} --workspace same-branch (on ${addressName()}'s word).`,
         );
     const changes = dirty(clone);
     if (changes !== "")
@@ -199,7 +199,7 @@ function forgetRecorded(project: Project, task: Task, clone: string, recorded: T
     if (work !== null)
         throw new ToliError(
             `refusing to move ${task.id} off its ${recorded.strategy} workspace: ${work}. Land that work from there ` +
-                `(bin/toli commit|push ${project.name} --task ${task.id}) or ask ${persona().user}.`,
+                `(bin/toli commit|push ${project.name} --task ${task.id}) or ask ${addressName()}.`,
         );
     if (recorded.strategy === "worktree-per-task" && existsSync(recorded.path)) {
         // No --force: git refuses a worktree that gained files since the check.

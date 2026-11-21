@@ -24,6 +24,7 @@ Each item has a stable id, a status, who closes it, and the exact fix command or
 | `tools`        | Bun (always, it runs `bin/toli`) and git on PATH                    | missing                                        | jawan            |
 | `machine`      | `config/machine.json` (`bin/toli init`)                             | missing                                        | user             |
 | `persona`      | `config/persona.json`; the default names are fine                   | optional                                       | user             |
+| `first-name`   | `userFirstName` in `config/persona.json`, a name or `""` for none   | missing                                        | user             |
 | `harness-sync` | harness shims match `bin/toli harness sync`                         | missing                                        | jawan            |
 | `harness-cli`  | at least one harness CLI installed and logged in                    | missing                                        | jawan, then user |
 | `scheduler`    | the per-minute tick (`bin/toli schedule status`) runs this checkout | missing (runs another checkout: user decides)  | jawan            |
@@ -65,17 +66,18 @@ Commands:
     bin/toli setup notice [--json]   # the told-once line (empty when nothing new); marks it shown
     bin/toli setup snooze            # quiet until a new step is missing (the Next line becomes "Setup snoozed: ...")
     bin/toli setup seed-local        # create local/ without touching existing files
+    bin/toli setup first-name <name> # record your first name (--none: nobody sits at this machine)
 
 ## What "set up toli" does
 
 The `toli-setup` skill (`/setup` command, in every harness after `bin/toli harness sync`):
 
 1. reads `bin/toli setup status --json`;
-2. asks one batched question for the user items: machine name and role (coordinator or worker), persona names,
-   default jawan harness, default workspace strategy (`same-branch`, `branch-per-task`, `worktree-per-task`), first
-   project to add, other machines, and any login you must do yourself;
-3. runs the bookkeeping: `bin/toli init`, `config/persona.json`, `harness.jawan` and `defaults.workspace` in
-   `config/machine.json`, `bin/toli setup seed-local`, `/add-project`, `config/fleet.json`;
+2. asks one batched question for the user items: machine name and role (coordinator or worker), your first name,
+   persona names, default jawan harness, default workspace strategy (`same-branch`, `branch-per-task`,
+   `worktree-per-task`), first project to add, other machines, and any login you must do yourself;
+3. runs the bookkeeping: `bin/toli init`, `bin/toli setup first-name`, `config/persona.json`, `harness.jawan` and
+   `defaults.workspace` in `config/machine.json`, `bin/toli setup seed-local`, `/add-project`, `config/fleet.json`;
 4. dispatches one jawan for the rest: harness installs, `bin/toli harness sync`, `bin/toli schedule install`,
    `git config core.hooksPath .githooks`;
 5. re-checks until status says `complete`.
@@ -96,6 +98,22 @@ prints the active names):
 `userAliases` lists other names you go by (a real name next to a nickname, say `["Sam Lee"]`; none by default). A
 message addressed to any of them, such as `for Sam Lee` or `Sam Lee, keep it?`, is marked `[needs you]` in the
 lead's wake ([sardars.md](sardars.md), "Hide Sardar chatter").
+
+### Your first name
+
+Setup asks your first name once and records it with `bin/toli setup first-name <name>` (`userFirstName` in
+`config/persona.json`; the other keys there are kept). The lead then calls you "<first name> <user>"; with the title
+`Boss`, say, the digest's Names line reads `the user is "Robin Boss" (first name Robin, title Boss)`, and the lead's
+per-turn reminder, headless turns and toli's own messages use the same. Your first name also counts as one of your
+names for `[needs you]` (`Robin, keep it?`), next to the title and `userAliases`.
+
+A first name is letters, spaces, hyphens and apostrophes, at most 40 characters; anything else is refused and nothing
+is written. A machine nobody sits at (a headless build box) records `bin/toli setup first-name --none`
+(`"userFirstName": ""`) and keeps the plain title. An install whose `config/persona.json` predates the field keeps
+working exactly as before; `bin/toli setup status` shows `first-name` as one remaining step until it is answered.
+
+Paired machines learn each other's first name ([peers.md](peers.md#identity)), so "tell Sam <title> ..." becomes
+`bin/toli talk Sam "<words>"` ([sardars.md](sardars.md#naming-another-machines-person)).
 
 ## By hand
 

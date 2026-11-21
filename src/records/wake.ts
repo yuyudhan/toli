@@ -3,7 +3,7 @@ import { relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { persona, userNames } from "../core/persona.ts";
 import { out, printJson, ToliError, withLock } from "../core/util.ts";
 import { inboxHolderLocked, leadLock } from "../fleet/lead-state.ts";
 import { listResults } from "../jobs/results.ts";
@@ -135,7 +135,8 @@ export function wakeFormat(): WakeFormat {
     if (raw !== undefined && typeof raw !== "boolean")
         throw new ToliError("config/machine.json lead.hideSardarChatter must be true or false");
     const names = persona();
-    return { hide: raw ?? true, user: names.user, aliases: names.userAliases };
+    const [user = names.user, ...aliases] = userNames(names);
+    return { hide: raw ?? true, user, aliases };
 }
 
 /** Every body shown with its item, the first `MAX_FULL_ITEMS` in full and the rest by path. */

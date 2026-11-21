@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { now, withLock, writeJsonAtomic } from "../core/util.ts";
 import { leadGuidance } from "../harness/guidance.ts";
 import { harnessConfig } from "../harness/harness.ts";
@@ -34,7 +34,7 @@ export function logLine(line: string): void {
  * "subagents"` no dispatch at all, the work left unacknowledged for the interactive Sardar), and the wake items.
  */
 export function headlessPrompt(machine: string, wake: string, dispatch: LeadDispatch): string {
-    const user = persona().user;
+    const user = addressName();
     const full = currentFull();
     const subagents = dispatch === "subagents";
     return [

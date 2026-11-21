@@ -20,7 +20,7 @@ import { certSigValid, fingerprintOf, initIdentity, loadIdentity } from "./ident
 import { heldFor } from "./relay.ts";
 import { flushRelayed } from "./relay-client.ts";
 import { controlRequest, json, type ListenerContext, MAX_BATCH, onBound, readControl, routes } from "./server.ts";
-import { activePeer, loadPeers, type Peer, peerLog, pushable, updatePeers } from "./store.ts";
+import { activePeer, loadPeers, notePerson, type Peer, peerLog, personField, pushable, updatePeers } from "./store.ts";
 
 /** What one flush did for one peer. */
 export type Flush = {
@@ -164,15 +164,17 @@ export async function delegationHook(): Promise<OnDelivered> {
     return (item, stdout) => onOutboxDelivered({ item, stdout });
 }
 
-// Announce: this machine is (back) on these addresses; the peer sends what waits for it here.
+// Announce: this machine is (back) on these addresses, and whose it is (its user's first name, docs/peers.md); the
+// peer sends what waits for it here.
 
 async function announceAll(context: ListenerContext, addrs: string[]): Promise<void> {
+    const person = personField();
     for (const peer of loadPeers().filter(pushable)) {
         try {
             const answer = await postPeer(
                 peer,
                 "/v1/announce",
-                controlEnvelope(peer, "announce", { addrs, version: context.version }),
+                controlEnvelope(peer, "announce", { addrs, version: context.version, ...person }),
             );
             if (answer.status !== 200)
                 peerLog(`announce to ${peer.name}: ${answer.status} ${String(answer.value.error ?? "")}`);
@@ -205,6 +207,7 @@ routes.set("POST /v1/announce", async (request, context) => {
             const peer = peers.find((entry) => entry.name === control.peer.name);
             if (peer !== undefined) peer.addrs = [...new Set([...(addrs as string[]), ...peer.addrs])].slice(0, 8);
         });
+    notePerson(control.peer.name, body.person);
     const peer = activePeer(control.peer.name);
     peerLog(`${control.peer.name} announced ${addrs.join(", ") || "no address"}`);
     // Deliver what waits for it, without holding up its request.
@@ -262,7 +265,9 @@ routes.set("POST /v1/outbox/pending", async (request, context) => {
     if (control instanceof Response) return control;
     const peer = control.peer;
     notePuller(peer.name);
-    const pulling = parsed(control.envelope).inbound === false;
+    const body = parsed(control.envelope);
+    notePerson(peer.name, body.person);
+    const pulling = body.inbound === false;
     if ((peer.inbound === false) !== pulling)
         updatePeers((peers) => {
             const entry = peers.find((candidate) => candidate.name === peer.name);

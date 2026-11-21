@@ -50,10 +50,11 @@ export function pin(
         status?: Peer["status"];
         addrs?: string[];
         cert?: string;
+        person?: string;
     }>,
 ): void {
     const file: { peers: Peer[] } = {
-        peers: peers.map(({ name, identity, allow, status, addrs, cert }) => ({
+        peers: peers.map(({ name, identity, allow, status, addrs, cert, person }) => ({
             name,
             key: identity.key,
             fingerprint: identity.fingerprint,
@@ -64,6 +65,7 @@ export function pin(
             pairedAt: new Date().toISOString(),
             pairedBy: "owner",
             status: status ?? "active",
+            ...(person === undefined ? {} : { person }),
         })),
     };
     writeFileSync(join(box.root, "config", "peers.json"), JSON.stringify(file, null, 4));

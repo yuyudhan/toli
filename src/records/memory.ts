@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import { machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { now, out, printJson, ToliError, withLock, writeTextAtomic } from "../core/util.ts";
 
 /** pinned: never ages (the user's word only); aging: stale after 30 days; perishable `(until: ...)`: after 7 days. */
@@ -219,7 +219,7 @@ export function archiveEntry(spec: string, selector: string, reason: string, for
         const entry = findEntry(parseEntries(file.file, source, file.tier), selector);
         if (entry.tier === "pinned" && !force)
             throw new ToliError(
-                `${file.file} line ${entry.line} is pinned (${persona().user}'s preference): archive it only on their explicit word, with --force`,
+                `${file.file} line ${entry.line} is pinned (${addressName()}'s preference): archive it only on their explicit word, with --force`,
             );
         const at = now();
         const existing = existsSync(archivePath) ? readFileSync(archivePath, "utf8") : "";

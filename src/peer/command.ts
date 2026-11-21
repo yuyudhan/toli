@@ -265,9 +265,10 @@ function status(argv: string[]): void {
     out(`peers: ${peers.filter((peer) => peer.status === "active").length} active, ${peers.length} recorded`);
 }
 
+/** One `peer list` row: name, its user's first name (`-` for none yet), status, permissions, addresses, fingerprint. */
 function peerLine(peer: Peer): string {
     const addrs = peer.addrs.length === 0 ? "no address yet" : peer.addrs.join(", ");
-    return `${peer.name}\t${peer.status}\t${peer.allow.join(",") || "nothing"}\t${addrs}\t${peer.fingerprint.slice(0, 16)}`;
+    return `${peer.name}\t${peer.person ?? "-"}\t${peer.status}\t${peer.allow.join(",") || "nothing"}\t${addrs}\t${peer.fingerprint.slice(0, 16)}`;
 }
 
 function list(argv: string[]): void {

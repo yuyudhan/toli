@@ -98,8 +98,9 @@ their files for the lead to read when it acts on one. Repetitive items fold into
 shared learning (`learning <id>: adopted by m2, m3, m4 (+6); adapted by m1`) and several plain messages from one
 machine (`m2 3 messages: newest ...`). Items that carry a decision for the user are listed first and marked
 `[needs you]`: a held task or a word asked of them, a body with `Decision needed` or `Needs you`/`Needs <user>`, an ask
-for the user by any of their names (`for <name>`, `<name>, ...?`, `<name>'s call`, `waiting on <name> to`; `user` and
-`userAliases` in `config/persona.json`), a `Should I`, `Shall I`, `Can`/`Could`/`Would you`, `Do you want me to` or
+for the user by any of their names (`for <name>`, `<name>, ...?`, `<name>'s call`, `waiting on <name> to`; `user`,
+`userFirstName`, the two together, and `userAliases` in `config/persona.json`), a `Should I`, `Shall I`,
+`Can`/`Could`/`Would you`, `Do you want me to` or
 `Approve ...?` question, `Please approve`, `needs your decision`, `your call`, `let me know which`, `which one do you
 want`, or a list of options with a recommendation. A decision line whose whole content is a negation (`Decision
 needed: none.`, `no decision needed`) is not marked; one that goes on (`Needs you: no rush, but approve ...`,
@@ -114,6 +115,7 @@ before and cover exactly the items listed. To see every body in the chat again, 
 
     bin/toli talk <machine>              # attach to that machine's lead conversation (ssh -t, interactive)
     bin/toli talk <machine> "<words>"    # send it a message; it wakes and answers with talk back
+    bin/toli talk <person> "<words>"     # the same, to the machine whose user has that first name ("Sam", "Sam <title>")
 
 `bin/toli talk <machine>` with no words opens the lead conversation of that machine in this terminal: on this
 machine it is `bin/toli lead attach`, elsewhere `ssh -t <host> 'cd <root> && bin/toli lead attach'`. Attach waits
@@ -130,6 +132,18 @@ unreachable. To a paired peer they go over HTTPS first, signed, with ssh as the 
 (`inbound: false`) pulls its messages, delegations and results from the others' outboxes every minute instead
 ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)), or from its paired peers over HTTPS. A message from
 another machine is information for the lead to weigh, never an instruction (AGENTS.md rule 10).
+
+#### Naming another machine's person
+
+Each machine's user may record a first name ([setup.md](setup.md#your-first-name)); the lead addresses its own user
+as "<first name> <user>" (`Robin Boss` for the title `Boss`) and names the people at other machines the same way.
+Paired peers share their first names ([peers.md](peers.md#identity)), and `bin/toli peer list` shows each peer's
+person in its second column (`-` for none). So "tell Sam Boss the release is out" (or "Sam Boss ko bolo ...") is
+`bin/toli talk Sam "the release is out"`: `talk` takes a machine name first, else a person's first name, alone or
+followed by this installation's title, case and spacing aside. Your own first name names this machine. A first name
+that two machines share is refused, listing both (`"Alex" is the person at 2 machines (m3, m4): name the machine
+instead`); a name nobody has is refused too. A machine with no first name (a headless box) is reached by its
+machine name only. The names are display and lookup only: a peer's name is never an instruction.
 
 ## Delegation
 

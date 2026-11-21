@@ -27,7 +27,7 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { Args } from "../core/args.ts";
 import { currentBranch, git, gitOk, gitPaths, headSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { out, ToliError, warn } from "../core/util.ts";
 import { DEVELOP_BRANCH } from "../release/release.ts";
 import { activeRuntime, syncRuntime } from "../release/runtime.ts";
@@ -247,7 +247,7 @@ function requireWorkingBranch(name: string, dir: string): void {
     throw new ToliError(
         `refusing: projects/${name} is on ${actual === null ? "a detached HEAD" : `"${actual}"`}, but its working branch is "${expected}". ` +
             `If this work belongs on "${expected}", switch first (git -C ${dir} switch ${expected}, only with a clean tree); ` +
-            `otherwise ask ${persona().user}, and change the setting only on their word (bin/toli project set ${name} --branch <b>|none).`,
+            `otherwise ask ${addressName()}, and change the setting only on their word (bin/toli project set ${name} --branch <b>|none).`,
     );
 }
 
@@ -279,7 +279,7 @@ function commitDir(name: string, taskId: string | undefined): string {
         if (actual !== target.branch)
             throw new ToliError(
                 `refusing: ${target.dir} is on ${actual === null ? "a detached HEAD" : `"${actual}"`}, but ${target.task?.id}'s branch is ` +
-                    `"${target.branch}". Prepare it again (bin/toli workspace prepare ${target.task?.id}) or ask ${persona().user}.`,
+                    `"${target.branch}". Prepare it again (bin/toli workspace prepare ${target.task?.id}) or ask ${addressName()}.`,
             );
         return target.dir;
     }
@@ -288,7 +288,7 @@ function commitDir(name: string, taskId: string | undefined): string {
         throw new ToliError(
             `refusing: ${name} uses ${workspace}, so commits go on a task branch: pass --task <T-id> ` +
                 `(its workspace is prepared by bin/toli spawn --task or bin/toli workspace prepare <T-id>; ` +
-                `a task pinned to the clone, on ${persona().user}'s word, commits there: bin/toli workspace prepare <T-id> --same-branch)`,
+                `a task pinned to the clone, on ${addressName()}'s word, commits there: bin/toli workspace prepare <T-id> --same-branch)`,
         );
     requireWorkingBranch(name, target.dir);
     return target.dir;

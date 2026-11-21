@@ -3,7 +3,7 @@
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { now, out, run, ToliError, withLock } from "../core/util.ts";
 import { refExists } from "./base-branch.ts";
 import { TRAILER_FIELDS } from "./catch-up-merge.ts";
@@ -132,7 +132,7 @@ function applyWorkspace(project: Project, workspace: Workspace, at: string, keep
     return (
         `note: ${tasks} still works in its ${from} workspace, so projects/${project.name} counts as toggled: ` +
         `workspace prepare refuses new tasks until it switches back to ${from}; to keep ${workspace} for them too ` +
-        `(on ${persona().user}'s word): bin/toli project set ${project.name} --workspace ${workspace} --keep`
+        `(on ${addressName()}'s word): bin/toli project set ${project.name} --workspace ${workspace} --keep`
     );
 }
 

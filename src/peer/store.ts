@@ -6,6 +6,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { machineSettings, type PeerSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
+import { persona, personName } from "../core/persona.ts";
 import { isJsonObject, now, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { fingerprintOf } from "./identity.ts";
 
@@ -47,6 +48,11 @@ export type Peer = {
      * pulls (`/v1/outbox/pending` carries its setting).
      */
     inbound?: boolean;
+    /**
+     * The first name of the peer's user, as its announce and pulls say (its config/persona.json `userFirstName`), so
+     * `bin/toli talk <first name>` finds its machine. Information only: kept when it is a plain name, else dropped.
+     */
+    person?: string;
 };
 
 /** Whether this machine connects to `peer` itself: active, with an address, and taking inbound connections. */
@@ -84,6 +90,33 @@ export function requirePeer(name: string): Peer {
     const peer = loadPeers().find((entry) => entry.name === name);
     if (peer === undefined) throw new ToliError(`no peer named "${name}" (bin/toli peer list)`);
     return peer;
+}
+
+/** This machine's user's first name for its peers' records: none without one, or while config/persona.json is invalid. */
+export function personField(): { person?: string } {
+    try {
+        const first = persona().userFirstName;
+        return first === "" ? {} : { person: first };
+    } catch (error) {
+        if (error instanceof ToliError) return {};
+        throw error;
+    }
+}
+
+/**
+ * Record the first name `name`'s announce or pull carried (`person`): kept only when it is a plain name
+ * (src/core/persona.ts `personName`), removed when absent or anything else.
+ */
+export function notePerson(name: string, raw: unknown): void {
+    const person = personName(raw);
+    if (loadPeers().find((entry) => entry.name === name)?.person === person) return;
+    updatePeers((peers) => {
+        const entry = peers.find((candidate) => candidate.name === name);
+        if (entry === undefined) return;
+        if (person === undefined) delete entry.person;
+        else entry.person = person;
+    });
+    peerLog(`${name}'s person: ${person ?? "none"}`);
 }
 
 /** The peer whose current (or, within its rotation window, previous) key has this fingerprint. */

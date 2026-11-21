@@ -1,7 +1,7 @@
 // A per-task project toggled to same-branch under a live task (T1904): `project set` records the toggle
 // (`workspaceToggle`, src/projects/set.ts) and `workspace prepare` refuses new records while it lasts, since a task
 // prepared then would be recorded on the shared clone for good.
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { ToliError } from "../core/util.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import type { Project } from "./projects.ts";
@@ -34,7 +34,7 @@ export function refuseWhileToggled(project: Project, taskId: string): void {
         `refusing to prepare ${taskId}: projects/${project.name} is toggled from ${toggle.from} to ` +
             `${project.workspace} since ${toggle.at} (${why}), so ${taskId} would be recorded on the shared clone. ` +
             `Switch it back (bin/toli project set ${project.name} --workspace ${toggle.from}), or keep ` +
-            `${project.workspace} for new tasks too on ${persona().user}'s word: ` +
+            `${project.workspace} for new tasks too on ${addressName()}'s word: ` +
             `bin/toli project set ${project.name} --workspace ${project.workspace} --keep.`,
     );
 }

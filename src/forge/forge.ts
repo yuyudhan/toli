@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { currentBranch, git, gitOk, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError, warn } from "../core/util.ts";
 import { runInSlot, withBuildSlot } from "../fleet/build-slots.ts";
 import { activeHookPath, lightPushCondition } from "../projects/hooks.ts";
@@ -216,7 +216,7 @@ function requireBranch(dir: string, action: string): string {
 function requirePushAuthority(project: string, word: string | null): void {
     if (word !== null) return;
     if (loadProjects().find((entry) => entry.name === project)?.standing?.push === true) return;
-    const user = persona().user;
+    const user = addressName();
     throw new ToliError(
         `refusing to push ${project}: no --word and no standing push grant for ${project} on this machine. ` +
             `Pass --word "<${user}'s word>" quoting ${user}'s word for this push, or have ${user} grant it with ` +
@@ -299,7 +299,7 @@ function requirePushed(dir: string, pushHint: string, branch: string): void {
     if (remote.code !== 0)
         throw new ToliError(`git ls-remote origin failed: ${(remote.stderr || remote.stdout).trim()}`);
     const remoteSha = remote.stdout.trim().split(/\s+/)[0] ?? "";
-    const push = `run ${pushHint} first (only with ${persona().user}'s word to push, or the project's standing push grant)`;
+    const push = `run ${pushHint} first (only with ${addressName()}'s word to push, or the project's standing push grant)`;
     if (remoteSha === "") throw new ToliError(`refusing: branch ${branch} is not on origin; ${push}`);
     const head = headSha(dir);
     if (remoteSha !== head && git(dir, ["merge-base", "--is-ancestor", head, remoteSha]).code !== 0)

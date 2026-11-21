@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { type Machine, machineSettings, type RetentionConfig } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { addressName } from "../core/persona.ts";
 import { now, out, printJson, readJson, stamp, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { queueOutbox } from "../jobs/outbox.ts";
 import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
@@ -200,7 +200,7 @@ export function renderPrune(items: PruneItem[], applied: boolean): string {
     if (items.length === 0) return "prune: nothing to prune";
     const head = applied
         ? `prune: removed ${items.length} item${items.length === 1 ? "" : "s"} (tasks archived, not deleted)`
-        : `prune (dry run): ${items.length} item${items.length === 1 ? "" : "s"} would go; nothing changed. Apply with \`bin/toli prune --apply\` only on ${persona().user}'s word.`;
+        : `prune (dry run): ${items.length} item${items.length === 1 ? "" : "s"} would go; nothing changed. Apply with \`bin/toli prune --apply\` only on ${addressName()}'s word.`;
     const rows = items.map(
         (item) => `  ${item.action}\t${item.kind}\t${item.target}\t${item.ageDays}d\t${item.detail}`,
     );

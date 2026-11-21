@@ -13,7 +13,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { persona } from "../core/persona.ts";
+import { userNames } from "../core/persona.ts";
 import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
@@ -63,9 +63,9 @@ const routesQuestions = (_before: string, after: string): boolean =>
 
 /** Phrases that mention the user's word, the installation's own user name included. */
 function wordPhrases(): WordPhrase[] {
-    const user = escapeRegex(persona().user);
+    const user = userNames().map(escapeRegex).join("|");
     return [
-        { pattern: new RegExp(`\\b${user}'s word\\b`, "gi"), cites: citesWord },
+        { pattern: new RegExp(`\\b(?:${user})'s word\\b`, "gi"), cites: citesWord },
         { pattern: /\b[A-Z][\w-]*'s word\b/g, cites: citesWord },
         { pattern: /\bthe user's word\b/gi, cites: citesWord },
         { pattern: new RegExp(`\\bquestions? for (?:${user}|the user)\\b`, "gi"), cites: routesQuestions },

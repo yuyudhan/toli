@@ -1,10 +1,11 @@
-// `bin/toli setup status|notice|snooze|seed-local`: the setup checklist (src/setup/checklist.ts) and the told-once
+// `bin/toli setup status|notice|snooze|seed-local|first-name`: the setup checklist (src/setup/checklist.ts) and the told-once
 // notice. `status` always reports every item. `notice` is what session start shows (the digest header, the omp
 // extension, the Claude Code SessionStart hook): one line, only on the first run or when a step is missing that was
 // not missing the last time the notice was shown or snoozed. state/setup-shown.json remembers that set.
 import { createHash } from "node:crypto";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
+import { addressName, setFirstName } from "../core/persona.ts";
 import { now, out, printJson, readJson, ToliError, writeJsonAtomic } from "../core/util.ts";
 import { seedLocal } from "../helpers/local.ts";
 import { setupRemaining } from "../records/next.ts";
@@ -106,6 +107,20 @@ function snooze(): void {
     );
 }
 
+/** `setup first-name <name>|--none`: record the user's first name, or that nobody sits at this machine. */
+function firstName(argv: string[]): void {
+    const args = new Args(argv, { booleans: ["none"] });
+    args.maxPositional(1);
+    const name = args.positional[0];
+    if (args.bool("none") === (name !== undefined)) throw new ToliError("usage: toli setup first-name <name> | --none");
+    const names = setFirstName(name ?? "");
+    out(
+        names.userFirstName === ""
+            ? `recorded: no person at this machine; the user is addressed as "${names.user}"`
+            : `recorded: the user is addressed as "${addressName(names)}" (config/persona.json userFirstName)`,
+    );
+}
+
 export function setupCommand(argv: string[]): void {
     const [sub, ...rest] = argv;
     switch (sub) {
@@ -136,7 +151,12 @@ export function setupCommand(argv: string[]): void {
             seedLocal();
             out("local/ seeded (scripts/, hooks/, helpers.json, README.md); existing files left untouched");
             return;
+        case "first-name":
+            firstName(rest);
+            return;
         default:
-            throw new ToliError("usage: toli setup status [--json] | notice [--json] | snooze | seed-local");
+            throw new ToliError(
+                "usage: toli setup status [--json] | notice [--json] | snooze | seed-local | first-name <name>|--none",
+            );
     }
 }

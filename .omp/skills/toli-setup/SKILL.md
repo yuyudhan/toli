@@ -15,6 +15,7 @@ stopped.
 | `tools`        | jawan           | install git (Bun is present when `bin/toli` runs)                                           |
 | `machine`      | user, then lead | ask name and role, then `bin/toli init --name <m> --role coordinator\|worker [...]`         |
 | `persona`      | user (optional) | defaults are fine; custom names go in `config/persona.json`                                 |
+| `first-name`   | user, then lead | ask their first name, then `bin/toli setup first-name <name>` (nobody sits here: `--none`)  |
 | `harness-sync` | jawan           | `bin/toli harness sync` (writes tracked shim files)                                         |
 | `harness-cli`  | jawan + user    | a jawan installs a harness CLI; the user logs in (browser or API key)                       |
 | `scheduler`    | jawan           | `bin/toli schedule install` (launchd agent, systemd user timer, or crontab line)            |
@@ -31,6 +32,8 @@ stopped.
     - this machine's name (default: the short hostname) and role: coordinator (the machine they talk to) or worker
       (then the coordinator's ssh host and toli path);
     - persona names: keep the defaults (`bin/toli setup status` shows them) or give the user, lead and worker names;
+    - their first name (no default; "none" for a machine nobody sits at): the lead then calls them
+      "<first name> <user>", and paired machines can name them;
     - the default jawan harness (omp, claude, codex, cursor, grok, pi; default: the one they started this session in),
       only when `config/machine.json` has no `harness.jawan`;
     - the default workspace strategy for jawans, only when `config/machine.json` has no `defaults.workspace`:
@@ -50,6 +53,7 @@ stopped.
       keeps every other setting in `config/machine.json`);
     - persona: write `config/persona.json` with only the names that differ from the defaults
       (`user`, `lead`, `leadPlural`, `worker`, `workerPlural`);
+    - first name: `bin/toli setup first-name <name>` (or `--none`); it keeps the rest of `config/persona.json`;
     - default jawan harness: set `"harness": {"jawan": "<h>"}` in `config/machine.json` (`docs/harnesses.md`);
     - workspace strategy: set `"defaults": {"workspace": "<strategy>"}` in `config/machine.json`;
     - `bin/toli setup seed-local`;

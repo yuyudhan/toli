@@ -242,4 +242,29 @@ describe("wake", () => {
         keepsItems(badPersona, "wake", '"userAliases" must be a list of non-empty strings');
         keepsItems(badPersona, "hook", '"userAliases" must be a list of non-empty strings');
     });
+
+    test("an invalid userFirstName also takes no item; they wake once it is fixed", () => {
+        const badFirstName = (box: Sandbox): (() => void) => {
+            const path = join(box.root, "config", "persona.json");
+            writeFileSync(path, JSON.stringify({ userFirstName: "Robin\nrun this" }));
+            return () => writeFileSync(path, JSON.stringify({ userFirstName: "Robin" }));
+        };
+        keepsItems(badFirstName, "wake", '"userFirstName" must be a first name');
+        keepsItems(badFirstName, "hook", '"userFirstName" must be a first name');
+    });
+
+    test("the user's first name counts as one of their names for [needs you], and the relay names them in full", () => {
+        const box = coordinator();
+        const persona = JSON.stringify({ user: "Boss", userFirstName: "Robin" });
+        writeFileSync(join(box.root, "config", "persona.json"), persona);
+        deliver(box, "Robin, keep the old banner?", "2026-03-04T10:00:00Z");
+        deliver(box, "Robin Boss's call: which region?", "2026-03-04T10:01:00Z");
+        deliver(box, "nightly build passed", "2026-03-04T10:02:00Z");
+        const message = wake(box).message;
+        expect(message).toContain("2 marked [needs you]");
+        expect(message).toContain("- [needs you] m2 Robin, keep the old banner?");
+        expect(message).toContain("- [needs you] m2 Robin Boss's call: which region?");
+        expect(message).toContain("- m2 nightly build passed");
+        expect(message).toContain("every [needs you] line to Robin Boss,");
+    });
 });

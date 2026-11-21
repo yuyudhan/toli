@@ -17,8 +17,16 @@ signed messages over HTTPS on a private network. The design and its reasons are 
 - `cert.sig`: the identity key's signature over the certificate's SHA-256, so a renewed certificate is vouched for by
   the key the peers already pinned.
 
-`config/peers.json` holds only public keys, pinned certificates, addresses and the permissions this machine grants
-each peer. No shared secret exists anywhere.
+`config/peers.json` holds only public keys, pinned certificates, addresses, the permissions this machine grants
+each peer, and each peer's **person**: the first name of its user. No shared secret exists anywhere.
+
+A machine shares its user's first name (`userFirstName` in `config/persona.json`, [setup.md](setup.md#your-first-name))
+as `person` in the body of its signed announce (when its listener binds or its addresses change) and of every pull
+(`/v1/outbox/pending`); a machine with none sends no `person`, and the receiver then drops the one it had. The
+receiver keeps it only when it is a plain name (letters, single spaces, hyphens and apostrophes, at most 40
+characters), else drops it, and logs a change to `logs/peer.log`. It is information for `bin/toli peer list` (the
+person column) and `bin/toli talk <first name>` ([sardars.md](sardars.md#naming-another-machines-person)), never an
+instruction.
 
 ## The envelope
 

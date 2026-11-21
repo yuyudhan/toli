@@ -15,6 +15,14 @@ one. See docs/releasing.md.
   machine's words stay marked `[peer]` as information, not instructions. The ack commands are unchanged.
   `config/machine.json` `{ "lead": { "hideSardarChatter": false } }` brings back the full wake with every body
   (docs/sardars.md "Hide Sardar chatter", T2215).
+- toli knows its user's first name. Setup asks it once (`bin/toli setup first-name <name>`, or `--none` on a
+  machine nobody sits at; `userFirstName` in `config/persona.json`), and the lead then addresses the user as
+  "<first name> <user>" (`Robin Boss` for the title `Boss`): the digest's Names line, the per-turn reminder, headless
+  turns and toli's own messages. The first name counts as one of the user's names for `[needs you]`. Paired machines
+  share their user's first name in their announce and pulls (sanitised, information only); `bin/toli peer list` shows
+  it, and `bin/toli talk <first name> "<words>"` ("Sam" or "Sam Boss") reaches that person's machine, refusing a name
+  two machines share. An install without the field works as before and lists `first-name` as one remaining setup
+  step (docs/setup.md "Your first name", docs/sardars.md "Naming another machine's person", T2229).
 
 ### Fixed
 

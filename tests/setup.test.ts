@@ -98,6 +98,7 @@ describe("setup checklist", () => {
             tools: "missing",
             machine: "missing",
             persona: "optional",
+            "first-name": "missing",
             "harness-sync": "missing",
             "harness-cli": "missing",
             scheduler: "missing",
@@ -123,12 +124,51 @@ describe("setup checklist", () => {
         expect(after).not.toContain("local");
 
         box.ok(["harness", "sync"]);
+        box.ok(["setup", "first-name", "Robin"]);
         mkdirSync(join(box.root, "data"), { recursive: true });
         writeFileSync(
             join(box.root, "data", "projects.json"),
             JSON.stringify({ projects: [{ name: "app", url: "git@example.com:app.git", mode: "commit" }] }),
         );
         expect(pendingIds(setupChecklist(readyProbe))).toEqual([]);
+    });
+
+    test("the user's first name is one remaining step until recorded, by name or as none", () => {
+        const missing = setupChecklist(bareProbe).find((item) => item.id === "first-name");
+        expect(missing?.status).toBe("missing");
+        expect(missing?.who).toBe("user");
+        expect(missing?.fix).toContain("Question: what is your first name?");
+        expect(missing?.fix).toContain("bin/toli setup first-name <name>");
+        // An install whose persona predates the field keeps every other name and only gains the step.
+        mkdirSync(join(box.root, "config"), { recursive: true });
+        writeFileSync(join(box.root, "config", "persona.json"), JSON.stringify({ user: "Boss" }));
+        expect(setupChecklist(bareProbe).find((item) => item.id === "persona")?.status).toBe("done");
+        expect(pendingIds(setupChecklist(bareProbe))).toContain("first-name");
+        expect(box.ok(["digest"])).toContain('Names: the user is "Boss", the lead');
+
+        expect(box.ok(["setup", "first-name", " Robin "])).toBe(
+            'recorded: the user is addressed as "Robin Boss" (config/persona.json userFirstName)',
+        );
+        expect(JSON.parse(readFileSync(join(box.root, "config", "persona.json"), "utf8"))).toEqual({
+            user: "Boss",
+            userFirstName: "Robin",
+        });
+        const named = setupChecklist(bareProbe).find((item) => item.id === "first-name");
+        expect(named?.status).toBe("done");
+        expect(named?.detail).toBe('addressed as "Robin Boss"');
+        expect(box.ok(["digest"])).toContain('Names: the user is "Robin Boss" (first name Robin, title Boss)');
+
+        expect(box.toli(["setup", "first-name", "R2-D2"]).stderr).toContain('"userFirstName" must be a first name');
+        expect(JSON.parse(readFileSync(join(box.root, "config", "persona.json"), "utf8")).userFirstName).toBe("Robin");
+
+        expect(box.ok(["setup", "first-name", "--none"])).toBe(
+            'recorded: no person at this machine; the user is addressed as "Boss"',
+        );
+        const none = setupChecklist(bareProbe).find((item) => item.id === "first-name");
+        expect(none?.status).toBe("done");
+        expect(none?.detail).toBe('no person at this machine (addressed as "Boss")');
+        expect(box.toli(["setup", "first-name"]).code).not.toBe(0);
+        expect(box.toli(["setup", "first-name", "Robin", "--none"]).code).not.toBe(0);
     });
 
     test("a logged-out harness asks the user to log in; a worker without a coordinator is missing", () => {
@@ -245,6 +285,7 @@ describe("setup CLI", () => {
             "tools",
             "machine",
             "persona",
+            "first-name",
             "harness-sync",
             "harness-cli",
             "scheduler",

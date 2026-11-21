@@ -7,7 +7,7 @@ import { controlEnvelope, postPeer } from "./client.ts";
 import { applyBatch } from "./envelope.ts";
 import { loadIdentity } from "./identity.ts";
 import { applyRelayed, type RelayedPull } from "./relay-client.ts";
-import { loadPeers, peerSettings, pushable } from "./store.ts";
+import { loadPeers, peerSettings, personField, pushable } from "./store.ts";
 
 /** What one pull from a peer did; `relayed` counts the items it held for this machine from other peers. */
 export type PeerPull = { peer: string; applied: number; relayed?: RelayedPull; error?: string };
@@ -21,9 +21,14 @@ export async function pullPeers(): Promise<PeerPull[]> {
     const reports: PeerPull[] = [];
     for (const peer of loadPeers().filter(pushable)) {
         try {
-            // Its own setting tells the peer whether to push to it at all (`inbound: false`: it only pulls).
+            // Its own setting tells the peer whether to push to it at all (`inbound: false`: it only pulls), and
+            // whose machine this is (its user's first name, information only).
             const inbound = peerSettings().listen && !pullsItsMessages() ? {} : { inbound: false };
-            const pending = await postPeer(peer, "/v1/outbox/pending", controlEnvelope(peer, "pending", inbound));
+            const pending = await postPeer(
+                peer,
+                "/v1/outbox/pending",
+                controlEnvelope(peer, "pending", { ...inbound, ...personField() }),
+            );
             if (pending.status !== 200) {
                 reports.push({ peer: peer.name, applied: 0, error: `pending: ${pending.status}` });
                 continue;

@@ -326,6 +326,7 @@ describe("lead guidance", () => {
     test("the reply-length rule comes first, in the live reminder and the generic rule files alike", () => {
         const persona = {
             user: "Jane",
+            userFirstName: "",
             userAliases: [],
             lead: "Sardar",
             leadPlural: "Saradars",
@@ -335,6 +336,9 @@ describe("lead guidance", () => {
         const lines = leadGuidance(persona).split("\n");
         expect(lines[0]).toStartWith("[toli] You are the lead (Sardar)");
         expect(lines[1]).toMatch(REPLY_RULE);
+        expect(leadGuidance({ ...persona, userFirstName: "Robin" })).toContain(
+            "- Reply to Robin Jane in 1-3 short lines",
+        );
         expect(guidanceRules(GENERIC_NAMES)[0]).toMatch(REPLY_RULE);
         expect(guidanceRules(GENERIC_NAMES).join("\n")).not.toContain("one or two lines");
     });
