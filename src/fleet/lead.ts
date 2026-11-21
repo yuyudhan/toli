@@ -10,7 +10,7 @@ import { liveSession } from "../harness/session.ts";
 import { sessionFile } from "../jawans/launch.ts";
 import { receivingNow } from "../peer/receiving.ts";
 import { ensureListener } from "../peer/supervise.ts";
-import { takeWake, wakeMessage } from "../records/wake.ts";
+import { hideSardarChatter, takeWake, wakeMessage } from "../records/wake.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
 import { machineDispatch } from "./dispatch.ts";
 import { fullCommand } from "./full.ts";
@@ -57,9 +57,11 @@ function claimTurn(): Claim | null {
         if (receivingNow()) return null;
         const state = readLeadState();
         const dispatch = machineDispatch();
+        // Read before taking: an invalid setting fails this pass without consuming any item.
+        const hide = hideSardarChatter();
         const pendingPath = paths.leadPending();
         const pending = existsSync(pendingPath) ? readFileSync(pendingPath, "utf8").trim() : "";
-        const fresh = wakeMessage(takeWake(dispatch === "subagents" ? "headless" : "session"));
+        const fresh = wakeMessage(takeWake(dispatch === "subagents" ? "headless" : "session"), hide);
         const wake = [pending, fresh].filter((text) => text !== "").join("\n\n");
         if (wake === "") return null;
         writeTextAtomic(pendingPath, `${wake}\n`);

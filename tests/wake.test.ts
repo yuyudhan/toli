@@ -202,13 +202,22 @@ describe("wake", () => {
         ]);
     });
 
-    test("a lead.hideSardarChatter that is not a boolean is refused", () => {
+    test("an invalid lead.hideSardarChatter is refused before any item is taken, so they wake once it is fixed", () => {
         const box = coordinator();
         const path = join(box.root, "config", "machine.json");
         const machine = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
         writeFileSync(path, JSON.stringify({ ...machine, lead: { hideSardarChatter: "yes" } }));
         deliver(box, "A", "2026-03-04T10:00:00Z");
-        expect(box.toli(["wake"]).stderr).toContain("lead.hideSardarChatter must be true or false");
+        const refused = box.toli(["wake"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("lead.hideSardarChatter must be true or false");
+        // The Claude Code prompt hook takes no item either.
+        box.toli(["hook", "claude-prompt"], {
+            stdin: JSON.stringify({ cwd: box.root, prompt: "hello" }),
+            env: { TOLI_ROLE: "" },
+        });
+        writeFileSync(path, JSON.stringify({ ...machine, lead: { hideSardarChatter: true } }));
+        expect(wake(box).items.map((item) => item.title)).toEqual(["m2: A"]);
     });
 });
 
@@ -346,6 +355,23 @@ describe("compact wake (Hide Sardar chatter)", () => {
             `- m2 message: a local note  (data/inbox/${at(2)}-m2.md)`,
         ]);
         expect(compact([inboxItem(at(2), "m2", "message from m2", "m2: note")])).not.toContain("[peer]");
+    });
+
+    test("a question for the user by name, or a 'Should I/we ...?' question, is marked [needs you]", () => {
+        const message = compact([
+            inboxItem(at(1), "m2", "message from m2", "m2: Robin, keep the old banner or drop it?"),
+            inboxItem(at(2), "m3", "message from m3", "m3: done. Should I also tidy the staging pod?"),
+            inboxItem(at(3), "m4", "message from m4", "m4: should we ask Robin about the logo?"),
+            inboxItem(at(4), "m6", "message from m6", "m6: placed. Is the gate green? Yes, all green."),
+            inboxItem(at(5), "m7", "message from m7", "m7: Robin's report is in. Done."),
+        ]);
+        expect(itemLines(message)).toEqual([
+            `- [needs you] m2 message: Robin, keep the old banner or drop it?  (data/inbox/${at(1)}-m2.md)`,
+            `- [needs you] m3 message: done. Should I also tidy the staging pod?  (data/inbox/${at(2)}-m3.md)`,
+            `- [needs you] m4 message: should we ask Robin about the logo?  (data/inbox/${at(3)}-m4.md)`,
+            `- m6 message: placed. Is the gate green? Yes, all green.  (data/inbox/${at(4)}-m6.md)`,
+            `- m7 message: Robin's report is in. Done.  (data/inbox/${at(5)}-m7.md)`,
+        ]);
     });
 
     test("the ack commands close the message unchanged, covering exactly the items shown", () => {

@@ -153,9 +153,10 @@ function fullWakeMessage(items: WakeItem[]): string {
 
 /**
  * The message pushed into the live session for `items`; empty when nothing arrived. Compact unless `hide` is false;
- * the compact form reads each whole file, so a decision past the shown body's limit is still marked.
+ * the compact form reads each whole file, so a decision past the shown body's limit is still marked. Callers read
+ * `hideSardarChatter()` before taking items, so an invalid setting is refused without consuming them.
  */
-export function wakeMessage(items: WakeItem[], hide: boolean = hideSardarChatter()): string {
+export function wakeMessage(items: WakeItem[], hide: boolean): string {
     if (items.length === 0) return "";
     if (!hide) return fullWakeMessage(items);
     const whole = items.map((item) =>
@@ -184,9 +185,11 @@ export function wakeCommand(argv: string[]): void {
     const rawPid = args.str("pid");
     const pid = rawPid === undefined ? null : Number(rawPid);
     if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new ToliError("wake --pid needs a process id");
+    // Read first: an invalid setting fails here, before any item is taken and marked delivered.
+    const hide = hideSardarChatter();
     // A peer's batch is still arriving: take it next time, whole, as one wake.
     const items = receivingNow() ? [] : takeSessionWake(pid);
-    const message = wakeMessage(items);
+    const message = wakeMessage(items, hide);
     if (args.bool("json")) {
         printJson({ items, message });
         return;
