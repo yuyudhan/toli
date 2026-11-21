@@ -1,7 +1,5 @@
-// The disk keeper's Docker volume steps (src/fleet/disk.ts). Step 1, under the floor and before any checkout's build
-// folder (T2232): an unused build cache, a volume whose name holds one of capacity.diskCacheVolumes' words (default
-// `target`, `cargo`, `node_modules`; cacheVolumes) that no container mounts, running or stopped, and whose name does
-// not look like data, largest first until free disk is back at the floor. Step 5, under the emergency level only,
+// The disk keeper's Docker volume steps (src/fleet/disk.ts). Step 1's unused build caches, named by an exact rule,
+// are cache-volumes.ts; it shares DockerApi and the removal loop (freeVolumes) here. Step 5, under the emergency level only,
 // after every idle build folder and Docker's build cache (step 3) and before any build folder in use: Docker volumes
 // of rebuildable build output that no running container uses: a compose stack's cargo `target/` or `node_modules`
 // cache, rebuilt by its next build. A volume counts as build output only when its name says so (ends in `target`,
@@ -14,8 +12,7 @@
 // data-looking volume) and an image that is no database or data store (DATA_IMAGE). Any other stopped user keeps the
 // volume, which is then skipped. A running, paused or just-created container keeps its volumes. Like the prune,
 // neither step runs while a pull, build or compose up runs. Every Docker call goes through DockerApi (hostDocker).
-import type { Machine } from "../core/config.ts";
-import { run, ToliError } from "../core/util.ts";
+import { run } from "../core/util.ts";
 import { parseSize } from "./disk-caches.ts";
 import { GIB, gb } from "./disk-state.ts";
 import { dockerBusy } from "./docker-prune.ts";
@@ -30,13 +27,13 @@ const BUILD_NAME = /(?:^|[_.-])target$|cargo|node[_-]?modules/i;
 /** A mount point that says build output: a `target` or `node_modules` folder, or a cargo home or registry. */
 const BUILD_MOUNT = /\/(?:target|node_modules)\/?$|cargo/i;
 /** A name or mount point that may hold data: such a volume is never removed, even when it also looks like a build's. */
-const DATA =
+export const DATA =
     /pg|postgres|sql|maria|mongo|redis|valkey|data|db|upload|media|minio|elastic|opensearch|clickhouse|kafka|rabbit|backup|storage|vault|secret/i;
 /** An image that keeps data in its container (a database, queue or object store): such a container is never removed. */
 const DATA_IMAGE =
     /postgres|postgis|timescale|mysql|maria|percona|mongo|clickhouse|redis|valkey|keydb|memcache|elastic|opensearch|minio|rabbitmq|kafka|zookeeper|cassandra|scylla|couch|neo4j|influx|etcd|consul|vault|nats|pulsar|cockroach|surreal|questdb|meilisearch|typesense|qdrant|weaviate|milvus|registry|gitea|gitlab|nextcloud|wordpress|ghost/i;
 /** An anonymous volume's name: 64 hex digits Docker chose. */
-const ANONYMOUS = /^[0-9a-f]{64}$/;
+export const ANONYMOUS = /^[0-9a-f]{64}$/;
 /** Docker's volume names: anything else in `docker volume ls` output is not a volume. */
 const VOLUME_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 /** Container states that start nothing on their own: their volumes may go once they are removed. */
@@ -233,35 +230,6 @@ export const hostDocker: DockerApi = {
     },
 };
 
-/** Default words whose presence in a Docker volume's name marks it a build cache (capacity.diskCacheVolumes). */
-export const DEFAULT_CACHE_VOLUME_WORDS: readonly string[] = ["target", "cargo", "node_modules"];
-
-/** `capacity.diskCacheVolumes` (config/machine.json): the words marking a Docker volume a build cache by its name. */
-export function diskCacheVolumes(machine: Machine): readonly string[] {
-    const raw: unknown = machine.capacity?.diskCacheVolumes;
-    if (raw === undefined) return DEFAULT_CACHE_VOLUME_WORDS;
-    if (!Array.isArray(raw) || !raw.every((word) => typeof word === "string" && word.trim() !== ""))
-        throw new ToliError("config/machine.json capacity.diskCacheVolumes must be a list of non-empty strings");
-    return raw;
-}
-
-/**
- * The unused build caches among `names`: a named volume whose name holds one of `words` (case-insensitive), whose
- * name does not look like data, and that no container mounts, running or stopped (nothing to remove first).
- */
-export function cacheVolumes(names: string[], containers: DockerContainer[], words: readonly string[]): BuildVolume[] {
-    const lowered = words.map((word) => word.toLowerCase());
-    const mounted = new Set(
-        containers.flatMap((container) =>
-            container.mounts.flatMap((mount) => (mount.type === "volume" ? [mount.volume] : [])),
-        ),
-    );
-    return names
-        .filter((name) => !ANONYMOUS.test(name) && !mounted.has(name) && !DATA.test(name))
-        .filter((name) => lowered.some((word) => name.toLowerCase().includes(word)))
-        .map((name) => ({ name, sizeGB: null, stopped: [] }));
-}
-
 export type BuildVolumeContext = {
     dryRun: boolean;
     /** Free disk now, GB. */
@@ -273,7 +241,7 @@ export type BuildVolumeContext = {
 };
 
 /** One volume step: what its lines are called, its step label, and which volumes it may remove. */
-type VolumeStep = {
+export type VolumeStep = {
     what: string;
     label: string;
     pick: (names: string[], containers: DockerContainer[]) => { volumes: BuildVolume[]; kept: string[] };
@@ -289,28 +257,8 @@ export function freeBuildVolumes(
     return freeVolumes(step, context, say, docker);
 }
 
-/**
- * The keeper's step 1, before any checkout's build folder: remove unused build-cache volumes (cacheVolumes, named by
- * `words`), largest first, until free disk is back at the floor; how many went.
- */
-export function freeCacheVolumes(
-    context: BuildVolumeContext,
-    say: (line: string) => void,
-    words: readonly string[],
-    docker: DockerApi = hostDocker,
-): number {
-    const step = {
-        what: "docker cache volumes",
-        label: "step 1: unused build-cache volume",
-        pick: (names: string[], containers: DockerContainer[]) => ({
-            volumes: cacheVolumes(names, containers, words),
-            kept: [],
-        }),
-    };
-    return freeVolumes(step, context, say, docker);
-}
-
-function freeVolumes(
+/** Remove the volumes `step` picks until `context.stop()`, largest first; how many went. Shared by steps 1 and 5. */
+export function freeVolumes(
     step: VolumeStep,
     context: BuildVolumeContext,
     say: (line: string) => void,

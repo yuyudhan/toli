@@ -34,9 +34,9 @@ export type CapacityConfig = {
      */
     diskBuildTools?: string[];
     /**
-     * Words whose presence in a Docker volume's name (case-insensitive) marks it a build cache: one no container
-     * mounts goes before any checkout's build folder (src/fleet/docker-volumes.ts; default target, cargo,
-     * node_modules). A name that looks like data never counts.
+     * Cache names: a Docker volume whose name is one, or ends in `_<name>` (case-insensitive), is a build cache; one
+     * no container mounts goes before any checkout's build folder (src/fleet/cache-volumes.ts; default target,
+     * node_modules, cargo_target, cargo_registry, cargo_git). A name that looks like data never counts.
      */
     diskCacheVolumes?: string[];
     /**

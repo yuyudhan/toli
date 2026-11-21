@@ -37,6 +37,7 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { out, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
+import { cacheVolumeNames, freeCacheVolumes } from "./cache-volumes.ts";
 import { wipeNow } from "./cargo-lock.ts";
 import { containerUseOnce } from "./container-mounts.ts";
 import { diskKeepSetting } from "./disk-alert.ts";
@@ -68,7 +69,7 @@ import {
     releaseKeeper,
 } from "./disk-state.ts";
 import { pruneDocker } from "./docker-prune.ts";
-import { diskCacheVolumes, freeBuildVolumes, freeCacheVolumes } from "./docker-volumes.ts";
+import { freeBuildVolumes } from "./docker-volumes.ts";
 import { targetsInUse } from "./live-builds.ts";
 import { freeRunWorktrees } from "./no-mistakes-runs.ts";
 import { removeTree } from "./remove-tree.ts";
@@ -325,8 +326,8 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         freeRunWorktrees({ dryRun, checkouts, enough, remove, say });
         // 1, before any checkout's build folder: Docker volumes of build caches no container uses, running or stopped
         // (T2232: a release lane's 120 GB target went twice while an unused 112 GB cargo-target volume stayed).
-        if (!enough() && freeCacheVolumes({ dryRun, free, stop: enough, simulate }, say, diskCacheVolumes(machine)) > 0)
-            log.open();
+        const cache = { names: cacheVolumeNames(machine.capacity?.diskCacheVolumes), machine: machine.name };
+        if (!enough() && freeCacheVolumes({ dryRun, free, stop: enough, simulate }, say, cache) > 0) log.open();
         // 1 and 2: idle checkouts. The target wipe still takes cargo's locks once, for builds run from elsewhere.
         const wipeTarget: DeleteIt = (dir, dry) => wipeNow(dir.path, dry, pauseHold);
         idleTier(1, ["target"], wipeTarget);

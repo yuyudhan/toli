@@ -4,15 +4,15 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { KeepReport } from "../src/fleet/disk.ts";
-import { type Holders, softHold } from "../src/fleet/disk-scan.ts";
 import {
+    cacheVolumeNames,
     cacheVolumes,
     DEFAULT_CACHE_VOLUME_WORDS,
-    type DockerApi,
-    type DockerContainer,
     freeCacheVolumes,
-} from "../src/fleet/docker-volumes.ts";
+} from "../src/fleet/cache-volumes.ts";
+import type { KeepReport } from "../src/fleet/disk.ts";
+import { type Holders, softHold } from "../src/fleet/disk-scan.ts";
+import type { DockerApi, DockerContainer } from "../src/fleet/docker-volumes.ts";
 import { buildOutput, keeperBox, keeperTest, setCapacity } from "./disk-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
 
@@ -67,9 +67,50 @@ describe("unused build-cache volumes", () => {
             "app_backend_cargo_target",
         ]);
         // capacity.diskCacheVolumes names other caches.
-        expect(cacheVolumes(names, containers, ["BUILD-CACHE"]).map((volume) => volume.name)).toEqual([
+        expect(cacheVolumes(names, containers, ["build-cache"]).map((volume) => volume.name)).toEqual([
             "ci_build-cache",
         ]);
+    });
+
+    // T2232 round 2: a cache word anywhere in the name took compose data volumes of a project named after one.
+    test("only a last name segment that is exactly a cache name counts; everything else is kept", () => {
+        const kept = [
+            "cargo-api_grafana",
+            "cargo-api_keycloak",
+            "cargo_wal",
+            "cargo_gitea",
+            "target-app_grafana",
+            "retarget_home",
+            "cargo_home_ssh_keys",
+            "myproj_targets_config",
+            "app_cache",
+            "hf_cache",
+            "x_cargo",
+            "x_mytarget",
+        ];
+        const caches = [
+            "acme_backend_cargo_target",
+            "x_target",
+            "x_node_modules",
+            "x_cargo_registry",
+            "x_cargo_target",
+            "target",
+        ];
+        const picked = cacheVolumes([...kept, ...caches], [], DEFAULT_CACHE_VOLUME_WORDS).map((volume) => volume.name);
+        expect(picked).toEqual(caches);
+        // A custom name opts its own caches in, still only as the whole last segment(s).
+        expect(
+            cacheVolumes(["app_cache", "hf_cache", "cache_db_x", "x_cachex"], [], ["cache"]).map((v) => v.name),
+        ).toEqual(["app_cache", "hf_cache"]);
+    });
+
+    const defaults = { names: DEFAULT_CACHE_VOLUME_WORDS, machine: "m1" };
+
+    test("a malformed capacity.diskCacheVolumes is reported, never read as the defaults", () => {
+        expect(cacheVolumeNames(undefined)).toEqual(DEFAULT_CACHE_VOLUME_WORDS);
+        expect(cacheVolumeNames(["cargo_target"])).toEqual(["cargo_target"]);
+        for (const bad of ["target", [], [""], ["has space"], ["_target"], [3]])
+            expect(cacheVolumeNames(bad)).toContain("capacity.diskCacheVolumes must be");
     });
 
     test("largest first until free disk is back at the floor, through the Docker interface", () => {
@@ -83,7 +124,7 @@ describe("unused build-cache volumes", () => {
         };
         const lines: string[] = [];
         const context = { dryRun: false, free: () => free, stop: () => free >= 60, simulate: () => undefined };
-        expect(freeCacheVolumes(context, (line) => lines.push(line), DEFAULT_CACHE_VOLUME_WORDS, docker)).toBe(1);
+        expect(freeCacheVolumes(context, (line) => lines.push(line), defaults, docker)).toBe(1);
         expect(docker.removed).toEqual(["big_cargo_target"]);
         expect(lines).toContain(
             "removed docker volume big_cargo_target (112.2 GB), freed 112.2 GB (step 1: unused build-cache volume)",
@@ -102,7 +143,7 @@ describe("unused build-cache volumes", () => {
                 simulated += size;
             },
         };
-        expect(freeCacheVolumes(context, (line) => lines.push(line), DEFAULT_CACHE_VOLUME_WORDS, docker)).toBe(1);
+        expect(freeCacheVolumes(context, (line) => lines.push(line), defaults, docker)).toBe(1);
         expect(docker.removed).toEqual([]);
         expect(lines).toContain(
             "would remove docker volume big_cargo_target (112.2 GB, step 1: unused build-cache volume)",
@@ -110,7 +151,7 @@ describe("unused build-cache volumes", () => {
 
         const absent = fakeDocker({ big_cargo_target: 112.2 }, [], "not installed");
         const said: string[] = [];
-        expect(freeCacheVolumes(context, (line) => said.push(line), DEFAULT_CACHE_VOLUME_WORDS, absent)).toBe(0);
+        expect(freeCacheVolumes(context, (line) => said.push(line), defaults, absent)).toBe(0);
         expect(said).toEqual(["docker cache volumes: skipped (not installed)"]);
         expect(absent.removed).toEqual([]);
     });
@@ -226,6 +267,22 @@ describe("the keeper beside a release lane", () => {
                 expect(calls()).not.toContain(call);
         },
     );
+
+    keeperTest("a malformed capacity.diskCacheVolumes skips step 1 with an alert and removes no volume", () => {
+        const box = keeperBox();
+        const marker = join(box.root, "cargo-target.volume");
+        laneTree(box, 30, () => marker);
+        const calls = laneDocker(box, marker);
+        const config = join(box.root, "config", "machine.json");
+        const machine = JSON.parse(readFileSync(config, "utf8")) as Record<string, unknown>;
+        writeFileSync(config, JSON.stringify({ ...machine, capacity: { diskCacheVolumes: "cargo" } }));
+        const lines = keep(box).lines.join("\n");
+        expect(lines).toContain("docker cache volumes: skipped (config/machine.json capacity.diskCacheVolumes must be");
+        expect(calls().filter((call) => call.startsWith("volume rm"))).toEqual([]);
+        expect(existsSync(marker)).toBe(true);
+        const inbox = box.ok(["inbox", "list"]);
+        expect(inbox).toContain("disk keeper: capacity.diskCacheVolumes on m1 is malformed");
+    });
 
     keeperTest("with capacity.diskKeep false a jawan start removes no volume: low disk only alerts", () => {
         const box = keeperBox();

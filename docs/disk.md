@@ -123,9 +123,13 @@ it`; a done or dropped task's old jawan tag holds nothing, since that subagent l
    folder.
 
     Build-cache volumes come before any checkout's `target/` (T2232: a release lane's 120 GB target was wiped twice
-    while an unused 112 GB cargo-target volume sat beside it). A volume is one when its name holds a word of
-    `capacity.diskCacheVolumes` (case-insensitive; default `target`, `cargo`, `node_modules`), its name does not
-    look like data (the data words of step 5), and no container mounts it, running or stopped. Largest first, until
+    while an unused 112 GB cargo-target volume sat beside it). A volume is one only by an exact name rule, failing
+    closed: its name is one of the cache names in `capacity.diskCacheVolumes`, or ends in `_<name>`, that is, its last
+    `_`-separated segment (two for a name like `cargo_target`) after the compose `<project>_` prefix is exactly that
+    name, case-insensitive (default `target`, `node_modules`, `cargo_target`, `cargo_registry`, `cargo_git`). So
+    `x_target` and `app_backend_cargo_target` are caches, while `cargo-api_grafana`, `cargo_wal`, `retarget_home` and
+    `myproj_targets_config` are not. It must also not look like data (the data words of step 5), and no container
+    may mount it, running or stopped. Largest first, until
     free space is back at the floor
     (`removed docker volume <name> (104.5 GB), freed 104.0 GB (step 1: unused build-cache volume)`). Only where
     Docker answers (`docker cache volumes: skipped (daemon not reachable)`), never while a pull or build runs; a
@@ -396,7 +400,7 @@ still shows up in `disk keep` and `doctor`.
         "diskKeepGB": 60,
         "diskSweepStaleMinutes": 180,
         "diskBuildTools": ["my-queue"],
-        "diskCacheVolumes": ["target", "cargo", "node_modules"]
+        "diskCacheVolumes": ["target", "node_modules", "cargo_target", "cargo_registry", "cargo_git"]
     }
 }
 ```
@@ -409,9 +413,11 @@ full disk") deletes it (a positive number of minutes; at 1440 or more, Linux `re
 cargo from above its workspaces: while one runs, a target in a workspace it works in, above or names counts as in
 use. An entry is a program name, matched against every word of a command line by file name (`my-queue` also
 matches a script `/opt/tools/my-queue.ts`), or several words that must follow each other (`my-tool queue`).
-`diskCacheVolumes` (default `["target", "cargo", "node_modules"]`) lists the words that mark a Docker volume a build
-cache by its name, case-insensitive: one no container mounts goes in step 1, before any checkout's `target/`. A name
-that looks like data never counts, whatever word it holds.
+`diskCacheVolumes` (default `["target", "node_modules", "cargo_target", "cargo_registry", "cargo_git"]`) lists the
+cache names of step 1: a Docker volume whose name is one or ends in `_<name>` is a build cache, and one no container
+mounts goes before any checkout's `target/`. A name that looks like data never counts. Each entry is name segments
+joined by `_` (`cargo_target`); anything else (not a non-empty list, an empty or spaced entry) skips step 1, says so
+in `logs/disk.log` and posts one inbox item until it is fixed.
 
 Each machine reads its own `config/machine.json`. Machine-private cleanup scripts ([helpers.md](helpers.md)) can
 still run on top of the keeper, but none of them may refuse work on low disk.
