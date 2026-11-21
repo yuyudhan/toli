@@ -55,7 +55,7 @@ Next block) and with `bin/toli wake`.
 
     bin/toli spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>]
                    [--model <m>] [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release]
-                   [--cwd <dir>] [--max-time <minutes>] [--now] [--replace] [--dry-run] [--json]
+                   [--cwd <dir>] [--max-time <minutes>] [--now] [--first] [--replace] [--dry-run] [--json]
     bin/toli runs [--json] [--active]
     bin/toli run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
 
@@ -97,7 +97,12 @@ recorded outside a lead session, stopped reporting (`has not reported running si
 reported running`) for a re-dispatch, after the grace minutes. `spawn` with every slot busy
 records the run as `queued` (shown by `bin/toli runs`) and returns; queued runs start oldest first as slots free,
 from the supervisor of each run that ends and from the minute tick (`bin/toli job tick`). `--now` starts the run
-regardless, for the lead's explicit use. `run kill` on a queued run cancels it; a task naming that run as its jawan
+regardless, for the lead's explicit use. `--first` puts an urgent run at the head of the queue instead: it starts
+ahead of every run queued without it, and several `--first` runs start in the order they were queued. A continuation
+of a `--first` run (a stall, time-limit or network-fault resume) keeps it. It only reorders the queue: a running run is
+never stopped, and a `--first` run still waits for a disk or network hold and for its `notBefore`. `bin/toli runs`
+(and the digest) end each queued run's line with its place, `queue 1 (--first)`, `queue 2`, in start order. `run
+kill` on a queued run cancels it; a task naming that run as its jawan
 goes back to queued with no jawan, ready for the next dispatch. A queued run whose task is done or dropped never
 starts: `task drop`, `task done` and `task handback` cancel the task's queued runs and name each, and the queue drain
 reads each task again before a start, so a task closed elsewhere (or in a race) has its run cancelled too, logged in

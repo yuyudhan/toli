@@ -40,7 +40,17 @@ import { continueRun } from "./continue.ts";
 import { jawanSlots, startOrQueue, stopRun } from "./launch.ts";
 import { heldHost } from "./network.ts";
 import { briefStallMinutes } from "./progress.ts";
-import { ACTIVE, activeRuns, type JawanRun, listRuns, loadRun, modelText, runLine, updateRun } from "./runs.ts";
+import {
+    ACTIVE,
+    activeRuns,
+    type JawanRun,
+    listRuns,
+    loadRun,
+    modelText,
+    runLine,
+    runLines,
+    updateRun,
+} from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
@@ -59,6 +69,8 @@ export type SpawnOptions = {
     maxMinutes?: number | undefined;
     /** Start even when every jawan slot is busy (the lead's explicit `--now`). */
     now?: boolean | undefined;
+    /** Queue ahead of the runs queued without it, behind earlier `--first` ones (`--first`); nothing running stops. */
+    first?: boolean | undefined;
     /** Supersede the task's live run (stopped as `run kill` does) instead of refusing (`--replace`). */
     replace?: boolean | undefined;
     /** A section added after the brief (and its Workspace block): toli's re-dispatch of a dead run's task. */
@@ -183,6 +195,7 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
             baseBrief: resolved.brief,
             extra: options.extra ?? "",
             ...(replaced.length === 0 ? {} : { replaces: replaced }),
+            ...(options.first === true ? { first: true } : {}),
         },
         { now: options.now === true },
     );
@@ -193,10 +206,10 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
     return run;
 }
 
-/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--tier t] [--work w] [--cwd d] [--max-time min] [--now] [--replace] [--dry-run]`. */
+/** `toli spawn --brief <file> [--harness h] [--task T<n>] [--project p] [--model m] [--tier t] [--work w] [--cwd d] [--max-time min] [--now] [--first] [--replace] [--dry-run]`. */
 export function spawnCommand(argv: string[]): void {
     const args = new Args(argv, {
-        booleans: ["json", "now", "replace", "dry-run"],
+        booleans: ["json", "now", "first", "replace", "dry-run"],
         values: ["harness", "brief", "task", "project", "model", "tier", "work", "cwd", "max-time"],
     });
     args.maxPositional(0);
@@ -215,6 +228,7 @@ export function spawnCommand(argv: string[]): void {
         cwd: args.str("cwd"),
         maxMinutes: parseMinutes(args.str("max-time")),
         now: args.bool("now"),
+        first: args.bool("first"),
         replace: args.bool("replace"),
     };
     if (args.bool("dry-run")) {
@@ -244,7 +258,8 @@ export function spawnCommand(argv: string[]): void {
                 : host !== null
                   ? `the model API host ${host} does not resolve; it starts once it does (\`spawn --now\` starts it anyway)`
                   : `all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees`;
-        out(`queued ${run.id}: ${why} (\`bin/toli runs\`). Log ${relative(paths.root(), run.logPath)}`);
+        const first = run.first === true ? "; --first: it starts ahead of the runs queued without it" : "";
+        out(`queued ${run.id}: ${why}${first} (\`bin/toli runs\`). Log ${relative(paths.root(), run.logPath)}`);
     } else
         out(
             `spawned ${run.id}: ${modelText(run)} in ${run.cwd} (supervisor pid ${run.supervisorPid}); log ${relative(paths.root(), run.logPath)}`,
@@ -265,7 +280,7 @@ export function runsCommand(argv: string[]): void {
         out(args.bool("active") ? "no active jawan runs" : "no jawan runs");
         return;
     }
-    for (const run of runs) out(runLine(run));
+    for (const line of runLines(runs)) out(line);
 }
 
 /**

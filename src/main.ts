@@ -136,7 +136,7 @@ const USAGE = `usage: bin/toli <command> [args]
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
         [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
-        [--now] [--replace] [--dry-run] [--json]
+        [--now] [--first] [--replace] [--dry-run] [--json]
   runs [--json] [--active]
   run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]

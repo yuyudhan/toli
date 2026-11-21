@@ -28,7 +28,7 @@ import {
     modelTotalLine,
     modelTotalsToday,
     RUNNING,
-    runLine,
+    runLines,
 } from "../jawans/runs.ts";
 import { loadJobState } from "../jobs/jobs.ts";
 import { waitingLines } from "../jobs/outbox-admin.ts";
@@ -316,7 +316,7 @@ function render(digest: Digest, notices: readonly string[] = [], resurface: Read
     lines.push(
         "",
         `jawan runs (${runs.length}):`,
-        ...(runs.length === 0 ? ["  none"] : runs.map((entry) => `  ${runLine(entry)}`)),
+        ...(runs.length === 0 ? ["  none"] : runLines(runs).map((line) => `  ${line}`)),
     );
     const models = digest.models ?? [];
     lines.push(

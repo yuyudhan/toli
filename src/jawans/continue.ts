@@ -83,6 +83,7 @@ export function continueRun(run: JawanRun, options: ContinueOptions): JawanRun {
             resumeCount: number,
             resumeReason: options.reason,
             ...(options.notBefore === undefined ? {} : { notBefore: options.notBefore }),
+            ...(run.first === true ? { first: true } : {}),
         },
         { now: options.now },
     );

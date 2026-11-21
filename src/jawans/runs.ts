@@ -58,6 +58,8 @@ export type JawanRun = {
     queuedAt?: string;
     /** The earliest a queued run may start: a network-fault requeue waits out NETWORK_REQUEUE_MINUTES (network.ts). */
     notBefore?: string;
+    /** `spawn --first`: queued ahead of the runs queued without it (and kept by its continuations). */
+    first?: true;
     /** Resume chain: the run this one continues, and its place in the chain (1 for the first continuation). */
     resumeOf?: string;
     resumeCount?: number;
@@ -138,6 +140,21 @@ export function activeRuns(): JawanRun[] {
     return listRuns().filter((run) => ACTIVE.includes(run.status));
 }
 
+/**
+ * The queued runs in the order the queue starts them: `--first` runs ahead of the others, each group oldest queued
+ * first. A run not due yet (`notBefore`) keeps its place but is skipped until it is (src/jawans/launch.ts).
+ */
+export function queueOrder(runs: JawanRun[]): JawanRun[] {
+    return runs
+        .filter((run) => run.status === "queued")
+        .sort(
+            (a, b) =>
+                Number(b.first === true) - Number(a.first === true) ||
+                (a.queuedAt ?? a.startedAt).localeCompare(b.queuedAt ?? b.startedAt) ||
+                a.id.localeCompare(b.id),
+        );
+}
+
 /** Signal the run's whole process group (spawned detached), falling back to the single pid. */
 export function killGroup(pid: number, signal: NodeJS.Signals): void {
     try {
@@ -210,12 +227,22 @@ export function modelText(run: Pick<JawanRun, "harness" | "model" | "tier">): st
     return `${run.harness} ${run.model ?? "default"}${tier}`;
 }
 
-/** `<id> <status> <harness model (tier)> <task project> <age> <log>`, tab-separated. */
-export function runLine(run: JawanRun): string {
+/**
+ * `<id> <status> <harness model (tier)> <task project> <age> <log>`, tab-separated; a queued run adds its `place` in
+ * the queue (queueOrder, from 1): `queue 2 (--first)`.
+ */
+export function runLine(run: JawanRun, place?: number): string {
     const where = [run.task, run.project].filter((part) => part !== null).join(" ");
     const minutes = Math.max(0, Math.round((now().getTime() - Date.parse(run.startedAt)) / 60_000));
     const age = minutes < 120 ? `${minutes}m ago` : `${Math.round(minutes / 60)}h ago`;
-    return `${run.id}\t${run.status}\t${modelText(run)}\t${where === "" ? "-" : where}\t${age}\t${relative(paths.root(), run.logPath)}`;
+    const queue = place === undefined ? "" : `\tqueue ${place}${run.first === true ? " (--first)" : ""}`;
+    return `${run.id}\t${run.status}\t${modelText(run)}\t${where === "" ? "-" : where}\t${age}\t${relative(paths.root(), run.logPath)}${queue}`;
+}
+
+/** runLine of each run, queued ones with their place in the queue. */
+export function runLines(runs: JawanRun[]): string[] {
+    const places = new Map(queueOrder(runs).map((run, index) => [run.id, index + 1]));
+    return runs.map((run) => runLine(run, places.get(run.id)));
 }
 
 /** One harness and model's share of the runs started today: `bin/toli digest` and `bin/toli resources --json`. */

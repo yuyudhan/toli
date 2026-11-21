@@ -197,7 +197,7 @@ the interactive Sardar's subagents.
 
     spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
           [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
-          [--now] [--replace] [--dry-run] [--json]
+          [--now] [--first] [--replace] [--dry-run] [--json]
     runs [--json] [--active]
     run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
     resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
@@ -209,6 +209,9 @@ the interactive Sardar's subagents.
 - `spawn` starts a jawan in the background on any harness and returns a run id; `runs` and `run` follow it. With
   every jawan slot busy (`capacity.maxRuns`, shared with the lead's native subagents), or while the model API host a
   run failed to resolve still does not, the run is queued and starts when it can; `--now` starts it anyway.
+  `--first` queues it ahead of the runs queued without it (behind earlier `--first` runs; its continuations keep it):
+  it only reorders the queue, never stops a running run, and still waits for the network hold and `notBefore`.
+  `runs` shows each queued run's place (`queue 1 (--first)`).
   A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
   Runs have no time limit unless given `--max-time`; a run that shows no progress for `capacity.stallMinutes`
   (default 30, or its brief's `Stall: <minutes>` line), or uses its explicit limit, without a report is resumed in the same omp session

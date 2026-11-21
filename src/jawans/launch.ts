@@ -1,6 +1,7 @@
 // Starting spawned jawan runs within the machine's jawan slots (config/machine.json capacity.maxRuns), which native
 // subagent jawans share. A new run is recorded, then started at once when a slot is free (or with `spawn --now`),
-// otherwise left `queued`; queued runs start oldest first as slots free, from the supervisor of each finishing run and
+// otherwise left `queued`; queued runs start as slots free, `spawn --first` runs ahead of the others and each oldest
+// first (runs.ts queueOrder), from the supervisor of each finishing run and
 // from the minute tick. Before any start, the disk keeper frees build output when the disk is low (src/fleet/disk.ts):
 // low disk holds a run only when the keeper is left with build folders in use alone (a disk hold, disk-hold.ts). A
 // model API host a run failed to resolve holds runs too, until it resolves (src/jawans/network.ts): runs queue
@@ -40,6 +41,7 @@ import {
     killRun,
     listRuns,
     loadRun,
+    queueOrder,
     RUNNING,
     runMinuteMs,
     SLOTS_LOCK,
@@ -79,6 +81,8 @@ export type NewRun = {
     replaces?: string[] | undefined;
     /** The earliest the run may start (a network-fault requeue); absent starts as soon as a slot is free. */
     notBefore?: string | undefined;
+    /** `spawn --first`: queued ahead of the runs queued without it; a continuation keeps it. */
+    first?: boolean | undefined;
 };
 
 function newRunId(at: Date): string {
@@ -187,6 +191,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         ...(input.resumeReason === undefined ? {} : { resumeReason: input.resumeReason }),
         ...(input.replaces === undefined ? {} : { replaces: input.replaces }),
         ...(input.notBefore === undefined ? {} : { notBefore: input.notBefore }),
+        ...(input.first === true ? { first: true as const } : {}),
     };
     mkdirSync(paths.jawansDir(), { recursive: true });
     writeJsonAtomic(paths.jawanRecord(id), run);
@@ -327,7 +332,8 @@ function closedTasks(): Map<string, string> {
 }
 
 /**
- * Start queued runs, oldest first, while jawan slots are free, and none before its earliest start. A queued run whose
+ * Start queued runs in queue order (runs.ts queueOrder: `--first` runs ahead, each oldest first) while jawan slots are
+ * free, and none before its earliest start. A queued run whose
  * task is done or dropped by now (a drop elsewhere, a handback, or a race with `task drop`) is cancelled instead, never
  * started; the backlog is read under the slots lock, which `task drop` takes to cancel. A run that cannot start is
  * recorded failed. `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached). A
@@ -343,12 +349,7 @@ export function startQueued(options: { diskKept?: boolean } = {}): DrainResult {
         const result: DrainResult = { started: [], failed: [], cancelled: [], held: hold?.line ?? null };
         if (hold !== null) return result;
         const at = now();
-        const queued = listRuns()
-            .filter((run) => run.status === "queued" && startDue(run, at))
-            .sort(
-                (a, b) =>
-                    (a.queuedAt ?? a.startedAt).localeCompare(b.queuedAt ?? b.startedAt) || a.id.localeCompare(b.id),
-            );
+        const queued = queueOrder(listRuns()).filter((run) => startDue(run, at));
         const closed = closedTasks();
         let free = jawanSlots() - busySlots();
         for (const run of queued) {
