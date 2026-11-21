@@ -217,10 +217,22 @@ export function isLockFile(file: string): boolean {
     return name === "Cargo.lock" || name === "bun.lock";
 }
 
-/** Refuse a staged Cargo.lock or bun.lock that does not parse (and a Cargo.lock that cargo rejects in the staged tree). */
-export function checkLockFiles(attempt: Attempt, files: string[]): void {
+/**
+ * Refuse a staged Cargo.lock or bun.lock that does not parse (and a Cargo.lock that cargo rejects in the staged tree).
+ * `merge`: the merged ref and the files it changes that the commit leaves as merged; a refused lock file among them
+ * is the merge's own text, so the refusal says how to land a fixed one in the merge commit.
+ */
+export function checkLockFiles(
+    attempt: Attempt,
+    files: string[],
+    merge: { ref: string; untouched: string[] } | null = null,
+): void {
     for (const file of files) {
         if (!isLockFile(file)) continue;
+        const fix =
+            merge?.untouched.includes(file) === true
+                ? `\n${file} is as merging ${merge.ref} left it: regenerate it in the working tree and name the fixed lock file: -- ${file} (it lands in the merge commit, listed in a Merge-amended: trailer)`
+                : "";
         const name = basename(file);
         const staged = attempt.git(["show", `:${file}`]);
         if (staged.code !== 0) continue; // deleted in this commit
@@ -246,7 +258,7 @@ export function checkLockFiles(attempt: Attempt, files: string[]): void {
         } catch (error) {
             throw new ToliError(
                 `refusing: the staged ${file} does not parse (${error instanceof Error ? error.message : String(error)}); ` +
-                    "regenerate it (cargo generate-lockfile / bun install) instead of merging it by hand",
+                    `regenerate it (cargo generate-lockfile / bun install) instead of merging it by hand${fix}`,
             );
         }
         if (name !== "Cargo.lock") continue;
@@ -260,7 +272,9 @@ export function checkLockFiles(attempt: Attempt, files: string[]): void {
                 `refusing: ${file} is staged but cargo is not on PATH to check it (cargo metadata --locked)`,
             );
         if (cargo.code !== 0)
-            throw new ToliError(`refusing: cargo metadata --locked rejects the staged ${file}:\n${tail(cargo.stderr)}`);
+            throw new ToliError(
+                `refusing: cargo metadata --locked rejects the staged ${file}:\n${tail(cargo.stderr)}${fix}`,
+            );
     }
 }
 

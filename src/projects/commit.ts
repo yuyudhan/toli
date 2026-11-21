@@ -13,7 +13,8 @@
 // conflicted path must be named and marker-free, and the usual checks run on the result. A named path the merge
 // conflicts on or changes that is in neither the working tree nor the merge result is resolved by deleting it. A
 // resolved merge may also change paths the merge changed cleanly (an evil merge: fixes the bare result needs, by name
-// or patch); they land in the same commit, listed in `Merge-amended:` trailers. A clean merge refuses such edits.
+// or patch); they land in the same commit, listed in `Merge-amended:` trailers. A clean merge refuses such edits
+// except to a lock file it left stale (named, with or without `--resolved`, or patched), still lock-checked.
 // A `git merge` in progress (MERGE_HEAD) must be landed with `--merge <its sha>`: the commit then adopts it (merged
 // files not named must match the merge result in the working tree, named ones may change it) and ends it with
 // `git merge --quit`. Any other commit is refused while it is in progress, since it would drop the merged parent.

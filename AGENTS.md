@@ -203,8 +203,9 @@ commit`: it builds a private index from the branch tip, commits only the named p
    branch that moved twice meanwhile, or a message the project's commit-msg hook rejects, and strips AI co-author
    trailers. A `git merge` in progress (MERGE_HEAD) lands only with `bin/toli commit ... --merge <its sha>` (plus
    `--resolved -- <conflicted paths>` after conflicts), which records both parents; any other commit is refused
-   until then. A `--resolved` merge may also name (or `--patch`) fixes to paths the merge changed cleanly; they land in
-   the same merge commit, listed in `Merge-amended:` trailers (docs/development.md). Pushing a task branch and opening its
+   until then. A `--resolved` merge may also name (or `--patch`) fixes to paths the merge changed cleanly, and a clean
+   merge a fixed lock file it left stale; they land in the same merge commit, listed in `Merge-amended:` trailers
+   (docs/development.md). Pushing a task branch and opening its
    PR/MR still need the user's word for that change unless the project has an explicit standing grant (`standing`
    push/pr, set only on their word with `bin/toli project set <p> --standing-push yes --standing-pr yes`).
 7. Parallel subagents on the same project are allowed, even when their files overlap, because the user optimizes
