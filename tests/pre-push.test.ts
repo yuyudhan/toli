@@ -46,8 +46,11 @@ function clone(): { dir: string; push: (check: number, run: number, bun?: number
         ].join("\n"),
     );
     chmodSync(join(dir, "bin", "toli"), 0o755);
+    // The hook decides TOLI_DEV itself and the stub logs it, so a caller's (toli's own pre-push gate runs this suite
+    // with TOLI_DEV=1) must not reach the hook.
+    const { TOLI_DEV: _callerDev, ...callerEnv } = process.env;
     const env = {
-        ...process.env,
+        ...callerEnv,
         ...GIT_ENV,
         PATH: [stubs, dirname(process.execPath), "/usr/bin", "/bin"].join(":"),
     };
