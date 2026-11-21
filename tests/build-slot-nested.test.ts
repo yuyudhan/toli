@@ -1,8 +1,10 @@
 // A build inside a heavy-build slot runs in that slot (src/fleet/enclosing-slot.ts `enclosingSlot`): a nested
 // `bin/toli build-slot` or a cargo through the shim never queues behind the slot its own ancestor holds, while a build
-// whose TOLI_BUILD_SLOT names a slot nobody holds takes a slot of its own like any other.
+// whose TOLI_BUILD_SLOT names a slot nobody holds takes a slot of its own like any other. Nor does the build take a
+// second slot's room through the compilations a compiler daemon (sccache's server) runs for it (T2244).
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { CARGO_SHIM, holdSlot, type Run, runs, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
 import { TOLI_BIN } from "./helpers.ts";
 
@@ -52,5 +54,48 @@ describe("nested heavy builds", () => {
         expect(a).toMatchObject({ label: "a", slot: "1", args: "build" });
         expect(b).toMatchObject({ label: "b", slot: "1", args: "check" });
         expect((b as Run).start).toBeGreaterThanOrEqual((a as Run).end);
+    }, 30_000);
+
+    test("a build-slot around the cargo shim, compiling through sccache's server, takes one slot in all", async () => {
+        const { box, log } = slotBox(2, 3);
+        // The shape that filled a two-slot Linux worker: `bin/toli build-slot -- cargo test`, cargo the shim (a nested
+        // build-slot), every crate compiled by sccache's server, a daemon outside the build's process tree.
+        const outer = start(box, toliArgs("build-slot", "--", "cargo", "test"), { STUB_LABEL: "a", STUB_SLEEP: "150" });
+        await until("the nested build", () => runs(log).some((run) => run.label === "a"));
+        const record: unknown = JSON.parse(readFileSync(join(box.root, "state", "build-slots", "1.lock"), "utf8"));
+        const holder = typeof record === "object" && record !== null && "pid" in record ? Number(record.pid) : 0;
+        expect(holder).toBeGreaterThan(0);
+        const compile = "--crate-name audit_log --edition=2021 -C metadata=aa1 -C codegen-units=1";
+        writeFileSync(
+            join(box.root, ".process-table"),
+            [
+                `${holder} 1 Sl bun bin/toli build-slot -- cargo test`,
+                `9001 ${holder} S /bin/sh bin/shims/toli-rustc-wrapper rustc ${compile}`,
+                `9002 9001 S sccache rustc ${compile}`,
+                "9100 1 Sl /home/u/.cargo/bin/sccache",
+                `9101 9100 Rl rustc ${compile}`,
+                "",
+            ].join("\n"),
+        );
+        const second = start(box, toliArgs("build-slot", "--", "cargo", "check"), {
+            STUB_LABEL: "b",
+            STUB_SLEEP: "150",
+        });
+        await until("the second build", () => runs(log).some((run) => run.label === "b"));
+        expect(second.stderr.join("")).not.toContain("waiting");
+        const third = start(box, toliArgs("build-slot", "--", "cargo", "build"), { STUB_LABEL: "c" });
+        await until("the third build waiting", () => third.stderr.join("").includes("waiting for a heavy-build slot"));
+        writeFileSync(`${log}.done-a`, "");
+        const first = await outer.done;
+        writeFileSync(join(box.root, ".process-table"), ""); // The build's compilations end with it.
+        writeFileSync(`${log}.done-b`, "");
+        const [two, three] = await Promise.all([second.done, third.done]);
+        expect([first.code, two.code, three.code]).toEqual([0, 0, 0]);
+        expect(first.stderr).not.toContain("waiting");
+        expect(runs(log).map((run) => [run.label, run.slot, run.args])).toEqual([
+            ["a", "1", "test"],
+            ["b", "2", "check"],
+            ["c", expect.stringMatching(/^[12]$/), "build"],
+        ]);
     }, 30_000);
 });

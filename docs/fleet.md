@@ -291,11 +291,12 @@ A slot's command may itself wait on a lock of its own: a project's recipe under 
 that waits for the project's test-database lock, held by a plain `just test` elsewhere whose cargo, through the shim,
 waits for that slot. Neither would ever move. So the first waiter in line watches each busy slot's command (every
 process below the `build-slot` or gate process holding it; for a cargo the rustc wrapper holds a slot for, that cargo
-and everything below it) in the process table each time it looks, and a slot whose command ran (on a CPU, runnable or
-in disk I/O; a process runs when any of its threads does, read on Linux from `/proc/<pid>/task/*/stat`, since `ps`
-shows only the main thread and rustc, a test binary's harness, mold and lld work on other threads while it sleeps) in
-at most 5% of those looks over the last minute does not count: the waiter takes a slot numbered above
-`capacity.buildSlots` beside it and says so once, naming the slot, its holder's pid and directory:
+and everything below it; and a compiler daemon's rustc compiling for one of them, see below) in the process table each
+time it looks, and a slot whose command ran (on a CPU, runnable or in disk I/O; a process runs when any of its threads
+does, read on Linux from `/proc/<pid>/task/*/stat`, since `ps` shows only the main thread and rustc, a test binary's
+harness, mold and lld work on other threads while it sleeps) in at most 5% of those looks over the last minute does
+not count: the waiter takes a slot numbered above `capacity.buildSlots` beside it and says so once, naming the slot,
+its holder's pid and directory:
 `heavy-build slot 1 (pid 4242 in /path) has run nothing for 60s, maybe waiting on a lock this build holds; building
 beside it`. A command that sleeps, waits on a socket or a lock is idle; one that compiles, links or runs tests is not.
 The slot stays lent while that build runs: once the idle command wakes, its next build (a cargo through the shim or
@@ -442,9 +443,15 @@ says what it waits for once:
 `bin/toli resources` counts them in `builds <busy>/<total>` and names each (`buildsOutsideSlots` in `--json`, with
 its pid, command, directory on Linux and the crates compiling), so a lead finds the build to stop or wait for. A
 build outside the slots is seen only while it compiles: test binaries it runs after its last rustc, or a server it
-started with `cargo run`, are not heavy builds. A wrapper whose rustc runs under its own daemon (sccache's server) is
-counted as one build outside the slots while it compiles, even for a build in a slot. A live-stack checkout's build,
-which skips the slots, counts as a build outside them while it compiles, so a build that wants a slot waits for it.
+started with `cargo run`, are not heavy builds. A wrapper whose rustc runs under its own daemon (sccache's server
+starts every compilation its clients ask for, outside their process trees) is matched to the build that asks for it:
+a daemon's rustc with no cargo above it belongs to the build whose process (the sccache client, the rustc wrapper)
+asks for the same compilation, the same crate name and cargo `-C metadata` hash. So a build in a slot compiling
+through sccache takes its one slot and never counts a second time as a build outside the slots (on a machine with two
+slots it used to fill both, T2244), and its slot never looks idle while the daemon compiles for it. A daemon's
+compilation no build in a slot asks for counts as a build outside the slots while it compiles. A live-stack
+checkout's build, which skips the slots, counts as a build outside them while it compiles, so a build that wants a
+slot waits for it.
 
 #### Dev stacks and heavy builds
 

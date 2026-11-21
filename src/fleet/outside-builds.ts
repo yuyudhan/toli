@@ -6,9 +6,14 @@
 // (src/fleet/build-queue.ts), so it waits instead of piling a second build on top, and `bin/toli resources` lists them.
 // A build is the outermost cargo above its compiling rustc processes (its own process when no cargo is above it). It is
 // inside a slot when a slot holder (the pid in a slot's lock file, or a cargo whose rustc-wrapper holder holds a slot,
-// `cargo-<pid>.held`) is among its ancestors. Stopped processes (SIGSTOP) and processes in a frozen cgroup (a `docker
-// pause`d container, src/fleet/stack-pause.ts) use no CPU and are never counted, or a stack a build paused would hold
-// up the next build. The process table is `ps`'s; `TOLI_PROCESS_TABLE` names a file in its format instead (tests).
+// `cargo-<pid>.held`) is among its ancestors. A rustc a compiler daemon runs (sccache's server, which starts every
+// compilation its clients ask for, outside their process trees) with no cargo above it belongs to the build whose
+// client asks for that very compilation (`compileKey`: crate name and cargo's metadata hash): inside a slot when that
+// client is, so a build in a slot never counts a second time as a build outside the slots, and its slot never looks
+// idle while the daemon compiles for it (T2244). Stopped processes (SIGSTOP) and processes in a frozen cgroup (a
+// `docker pause`d container, src/fleet/stack-pause.ts) use no CPU and are never counted, or a stack a build paused
+// would hold up the next build. The process table is `ps`'s; `TOLI_PROCESS_TABLE` names a file in its format instead
+// (tests).
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { paths } from "../core/paths.ts";
@@ -131,6 +136,25 @@ function compiledCrate(proc: Proc): string | null {
     return crate === undefined || crate === PROBE_CRATE ? null : crate;
 }
 
+/**
+ * The compilation a command line asks for: its crate name and cargo's `-C metadata` hash (empty without one), the same
+ * in a compiler daemon's rustc as in the client (or the rustc wrapper) that asked for it; null when it names no crate
+ * or only the target-info probe's.
+ */
+function compileKey(argv: string[]): string | null {
+    let crate: string | undefined;
+    let metadata = "";
+    for (const [at, word] of argv.entries()) {
+        const next = argv[at + 1] ?? "";
+        if (word === "--crate-name") crate = next;
+        else if (word.startsWith("--crate-name=")) crate = word.slice("--crate-name=".length);
+        else if ((word === "-C" || word === "--codegen") && next.startsWith("metadata="))
+            metadata = next.slice("metadata=".length);
+        else if (word.startsWith("-Cmetadata=")) metadata = word.slice("-Cmetadata=".length);
+    }
+    return crate === undefined || crate === PROBE_CRATE ? null : `${crate} ${metadata}`;
+}
+
 /** `pid` and its ancestors, nearest first. */
 function lineage(table: ProcessTable, pid: number): number[] {
     const chain: number[] = [];
@@ -140,6 +164,30 @@ function lineage(table: ProcessTable, pid: number): number[] {
         current = current.ppid > 1 ? table.get(current.ppid) : undefined;
     }
     return chain;
+}
+
+/** The cargo processes above `chain`'s first process (its lineage), nearest first. */
+function cargosAbove(table: ProcessTable, chain: number[]): number[] {
+    return chain.slice(1).filter((pid) => programIs(table.get(pid)?.argv ?? [], (name) => CARGO.test(name)));
+}
+
+/**
+ * The compilations (`compileKey`) asked for by the processes whose lineage `belongs` accepts, so a compiler daemon's
+ * rustc for one of them is theirs (`daemonCompiles`).
+ */
+function compilesAskedBy(table: ProcessTable, belongs: (chain: number[]) => boolean): Set<string> {
+    const keys = new Set<string>();
+    for (const proc of table.values()) {
+        const key = compileKey(proc.argv);
+        if (key !== null && belongs(lineage(table, proc.pid))) keys.add(key);
+    }
+    return keys;
+}
+
+/** Whether compiler `proc` (lineage `chain`) is a compiler daemon's run of one of the compilations `asked`. */
+function daemonCompiles(table: ProcessTable, proc: Proc, chain: number[], asked: Set<string>): boolean {
+    const key = compiledCrate(proc) === null ? null : compileKey(proc.argv);
+    return key !== null && asked.has(key) && cargosAbove(table, chain).length === 0;
 }
 
 /**
@@ -168,13 +216,18 @@ function threadRunning(pid: number): boolean {
 
 /**
  * Whether a process below `pid` (or `pid` itself, with `withRoot`) runs now: its state (`ACTIVE_STAT`) or one of its
- * threads' (`threadRunning`). A command blocked on a lock, a socket, a pipe or a sleep does not; neither does one
- * stopped (SIGSTOP).
+ * threads' (`threadRunning`), and so does a compiler daemon's rustc for a compilation one of them asks for
+ * (`daemonCompiles`). A command blocked on a lock, a socket, a pipe or a sleep does not; neither does one stopped
+ * (SIGSTOP).
  */
 export function treeRunning(table: ProcessTable, pid: number, withRoot: boolean): boolean {
+    const below = (chain: number[]): boolean => (withRoot ? chain : chain.slice(1)).includes(pid);
+    const running = (proc: Proc): boolean => ACTIVE_STAT.test(proc.stat) || threadRunning(proc.pid);
+    for (const proc of table.values()) if (below(lineage(table, proc.pid)) && running(proc)) return true;
+    const asked = compilesAskedBy(table, below);
+    if (asked.size === 0) return false;
     for (const proc of table.values()) {
-        if (!(proc.pid === pid ? withRoot : lineage(table, proc.pid).slice(1).includes(pid))) continue;
-        if (ACTIVE_STAT.test(proc.stat) || threadRunning(proc.pid)) return true;
+        if (daemonCompiles(table, proc, lineage(table, proc.pid), asked) && running(proc)) return true;
     }
     return false;
 }
@@ -209,8 +262,9 @@ function frozen(pid: number): boolean {
 
 /**
  * The heavy builds running now outside every slot: those with a compiling rustc whose lineage holds none of `inside`
- * (slot holders and held cargos), and that are not `waiter`'s own ancestors (a build waiting for a slot from inside an
- * outside build, such as its build script's cargo, must never wait for the build it runs in).
+ * (slot holders and held cargos) and that no compiler daemon runs for a build inside them (`daemonCompiles`), and that
+ * are not `waiter`'s own ancestors (a build waiting for a slot from inside an outside build, such as its build script's
+ * cargo, must never wait for the build it runs in).
  */
 export function outsideBuilds(
     inside: readonly number[],
@@ -218,17 +272,16 @@ export function outsideBuilds(
     table: ProcessTable = processTable(),
 ): OutsideBuild[] {
     const insideSet = new Set(inside);
+    const inSlot = (chain: number[]): boolean => chain.some((pid) => insideSet.has(pid));
+    const askedInSlots = compilesAskedBy(table, inSlot);
     const waiterLine = new Set(waiter === null ? [] : lineage(table, waiter));
     const builds = new Map<number, OutsideBuild>();
     for (const proc of table.values()) {
         const crate = compiledCrate(proc);
         if (crate === null || /^[TtZ]/.test(proc.stat)) continue;
         const chain = lineage(table, proc.pid);
-        if (chain.some((pid) => insideSet.has(pid))) continue;
-        const cargos = chain
-            .slice(1)
-            .filter((pid) => programIs(table.get(pid)?.argv ?? [], (name) => CARGO.test(name)));
-        const root = cargos.at(-1) ?? proc.pid;
+        if (inSlot(chain) || daemonCompiles(table, proc, chain, askedInSlots)) continue;
+        const root = cargosAbove(table, chain).at(-1) ?? proc.pid;
         if (waiterLine.has(root) || frozen(proc.pid)) continue;
         const build = builds.get(root) ?? {
             pid: root,

@@ -41,6 +41,14 @@ everything below.
 
 ### Fixed
 
+- A heavy build compiling through sccache no longer takes two heavy-build slots. sccache's server, not the build's
+  cargo, starts each rustc, outside the build's process tree, so a waiter counted that rustc as a build outside the
+  slots: on a two-slot machine `bin/toli build-slot -- cargo test` (with its nested build-slot through the cargo shim,
+  which already reuses the outer slot) held one slot and filled the other, and every other build waited 30+ minutes.
+  A daemon's rustc with no cargo above it now belongs to the build whose sccache client or rustc wrapper asks for the
+  same compilation (crate name and cargo's `-C metadata` hash): it counts in that build's slot, keeps that slot from
+  looking idle while it compiles, and counts outside the slots only when no build in a slot asked for it
+  (docs/fleet.md "Builds outside the slots", T2244).
 - `bin/toli disk keep` run by hand or from a script (and `bin/toli doctor`) no longer hangs on macOS in its scan for
   build folders outside the clones. The scan opened `$TMPDIR/com.apple.replayd/TemporaryItems`, which macOS guards
   with a privacy prompt; the read waits for an answer that never comes and Bun retries it forever. Folders named

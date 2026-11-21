@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { outsideBuilds } from "../src/fleet/outside-builds.ts";
+import { outsideBuilds, processTable, treeRunning } from "../src/fleet/outside-builds.ts";
 import type { Resources } from "../src/fleet/resources.ts";
 import { holdSlot, type Run, runs, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
 import { tempDir } from "./helpers.ts";
@@ -114,6 +114,39 @@ describe("heavy builds outside the slots", () => {
         writeFileSync(join(cgroups, "system.slice", "docker-abc.scope", "cgroup.events"), "populated 1\nfrozen 0\n");
         expect(outsideBuilds([7000], 9004).map((build) => build.pid)).toEqual([8101]);
         expect(outsideBuilds([], null).map((build) => build.pid)).toEqual([7001, 8101, 9001]);
+    });
+
+    test("a compiler daemon's rustc for a build in a slot belongs to that build, not outside it", () => {
+        useTable([
+            // A build in a slot whose rustc wrapper chains to sccache: the client waits, sccache's server compiles.
+            [7000, 1, "S", "bun bin/toli build-slot -- cargo test"],
+            [7001, 7000, "S", "bun bin/toli build-slot -- /home/u/.cargo/bin/cargo test"],
+            [7002, 7001, "Sl", "/home/u/.cargo/bin/cargo test"],
+            [7003, 7002, "S", "/bin/sh bin/shims/toli-rustc-wrapper rustc --crate-name audit_log -C metadata=aa1"],
+            [7004, 7003, "S", "sccache rustc --crate-name audit_log --edition=2021 -C metadata=aa1 -C codegen-units=1"],
+            [7100, 1, "Sl", "/home/u/.cargo/bin/sccache"],
+            [7101, 7100, "Rl", "rustc --crate-name audit_log --edition=2021 -C metadata=aa1 -C codegen-units=1"],
+            // The same server compiling a crate no build in a slot asks for (another build's, same crate, other hash).
+            [7102, 7100, "Rl", "rustc --crate-name audit_log --edition=2021 -C metadata=bb2"],
+            // A terminal cargo compiling the in-slot build's very crate: a cargo above it makes it its own build.
+            [7200, 1, "Sl", "cargo build"],
+            [7201, 7200, "Rl", "rustc --crate-name audit_log -C metadata=aa1"],
+        ]);
+        expect(outsideBuilds([7000]).map((build) => [build.pid, build.crates])).toEqual([
+            [7102, ["audit_log"]],
+            [7200, ["audit_log"]],
+        ]);
+        // The slot's command runs while the daemon compiles for it, though every process below its holder sleeps; a
+        // compilation of the same crate for another build (another hash, or a cargo above it) is not its work.
+        const rows: [number, number, string, string][] = [...processTable().values()].map((proc) => [
+            proc.pid,
+            proc.ppid,
+            proc.stat,
+            proc.argv.join(" "),
+        ]);
+        expect(treeRunning(processTable(), 7000, false)).toBe(true);
+        useTable(rows.map(([pid, ppid, stat, args]) => [pid, ppid, pid === 7101 ? "Sl" : stat, args]));
+        expect(treeRunning(processTable(), 7000, false)).toBe(false);
     });
 });
 
