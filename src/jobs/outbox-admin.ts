@@ -8,6 +8,7 @@ import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, readJson, ToliError, waited, withLock, writeJsonAtomic } from "../core/util.ts";
+import { answerCancelled } from "../records/delegated-answer.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { stopUnrecordedReports } from "../records/report-refusal.ts";
 import type { OutboxItem } from "./outbox.ts";
@@ -56,6 +57,7 @@ export function cancelItems(files: string[], reason: string): string[] {
         }
     });
     const alerts = moved.flatMap(({ id, item }) => {
+        answerCancelled(id, item);
         const stopped = stopUnrecordedReports(item, reason);
         if (stopped === "repeat") return [];
         const line = `- ${id}: ${item.kind ?? "inbox"} to ${waitingFor(item)}: ${item.title.slice(0, 120)}`;

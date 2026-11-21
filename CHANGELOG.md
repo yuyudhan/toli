@@ -47,7 +47,8 @@ one. See docs/releasing.md.
   and cancels an answer still queued when that report lands; a task the owner takes up again reports a new state, so
   its new question gets a new answer through. An answer pushed over ssh to a machine whose toli predates this is
   sent again at once without its id, the old way, so it is delivered now rather than queued until that machine
-  upgrades (docs/sardars.md "Results and questions go back", T2151).
+  upgrades. An answer that never arrives (refused by the owner on any route, `outbox cancel`, `outbox expire`) leaves
+  its question open for a new answer (docs/sardars.md "Results and questions go back", T2151).
 - The lead's balancing offers (`queue: offer work to <machine>`) no longer go to a machine that cannot take the
   work, nor repeat every period. A task is offered only to a machine that publishes its project's clone (its
   `resources --json` `projects`), so a machine that registered one project is not offered the others; when the

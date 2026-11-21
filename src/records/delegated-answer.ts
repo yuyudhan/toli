@@ -6,7 +6,7 @@
 import { Args } from "../core/args.ts";
 import { fleetMachine, loadMachine } from "../core/config.ts";
 import { now, out, requireName, stamp, ToliError, warn } from "../core/util.ts";
-import { type AnswerBody, parseAnswer, queuedText, sendNow } from "../jobs/outbox.ts";
+import { type AnswerBody, type OutboxItem, parseAnswer, queuedText, sendNow } from "../jobs/outbox.ts";
 import { cancelItems } from "../jobs/outbox-admin.ts";
 import { queuedItems } from "../jobs/outbox-queue.ts";
 import { loadBacklog, type Task, updateTask } from "./backlog.ts";
@@ -89,6 +89,16 @@ function noteAnswered(fid: string, answered: { id: string; at: string } | undefi
 }
 
 /**
+ * An answer item `id` was given up here (refused by its owner on any route, `outbox cancel`, `outbox expire`;
+ * src/jobs/outbox-admin.ts `cancelItems`): it never arrived, so its question is open again for a new answer.
+ */
+export function answerCancelled(id: string, item: OutboxItem): void {
+    if (item.kind !== "answer" || item.to?.name === undefined) return;
+    const fid = fleetId(item.to.name, parseAnswer(item.body).id);
+    if (loadBacklog().tasks.some((task) => task.delegates?.[fid]?.answered?.id === id)) noteAnswered(fid, undefined);
+}
+
+/**
  * `task answer <machine>/T<n> "<answer>"` for another machine's task: the owner records it (rule 2). It travels as
  * an `answer` outbox item, over HTTPS to a paired peer or ssh otherwise; an owner that cannot be reached now gets it
  * when it is back (or with its next pull). The item's id travels in its body, so the owner applies it once however
@@ -114,7 +124,6 @@ export function forwardAnswer(owner: string, argv: string[]): void {
         out(sent.stdout.trimEnd());
         return;
     }
-    if (sent.refused !== undefined) noteAnswered(fid, undefined);
     if (!sent.pulled) warn(sent.error);
     out(`answer for ${fid} ${queuedText(owner, sent)}`);
 }

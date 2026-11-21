@@ -163,4 +163,33 @@ describe("a delegated task's question goes to the delegating lead", () => {
         expect(owned?.status).toBe("queued");
         expect(owned?.notes.at(-1)).toBe("Q: Which?\nA: a (= a) (recorded by m1's lead)");
     });
+
+    test("an answer refused at the tick lifts the 'already answered' mark, so the question can be answered (T2151)", () => {
+        const { m1, m2, down, up } = delegated();
+        m2.ok(["task", "hold", "T1", "--question", "Which?", ...CHOICES]);
+        down();
+        m1.ok(["task", "answer", "m2/T1", "a"]);
+        expect(parent(m1).delegates?.["m2/T1"]?.answered).toBeDefined();
+        // m2 no longer takes m1's answers for T1: the tick's delivery is refused there and cancelled here.
+        const backlog = join(m2.root, "data", "backlog.json");
+        writeFileSync(backlog, readFileSync(backlog, "utf8").replaceAll('"machine": "m1"', '"machine": "m3"'));
+        up();
+        m1.ok(["job", "tick"]);
+        expect(cancelled(m1).map((entry) => entry.kind)).toEqual(["answer"]);
+        expect(parent(m1).delegates?.["m2/T1"]?.answered).toBeUndefined();
+        expect(m1.toli(["task", "answer", "m2/T1", "b"]).stderr).not.toContain("already answered");
+    });
+
+    test("an answer removed by outbox cancel lifts the 'already answered' mark; a new answer goes (T2151)", () => {
+        const { m1, m2, down, up } = delegated();
+        m2.ok(["task", "hold", "T1", "--question", "Which?", ...CHOICES]);
+        down();
+        m1.ok(["task", "answer", "m2/T1", "a"]);
+        const [file] = outboxFiles(m1);
+        m1.ok(["outbox", "cancel", (file ?? "").replace(/\.json$/, ""), "--why", "wrong words"]);
+        expect(parent(m1).delegates?.["m2/T1"]?.answered).toBeUndefined();
+        up();
+        expect(m1.ok(["task", "answer", "m2/T1", "b"])).toContain("m2 recorded the answer for m2/T1:");
+        expect(tasks(m2)[0]?.notes.at(-1)).toBe("Q: Which?\nA: b (= b) (recorded by m1's lead)");
+    });
 });

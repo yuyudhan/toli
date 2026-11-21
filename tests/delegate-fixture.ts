@@ -21,7 +21,16 @@ export type Task = {
     };
     delegatedTo?: string[];
     sending?: { machine: string; id: string }[];
-    delegates?: Record<string, { status: string; question?: string; options?: { choice: string }[]; commit?: string }>;
+    delegates?: Record<
+        string,
+        {
+            status: string;
+            question?: string;
+            options?: { choice: string }[];
+            commit?: string;
+            answered?: { id: string };
+        }
+    >;
     heldFrom?: string;
     question?: string;
     options?: { choice: string; outcome: string }[];

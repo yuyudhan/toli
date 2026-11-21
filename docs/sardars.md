@@ -165,11 +165,12 @@ drops a copy it already applied (a delivery retried after its exit or receipt wa
 refuses the id, so the answer goes to it the old way, without that guard). The delegator sends one
 answer per question: a second `task answer` before the owner reports again is refused, as is any answer to a task the
 owner reported done or dropped, and an answer still queued when that report lands is cancelled
-(`state/outbox/cancelled/`). A task the owner takes up again reports a new state, so its new question takes a new
-answer. A question only the user can decide (push, merge, release, money, security, a destructive step, his taste)
-goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task with `<owner>/T<n> asks: <question>` and
-its options, so it sits in this machine's Needs-you queue; his `task answer T<n> "<words>"` there is recorded here
-and forwarded to the owner too, unless the owner already reported the task done or dropped.
+(`state/outbox/cancelled/`). An answer that never arrives (refused by the owner, `outbox cancel`, `outbox expire`)
+leaves its question open for a new one. A task the owner takes up again reports a new state, so its new question
+takes a new answer. A question only the user can decide (push, merge, release, money, security, a destructive step,
+his taste) goes to him: `bin/toli task escalate <owner>/T<n>` holds the `--for` task with `<owner>/T<n> asks:
+<question>` and its options, so it sits in this machine's Needs-you queue; his `task answer T<n> "<words>"` there is
+recorded here and forwarded to the owner too, unless the owner already reported the task done or dropped.
 
 ### Questions for the user
 
