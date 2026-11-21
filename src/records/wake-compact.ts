@@ -72,15 +72,23 @@ function leadParagraph(body: string): string {
  * Whether an item carries a decision for the user: a held task or a word asked of them, or a body naming a question
  * for them by name, a decision needed or what needs them, or asking a question: one that names them (`<user>, keep
  * it?`) or a `Should I/we ...?`. toli's own boilerplate about holds says "the user", so a phrase with "the user"
- * alone does not count, nor an empty `Needs you (0):` digest header.
+ * alone does not count, nor a negated one: `Decision needed: none`, `Needs you: nothing new`, `no decision needed`,
+ * `nothing needs you`, an empty `Needs you (0):` digest header.
  */
 function needsYou(title: string, body: string, user: string): boolean {
     if (HELD_TITLE.test(title)) return true;
     const name = escapeRegExp(user);
-    const phrase = `question for ${name}\\b|decision needed|\\bneeds (you|${name})\\b(?! \\(0\\))`;
     // A question is the rest of its sentence up to a `?`, never past `.`, `!` or a line end.
-    const question = `\\b${name}\\b[^.!?\\n]*\\?|\\bshould (i|we)\\b[^.!?\\n]*\\?`;
-    return new RegExp(`${phrase}|${question}`, "i").test(body);
+    const asks = `question for ${name}\\b|\\b${name}\\b[^.!?\\n]*\\?|\\bshould (i|we)\\b[^.!?\\n]*\\?`;
+    if (new RegExp(asks, "i").test(body)) return true;
+    for (const match of body.matchAll(new RegExp(`decision needed|\\bneeds (you|${name})\\b`, "gi"))) {
+        const before = body.slice(0, match.index).split("\n").at(-1) ?? "";
+        const after = body.slice(match.index + match[0].length).split("\n", 1)[0] ?? "";
+        const negated =
+            /\b(no|nothing)\s+$/i.test(before) || /^\s*(\(0\)|[:-]?\s*(none|nothing|no|n\/a)\b)/i.test(after);
+        if (!negated) return true;
+    }
+    return false;
 }
 
 function parse(item: WakeItem, user: string): Parsed {
