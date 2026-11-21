@@ -4,7 +4,7 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
-## v0.5.42 - unreleased
+## v0.6.0 - unreleased
 
 ### Added
 
@@ -36,9 +36,36 @@ one. See docs/releasing.md.
   and keeps every catch-up merge local. On by default; `bin/toli project set <p> --catch-up no` turns it off on that
   machine
   (docs/projects.md "Release catch-up", T2142).
+- `bin/toli spawn --first` queues a run ahead of the runs queued without it (first in, first out among `--first`
+  runs; its continuations keep the place). It only reorders the queue: no running run stops, and the network hold,
+  the disk hold and a run's `notBefore` still apply. `bin/toli runs` and the digest end each queued run's line with
+  its place, `queue 1 (--first)` (docs/cli.md, docs/harnesses.md, T2158).
+- A worker's held tasks reach the coordinator's Needs-you queue within a tick. Each minute tick on a worker sends its
+  own held tasks (none delegated to it) to the coordinator through the outbox, where each is held once as
+  `<worker>/T<n> asks: <question>` with its options in the worker's project. The user's `task answer` there is done
+  at once and goes back to the worker's task; once the worker's task no longer holds that question (answered on
+  either machine, dropped, re-held with another) the coordinator's copy closes. What was sent is kept in
+  `state/raised-holds.json`. A delegated task still raises its hold to its delegator only, and a question for
+  another Sardar never reaches the user (docs/sardars.md "Holds on a worker reach the coordinator", T2171).
 
 ### Fixed
 
+- `bin/toli commit --merge` can land a clean merge that leaves a lock file stale (one side bumps the workspace
+  version, the other adds a package that inherits it). The fixed `Cargo.lock` or `bun.lock` is now taken with
+  `--resolved` or as a `--patch`, besides naming it, and the bare merge's lock refusal says how. The lock check still
+  runs on the final commit, and the fix is listed in a `Merge-amended:` trailer (T2157).
+- A push with a recorded gate pass handles a project whose pre-push hook runs more than the gate. `push --gate`
+  cannot skip part of a hook, so the push now says whether that hook asks `bin/toli gate check` (its gate step is
+  skipped on the passed tree) or never asks (its gate step reruns, with the guard to add). docs/delivery.md gives a
+  hook that guards only its gate step, so its other steps still run, checks the ref tips being pushed, and finds toli
+  from a worktree (T2156).
+- `bin/toli fleet check` says why a machine is unreachable. A host off the mesh VPN read as an ssh banner timeout or
+  an HTTPS certificate error, since a userspace VPN client accepts TCP to any mesh address. On a failed probe toli now
+  asks the NetBird client (once per pass): a peer not connected, or an address that is no peer, reads
+  `off the network: NetBird peer <name> is <state>, last handshake <ago>`; a connected peer keeps the probe's errors
+  with its state appended. Without the client, a timeout, no route or banner timeout reads
+  `no route / host down (<ssh error>)` without the HTTPS error. `delegate`'s verify-only check skips the read to keep
+  its budget (T2140).
 - The tick's background disk keeper always ends and never piles up. One stuck in a macOS privacy prompt (its
   report-only scan of the home folder opened `~/Music`) had already released its lock, so every tick under the floor
   started another: 140 hung keepers, about 6 GB of memory. The tick now starts `bin/toli disk keep --background`,
