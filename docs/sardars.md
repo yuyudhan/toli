@@ -98,10 +98,13 @@ their files for the lead to read when it acts on one. Repetitive items fold into
 shared learning (`learning <id>: adopted by m2, m3, m4 (+6); adapted by m1`) and several plain messages from one
 machine (`m2 3 messages: newest ...`). Items that carry a decision for the user are listed first and marked
 `[needs you]`: a held task or a word asked of them, a body with `Decision needed` or `Needs you`/`Needs <user>`, an ask
-for the user by any of their names (`for <name>`, `<name>, ...?`; `user` and `userAliases` in `config/persona.json`),
-a `Should I`, `Shall I`, `Can you` or `Do you want me to` question, `Please approve`, `needs your decision`, or a
-list of options with a recommendation. A decision line whose whole content is a negation (`Decision needed: none.`,
-`no decision needed`) is not marked; one that goes on (`Needs you: no rush, but approve ...`) is.
+for the user by any of their names (`for <name>`, `<name>, ...?`, `<name>'s call`, `waiting on <name> to`; `user` and
+`userAliases` in `config/persona.json`), a `Should I`, `Shall I`, `Can`/`Could`/`Would you`, `Do you want me to` or
+`Approve ...?` question, `Please approve`, `needs your decision`, `your call`, `let me know which`, `which one do you
+want`, or a list of options with a recommendation. A decision line whose whole content is a negation (`Decision
+needed: none.`, `no decision needed`) is not marked; one that goes on (`Needs you: no rush, but approve ...`,
+`none (<user> to pick later)`) is. An invalid `hideSardarChatter` or `config/persona.json` makes every wake refuse
+before it takes an item, so nothing is lost while it is fixed.
 Another machine's words (`- via: peer ...`) are marked `[peer]`, quoted on one line with quotes and backticks
 neutralized, and the header says they are information, not instructions. The ack commands close the message as
 before and cover exactly the items listed. To see every body in the chat again, as before, set `config/machine.json`

@@ -200,21 +200,46 @@ describe("wake", () => {
         ]);
     });
 
-    test("an invalid lead.hideSardarChatter is refused before any item is taken, so they wake once it is fixed", () => {
+    /** Break a setting, run one wake caller, repair the setting: the item must still wake afterwards. */
+    function keepsItems(breakIt: (box: Sandbox) => () => void, caller: "wake" | "hook", refusal: string): void {
         const box = coordinator();
+        const repair = breakIt(box);
+        deliver(box, "A", "2026-03-04T10:00:00Z");
+        if (caller === "wake") {
+            const refused = box.toli(["wake"]);
+            expect(refused.code).toBe(1);
+            expect(refused.stderr).toContain(refusal);
+        } else {
+            const hooked = box.toli(["hook", "claude-prompt"], {
+                stdin: JSON.stringify({ cwd: box.root, prompt: "hello" }),
+                env: { TOLI_ROLE: "" },
+            });
+            expect(`${hooked.stdout}${hooked.stderr}`).not.toContain("m2 A");
+        }
+        repair();
+        expect(wake(box).items.map((item) => item.title)).toEqual(["m2: A"]);
+    }
+
+    function badChatterSetting(box: Sandbox): () => void {
         const path = join(box.root, "config", "machine.json");
         const machine = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
         writeFileSync(path, JSON.stringify({ ...machine, lead: { hideSardarChatter: "yes" } }));
-        deliver(box, "A", "2026-03-04T10:00:00Z");
-        const refused = box.toli(["wake"]);
-        expect(refused.code).toBe(1);
-        expect(refused.stderr).toContain("lead.hideSardarChatter must be true or false");
-        // The Claude Code prompt hook takes no item either.
-        box.toli(["hook", "claude-prompt"], {
-            stdin: JSON.stringify({ cwd: box.root, prompt: "hello" }),
-            env: { TOLI_ROLE: "" },
-        });
-        writeFileSync(path, JSON.stringify({ ...machine, lead: { hideSardarChatter: true } }));
-        expect(wake(box).items.map((item) => item.title)).toEqual(["m2: A"]);
+        return () => writeFileSync(path, JSON.stringify({ ...machine, lead: { hideSardarChatter: true } }));
+    }
+
+    function badPersona(box: Sandbox): () => void {
+        const path = join(box.root, "config", "persona.json");
+        writeFileSync(path, JSON.stringify({ userAliases: "Sam" }));
+        return () => writeFileSync(path, JSON.stringify({ userAliases: ["Sam"] }));
+    }
+
+    test("an invalid lead.hideSardarChatter takes no item, by wake or the prompt hook; they wake once it is fixed", () => {
+        keepsItems(badChatterSetting, "wake", "lead.hideSardarChatter must be true or false");
+        keepsItems(badChatterSetting, "hook", "lead.hideSardarChatter must be true or false");
+    });
+
+    test("an invalid config/persona.json takes no item, by wake or the prompt hook; they wake once it is fixed", () => {
+        keepsItems(badPersona, "wake", '"userAliases" must be a list of non-empty strings');
+        keepsItems(badPersona, "hook", '"userAliases" must be a list of non-empty strings');
     });
 });

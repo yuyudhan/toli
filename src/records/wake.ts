@@ -121,16 +121,21 @@ export function fenceFromPeer(body: string): string {
     ].join("\n");
 }
 
+/** How the wake is written: compact or full, and the user's names for `[needs you]` marks. */
+export type WakeFormat = { hide: boolean; user: string; aliases: string[] };
+
 /**
- * `lead.hideSardarChatter` in config/machine.json (docs/sardars.md "Hide Sardar chatter"): true, the default, gives
- * the compact wake, one line per item; false shows every body as before.
+ * Every setting the wake reads, validated: `lead.hideSardarChatter` in config/machine.json (docs/sardars.md "Hide
+ * Sardar chatter"; true, the default, gives the compact wake, one line per item; false shows every body as before)
+ * and the user's names in config/persona.json. Callers read it before taking items, so an invalid setting is
+ * refused without consuming them.
  */
-export function hideSardarChatter(): boolean {
+export function wakeFormat(): WakeFormat {
     const raw: unknown = machineSettings().lead?.hideSardarChatter;
-    if (raw === undefined) return true;
-    if (typeof raw !== "boolean")
+    if (raw !== undefined && typeof raw !== "boolean")
         throw new ToliError("config/machine.json lead.hideSardarChatter must be true or false");
-    return raw;
+    const names = persona();
+    return { hide: raw ?? true, user: names.user, aliases: names.userAliases };
 }
 
 /** Every body shown with its item, the first `MAX_FULL_ITEMS` in full and the rest by path. */
@@ -152,21 +157,19 @@ function fullWakeMessage(items: WakeItem[]): string {
 }
 
 /**
- * The message pushed into the live session for `items`; empty when nothing arrived. Compact unless `hide` is false;
- * the compact form reads each whole file, so a decision past the shown body's limit is still marked. Callers read
- * `hideSardarChatter()` before taking items, so an invalid setting is refused without consuming them.
+ * The message pushed into the live session for `items`; empty when nothing arrived. Compact unless `format.hide` is
+ * false; the compact form reads each whole file, so a decision past the shown body's limit is still marked.
  */
-export function wakeMessage(items: WakeItem[], hide: boolean): string {
+export function wakeMessage(items: WakeItem[], format: WakeFormat): string {
     if (items.length === 0) return "";
-    if (!hide) return fullWakeMessage(items);
+    if (!format.hide) return fullWakeMessage(items);
     const whole = items.map((item) =>
         existsSync(item.path) ? { ...item, body: readFileSync(item.path, "utf8") } : item,
     );
-    const names = persona();
     return compactWakeMessage(whole, {
         root: paths.root(),
-        user: names.user,
-        aliases: names.userAliases,
+        user: format.user,
+        aliases: format.aliases,
         ackCommands: ackCommands(items),
     });
 }
@@ -192,10 +195,10 @@ export function wakeCommand(argv: string[]): void {
     const pid = rawPid === undefined ? null : Number(rawPid);
     if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new ToliError("wake --pid needs a process id");
     // Read first: an invalid setting fails here, before any item is taken and marked delivered.
-    const hide = hideSardarChatter();
+    const format = wakeFormat();
     // A peer's batch is still arriving: take it next time, whole, as one wake.
     const items = receivingNow() ? [] : takeSessionWake(pid);
-    const message = wakeMessage(items, hide);
+    const message = wakeMessage(items, format);
     if (args.bool("json")) {
         printJson({ items, message });
         return;

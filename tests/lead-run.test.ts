@@ -259,4 +259,32 @@ describe("lead run --once", () => {
         box.ok(["inbox", "ack", "--through", shown.at(-1)?.stamp ?? ""]);
         expect((JSON.parse(box.ok(["wake", "--json"])) as { items: unknown[] }).items).toHaveLength(0);
     });
+
+    test("an invalid wake setting or persona fails the pass before it takes anything; the items wake once fixed", () => {
+        const machinePath = (box: { root: string }): string => join(box.root, "config", "machine.json");
+        const breakers: ((box: { root: string }) => () => void)[] = [
+            (box) => {
+                const machine = readFileSync(machinePath(box), "utf8");
+                const parsed = JSON.parse(machine) as Record<string, unknown>;
+                writeFileSync(machinePath(box), JSON.stringify({ ...parsed, lead: { hideSardarChatter: "yes" } }));
+                return () => writeFileSync(machinePath(box), machine);
+            },
+            (box) => {
+                const persona = join(box.root, "config", "persona.json");
+                writeFileSync(persona, JSON.stringify({ userAliases: "Sam" }));
+                return () => rmSync(persona);
+            },
+        ];
+        for (const breakIt of breakers) {
+            const setup = lead();
+            const { box } = setup;
+            const repair = breakIt(box);
+            deliver(box, "message from m2", "kept body");
+            box.toli(["lead", "run", "--once"]);
+            expect(calls(setup)).toHaveLength(0);
+            repair();
+            const wake = JSON.parse(box.ok(["wake", "--json"])) as { items: { body: string }[] };
+            expect(wake.items.map((item) => item.body).join("\n")).toContain("kept body");
+        }
+    });
 });

@@ -72,13 +72,14 @@ function leadParagraph(body: string): string {
 
 /**
  * Whether an item carries a decision for the user: a held task or a word asked of them; an ask for the user by any
- * of `names` (`for <name>`, `<name>, keep it?`, not `<name>'s`); a `Should I/we`, `Shall I/we`, `Can you` or
- * `Do you want me to` question; `please approve`, `needs your decision`; options with a recommendation; or a decision
- * needed / what needs them. toli's own boilerplate about holds says "the user", so "the user" alone does not count.
- * A decision line is negated only when the negation is all its line says (`Decision needed: none.`, `Needs you:
- * nothing new`, `no decision needed`, `nothing needs you`, an empty `Needs you (0):` digest header); anything more
- * (`no rush, but approve ...`, `no-go or go`, `n/a for now; later ...`) keeps it, since a lost ask costs more than a
- * false mark.
+ * of `names` (`for <name>`, `<name>, keep it?`, `<name>'s call`, `waiting on <name> to`; not `<name>'s` alone); a
+ * `Should/Shall I`, `Can/Could/Would you`, `Do you want me to` or `Approve ...?` question; `please approve`, `needs
+ * your decision`, `your call`, `let me know which`, `which one do you want`; options with a recommendation; or a
+ * decision needed / what needs them. toli's own boilerplate about holds says "the user", so "the user" alone does not
+ * count. A decision line is negated only when the negation is all its line says (`Decision needed: none.`, `Needs
+ * you: nothing new (all clear)`, `No decision needed from <user>.`, `nothing needs you`, an empty `Needs you (0):`
+ * digest header); anything more (`no rush, but approve ...`, `no-go or go`, `none (<user> to pick later)`) keeps it,
+ * since a lost ask costs more than a false mark.
  */
 function needsYou(title: string, body: string, names: string[]): boolean {
     if (HELD_TITLE.test(title)) return true;
@@ -88,10 +89,17 @@ function needsYou(title: string, body: string, names: string[]): boolean {
     const asks = [
         `\\bfor ${name}\\b(?!'s)`,
         `\\b${name}\\b(?!'s)${question}`,
+        `\\b${name}'s call\\b`,
+        `\\bwaiting on ${name} to\\b`,
         `\\b(should|shall) (i|we)\\b${question}`,
-        `\\b(can you|do you want (me|us) to)\\b${question}`,
+        `\\b(can|could|would) you\\b${question}`,
+        `\\bdo you want (me|us) to\\b${question}`,
+        `\\bapprove\\b${question}`,
         "\\bplease approve\\b",
         "\\bneeds your decision\\b",
+        "\\byour call\\b",
+        "\\blet me know which\\b",
+        "\\bwhich one do you want\\b",
     ];
     if (new RegExp(asks.join("|"), "i").test(body)) return true;
     // Options to choose from (`Options:`, `(a) ... (b)`, `1 = ... 2 =`, a numbered list) with a recommendation.
@@ -99,9 +107,11 @@ function needsYou(title: string, body: string, names: string[]): boolean {
     const pick = /\b(i recommend|recommended|my pick)\b/i;
     if (choices.test(body) && pick.test(body)) return true;
     // What may follow the phrase in a negated line: who it is from (`from <user>`), then the negation (for `Decision
-    // needed: none`), then at most a parenthetical and a full stop.
+    // needed: none`), then at most a parenthetical and a full stop. A parenthetical that names the user or holds a
+    // `pick`, `but`, `see` or a task id carries an ask of its own, so it does not count as part of the negation.
     const from = `(\\s+from (you|the user|${name}))?`;
-    const tail = "\\s*(\\([^)\\n]*\\))?\\s*[.!]?\\s*$";
+    const aside = `\\((?![^)\\n]*(\\b(pick|but|see)\\b|\\b${name}\\b|\\bT\\d+\\b))[^)\\n]*\\)`;
+    const tail = `\\s*(${aside})?\\s*[.!]?\\s*$`;
     const negatedBefore = new RegExp(`^${from}${tail}`, "i");
     const negation = "(none|nothing( new| more| further)?|no|n/a)";
     const negatedAfter = new RegExp(`^\\s*(\\(0\\)|${from}\\s*[:-]\\s*${negation}${tail})`, "i");

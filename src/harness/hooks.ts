@@ -11,7 +11,7 @@ import { now, out, readStdin, shellQuote, ToliError, warn } from "../core/util.t
 import { capacityFor } from "../fleet/resources.ts";
 import { leadBuildEnv } from "../jawans/env.ts";
 import { type HookAgentEvent, reportHookEvent } from "../records/agents.ts";
-import { hideSardarChatter, takeWake, wakeMessage } from "../records/wake.ts";
+import { takeWake, wakeFormat, wakeMessage } from "../records/wake.ts";
 import { leadNoticeContext, takeSetupNotice } from "../setup/setup.ts";
 import { leadGuidance } from "./guidance.ts";
 import { claudeAction, guardDecision, isBrief, jawanEnv } from "./lead-guard.ts";
@@ -91,9 +91,9 @@ export function claudePreToolDecision(input: ClaudeHookInput, env: Record<string
 export function claudePromptContext(input: ClaudeHookInput, env: Record<string, string | undefined>): string | null {
     if (jawanEnv(env) || isBrief(input.prompt ?? "")) return null;
     if (input.cwd !== undefined && input.cwd !== paths.root()) return null;
-    // Read before taking: an invalid setting fails without consuming any item.
-    const hide = hideSardarChatter();
-    const wake = wakeMessage(takeWake(), hide);
+    // Read before taking: an invalid setting or persona fails without consuming any item.
+    const format = wakeFormat();
+    const wake = wakeMessage(takeWake(), format);
     return wake === "" ? leadGuidance() : `${leadGuidance()}\n\n${wake}`;
 }
 
