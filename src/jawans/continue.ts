@@ -27,7 +27,7 @@ function noteOnTask(run: JawanRun, line: string): void {
 }
 
 export type ContinueOptions = {
-    /** Why the run is continued: `stalled`, `time-limit`, `rate/usage limit` or `lead`. */
+    /** Why the run is continued: `stalled`, `time-limit`, `network fault`, `rate/usage limit` or `lead`. */
     reason: string;
     /** How it stopped, in words: `stalled: no progress for 30 minutes (...)`. */
     stopped: string;
@@ -41,6 +41,8 @@ export type ContinueOptions = {
     note?: string | undefined;
     /** Overrides the wall-clock limit the continuation inherits (`bin/toli resume --max-time`). */
     maxMinutes?: number | null | undefined;
+    /** The earliest the continuation may start (a network-fault requeue, src/jawans/network.ts). */
+    notBefore?: string | undefined;
 };
 
 /**
@@ -80,6 +82,7 @@ export function continueRun(run: JawanRun, options: ContinueOptions): JawanRun {
             resumeOf: run.id,
             resumeCount: number,
             resumeReason: options.reason,
+            ...(options.notBefore === undefined ? {} : { notBefore: options.notBefore }),
         },
         { now: options.now },
     );
@@ -97,10 +100,16 @@ export function continueRun(run: JawanRun, options: ContinueOptions): JawanRun {
 
 /**
  * Continue a run that stopped without a report (`stopped` says how) through continueRun, queued like any spawn when
- * every slot is busy. Past capacity.autoResume continuations in the chain, the chain stops: an inbox item and the
- * task's notes say why. Returns the stopped run as recorded afterwards.
+ * every slot is busy (or until `notBefore`). Past capacity.autoResume continuations in the chain, the chain stops: an
+ * inbox item and the task's notes say why. Returns the stopped run as recorded afterwards.
  */
-export function autoResume(machine: Machine, run: JawanRun, reason: string, stopped: string): JawanRun {
+export function autoResume(
+    machine: Machine,
+    run: JawanRun,
+    reason: string,
+    stopped: string,
+    options: { notBefore?: string | undefined } = {},
+): JawanRun {
     const cap = autoResumeLimit(machine);
     const number = (run.resumeCount ?? 0) + 1;
     if (number > cap) {
@@ -123,6 +132,6 @@ export function autoResume(machine: Machine, run: JawanRun, reason: string, stop
         noteOnTask(run, `run ${run.id} ${stopped}; not resumed: ${cap} automatic resumes used (capacity.autoResume)`);
         return run;
     }
-    continueRun(run, { reason, stopped, cap, now: false });
+    continueRun(run, { reason, stopped, cap, now: false, notBefore: options.notBefore });
     return loadRun(run.id);
 }

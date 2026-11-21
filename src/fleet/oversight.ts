@@ -2,9 +2,9 @@
 // never pauses, away mode included: every reachable machine with no running jawan (no spawn run and no native
 // subagent) while queued work (or an active task no live run works on) exists for a project cloned there is an idle
 // machine, every active task with no live run on this machine or any reachable one is named, and so is every machine
-// whose configured peer listener is down. `--wake` posts the findings as one inbox item (a `[toli wake]` for the
-// lead); the coordinator's tick starts `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no
-// job prompt can skip it.
+// whose configured peer listener is down. Most other machines unreachable the same way read as one network fault, not
+// one fault per host. `--wake` posts the findings as one inbox item (a `[toli wake]` for the lead); the coordinator's
+// tick starts `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no job prompt can skip it.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { relative, resolve } from "node:path";
@@ -35,6 +35,7 @@ import { listenerProblem } from "../peer/supervise.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
+import { commonNetworkFault, type NetworkFaultGroup, networkFaultLine } from "./network-fault.ts";
 import { fleetStatus } from "./pick.ts";
 import type { FleetEntry } from "./resources.ts";
 
@@ -81,6 +82,8 @@ export type FleetCheck = {
     /** Machines whose configured peer listener is down or stuck on a replaced runtime. */
     listeners: { machine: string; problem: string }[];
     unreachable: { machine: string; reason: string }[];
+    /** Most other machines unreachable the same way: one fault of the network here, not of each host. */
+    networkFault: NetworkFaultGroup | null;
     /** Reachable machines whose own backlog could not be read (an older toli there). */
     unchecked: { machine: string; reason: string }[];
 };
@@ -158,6 +161,7 @@ export function checkFleet(
         idle: [],
         listeners: [],
         unreachable: [],
+        networkFault: commonNetworkFault(entries),
         unchecked: [],
     };
     for (const entry of entries) {
@@ -204,8 +208,14 @@ function listenersDown(check: FleetCheck): string {
 export function fleetCheckText(check: FleetCheck): string {
     const missing = [...check.unreachable, ...check.unchecked];
     const blind = check.blind ? `${blindText(check.machines, missing, "not checked")}, ` : "";
+    const fault = check.networkFault === null ? [] : [networkFaultLine(check.networkFault)];
+    const grouped = new Set(check.networkFault?.machines ?? []);
+    const unreachable = check.unreachable.filter((entry) => !grouped.has(entry.machine));
     if (!needsAction(check)) {
-        const notes = missing.map((entry) => `${entry.machine} (${entry.reason})`);
+        const notes = [
+            ...fault,
+            ...[...unreachable, ...check.unchecked].map((entry) => `${entry.machine} (${entry.reason})`),
+        ];
         return `fleet check at ${check.at}: all clear, no idle machine has waiting work and no active task lacks a live run${notes.length === 0 ? "" : `; not checked: ${notes.join(", ")}`}`;
     }
     const found = check.stale.length > 0 || check.idle.length > 0 || check.listeners.length > 0;
@@ -237,9 +247,10 @@ export function fleetCheckText(check: FleetCheck): string {
         );
         for (const entry of check.listeners) lines.push(`- ${entry.machine}: ${entry.problem}`);
     }
-    if (check.unreachable.length > 0 || check.unchecked.length > 0) {
+    if (fault.length > 0 || unreachable.length > 0 || check.unchecked.length > 0) {
         lines.push("", "Not checked:");
-        for (const entry of check.unreachable) lines.push(`- ${entry.machine}: ${entry.reason}`);
+        for (const line of fault) lines.push(`- ${line}`);
+        for (const entry of unreachable) lines.push(`- ${entry.machine}: ${entry.reason}`);
         for (const entry of check.unchecked) lines.push(`- ${entry.machine}: its own backlog (${entry.reason})`);
     }
     return lines.join("\n");

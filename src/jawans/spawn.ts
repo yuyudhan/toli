@@ -3,7 +3,8 @@
 // spawn validates the brief, writes the run record (state/jawans/<runId>.json, src/jawans/runs.ts) and the run dir (the
 // project's data/projects/<p>/runs/<runId>/, or state/jawans/<runId>/ without a project), and either starts a detached
 // supervisor (`bin/toli run supervise <runId>`, src/jawans/supervise.ts) or, with every jawan slot busy
-// (capacity.maxRuns), leaves the run queued to start when one frees (src/jawans/launch.ts). It returns at once.
+// (capacity.maxRuns) or the model API host not resolving (src/jawans/network.ts), leaves the run queued to start when
+// it can (src/jawans/launch.ts). It returns at once.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { Args, parseMinutes } from "../core/args.ts";
@@ -37,6 +38,7 @@ import { workspaceBrief } from "../projects/workspace-brief.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { continueRun } from "./continue.ts";
 import { jawanSlots, startOrQueue, stopRun } from "./launch.ts";
+import { heldHost } from "./network.ts";
 import { briefStallMinutes } from "./progress.ts";
 import { ACTIVE, activeRuns, type JawanRun, listRuns, loadRun, modelText, runLine, updateRun } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
@@ -235,10 +237,13 @@ export function spawnCommand(argv: string[]): void {
     if (run.replaces !== undefined) out(`replaced ${run.replaces.join(", ")} (stopped as \`bin/toli run kill\` does)`);
     if (run.status === "queued") {
         const hold = currentDiskHold();
+        const host = heldHost();
         const why =
-            hold === null
-                ? `all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees`
-                : `${diskHoldText(hold)}; it starts once the disk keeper lifts the pause (\`spawn --now\` starts it anyway)`;
+            hold !== null
+                ? `${diskHoldText(hold)}; it starts once the disk keeper lifts the pause (\`spawn --now\` starts it anyway)`
+                : host !== null
+                  ? `the model API host ${host} does not resolve; it starts once it does (\`spawn --now\` starts it anyway)`
+                  : `all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees`;
         out(`queued ${run.id}: ${why} (\`bin/toli runs\`). Log ${relative(paths.root(), run.logPath)}`);
     } else
         out(

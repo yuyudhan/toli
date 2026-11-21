@@ -39,6 +39,14 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A DNS outage no longer kills every working jawan. A run whose harness gave up on the model API with `EAI_AGAIN`,
+  `ENOTFOUND` or `ECONNRESET` in its last lines (a non-zero exit) is recorded failed with `network fault: <line>` and
+  continued through the resume chain in the same omp session, within `capacity.autoResume`, at most once per 10
+  minutes per chain. While the model API host such a run failed to resolve still does not, no new jawan starts:
+  spawns, continuations and the queue wait, `logs/network.log` gets one line, and queued runs start once it resolves
+  (`spawn --now` starts one anyway). `fleet check` prints one `network fault` line when at least two and more than
+  half of the other machines are unreachable the same way, instead of one line per host (docs/harnesses.md, T2149).
+
 - A delegator's answer to a delegated task reaches its owner once. A delivery retried after its exit or receipt
   was lost re-ran `task answer` there, so an owner that had already finished the task got the same answer as a new
   "after this machine took it up again" note and wake each time. The answer item now carries its id, and the owner

@@ -2,7 +2,9 @@
 // subagent jawans share. A new run is recorded, then started at once when a slot is free (or with `spawn --now`),
 // otherwise left `queued`; queued runs start oldest first as slots free, from the supervisor of each finishing run and
 // from the minute tick. Before any start, the disk keeper frees build output when the disk is low (src/fleet/disk.ts):
-// low disk holds a run only when the keeper is left with build folders in use alone (a disk hold, disk-hold.ts).
+// low disk holds a run only when the keeper is left with build folders in use alone (a disk hold, disk-hold.ts). A
+// model API host a run failed to resolve holds runs too, until it resolves (src/jawans/network.ts): runs queue
+// meanwhile, and a network-fault requeue also waits for its earliest start (`notBefore`).
 import { spawn as spawnChild } from "node:child_process";
 import {
     closeSync,
@@ -18,7 +20,7 @@ import { cpus } from "node:os";
 import { join, resolve } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { now, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk.ts";
 import { currentDiskHold } from "../fleet/disk-hold.ts";
 import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
@@ -30,6 +32,7 @@ import type { ModelSource, Tier } from "../harness/models.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
 import { isClosed } from "../records/task-end.ts";
 import { deadlineSection } from "./limits.ts";
+import { networkHold, startDue } from "./network.ts";
 import { briefStallMinutes } from "./progress.ts";
 import {
     cancelQueuedRun,
@@ -74,6 +77,8 @@ export type NewRun = {
     prompt?: string | undefined;
     /** The live runs of the same task this one supersedes (`spawn --replace`). */
     replaces?: string[] | undefined;
+    /** The earliest the run may start (a network-fault requeue); absent starts as soon as a slot is free. */
+    notBefore?: string | undefined;
 };
 
 function newRunId(at: Date): string {
@@ -181,6 +186,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         ...(input.resumeCount === undefined ? {} : { resumeCount: input.resumeCount }),
         ...(input.resumeReason === undefined ? {} : { resumeReason: input.resumeReason }),
         ...(input.replaces === undefined ? {} : { replaces: input.replaces }),
+        ...(input.notBefore === undefined ? {} : { notBefore: input.notBefore }),
     };
     mkdirSync(paths.jawansDir(), { recursive: true });
     writeJsonAtomic(paths.jawanRecord(id), run);
@@ -250,11 +256,14 @@ function launch(id: string): JawanRun {
 }
 
 /**
- * Record a new run, name it as its task's agent, and start it if a jawan slot is free and no disk hold pauses new jobs
- * (src/fleet/disk-hold.ts); always with `now`. Otherwise it stays `queued`.
+ * Record a new run, name it as its task's agent, and start it if a jawan slot is free, no disk hold pauses new jobs
+ * (src/fleet/disk-hold.ts), no network hold applies and its earliest start has come; always with `now`. Otherwise it
+ * stays `queued`.
  */
 export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun {
     keepDiskBeforeWork();
+    const hold = options.now ? null : networkHold();
+    if (hold?.line) warn(hold.line);
     return withLock(paths.lock(SLOTS_LOCK), () => {
         const run = recordRun(input);
         const task = run.task;
@@ -269,7 +278,9 @@ export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun
                     delete entry.waitingOn;
                 }
             });
-        if (options.now || (busySlots() < jawanSlots() && currentDiskHold() === null)) return launch(run.id);
+        const free =
+            hold === null && startDue(input, now()) && busySlots() < jawanSlots() && currentDiskHold() === null;
+        if (options.now || free) return launch(run.id);
         return updateRun(run.id, (record) => {
             record.queuedAt = record.startedAt;
         });
@@ -302,6 +313,8 @@ export type DrainResult = {
     failed: { run: JawanRun; error: string }[];
     /** Queued runs whose task closed (done or dropped) since they queued: cancelled, never started. */
     cancelled: JawanRun[];
+    /** The one line logged when this drain was the first start a network hold stopped (src/jawans/network.ts). */
+    held: string | null;
 };
 
 /** Each closed (done or dropped) task's status by id, read when a drain begins under the slots lock. */
@@ -314,20 +327,24 @@ function closedTasks(): Map<string, string> {
 }
 
 /**
- * Start queued runs, oldest first, while jawan slots are free. A queued run whose task is done or dropped by now (a
- * drop elsewhere, a handback, or a race with `task drop`) is cancelled instead, never started; the backlog is read
- * under the slots lock, which `task drop` takes to cancel. A run that cannot start is recorded failed.
- * `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached). A headless lead
- * turn under `lead.dispatch: "subagents"` is refused and starts none; while a disk hold pauses new jobs none start.
+ * Start queued runs, oldest first, while jawan slots are free, and none before its earliest start. A queued run whose
+ * task is done or dropped by now (a drop elsewhere, a handback, or a race with `task drop`) is cancelled instead, never
+ * started; the backlog is read under the slots lock, which `task drop` takes to cancel. A run that cannot start is
+ * recorded failed. `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached). A
+ * headless lead turn under `lead.dispatch: "subagents"` is refused and starts none; while a disk hold pauses new jobs
+ * or a network hold applies none start.
  */
 export function startQueued(options: { diskKept?: boolean } = {}): DrainResult {
     refuseHeadlessDispatch("start queued runs");
     if (options.diskKept !== true) keepDiskBeforeWork();
-    if (currentDiskHold() !== null) return { started: [], failed: [], cancelled: [] };
+    if (currentDiskHold() !== null) return { started: [], failed: [], cancelled: [], held: null };
+    const hold = networkHold();
     return withLock(paths.lock(SLOTS_LOCK), () => {
-        const result: DrainResult = { started: [], failed: [], cancelled: [] };
+        const result: DrainResult = { started: [], failed: [], cancelled: [], held: hold?.line ?? null };
+        if (hold !== null) return result;
+        const at = now();
         const queued = listRuns()
-            .filter((run) => run.status === "queued")
+            .filter((run) => run.status === "queued" && startDue(run, at))
             .sort(
                 (a, b) =>
                     (a.queuedAt ?? a.startedAt).localeCompare(b.queuedAt ?? b.startedAt) || a.id.localeCompare(b.id),

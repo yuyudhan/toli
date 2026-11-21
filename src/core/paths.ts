@@ -181,6 +181,10 @@ export const paths = {
     jawansDir: () => join(repoRoot(), "state", "jawans"),
     jawanRecord: (runId: string) => join(repoRoot(), "state", "jawans", `${runId}.json`),
     lock: (name: string) => join(repoRoot(), "state", `${name}.lock`),
+    /** The model API host a jawan run last failed to reach, while it does not resolve (src/jawans/network.ts). */
+    networkFault: () => join(repoRoot(), "state", "network-fault.json"),
+    /** When jawan starts were held for a model API host that did not resolve, and when they were let go again. */
+    networkLog: () => join(repoRoot(), "logs", "network.log"),
     logsDir: () => join(repoRoot(), "logs"),
     tickLog: () => join(repoRoot(), "logs", "tick.log"),
     /** The disk keeper's actions (src/fleet/disk.ts). */

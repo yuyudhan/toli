@@ -112,8 +112,11 @@ describe("oversight never pauses in away mode", () => {
             `fleet check at ${at}: BLIND: 2 of 3 machines not checked (m2, m3), so no all clear: what they run is unknown`,
         );
         expect(output).not.toContain("all clear,");
-        expect(output).toMatch(/\n- m2: unreachable: /);
-        expect(output).toMatch(/\n- m3: unreachable: /);
+        // Both other machines refuse the same way: one network fault line stands for them (src/fleet/network-fault.ts).
+        expect(output).toContain(
+            "\n- network fault: 2 of 2 other machines unreachable the same way (connection refused): m2, m3;",
+        );
+        expect(output).not.toMatch(/\n- m[23]: unreachable: /);
         const [posted] = inbox(box);
         expect(posted).toStartWith("# fleet check: BLIND, 2 of 3 machines not checked\n");
         const json = JSON.parse(box.ok(["fleet", "check", "--json"], { env: ENV, now: at })) as { blind: boolean };

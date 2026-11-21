@@ -145,6 +145,17 @@ chain stopped. A run that ended with a report is never resumed. The lead can res
 limit ends the run, and a request to report 10 minutes before, halfway for limits under 20 minutes); a run that used
 it without a report is recorded `time-limit` and resumed the same way.
 
+**Network faults are requeued, and no jawan starts while the model API does not resolve.** A run whose harness gave
+up on the model API with a network-class error in its last lines (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, such as
+omp's `Retry budget exhausted after 3 retries: getaddrinfo EAI_AGAIN <host>`) is recorded failed with
+`network fault: <that line>` and continued the same way, in the same omp session, within `capacity.autoResume`. A
+chain is requeued for a network fault at most once every 10 minutes: a requeued run that fails the same way within 10
+minutes of its start waits out the rest (`notBefore` on the queued run). A name that did not resolve also records the
+host (the one the error names, else the model's provider: `api.anthropic.com` for Claude models and `provider/`
+names, `api.openai.com` for Codex, ...) in `state/network-fault.json`. While it still does not resolve, toli starts no
+jawan: spawns, continuations and the queue wait, `spawn` says why, and `logs/network.log` gets one line for the hold
+and one when the host resolves again, after which the minute tick starts the queue. `spawn --now` starts one anyway.
+
 **No request budget.** omp's `task.softRequestBudget` (200 requests per subagent by default, force-stopped at 1.5x)
 told long-running subagent jawans to wrap up and then stopped them. toli's root carries `.omp/config.yml` with
 `task.softRequestBudget: 0` (no budget), which omp reads as project settings for the lead and every run in toli's

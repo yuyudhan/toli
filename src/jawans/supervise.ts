@@ -4,8 +4,9 @@
 // inbox, from where `bin/toli wake` (omp extension tick, Claude Code UserPromptSubmit hook) brings it into the lead's
 // chat. A run has no wall-clock limit unless given `--max-time`; one that stalls (no progress for
 // capacity.stallMinutes, src/jawans/progress.ts), hits its explicit limit without a report, or stops on a rate/usage
-// limit is resumed: the same omp session continues (`omp --resume`), up to capacity.autoResume times per chain. When
-// a harness exits, the automation browsers its run left open are closed (src/jawans/browsers.ts). The freed slot
+// limit is resumed: the same omp session continues (`omp --resume`), up to capacity.autoResume times per chain. One
+// that ends on a network fault is requeued the same way, to start once the network is back (src/jawans/network.ts).
+// When a harness exits, the automation browsers its run left open are closed (src/jawans/browsers.ts). The freed slot
 // starts the oldest queued run.
 import { closeSync, existsSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { availableParallelism, constants } from "node:os";
@@ -27,6 +28,14 @@ import { LIMIT_STOP, signalDeathText } from "./death.ts";
 import { jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
 import { deadlineSection, hasReport, onlyHarnessErrors, usedTimeLimit } from "./limits.ts";
+import {
+    modelApiHost,
+    NETWORK_REASON,
+    networkFault,
+    networkFaultError,
+    networkRequeueAt,
+    recordNetworkFault,
+} from "./network.ts";
 import { stallText } from "./progress.ts";
 import { type JawanRun, loadRun, modelText, runMinuteMs, updateRun } from "./runs.ts";
 
@@ -111,10 +120,11 @@ function postOutcome(machine: Machine, run: JawanRun): void {
  */
 export function drainQueue(options: { diskKept?: boolean } = {}): string[] {
     const machine = loadMachine();
-    const { started, failed, cancelled } = startQueued(options);
+    const { started, failed, cancelled, held } = startQueued(options);
     for (const { run } of failed) postOutcome(machine, run);
     return [
         ...cancelled.map((run) => `jawan ${run.id}: not started from the queue, ${run.error}`),
+        ...(held === null ? [] : [held]),
         ...started.map((run) => `jawan ${run.id}: started from the queue`),
         ...failed.map(({ run, error }) => `jawan ${run.id}: could not start from the queue: ${error}`),
     ];
@@ -264,6 +274,11 @@ export async function superviseRun(id: string): Promise<void> {
         const output = existsSync(initial.logPath) ? readFileSync(initial.logPath, "utf8") : "";
         const reported = hasReport(output);
         const usage = parseUsage(last.output);
+        // A harness that gave up on the model API with a network-class error (not one toli stopped or killed).
+        const fault =
+            result.error === null && !timedOut && !last.stalled && signalled === null
+                ? networkFault(last.output, result.code)
+                : null;
         let finished = updateRun(id, (run) => {
             const exit = run.status === "killed" ? killedExit(result) : result;
             run.exitCode = exit.code;
@@ -295,17 +310,24 @@ export async function superviseRun(id: string): Promise<void> {
             else if (timedOut) run.error = `timed out after ${(run.maxMinutes ?? 0) + KILL_GRACE_MINUTES} minutes`;
             else if (signalled !== null) run.error = signalled;
             else if (run.status === "failed" && hitLimit(last.output, result.code)) run.error = LIMIT_STOP;
+            else if (run.status === "failed" && fault !== null) run.error = networkFaultError(fault);
             else if (errorOnly) run.error = "the harness printed only errors, no report";
         });
+        const faulted = fault !== null && finished.status === "failed" && finished.error === networkFaultError(fault);
+        if (faulted) recordNetworkFault(fault, fault.host ?? modelApiHost(finished.harness, finished.model));
         const stopped =
             finished.status === "stalled"
                 ? { reason: "stalled", text: `stalled (${stallText(finished.stallMinutes ?? DEFAULT_STALL_MINUTES)})` }
                 : finished.status === "time-limit"
                   ? { reason: "time-limit", text: `hit its ${finished.maxMinutes}-minute time limit` }
-                  : null;
+                  : faulted
+                    ? { reason: NETWORK_REASON, text: `failed on a network fault (${fault.line})` }
+                    : null;
         if (stopped !== null) {
             try {
-                finished = autoResume(machine, finished, stopped.reason, stopped.text);
+                finished = autoResume(machine, finished, stopped.reason, stopped.text, {
+                    notBefore: networkRequeueAt(finished, now()),
+                });
             } catch (error) {
                 warn(`auto-resume of ${id} failed: ${error instanceof Error ? error.message : String(error)}`);
             }

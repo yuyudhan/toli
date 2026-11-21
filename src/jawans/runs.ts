@@ -56,10 +56,12 @@ export type JawanRun = {
     error: string | null;
     /** When the run was queued for a free slot; absent when it started at once. */
     queuedAt?: string;
+    /** The earliest a queued run may start: a network-fault requeue waits out NETWORK_REQUEUE_MINUTES (network.ts). */
+    notBefore?: string;
     /** Resume chain: the run this one continues, and its place in the chain (1 for the first continuation). */
     resumeOf?: string;
     resumeCount?: number;
-    /** Why this run continues the previous one: `stalled`, `time-limit`, `rate/usage limit`, `lead` (`toli resume`). */
+    /** Why this run continues the previous one: `stalled`, `time-limit`, `network fault`, `lead` (`toli resume`). */
     resumeReason?: string;
     /** The continuation started (or queued) because this run stopped without a report, or the lead resumed it. */
     resumedBy?: string;

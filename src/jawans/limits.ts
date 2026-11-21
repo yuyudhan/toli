@@ -18,7 +18,7 @@ export const REPORT_MARGIN_MINUTES = 10;
 const HARNESS_ERROR = /^(?:API )?Error:|^(?:Claude AI )?usage limit reached/i;
 
 /** The run's output lines past blanks and harness warnings. */
-function answerLines(output: string): string[] {
+export function answerLines(output: string): string[] {
     return output
         .split("\n")
         .map((line) => line.trim())

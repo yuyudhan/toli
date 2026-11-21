@@ -207,8 +207,8 @@ the interactive Sardar's subagents.
     session start|end --pid <n>
 
 - `spawn` starts a jawan in the background on any harness and returns a run id; `runs` and `run` follow it. With
-  every jawan slot busy (`capacity.maxRuns`, shared with the lead's native subagents) the run is queued and starts
-  when one frees; `--now` starts it anyway.
+  every jawan slot busy (`capacity.maxRuns`, shared with the lead's native subagents), or while the model API host a
+  run failed to resolve still does not, the run is queued and starts when it can; `--now` starts it anyway.
   A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
   Runs have no time limit unless given `--max-time`; a run that shows no progress for `capacity.stallMinutes`
   (default 30, or its brief's `Stall: <minutes>` line), or uses its explicit limit, without a report is resumed in the same omp session
@@ -307,8 +307,11 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   starts the lead in tmux on every other machine where none runs ([fleet.md](fleet.md#fleet-health-and-work)).
 - `fleet check`: idle machines (no running jawan, spawn run or native subagent) with queued work for a project
   cloned there, and active tasks no live run works on, on every reachable machine; `--wake` posts the findings as one
-  inbox item; `--local` reports this machine's own backlog (what the coordinator reads over ssh). The coordinator's
-  tick runs it every `oversight.fleetCheckMinutes` (default 60), away mode included ([fleet.md](fleet.md#oversight)).
+  inbox item; `--local` reports this machine's own backlog (what the coordinator reads over ssh). When at least two
+  and more than half of the other machines are unreachable the same way (names do not resolve, no route or timed out,
+  off the network, connection refused), it prints one `network fault` line for them instead of one line per host. The
+  coordinator's tick runs it every `oversight.fleetCheckMinutes` (default 60), away mode included
+  ([fleet.md](fleet.md#oversight)).
 - `build-slot -- <command...>`: run a heavy build in one of this machine's heavy-build slots (`capacity.buildSlots`),
   waiting while all are busy; jawans' cargo goes through it on its own ([fleet.md](fleet.md#heavy-build-slots)). It
   refuses a build outside the registered clones, toli's task worktrees and toli's checkout unless
