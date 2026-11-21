@@ -129,8 +129,14 @@ it`; a done or dropped task's old jawan tag holds nothing, since that subagent l
     name, case-insensitive (default `target`, `node_modules`, `cargo_target`, `cargo_registry`, `cargo_git`). So
     `x_target` and `app_backend_cargo_target` are caches, while `cargo-api_grafana`, `cargo_wal`, `retarget_home` and
     `myproj_targets_config` are not. It must also not look like data (the data words of step 5), and no container
-    may mount it, running or stopped. Largest first, until
-    free space is back at the floor
+    may mount it, running or stopped. Then, just before it goes, the keeper looks inside it read-only, from a
+    throwaway `busybox:latest` container (`--pull never`, no network, the volume mounted read-only), since `<x>_target`
+    also names a sync, replica or export destination. It goes only when its root holds a build cache's marker: a
+    cargo target's `CACHEDIR.TAG`, `.rustc_info.json` or `debug/.fingerprint` / `release/.fingerprint`;
+    node_modules' `.package-lock.json`, `.modules.yaml` or `.yarn-state.yml`; a cargo registry's `index` and `cache`;
+    cargo git's `db` and `checkouts`. No marker, or no local image or a failed look, keeps it
+    (`kept docker volume <name>: no build-cache marker inside it`, `...: cannot look inside it (<why>)`). Largest
+    first, until free space is back at the floor
     (`removed docker volume <name> (104.5 GB), freed 104.0 GB (step 1: unused build-cache volume)`). Only where
     Docker answers (`docker cache volumes: skipped (daemon not reachable)`), never while a pull or build runs; a
     volume a stopped container still mounts waits for step 5.

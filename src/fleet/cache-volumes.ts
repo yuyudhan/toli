@@ -86,6 +86,37 @@ export function freeCacheVolumes(
             volumes: cacheVolumes(names, containers, words),
             kept: [],
         }),
+        confirm: (volume: BuildVolume) => cacheContents(docker.volumeHas(volume.name, LOOK_FOR)),
     };
     return freeVolumes(step, context, say, docker);
+}
+
+/**
+ * What a build cache's root holds (T2232 round 3: `<x>_target` also names a sync or export destination): a cargo
+ * target's `CACHEDIR.TAG`, `.rustc_info.json` or a profile's `.fingerprint`; node_modules' `.package-lock.json` (npm),
+ * `.modules.yaml` (pnpm) or `.yarn-state.yml` (yarn). Any one of these is enough.
+ */
+const MARKERS: readonly string[] = [
+    "CACHEDIR.TAG",
+    ".rustc_info.json",
+    "debug/.fingerprint",
+    "release/.fingerprint",
+    ".package-lock.json",
+    ".modules.yaml",
+    ".yarn-state.yml",
+];
+/** Markers that make a volume a cache only together: a cargo registry's layout, cargo's git checkouts'. */
+const PAIRS: readonly (readonly [string, string])[] = [
+    ["index", "cache"],
+    ["db", "checkouts"],
+];
+/** Every path a look inside a volume asks about. */
+const LOOK_FOR: readonly string[] = [...MARKERS, ...PAIRS.flat()];
+
+/** Why a volume whose look inside found `found` (or why the look failed) is no cache after all; null when it is. */
+function cacheContents(found: string[] | string): string | null {
+    if (typeof found === "string") return `cannot look inside it (${found})`;
+    const has = new Set(found);
+    const cache = MARKERS.some((marker) => has.has(marker)) || PAIRS.some(([a, b]) => has.has(a) && has.has(b));
+    return cache ? null : "no build-cache marker inside it";
 }

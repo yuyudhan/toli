@@ -18,6 +18,8 @@ import { GIB, gb } from "./disk-state.ts";
 import { dockerBusy } from "./docker-prune.ts";
 
 const DOCKER_LIST_TIMEOUT_MS = 120_000;
+/** Throwaway containers' image (a few MB, with `sh` and `rm`): looking inside a volume, removing root-owned files. */
+export const THROWAWAY_IMAGE = "busybox:latest";
 /** `docker system df -v` sizes every volume, which takes a while on a big one. */
 const DOCKER_DF_TIMEOUT_MS = 600_000;
 const DOCKER_REMOVE_TIMEOUT_MS = 600_000;
@@ -194,6 +196,11 @@ export type DockerApi = {
     containers(): DockerContainer[] | string;
     /** Volume sizes (GB) as far as Docker reports them. */
     volumeSizes(): Map<string, number>;
+    /**
+     * Which of `paths` (relative to the volume's root) exist in volume `name`, looked at read-only from a throwaway
+     * container of a local image (never pulled); why not, when it could not look.
+     */
+    volumeHas(name: string, paths: readonly string[]): string[] | string;
     /** Remove a stopped container (never its volumes); why not, when Docker refused. */
     removeContainer(id: string): string | null;
     /** Remove a volume; why not, when Docker refused. */
@@ -220,6 +227,20 @@ export const hostDocker: DockerApi = {
     volumeSizes() {
         return parseVolumeSizes(run(["docker", "system", "df", "-v"], { timeoutMs: DOCKER_DF_TIMEOUT_MS }).stdout);
     },
+    volumeHas(name, paths) {
+        const image = ["docker", "image", "inspect", "--format", "{{.Id}}", THROWAWAY_IMAGE];
+        if (run(image, { timeoutMs: DOCKER_LIST_TIMEOUT_MS }).code !== 0)
+            return `no local ${THROWAWAY_IMAGE} image to look with (never pulled)`;
+        const script = 'for p in "$@"; do [ -e "/v/$p" ] && echo "$p"; done; exit 0';
+        const mount = `type=volume,source=${name},target=/v,readonly`;
+        const look = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "sh"];
+        const looked = run([...look, "--mount", mount, THROWAWAY_IMAGE, "-c", script, "sh", ...paths], {
+            timeoutMs: DOCKER_LIST_TIMEOUT_MS,
+        });
+        if (looked.code !== 0) return `docker run failed: ${firstLine(looked.stderr || looked.stdout)}`;
+        const found = new Set(looked.stdout.split("\n").map((line) => line.trim()));
+        return paths.filter((path) => found.has(path));
+    },
     removeContainer(id) {
         const gone = run(["docker", "rm", id], { timeoutMs: DOCKER_REMOVE_TIMEOUT_MS });
         return gone.code === 0 ? null : firstLine(gone.stderr || gone.stdout);
@@ -240,11 +261,15 @@ export type BuildVolumeContext = {
     simulate: (sizeGB: number) => void;
 };
 
-/** One volume step: what its lines are called, its step label, and which volumes it may remove. */
+/**
+ * One volume step: what its lines are called, its step label, which volumes it may remove, and (`confirm`) why a
+ * picked volume must stay after all, checked just before it goes; null when it may go.
+ */
 export type VolumeStep = {
     what: string;
     label: string;
     pick: (names: string[], containers: DockerContainer[]) => { volumes: BuildVolume[]; kept: string[] };
+    confirm?: (volume: BuildVolume) => string | null;
 };
 
 /** Remove idle build-output volumes until free disk is over the emergency level (see the top); how many went. */
@@ -292,6 +317,11 @@ export function freeVolumes(
     let removed = 0;
     for (const volume of volumes) {
         if (context.stop()) break;
+        const unconfirmed = step.confirm?.(volume) ?? null;
+        if (unconfirmed !== null) {
+            say(`kept docker volume ${volume.name}: ${unconfirmed}`);
+            continue;
+        }
         const size = volume.sizeGB === null ? "size unknown" : gb(volume.sizeGB);
         if (context.dryRun) {
             for (const container of volume.stopped)

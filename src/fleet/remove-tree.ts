@@ -4,10 +4,8 @@ import { existsSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { run } from "../core/util.ts";
 import { describe } from "./disk-state.ts";
-import { firstLine } from "./docker-volumes.ts";
+import { firstLine, THROWAWAY_IMAGE as REMOVER_IMAGE } from "./docker-volumes.ts";
 
-/** The image of the throwaway container that removes root-owned build output: a few MB, with `rm` on board. */
-const REMOVER_IMAGE = "busybox:latest";
 /** Removing a 20 GB target can take minutes on a slow disk. */
 const REMOVER_TIMEOUT_MS = 900_000;
 

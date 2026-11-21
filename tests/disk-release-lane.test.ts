@@ -24,11 +24,15 @@ const mounting = (name: string, status: string, volume: string): DockerContainer
     mounts: [{ type: "volume", volume, source: "", destination: "/app/target" }],
 });
 
-/** A fake Docker: `volumes` with their sizes (GB), `containers`, and every removal it was asked for. */
+/**
+ * A fake Docker: `volumes` with their sizes (GB), `containers`, what a look inside each volume finds (`contents`: the
+ * paths there, or why the look failed; a cargo target's `CACHEDIR.TAG` when not given), and every removal asked for.
+ */
 function fakeDocker(
     volumes: Record<string, number>,
     containers: DockerContainer[] = [],
     unavailable: string | null = null,
+    contents: Record<string, string[] | string> = {},
 ): DockerApi & { removed: string[] } {
     const removed: string[] = [];
     return {
@@ -37,6 +41,10 @@ function fakeDocker(
         volumes: () => Object.keys(volumes),
         containers: () => containers,
         volumeSizes: () => new Map(Object.entries(volumes)),
+        volumeHas: (name, paths) => {
+            const found = contents[name] ?? ["CACHEDIR.TAG"];
+            return typeof found === "string" ? found : paths.filter((path) => found.includes(path));
+        },
         removeContainer: (id) => {
             removed.push(`container ${id}`);
             return null;
@@ -155,6 +163,44 @@ describe("unused build-cache volumes", () => {
         expect(said).toEqual(["docker cache volumes: skipped (not installed)"]);
         expect(absent.removed).toEqual([]);
     });
+
+    // T2232 round 3: `<x>_target` also names a destination (a sync, replica or export target), not only cargo's.
+    test("a cache-named volume goes only when a look inside finds a cache's markers; else it stays and says why", () => {
+        const destinations = "sync replica snapshot export migration s3 es mlflow".split(" ").map((w) => `${w}_target`);
+        const sizes = Object.fromEntries([
+            ...destinations.map((name) => [name, 50] as const),
+            ["app_cargo_target", 40],
+            ["web_node_modules", 30],
+            ["app_cargo_registry", 20],
+            ["app_cargo_git", 10],
+            ["pnpm_node_modules", 5],
+            ["broken_target", 4],
+            ["fake_cargo_registry", 3],
+        ]);
+        const contents: Record<string, string[] | string> = {
+            ...Object.fromEntries(destinations.map((name) => [name, ["data.parquet", "index"]])),
+            app_cargo_target: ["debug/.fingerprint", "debug"],
+            web_node_modules: [".package-lock.json"],
+            app_cargo_registry: ["index", "cache", "src"],
+            app_cargo_git: ["db", "checkouts"],
+            pnpm_node_modules: [".modules.yaml"],
+            broken_target: "docker run failed: no such image",
+            fake_cargo_registry: ["index"],
+        };
+        const docker = fakeDocker(sizes, [], null, contents);
+        const lines: string[] = [];
+        const context = { dryRun: false, free: () => 0, stop: () => false, simulate: () => undefined };
+        expect(freeCacheVolumes(context, (line) => lines.push(line), defaults, docker)).toBe(5);
+        expect(docker.removed.sort()).toEqual(
+            ["app_cargo_git", "app_cargo_registry", "app_cargo_target", "pnpm_node_modules", "web_node_modules"].sort(),
+        );
+        for (const name of destinations)
+            expect(lines).toContain(`kept docker volume ${name}: no build-cache marker inside it`);
+        expect(lines).toContain(
+            "kept docker volume broken_target: cannot look inside it (docker run failed: no such image)",
+        );
+        expect(lines).toContain("kept docker volume fake_cargo_registry: no build-cache marker inside it");
+    });
 });
 
 describe("a held clone's target", () => {
@@ -201,9 +247,9 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 20971
 /**
  * A docker stub listing `app_backend_cargo_target` (no container, there while `marker` exists), `app_e2e_s3_data` (no
  * container, a data name), `web_node_modules` (a stopped container's) and `live_target` (a running container's);
- * it logs every call and removes only the unused cache volume.
+ * it logs every call and removes only the unused cache volume. Without `localImage` no image is present locally.
  */
-function laneDocker(box: Sandbox, marker: string): () => string[] {
+function laneDocker(box: Sandbox, marker: string, localImage = true): () => string[] {
     writeFileSync(marker, "");
     const inspect = join(box.root, "inspect.json");
     writeFileSync(
@@ -229,10 +275,13 @@ function laneDocker(box: Sandbox, marker: string): () => string[] {
         `printf '%s\\n' "$*" >> "${log}"
 case "$*" in
 info*) echo 29 ;;
+"image inspect"*) ${localImage ? "echo sha256:busybox" : `echo "Error: No such image: busybox:latest" >&2; exit 1`} ;;
+pull*) echo "Error: the test refuses $*" >&2; exit 1 ;;
 "volume ls -q") [ -e "${marker}" ] && echo app_backend_cargo_target; printf 'app_e2e_s3_data\\nweb_node_modules\\nlive_target\\n' ;;
 "ps -aq --no-trunc") printf 'c1\\nc2\\n' ;;
 "container inspect c1 c2") cat "${inspect}" ;;
 "system df -v") printf 'Local Volumes space usage:\\n\\nVOLUME NAME LINKS SIZE\\napp_backend_cargo_target 0 112.2GB\\napp_e2e_s3_data 0 16GB\\n\\n' ;;
+"run "*source=app_backend_cargo_target,*) echo CACHEDIR.TAG; echo debug/.fingerprint ;;
 "volume rm app_backend_cargo_target") rm -f "${marker}"; echo app_backend_cargo_target ;;
 "rm "*|"volume rm"*) echo "Error: the test refuses $*" >&2; exit 1 ;;
 *) echo "Total reclaimed space: 0B" ;;
@@ -256,6 +305,9 @@ describe("the keeper beside a release lane", () => {
             expect(lines).toContain(
                 "removed docker volume app_backend_cargo_target (104.5 GB), freed 70.0 GB (step 1: unused build-cache volume)",
             );
+            const look = calls().find((call) => call.startsWith("run ") && call.includes("app_backend_cargo_target"));
+            expect(look).toContain("--pull never");
+            expect(look).toContain("source=app_backend_cargo_target,target=/v,readonly");
             expect(lines).not.toContain(`deleted ${join(clone, "target")}`);
             expect(existsSync(join(clone, "target", "debug", "deps", "libx.rlib"))).toBe(true);
             for (const call of [
@@ -282,6 +334,20 @@ describe("the keeper beside a release lane", () => {
         expect(existsSync(marker)).toBe(true);
         const inbox = box.ok(["inbox", "list"]);
         expect(inbox).toContain("disk keeper: capacity.diskCacheVolumes on m1 is malformed");
+    });
+
+    // T2232 round 3: with no image to look inside it with, the volume stays (fail closed) and nothing is pulled.
+    keeperTest("with no local image to look inside it, the cache volume stays and nothing is pulled", () => {
+        const box = keeperBox();
+        const marker = join(box.root, "cargo-target.volume");
+        laneTree(box, 30, () => marker);
+        const calls = laneDocker(box, marker, false);
+        const lines = keep(box).lines.join("\n");
+        expect(lines).toContain(
+            "kept docker volume app_backend_cargo_target: cannot look inside it (no local busybox:latest image to look with (never pulled))",
+        );
+        expect(calls().filter((call) => /^(pull|run|volume rm|image pull)\b/.test(call))).toEqual([]);
+        expect(existsSync(marker)).toBe(true);
     });
 
     keeperTest("with capacity.diskKeep false a jawan start removes no volume: low disk only alerts", () => {

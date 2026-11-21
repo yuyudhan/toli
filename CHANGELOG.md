@@ -35,7 +35,9 @@ one. See docs/releasing.md.
   name of `capacity.diskCacheVolumes` or ends in `_<name>` (default `target`, `node_modules`, `cargo_target`,
   `cargo_registry`, `cargo_git`; a compose data volume of a project named `cargo-api` stays), whose name does not look
   like data, and that no container mounts, running or stopped, now goes in step 1, largest first, only where Docker
-  answers and never with `capacity.diskKeep` false. A malformed setting skips the step and alerts the inbox once.
+  answers and never with `capacity.diskKeep` false, and only once a read-only look inside it (a local
+  `busybox:latest`, never pulled) finds a cargo, npm/pnpm/yarn or cargo-registry marker: a sync or export
+  `<x>_target` stays. A malformed setting skips the step and alerts the inbox once.
   A `target/` in a main clone a live native jawan's task works in, or in a checkout a held heavy-build slot's build
   works in, stays until free disk is under the emergency level; a full disk still deletes it
   (docs/disk.md "What it deletes, in order", T2232).
