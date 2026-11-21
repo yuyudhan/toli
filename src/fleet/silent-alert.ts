@@ -1,4 +1,4 @@
-// A Sardar that stops taking its wakes (docs/sardars.md "A Sardar that stops taking its wakes"): while an interactive
+// A Sardar that stops taking its wakes (docs/sardars.md, step 1): while an interactive
 // session is open it holds this machine's inbox, so when its extension stops fetching wakes nothing else reads them.
 // Once that silence passes `lead.silentSessionMinutes` (src/fleet/idle-session.ts silentSession), the minute tick on a
 // worker tells the coordinator, where the user is, once per episode; on the coordinator it is logged. The episode ends
