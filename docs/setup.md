@@ -93,6 +93,10 @@ prints the active names):
 { "user": "Boss", "lead": "Lead", "leadPlural": "Leads", "worker": "worker", "workerPlural": "workers" }
 ```
 
+`userAliases` lists other names you go by (a real name next to a nickname, say `["Sam Lee"]`; none by default). A
+message addressed to any of them, such as `for Sam Lee` or `Sam Lee, keep it?`, is marked `[needs you]` in the
+lead's wake ([sardars.md](sardars.md), "Hide Sardar chatter").
+
 ## By hand
 
 Everything "set up toli" does can be done directly. Requirements: [Bun](https://bun.sh), git 2.38 or newer

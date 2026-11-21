@@ -162,7 +162,13 @@ export function wakeMessage(items: WakeItem[], hide: boolean): string {
     const whole = items.map((item) =>
         existsSync(item.path) ? { ...item, body: readFileSync(item.path, "utf8") } : item,
     );
-    return compactWakeMessage(whole, { root: paths.root(), user: persona().user, ackCommands: ackCommands(items) });
+    const names = persona();
+    return compactWakeMessage(whole, {
+        root: paths.root(),
+        user: names.user,
+        aliases: names.userAliases,
+        ackCommands: ackCommands(items),
+    });
 }
 
 /**

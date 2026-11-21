@@ -5,6 +5,7 @@ import { out } from "../core/util.ts";
 /** Names for tracked, installation-independent files (harness rule files); live sessions use the configured persona. */
 export const GENERIC_NAMES: Persona = {
     user: "the user",
+    userAliases: [],
     lead: "the lead",
     leadPlural: "leads",
     worker: "jawan",

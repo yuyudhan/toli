@@ -24,6 +24,7 @@ describe("persona", () => {
         rootWith(undefined);
         expect(persona()).toEqual({
             user: "Malik",
+            userAliases: [],
             lead: "Sardar",
             leadPlural: "Saradars",
             worker: "jawan",
@@ -38,6 +39,15 @@ describe("persona", () => {
         rootWith({ user: "Boss", worker: "crew member", workerPlural: "crew" });
         expect(persona()).toEqual({ ...DEFAULT_PERSONA, user: "Boss", worker: "crew member", workerPlural: "crew" });
         expect(personaLine()).toContain('the user is "Boss"');
+    });
+
+    test("userAliases lists the user's other names", () => {
+        rootWith({ userAliases: [" Sam Lee ", "Sam"] });
+        expect(persona().userAliases).toEqual(["Sam Lee", "Sam"]);
+        rootWith({ userAliases: "Sam" });
+        expect(() => persona()).toThrow('"userAliases" must be a list of non-empty strings');
+        rootWith({ userAliases: [""] });
+        expect(() => persona()).toThrow('"userAliases" must be a list of non-empty strings');
     });
 
     test("unknown keys and empty values are errors", () => {

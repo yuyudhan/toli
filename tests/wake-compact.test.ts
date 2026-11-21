@@ -22,7 +22,7 @@ function at(second: number): string {
 }
 
 const compact = (items: WakeItem[]): string =>
-    compactWakeMessage(items, { root: ROOT, user: "Robin", ackCommands: ACKS });
+    compactWakeMessage(items, { root: ROOT, user: "Robin", aliases: [], ackCommands: ACKS });
 
 const itemLines = (message: string): string[] => message.split("\n").filter((line) => line.startsWith("- "));
 
@@ -201,6 +201,29 @@ describe("compact wake (Hide Sardar chatter)", () => {
             compact([inboxItem(at(1), "m2", "job daily-report", `Report done.\n\n${words}`)]).includes("- [needs you]");
         expect(asks.filter((words) => !marks(words))).toEqual([]);
         expect(negated.filter(marks)).toEqual([]);
+    });
+
+    test("an ask for another of the user's names, or options with a recommendation, is marked [needs you]", () => {
+        const marks = (words: string): boolean =>
+            compactWakeMessage([inboxItem(at(1), "m2", "message from m2", words)], {
+                root: ROOT,
+                user: "Robin",
+                aliases: ["Sam Lee"],
+                ackCommands: ACKS,
+            }).includes("- [needs you]");
+        const asks = [
+            "m2 for Sam Lee (design ruling, T1116): the banner overlaps the menu. Options: (a) move it (b) shrink it (c) leave it. I recommend (a).",
+            "m2: question for Sam Lee: which region?",
+            "m2: Sam Lee, keep the old banner?",
+            "m2: which import order? 1 = by date, 2 = by size. Recommended: 1",
+        ];
+        const plain = [
+            "m2: done. Options: (a) shipped (b) logged.",
+            "m2: I recommend more tests next sprint.",
+            "m2: Sam Lee's report is in. Done.",
+        ];
+        expect(asks.filter((words) => !marks(words))).toEqual([]);
+        expect(plain.filter(marks)).toEqual([]);
     });
 
     test("the ack commands close the message unchanged, covering exactly the items shown", () => {

@@ -326,6 +326,7 @@ describe("lead guidance", () => {
     test("the reply-length rule comes first, in the live reminder and the generic rule files alike", () => {
         const persona = {
             user: "Jane",
+            userAliases: [],
             lead: "Sardar",
             leadPlural: "Saradars",
             worker: "jawan",

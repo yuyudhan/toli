@@ -8,6 +8,11 @@ import { isJsonObject, readJson, ToliError } from "./util.ts";
 export type Persona = {
     /** How the lead addresses the user (the default is below). */
     user: string;
+    /**
+     * Other names the user goes by (a real name, a nickname): messages addressed to any of them are for the user,
+     * so the wake marks them `[needs you]` (src/records/wake-compact.ts). None by default.
+     */
+    userAliases: string[];
     /** The lead agent (the one session the user talks to). */
     lead: string;
     leadPlural: string;
@@ -18,11 +23,14 @@ export type Persona = {
 
 export const DEFAULT_PERSONA: Persona = {
     user: "Malik",
+    userAliases: [],
     lead: "Sardar",
     leadPlural: "Saradars",
     worker: "jawan",
     workerPlural: "jawans",
 };
+
+type NameField = Exclude<keyof Persona, "userAliases">;
 
 const FIELDS = Object.keys(DEFAULT_PERSONA) as (keyof Persona)[];
 
@@ -34,9 +42,15 @@ export function persona(): Persona {
     for (const [key, value] of Object.entries(raw)) {
         if (!FIELDS.includes(key as keyof Persona))
             throw new ToliError(`${paths.persona()}: unknown key "${key}" (allowed: ${FIELDS.join(", ")})`);
+        if (key === "userAliases") {
+            if (!Array.isArray(value) || value.some((alias) => typeof alias !== "string" || alias.trim() === ""))
+                throw new ToliError(`${paths.persona()}: "userAliases" must be a list of non-empty strings`);
+            result.userAliases = value.map((alias: string) => alias.trim());
+            continue;
+        }
         if (typeof value !== "string" || value.trim() === "")
             throw new ToliError(`${paths.persona()}: "${key}" must be a non-empty string`);
-        result[key as keyof Persona] = value.trim();
+        result[key as NameField] = value.trim();
     }
     return result;
 }

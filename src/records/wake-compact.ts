@@ -12,8 +12,10 @@ const GROUP_NAMES = 3;
 export type CompactOptions = {
     /** toli's root: item paths are shown relative to it. */
     root: string;
-    /** What the user is called (config/persona.json): `question for <user>` marks an item as needing them. */
+    /** What the user is called (config/persona.json `user`), named in the header. */
     user: string;
+    /** The user's other names (`userAliases`): an ask for any of their names needs them. */
+    aliases: string[];
     /** The ack commands covering exactly `items`, printed last. */
     ackCommands: string[];
 };
@@ -69,29 +71,33 @@ function leadParagraph(body: string): string {
 }
 
 /**
- * Whether an item carries a decision for the user: a held task or a word asked of them, or a body naming a question
- * for them by name, a decision needed or what needs them, or asking them: a question that names them (`<user>, keep
- * it?`), a `Should I/we`, `Shall I/we`, `Can you` or `Do you want me to` question, `please approve`, `needs your
- * decision`. toli's own boilerplate about holds says "the user", so a phrase with "the user" alone does not count.
+ * Whether an item carries a decision for the user: a held task or a word asked of them; an ask for the user by any
+ * of `names` (`for <name>`, `<name>, keep it?`, not `<name>'s`); a `Should I/we`, `Shall I/we`, `Can you` or
+ * `Do you want me to` question; `please approve`, `needs your decision`; options with a recommendation; or a decision
+ * needed / what needs them. toli's own boilerplate about holds says "the user", so "the user" alone does not count.
  * A decision line is negated only when the negation is all its line says (`Decision needed: none.`, `Needs you:
  * nothing new`, `no decision needed`, `nothing needs you`, an empty `Needs you (0):` digest header); anything more
  * (`no rush, but approve ...`, `no-go or go`, `n/a for now; later ...`) keeps it, since a lost ask costs more than a
  * false mark.
  */
-function needsYou(title: string, body: string, user: string): boolean {
+function needsYou(title: string, body: string, names: string[]): boolean {
     if (HELD_TITLE.test(title)) return true;
-    const name = escapeRegExp(user);
+    const name = `(${names.map(escapeRegExp).join("|")})`;
     // A question is the rest of its sentence up to a `?`, never past `.`, `!` or a line end.
     const question = "[^.!?\\n]*\\?";
     const asks = [
-        `question for ${name}\\b`,
-        `\\b${name}\\b${question}`,
+        `\\bfor ${name}\\b(?!'s)`,
+        `\\b${name}\\b(?!'s)${question}`,
         `\\b(should|shall) (i|we)\\b${question}`,
         `\\b(can you|do you want (me|us) to)\\b${question}`,
         "\\bplease approve\\b",
         "\\bneeds your decision\\b",
     ];
     if (new RegExp(asks.join("|"), "i").test(body)) return true;
+    // Options to choose from (`Options:`, `(a) ... (b)`, `1 = ... 2 =`, a numbered list) with a recommendation.
+    const choices = /\boptions?\s*:|\(a\)[\s\S]*?\(b\)|\b1\s*=[\s\S]*?\b2\s*=|^\s*1[.)]\s[\s\S]*?^\s*2[.)]\s/im;
+    const pick = /\b(i recommend|recommended|my pick)\b/i;
+    if (choices.test(body) && pick.test(body)) return true;
     // What may close a negated line: a parenthetical and a full stop.
     const tail = "\\s*(\\([^)\\n]*\\))?\\s*[.!]?\\s*$";
     const negatedAfter = new RegExp(`^\\s*(\\(0\\)|[:-]\\s*(none|nothing( new| more| further)?|no|n/a)${tail})`, "i");
@@ -105,7 +111,7 @@ function needsYou(title: string, body: string, user: string): boolean {
     return false;
 }
 
-function parse(item: WakeItem, user: string): Parsed {
+function parse(item: WakeItem, names: string[]): Parsed {
     const name = basename(item.path, ".md");
     const source = item.kind === "job" ? "job" : name.slice(item.stamp.length + 1) || "toli";
     const title =
@@ -118,7 +124,7 @@ function parse(item: WakeItem, user: string): Parsed {
         title,
         lead: leadParagraph(item.body),
         peer: /^- via: peer \S+ \(fingerprint [0-9a-f]+\)$/m.test(item.body),
-        needsYou: needsYou(title, item.body, user),
+        needsYou: needsYou(title, item.body, names),
     };
 }
 
@@ -203,7 +209,7 @@ function messagesLine(source: string, group: Parsed[], root: string): Line {
  */
 export function compactWakeMessage(items: WakeItem[], options: CompactOptions): string {
     if (items.length === 0) return "";
-    const parsed = items.map((item) => parse(item, options.user));
+    const parsed = items.map((item) => parse(item, [options.user, ...options.aliases]));
     const learnings = new Map<string, Parsed[]>();
     const messages = new Map<string, Parsed[]>();
     // Each group's line takes the place of its first item, so the list keeps arrival order.
