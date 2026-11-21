@@ -189,6 +189,7 @@ describe("compact wake (Hide Sardar chatter)", () => {
             "Shall I merge it tonight?",
             "Do you want me to retry the import?",
             "This needs your decision on the region.",
+            "Decision needed from Robin: pick 1 or 2",
         ];
         const negated = [
             "Decision needed: none.",
@@ -196,6 +197,8 @@ describe("compact wake (Hide Sardar chatter)", () => {
             "Needs you: none",
             "no decision needed",
             "nothing needs you",
+            "- No decision needed from Robin.",
+            "Decision needed from Robin: none.",
         ];
         const marks = (words: string): boolean =>
             compact([inboxItem(at(1), "m2", "job daily-report", `Report done.\n\n${words}`)]).includes("- [needs you]");

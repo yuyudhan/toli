@@ -98,14 +98,17 @@ function needsYou(title: string, body: string, names: string[]): boolean {
     const choices = /\boptions?\s*:|\(a\)[\s\S]*?\(b\)|\b1\s*=[\s\S]*?\b2\s*=|^\s*1[.)]\s[\s\S]*?^\s*2[.)]\s/im;
     const pick = /\b(i recommend|recommended|my pick)\b/i;
     if (choices.test(body) && pick.test(body)) return true;
-    // What may close a negated line: a parenthetical and a full stop.
+    // What may follow the phrase in a negated line: who it is from (`from <user>`), then the negation (for `Decision
+    // needed: none`), then at most a parenthetical and a full stop.
+    const from = `(\\s+from (you|the user|${name}))?`;
     const tail = "\\s*(\\([^)\\n]*\\))?\\s*[.!]?\\s*$";
-    const negatedAfter = new RegExp(`^\\s*(\\(0\\)|[:-]\\s*(none|nothing( new| more| further)?|no|n/a)${tail})`, "i");
+    const negatedBefore = new RegExp(`^${from}${tail}`, "i");
+    const negation = "(none|nothing( new| more| further)?|no|n/a)";
+    const negatedAfter = new RegExp(`^\\s*(\\(0\\)|${from}\\s*[:-]\\s*${negation}${tail})`, "i");
     for (const match of body.matchAll(new RegExp(`decision needed|\\bneeds (you|${name})\\b`, "gi"))) {
         const before = body.slice(0, match.index).split("\n").at(-1) ?? "";
         const after = body.slice(match.index + match[0].length).split("\n", 1)[0] ?? "";
-        const negated =
-            (/\b(no|nothing)\s+$/i.test(before) && new RegExp(`^${tail}`).test(after)) || negatedAfter.test(after);
+        const negated = (/\b(no|nothing)\s+$/i.test(before) && negatedBefore.test(after)) || negatedAfter.test(after);
         if (!negated) return true;
     }
     return false;
