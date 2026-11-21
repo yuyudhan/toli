@@ -330,8 +330,8 @@ export function delegationUpdate(
     };
 }
 
-/** The task id and delegator task of a queued update item, or null for any other item. */
-function updateOf(item: OutboxItem): { id: string; forTask?: string } | null {
+/** The task id, delegator task and task `updatedAt` of a queued update item, or null for any other item. */
+function updateOf(item: OutboxItem): { id: string; forTask: unknown; updatedAt: unknown } | null {
     if (item.kind !== "update") return null;
     let body: unknown;
     try {
@@ -341,22 +341,28 @@ function updateOf(item: OutboxItem): { id: string; forTask?: string } | null {
     }
     if (typeof body !== "object" || body === null || Reflect.get(body, "forUser") === true) return null;
     const id: unknown = Reflect.get(body, "id");
-    const forTask: unknown = Reflect.get(body, "forTask");
-    if (typeof id !== "string") return null;
-    return typeof forTask === "string" ? { id, forTask } : { id };
+    const task: unknown = Reflect.get(body, "task");
+    const updatedAt: unknown = typeof task === "object" && task !== null ? Reflect.get(task, "updatedAt") : undefined;
+    return typeof id === "string" ? { id, forTask: Reflect.get(body, "forTask"), updatedAt } : null;
 }
 
 /**
- * Drop the reports of task `id` to `to` still queued, but `sent`, the one just written (T2226): it carries the task as
- * it is now, all they had and more, so a delegator unreachable for hours gets one update, not one per change. It runs
- * after `sent` is written, so a crash in between leaves at least one report queued. One a process is sending right now
- * is not queued and goes as it is.
+ * Drop the reports of task `update.id` to `to` still queued whose task `updatedAt` is strictly older (T2226): `update`
+ * holds all they had and more, so an unreachable delegator gets one update, not one per change. It runs after `sent`
+ * is written, so a crash leaves one queued; one as new or newer stays, so two processes reporting the same task at
+ * once (after updateTask released the backlog lock) leave the newer in any order. One being sent goes as it is.
  */
-function dropOlderReports(id: string, to: { machine: string; task?: string }, sent: string): void {
+export function dropOlderReports(
+    sent: string,
+    to: { machine: string; task?: string },
+    update: { id: string; task: { updatedAt: string } },
+): void {
     for (const { file, item } of queuedItems()) {
         if (file === `${sent}.json` || item.to?.name !== to.machine) continue;
-        const update = updateOf(item);
-        if (update?.id === id && update.forTask === to.task) rmSync(join(paths.outboxDir(), file), { force: true });
+        const queued = updateOf(item);
+        if (queued === null || queued.id !== update.id || queued.forTask !== to.task) continue;
+        if (typeof queued.updatedAt === "string" && queued.updatedAt < update.task.updatedAt)
+            rmSync(join(paths.outboxDir(), file), { force: true });
     }
 }
 
@@ -381,7 +387,7 @@ export function reportToDelegator(task: Task): void {
         // carries the task's whole title, and the receiver's inbox item is its message.title.
         const label = fitTitle(update.message.title);
         const sent = sendNow(owner, target, "update", label, JSON.stringify(update), id);
-        dropOlderReports(task.id, to, id);
+        dropOlderReports(id, to, update);
         if (sent.delivered || sent.pulled) continue;
         // A refusal is final: the item already sits in state/outbox/cancelled/, and src/records/report-refusal.ts
         // stopped this task's reports to a machine that records no delegation of it.
