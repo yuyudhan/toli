@@ -84,6 +84,9 @@ function commitFiles(dir: string, files: Record<string, string>, message: string
 /** A plain `<file>:<rule>:<line>` entry, as a scan without git history writes it, for the sample key. */
 const PLAIN_ENTRY = "samples/key.txt:github-pat:1\n";
 
+/** A gitleaks config holding one rule of its own, for a token no default rule matches. */
+const EXTENDED_RULE = "[[rules]]\nid = \"toli-test\"\nregex = '''TOLIKEY[0-9]{8}'''\n";
+
 describe("bin/toli commit's staged gitleaks scan and .gitleaksignore", () => {
     test("a merge staging a key .gitleaksignore fingerprints by commit is accepted", () => {
         const { dir, samples } = ignoredSample();
@@ -199,6 +202,36 @@ describe("bin/toli commit's staged gitleaks scan and .gitleaksignore", () => {
         } finally {
             process.env.PATH = path;
         }
+    });
+
+    test("a relative [extend] path resolves to the staged files, chained, and their rules still fire", () => {
+        // .gitleaks.toml extends base.toml, which extends rules/more.toml: the only config holding a rule for TOLIKEY.
+        const dir = repo({
+            ".gitleaks.toml": '[extend]\npath = "base.toml"\n',
+            "base.toml": '[extend]\npath = "rules/more.toml"\n',
+            "app.txt": "app\n",
+        });
+        const before = commitFiles(dir, { "rules/more.toml": EXTENDED_RULE }, "gitleaks: a rule of our own");
+        writeFileSync(join(dir, "app.txt"), "app changed\n");
+        expect(safeCommit({ dir, paths: ["app.txt"], message: "App" }).sha).not.toBe(before);
+
+        writeFileSync(join(dir, "key.txt"), "TOLIKEY12345678\n");
+        expect(refusal(() => safeCommit({ dir, paths: ["key.txt"], message: "Key" }))).toContain(
+            "key.txt:1: toli-test",
+        );
+        // A working-tree-only edit to an extended file allowing everything is not what is committed: still refused.
+        writeFileSync(join(dir, "rules", "more.toml"), `${EXTENDED_RULE}\n[allowlist]\npaths = ['''.*''']\n`);
+        expect(refusal(() => safeCommit({ dir, paths: ["key.txt"], message: "Key" }))).toContain(
+            "key.txt:1: toli-test",
+        );
+    });
+
+    test("an [extend] path escaping the repository is refused", () => {
+        const dir = repo({ ".gitleaks.toml": '[extend]\npath = "../outside.toml"\n' });
+        writeFileSync(join(dir, "app.txt"), "app\n");
+        expect(refusal(() => safeCommit({ dir, paths: ["app.txt"], message: "App" }))).toContain(
+            "extends ../outside.toml, outside the repository",
+        );
     });
 
     test("only the staged .gitleaks.toml applies, never an uncommitted working-tree one", () => {

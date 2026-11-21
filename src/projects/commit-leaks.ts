@@ -1,5 +1,6 @@
 // The secrets refusal of `bin/toli commit` (src/projects/commit.ts): gitleaks over the attempt's private index.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, normalize } from "node:path";
 import { run, ToliError } from "../core/util.ts";
 import { type Attempt, tail } from "./commit-checks.ts";
 
@@ -84,6 +85,40 @@ function fingerprinted(attempt: Attempt, leak: Leak, ignore: string[], roots: st
 }
 
 /**
+ * Write under `into` (the folder gitleaks runs in, which resolves a relative `[extend] path` from its working
+ * directory as it would from the repository's top level) the staged copy of each config the staged `config` text
+ * (`from`) extends, chain included. Only the staged copies count, never a working-tree edit; a path leaving the
+ * repository or missing from the staged set is refused. An absolute path is left to gitleaks as it is.
+ */
+function stageExtends(attempt: Attempt, config: string, from: string, into: string, seen: Set<string>): void {
+    let parsed: unknown;
+    try {
+        parsed = Bun.TOML.parse(config);
+    } catch {
+        // An unparsable config is gitleaks' to report: it fails on it with no report, which refuses the commit.
+        return;
+    }
+    const extend = typeof parsed === "object" && parsed !== null && "extend" in parsed ? parsed.extend : undefined;
+    const path = typeof extend === "object" && extend !== null && "path" in extend ? extend.path : undefined;
+    if (typeof path !== "string" || isAbsolute(path)) return;
+    const file = normalize(path);
+    if (file === ".." || file.startsWith("../"))
+        throw new ToliError(`refusing: ${from} extends ${path}, outside the repository; nothing was committed`);
+    if (file === IGNORE_FILE)
+        throw new ToliError(`refusing: ${from} extends ${IGNORE_FILE}, which is not a gitleaks config`);
+    if (seen.has(file)) return;
+    seen.add(file);
+    const staged = attempt.git(["cat-file", "blob", `:${file}`]);
+    if (staged.code !== 0)
+        throw new ToliError(
+            `refusing: ${from} extends ${path}, which is not in the staged set, so the secrets scan cannot use it; nothing was committed`,
+        );
+    mkdirSync(dirname(join(into, file)), { recursive: true });
+    writeFileSync(join(into, file), staged.stdout);
+    stageExtends(attempt, staged.stdout, file, into, seen);
+}
+
+/**
  * Refuse when the staged set holds a secret: gitleaks over the private index, with the staged `.gitleaks.toml` (a
  * working-tree edit to it is not what is committed). It runs from an empty folder of the attempt, the repository
  * named by GIT_DIR and GIT_WORK_TREE, so it finds no `.gitleaksignore` of its own; the staged one is applied here, by
@@ -95,7 +130,10 @@ export function scanLeaks(attempt: Attempt, roots: string[]): void {
     mkdirSync(neutral, { recursive: true });
     const stagedConfig = attempt.git(["cat-file", "blob", ":.gitleaks.toml"]);
     const config = attempt.file("gitleaks.toml");
-    if (stagedConfig.code === 0) writeFileSync(config, stagedConfig.stdout);
+    if (stagedConfig.code === 0) {
+        writeFileSync(config, stagedConfig.stdout);
+        stageExtends(attempt, stagedConfig.stdout, ".gitleaks.toml", neutral, new Set());
+    }
     const report = attempt.file("gitleaks.json");
     const result = run(
         [
