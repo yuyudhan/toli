@@ -74,7 +74,11 @@ export type ToliRun = { code: number; stdout: string; stderr: string };
 export type Sandbox = {
     root: string;
     stubs: string;
-    toli(args: string[], options?: { stdin?: string; now?: string; env?: Record<string, string> }): ToliRun;
+    /** `timeoutMs`: kill it past that long (a command that may hang), leaving code 1 when it had to be killed. */
+    toli(
+        args: string[],
+        options?: { stdin?: string; now?: string; env?: Record<string, string>; timeoutMs?: number },
+    ): ToliRun;
     /** `toli` without blocking, so several can run at once (overlapping ticks). */
     toliAsync(args: string[], options?: { now?: string; env?: Record<string, string> }): Promise<ToliRun>;
     /** `toli` that must succeed; returns trimmed stdout. */
@@ -150,6 +154,7 @@ export function sandbox(): Sandbox {
             stdin: options.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
             stdout: "pipe",
             stderr: "pipe",
+            ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
         });
         return { code: proc.exitCode ?? 1, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
     };

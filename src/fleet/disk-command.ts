@@ -2,7 +2,7 @@
 import { Args } from "../core/args.ts";
 import { out, printJson, ToliError } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
-import { outsideBuildLine, outsideBuilds, PARTIAL_SCAN } from "./build-place.ts";
+import { outsideBuildLine, outsideBuilds, partialScanLines } from "./build-place.ts";
 import { floorText, type KeepReport, keepDisk } from "./disk.ts";
 import { diskAlertCommand } from "./disk-alert.ts";
 import { describe, gb } from "./disk-state.ts";
@@ -68,12 +68,17 @@ function keepAndReport(floorGB: number | undefined, json: boolean, dryRun: boole
         printJson(
             outside === null
                 ? report
-                : { ...report, outsideBuilds: outside.found, outsideScanComplete: outside.complete },
+                : {
+                      ...report,
+                      outsideBuilds: outside.found,
+                      outsideScanComplete: outside.complete,
+                      outsideScanUnanswered: outside.unanswered,
+                  },
         );
     } else if (report.lines.length === 0) out(`free ${gb(report.freeBeforeGB)}, ${floorText(report)}: nothing to do`);
     if (!json && outside !== null) {
         for (const build of outside.found) out(`flagged, not deleted: ${outsideBuildLine(build)}`);
-        if (!outside.complete) out(`flagged, not deleted: ${PARTIAL_SCAN}`);
+        for (const line of partialScanLines(outside)) out(`flagged, not deleted: ${line}`);
     }
     if (!json && !report.automatic) {
         out(

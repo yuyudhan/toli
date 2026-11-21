@@ -191,4 +191,48 @@ describe("build place guard", () => {
             join(real, "code", "app"),
         ]);
     }, 60_000);
+
+    // T2243: a foreground `disk keep` hung for good on macOS opening $TMPDIR/com.apple.replayd/TemporaryItems.
+    test("the stray scan never reads an app's macOS privacy-protected TemporaryItems folder", () => {
+        const { box } = placeBox();
+        const tmp = tempDir("tmpdir");
+        mkdirSync(join(tmp, "com.apple.replayd", "TemporaryItems", "app", "target"), { recursive: true });
+        mkdirSync(join(tmp, "export", "target"), { recursive: true });
+        const json = JSON.parse(
+            box.ok(["disk", "keep", "--dry-run", "--json"], { env: { TOLI_BUILD_SCAN_ROOTS: tmp } }),
+        ) as { outsideBuilds: { path: string }[] };
+        expect(json.outsideBuilds.map((entry) => entry.path)).toEqual([join(realpathSync(tmp), "export")]);
+    }, 60_000);
+
+    test("a folder whose read never returns cannot hold a foreground `disk keep`: its root's walk is stopped", () => {
+        const { box } = placeBox();
+        const stuck = tempDir("stuck");
+        mkdirSync(join(stuck, "prompt", "app", "target"), { recursive: true });
+        const other = tempDir("other");
+        mkdirSync(join(other, "export", "target"), { recursive: true });
+        const stalled = join(realpathSync(stuck), "prompt");
+        const env = {
+            TOLI_BUILD_SCAN_ROOTS: `${stuck}:${other}`,
+            TOLI_BUILD_SCAN_MS: "1000",
+            BUN_OPTIONS: `--preload ${join(import.meta.dir, "stall-readdir-preload.ts")}`,
+            STALL_READDIR: stalled,
+        };
+        const started = Date.now();
+        const keep = box.toli(["disk", "keep", "--dry-run", "--json"], { env, timeoutMs: 40_000 });
+        expect(Date.now() - started).toBeLessThan(30_000);
+        expect(keep.code).toBe(0);
+        const json = JSON.parse(keep.stdout) as {
+            outsideBuilds: { path: string }[];
+            outsideScanComplete: boolean;
+            outsideScanUnanswered: string[];
+        };
+        expect(json.outsideBuilds.map((entry) => entry.path)).toEqual([join(realpathSync(other), "export")]);
+        expect(json.outsideScanComplete).toBe(false);
+        expect(json.outsideScanUnanswered).toEqual([stalled]);
+
+        const text = box.toli(["disk", "keep", "--dry-run"], { env, timeoutMs: 40_000 });
+        expect(text.code).toBe(0);
+        expect(text.stdout).toContain(`flagged, not deleted: the scan gave up on ${stalled}`);
+        expect(text.stdout).toContain(join(realpathSync(other), "export"));
+    }, 90_000);
 });

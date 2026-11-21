@@ -383,14 +383,19 @@ briefs. The known places are a registered project's clone (`data/projects.json`)
 - `TOLI_BUILD_PLACE_OVERRIDE="<why>"` lets one build through anyway, for an exception the user agreed to: it
   prints `building outside the clones` and appends `{at, tree, cwd, command, reason, pid}` to
   `logs/build-place.log`. An empty or blank value overrides nothing.
-- `bin/toli disk keep` by hand (`flagged, not deleted:` lines; `outsideBuilds` and `outsideScanComplete` in `--json`;
-  never the tick's background keeper, whose lines nobody reads) and
+- `bin/toli disk keep` by hand or from a script (`flagged, not deleted:` lines; `outsideBuilds`,
+  `outsideScanComplete` and `outsideScanUnanswered` in `--json`; never the tick's background keeper, whose lines
+  nobody reads) and
   `bin/toli doctor` (`build-place`, a warning per folder, the first 10) flag, never delete, folders outside those
   places under `/tmp`, `$TMPDIR` and the home folder that hold a `target/` or `node_modules/`, and every
   `git worktree list` entry of toli's checkout or a registered clone that toli did not make. The scan reads up to 3
-  levels below each of those folders (10,000 folders and 60 s each at most), skipping hidden folders, `Library`
-  folders and the home folder's privacy-protected ones (`~/Desktop`, `~/Documents`, `~/Downloads`, `~/Movies`,
-  `~/Music`, `~/Pictures`): on macOS opening one raises a privacy prompt that blocks the scan until someone answers.
+  levels below each of those folders (10,000 folders and 60 s each at most), skipping hidden folders, `Library` and
+  `TemporaryItems` folders and the home folder's privacy-protected ones (`~/Desktop`, `~/Documents`,
+  `~/Downloads`, `~/Movies`, `~/Music`, `~/Pictures`): on macOS opening one (or an app's
+  `$TMPDIR/<app>/TemporaryItems`) raises a privacy prompt, and the read waits for an answer that on an unattended
+  machine never comes. Each of the three folders is read by a process of its own (`src/fleet/stray-walk.ts`), stopped
+  5 s past its 60 s, so a folder that blocks anyway costs that much at most: the folders found are still listed, the
+  scan reads as incomplete, and the folder it gave up on is named (`the scan gave up on <folder>`).
 
 A cargo that bypassed the shim (another cargo ahead of it on PATH) reaches toli only through the rustc wrapper
 ([fleet.md](fleet.md#heavy-build-slots)), which takes a slot but does not check the place. toli has no node or pnpm

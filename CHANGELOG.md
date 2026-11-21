@@ -41,6 +41,14 @@ everything below.
 
 ### Fixed
 
+- `bin/toli disk keep` run by hand or from a script (and `bin/toli doctor`) no longer hangs on macOS in its scan for
+  build folders outside the clones. The scan opened `$TMPDIR/com.apple.replayd/TemporaryItems`, which macOS guards
+  with a privacy prompt; the read waits for an answer that never comes and Bun retries it forever. Folders named
+  `TemporaryItems` are now skipped like `Library`, and each scan root (`/tmp`, `$TMPDIR`, the home folder) is walked
+  in a process of its own that is stopped 5 s past the root's 60 s limit, so any other folder that never answers
+  costs at most that: what was found is still listed, and the folder it gave up on is named
+  (`the scan gave up on <folder>`; `outsideScanUnanswered` in `--json`) (docs/disk.md "Builds outside the clones",
+  T2243).
 - `bin/toli push` no longer runs a project's pre-push check in a checkout a release train is using: it refuses a
   checkout on a `release/*` branch, or one a live jawan holds (the release catch-up's own check: a spawn run working
   there, or a live native subagent whose task records it as its workspace), naming who holds it. The train itself

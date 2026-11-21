@@ -9,8 +9,10 @@
 // delete, folders outside those places under /tmp, $TMPDIR and the home folder that hold a `target/` or
 // `node_modules/`, and every `git worktree list` entry of toli's checkout or a registered clone that toli did not make.
 // The scan never opens the home folder's privacy-protected folders (Desktop, Documents, Downloads, Movies, Music,
-// Pictures, Library): on macOS reading one raises a privacy prompt that blocks the reader until someone answers (T1907).
-import { appendFileSync, type Dirent, existsSync, mkdirSync, readdirSync } from "node:fs";
+// Pictures, Library) or an app's TemporaryItems folder: on macOS reading one raises a privacy prompt that blocks the
+// reader until someone answers (T1907, T2243). Each root is walked in a process of its own (src/fleet/stray-walk.ts),
+// killed past its time limit, so a folder that blocks anyway never holds `disk keep` or `doctor`.
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isGitRepo } from "../core/git.ts";
@@ -21,6 +23,7 @@ import { gitWorktrees } from "../projects/workspace.ts";
 import type { Check } from "../setup/doctor.ts";
 import { real, within } from "./disk-scan.ts";
 import { noMistakesHome } from "./no-mistakes-runs.ts";
+import type { WalkEvent, WalkJob } from "./stray-walk.ts";
 
 /** Set to a reason, it lets a build run outside the known places (logged in logs/build-place.log). */
 export const OVERRIDE_ENV = "TOLI_BUILD_PLACE_OVERRIDE";
@@ -32,23 +35,26 @@ const SCAN_DEPTH = 3;
 const SCAN_LIMIT = 10_000;
 /** At most this long is spent reading each scan root, so a slow disk cannot stall `doctor` or the keeper either. */
 const SCAN_MS = 60_000;
+/**
+ * Past its time limit a scan root's walk stops by itself between folders; this much later it is killed, stuck in one
+ * folder that never answered. Covers the walker's start too.
+ */
+const WALK_GRACE_MS = 5_000;
+/** The stray scan's walker, run as a process of its own per scan root (src/fleet/stray-walk.ts). */
+const WALKER = join(import.meta.dir, "stray-walk.ts");
 /** The build folders whose presence marks a folder as a build's working tree. */
 const BUILD_FOLDERS: readonly string[] = ["target", "node_modules"];
-/** Folders never descended into: OS and app data on macOS, never a project checkout. */
-const SKIPPED_FOLDERS: Readonly<Record<string, true>> = { Library: true };
+/**
+ * Folders never descended into, at any depth: OS and app data on macOS, never a project checkout. An app's
+ * `TemporaryItems` folder ($TMPDIR/com.apple.replayd/TemporaryItems) is privacy-protected like the ones below.
+ */
+const SKIPPED_FOLDERS: readonly string[] = ["Library", "TemporaryItems"];
 /**
  * The home folder's own folders macOS guards with a privacy (TCC) prompt: opening one makes the system ask the user
  * whether toli's runtime may read it, and the read blocks until someone answers, which on an unattended machine is
  * never. `~/Library` (iCloud Drive included) is a SKIPPED_FOLDERS entry. Never a project checkout's place either.
  */
-const HOME_PROTECTED_FOLDERS: Readonly<Record<string, true>> = {
-    Desktop: true,
-    Documents: true,
-    Downloads: true,
-    Movies: true,
-    Music: true,
-    Pictures: true,
-};
+const HOME_PROTECTED_FOLDERS: readonly string[] = ["Desktop", "Documents", "Downloads", "Movies", "Music", "Pictures"];
 /** Submodules nest; past this many superprojects the outermost one found counts. */
 const MAX_SUPERPROJECTS = 8;
 
@@ -65,7 +71,7 @@ type Places = {
 /** A folder outside the known places: a build folder's owner or a worktree toli did not make, and why it is flagged. */
 export type OutsideBuild = { path: string; why: string };
 
-export type OutsideScan = { found: OutsideBuild[]; complete: boolean };
+export type OutsideScan = { found: OutsideBuild[]; complete: boolean; unanswered: string[] };
 
 function knownPlaces(): Places {
     const checkouts = new Map<string, string>([[real(paths.root()), "toli's checkout"]]);
@@ -174,49 +180,76 @@ function scanRoots(): string[] {
     return [...new Set(roots.filter((root) => root !== "").map(real))];
 }
 
+/** How long each scan root's walk may read; `TOLI_BUILD_SCAN_MS` replaces SCAN_MS (tests). */
+function scanMs(): number {
+    const override = Number(process.env.TOLI_BUILD_SCAN_MS);
+    return Number.isInteger(override) && override > 0 ? override : SCAN_MS;
+}
+
+/** What one scan root's walk found, whether it read all of it, and the folder it got stuck in, if any. */
+type RootScan = { found: OutsideBuild[]; complete: boolean; unanswered: string | null };
+
+/**
+ * Walk `job.root` in a walker process (src/fleet/stray-walk.ts), killed `killAfterMs` after it starts. A walker killed
+ * there, or that never reports its end, leaves the root incomplete; killed in a read it never finished, the folder it
+ * was reading is the unanswered one. What it found before is kept either way.
+ */
+function walkRoot(job: WalkJob, killAfterMs: number): RootScan {
+    const result = run([process.execPath, WALKER], { cwd: "/", stdin: JSON.stringify(job), timeoutMs: killAfterMs });
+    const found: OutsideBuild[] = [];
+    let reading: string | null = null;
+    let end: { stopped: boolean } | null = null;
+    for (const line of result.stdout.split("\n")) {
+        if (line === "") continue;
+        let event: WalkEvent;
+        try {
+            event = JSON.parse(line) as WalkEvent;
+        } catch {
+            continue;
+        }
+        if ("reading" in event) reading = event.reading;
+        else if ("found" in event) {
+            const builds = event.builds.map((name) => `${name}/`).join(" and ");
+            found.push({ path: event.found, why: `holds ${builds} outside the clones` });
+        } else end = { stopped: event.stopped };
+    }
+    if (end !== null) return { found, complete: !end.stopped, unanswered: null };
+    return { found, complete: false, unanswered: result.timedOut ? reading : null };
+}
+
 /**
  * Folders below the scan roots, outside every known place, that hold a build folder. The home folder's protected
- * folders are never opened; a root read for SCAN_LIMIT folders or SCAN_MS stops there, leaving the scan incomplete.
+ * folders are never opened. Each root is walked in a process of its own, so one folder that never answers cannot hold
+ * the caller: a walk reads for SCAN_LIMIT folders or the scan time at most, and is killed WALK_GRACE_MS after that.
+ * A root cut short leaves the scan incomplete; a folder a walk was killed in is listed as unanswered.
  */
 function strayBuildFolders(places: Places, roots: string[]): OutsideScan {
-    const found: OutsideBuild[] = [];
     const home = real(homedir());
-    let complete = true;
-    let budget = 0;
-    let deadline = 0;
-    const visit = (dir: string, depth: number): void => {
-        if (budget <= 0 || insidePlace(dir, places)) return;
-        if (Date.now() > deadline) {
-            budget = 0;
-            return;
-        }
-        budget--;
-        let entries: Dirent[];
-        try {
-            entries = readdirSync(dir, { withFileTypes: true });
-        } catch {
-            return;
-        }
-        const folders = entries.filter((entry) => entry.isDirectory());
-        const builds = folders.filter((entry) => BUILD_FOLDERS.includes(entry.name)).map((entry) => `${entry.name}/`);
-        if (builds.length > 0) {
-            found.push({ path: dir, why: `holds ${builds.join(" and ")} outside the clones` });
-            return;
-        }
-        if (depth >= SCAN_DEPTH) return;
-        for (const entry of folders) {
-            if (entry.name.startsWith(".") || SKIPPED_FOLDERS[entry.name] === true) continue;
-            if (dir === home && HOME_PROTECTED_FOLDERS[entry.name] === true) continue;
-            visit(join(dir, entry.name), depth + 1);
-        }
-    };
+    const never = [
+        ...places.checkouts.keys(),
+        ...places.taskWorktrees.keys(),
+        places.runWorktrees,
+        ...HOME_PROTECTED_FOLDERS.map((name) => join(home, name)),
+    ];
+    const ms = scanMs();
+    const scan: OutsideScan = { found: [], complete: true, unanswered: [] };
     for (const root of roots) {
-        budget = SCAN_LIMIT;
-        deadline = Date.now() + SCAN_MS;
-        visit(root, 0);
-        if (budget <= 0) complete = false;
+        if (insidePlace(root, places)) continue;
+        const job: WalkJob = {
+            root,
+            never,
+            skipNames: [...SKIPPED_FOLDERS],
+            buildFolders: [...BUILD_FOLDERS],
+            depth: SCAN_DEPTH,
+            limit: SCAN_LIMIT,
+            ms,
+        };
+        const walked = walkRoot(job, ms + WALK_GRACE_MS);
+        scan.found.push(...walked.found);
+        if (!walked.complete) scan.complete = false;
+        if (walked.unanswered !== null) scan.unanswered.push(walked.unanswered);
     }
-    return { found, complete };
+    return scan;
 }
 
 /** Worktrees of toli's checkout and the registered clones that are none of the known places. */
@@ -240,7 +273,8 @@ function strayWorktrees(places: Places): OutsideBuild[] {
 
 /**
  * Every folder outside the known places that holds a build folder, and every worktree toli did not make, one entry per
- * path, sorted. Read only: nothing is ever deleted. `complete` is false when the scan stopped at its folder limit.
+ * path, sorted. Read only: nothing is ever deleted. `complete` is false when the scan of a root stopped early;
+ * `unanswered` lists the folders a walk was killed in, waiting on a read that never finished.
  */
 export function outsideBuilds(): OutsideScan {
     const places = knownPlaces();
@@ -252,7 +286,7 @@ export function outsideBuilds(): OutsideScan {
     const found = [...byPath.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([path, whys]) => ({ path, why: whys.join("; ") }));
-    return { found, complete: folders.complete };
+    return { found, complete: folders.complete, unanswered: folders.unanswered };
 }
 
 /** One line per flagged folder, for `disk keep` and `doctor`. */
@@ -260,20 +294,31 @@ export function outsideBuildLine({ path, why }: OutsideBuild): string {
     return `${path}: ${why} (AGENTS.md rule 5; toli never deletes it: land its work in the clone, then remove it)`;
 }
 
-/** What the scan left out, when it stopped early. */
-export const PARTIAL_SCAN = `the scan stopped after ${SCAN_LIMIT} folders or ${SCAN_MS / 1000} s in a scan root, so more may exist`;
+/** What the scan left out, when it stopped early: each folder that never answered, then what that means. */
+export function partialScanLines({ complete, unanswered }: OutsideScan): string[] {
+    if (complete) return [];
+    const ms = scanMs();
+    return [
+        ...unanswered.map(
+            (dir) =>
+                `the scan gave up on ${dir}: reading it never finished (its walk was stopped after ${(ms + WALK_GRACE_MS) / 1000} s; on macOS, a privacy prompt nobody answered)`,
+        ),
+        `the scan stopped early in a scan root (after ${SCAN_LIMIT} folders, ${ms / 1000} s, or at a folder that never answered), so more may exist`,
+    ];
+}
 
 /** At most this many flagged folders get a `doctor` line each; `disk keep --dry-run` lists them all. */
 const DOCTOR_LINES = 10;
 
 /** `doctor`'s lines: a warning per flagged folder (the first DOCTOR_LINES), or one ok line when there are none. */
 export function buildPlaceChecks(): Check[] {
-    const { found, complete } = outsideBuilds();
+    const scan = outsideBuilds();
+    const { found } = scan;
     const warning = (detail: string): Check => ({ level: "warn", name: "build-place", detail });
     const checks = found.slice(0, DOCTOR_LINES).map((build) => warning(outsideBuildLine(build)));
     if (found.length > DOCTOR_LINES)
         checks.push(warning(`${found.length - DOCTOR_LINES} more: bin/toli disk keep --dry-run lists them all`));
-    if (!complete) checks.push(warning(PARTIAL_SCAN));
+    for (const line of partialScanLines(scan)) checks.push(warning(line));
     if (checks.length > 0) return checks;
     return [
         {
