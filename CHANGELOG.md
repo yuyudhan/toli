@@ -4,7 +4,7 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
-## v0.6.1 - unreleased
+## v0.7.0 - unreleased
 
 ### Added
 
@@ -23,6 +23,18 @@ one. See docs/releasing.md.
   it, and `bin/toli talk <first name> "<words>"` ("Sam" or "Sam Boss") reaches that person's machine, refusing a name
   two machines share. An install without the field works as before and lists `first-name` as one remaining setup
   step (docs/setup.md "Your first name", docs/sardars.md "Naming another machine's person", T2229).
+- A release catch-up merge can satisfy a project's commit-msg hook that demands a trailer on some commits:
+  `bin/toli project set <p> --catch-up-trailer '<Key>: <text>'` stores one trailer line (`{tag}`, `{base}` and
+  `{branch}` filled in) that every catch-up merge message ends with; the hook still runs and still judges it, and a
+  refusal while no trailer is set names the setting (`project list` shows it; docs/projects.md "Release catch-up",
+  T2207).
+- A Sardar session that stops taking its wakes is noticed. A session whose extension has not taken an inbox item or
+  job result for `lead.silentSessionMinutes` (default 20) is silent: `lead status` shows a `silent:` line, and on a
+  worker the minute tick sends the coordinator one inbox item per episode (docs/sardars.md, T2204).
+- A project's pre-push hook can declare the gates it guards (`# toli-light-push-after-gate: <recipe>`): when HEAD's
+  tree has a sealed pass of each, `bin/toli push` pushes exactly that commit and runs the whole hook without taking a
+  heavy-build slot; a missing or stale pass takes the slot as before. toli's own hook declares its gate
+  (docs/delivery.md, T2211).
 
 ### Fixed
 
@@ -46,6 +58,26 @@ one. See docs/releasing.md.
   got a dozen copies; each update carries the whole task, so a new one now replaces the one still queued for that
   machine, and the delegator gets the latest once, with its wake (docs/sardars.md "Results and questions go back",
   T2226).
+- A dead `turn in progress` record no longer leaves a machine's Sardar deaf to its inbox: a turn's pid counts only
+  while ps lists it and it started before the record was written, the next lead pass clears a record whose process
+  is gone (logged in `logs/lead.log`), and a second interactive session in toli's root neither replaces nor removes
+  the first one's record (docs/sardars.md, T2204).
+- The release catch-up skips a branch that is not checked out on this machine (a clone switched to a release
+  train's branch) and a checkout a live jawan works in, retrying on the next scan; `bin/toli push` refuses before any
+  hook runs when the checkout is on another branch (docs/projects.md "Release catch-up", T2203).
+- The release catch-up skips a branch whose tip is already on `origin/<main>` (its work landed), so no jawan starts
+  for it (T2209).
+- `bin/toli commit` honours a project's `.gitleaksignore` and `[extend]` config chain without trusting text nobody
+  reviewed: toli, not gitleaks, applies the staged ignore file, and only to the exact lines a commit reviewed
+  (a plain `<file>:<rule>:<line>` entry needs the commit that added it while the file held those lines); another
+  secret at an ignored place is refused. Extend paths use the staged configs; a config that does not parse, an
+  absolute or escaping extend path, one naming the ignore file, a chain left with no rule, and any gitleaks failure
+  other than findings refuse the commit as unscanned (docs/development.md, T2209).
+- `bin/toli commit --merge` lands a merge of an annotated tag: the merge head is peeled to its commit instead of
+  being refused as a tag object (T2208).
+- A peer that only pulls no longer waits for its own next pull: the minute tick tries each queued item for it once
+  over HTTPS when it has an address, backing off 30 s doubling to 10 minutes while none answers, and the waiting
+  alert is sent only after a failed retry (docs/peers.md, T2172).
 
 ## v0.6.0 - 2026-11-21
 
