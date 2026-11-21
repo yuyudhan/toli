@@ -191,6 +191,22 @@ export function otherFleetMachines(): FleetMachine[] {
     return loadFleet().machines.filter((entry) => entry.name !== self);
 }
 
+/**
+ * This worker's coordinator by its fleet name, found from `coordinator.ssh`/`root`: the fleet entry with that ssh
+ * name, else the one named so, else the only one with that root. Null on a coordinator, or when the list has no match.
+ */
+export function coordinatorName(machine: Machine = loadMachine()): string | null {
+    const coordinator = machine.role === "worker" ? machine.coordinator : undefined;
+    if (coordinator === undefined) return null;
+    const machines = loadFleet().machines.filter((entry) => entry.name !== machine.name);
+    const rooted = machines.filter((entry) => entry.root === coordinator.root);
+    const found =
+        machines.find((entry) => entry.ssh === coordinator.ssh) ??
+        machines.find((entry) => entry.name === coordinator.ssh) ??
+        (rooted.length === 1 ? rooted[0] : undefined);
+    return found?.name ?? null;
+}
+
 /** Whether a fleet machine takes no inbound ssh (`inbound: false`): nothing ssh-es into it, it pulls instead. */
 export function inboundOff(machine: FleetMachine): boolean {
     return machine.inbound === false;

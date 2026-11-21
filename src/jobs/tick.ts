@@ -23,6 +23,7 @@ import { pullLine } from "../peer/transport-command.ts";
 import { startDueCatchUpScan } from "../projects/catch-up.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { weeklyPruneReport } from "../records/prune.ts";
+import { raiseHolds } from "../records/raise-holds.ts";
 import { redispatchDeadRuns } from "../records/redispatch.ts";
 import { surfaceStaleTasks } from "../records/stale.ts";
 import { holdInboxWords } from "../records/word-holds.ts";
@@ -236,6 +237,8 @@ export async function tick(): Promise<void> {
     // A project whose main carries a new vX.Y.Z tag gets one catch-up jawan here (src/projects/catch-up.ts); the scan
     // fetches, so it runs detached and the tick never waits on the network.
     logStep("release catch-up scan not started", () => startDueCatchUpScan());
+    // A worker's own holds go to its coordinator's Needs-you queue, where the user is (records/raise-holds.ts).
+    logStep("holds not raised to the coordinator", raiseHolds);
     try {
         const fleet = await runDueFleetCheck();
         if (fleet) log(fleet);

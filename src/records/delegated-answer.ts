@@ -10,22 +10,22 @@ import { type AnswerBody, type OutboxItem, parseAnswer, queuedText, sendNow } fr
 import { cancelItems } from "../jobs/outbox-admin.ts";
 import { queuedItems } from "../jobs/outbox-queue.ts";
 import { loadBacklog, type Task, updateTask } from "./backlog.ts";
-import { type DelegationUpdate, delegators, fleetId, splitFleetId } from "./delegation-report.ts";
+import { answerers, type DelegationUpdate, fleetId, splitFleetId } from "./delegation-report.ts";
 import { matchOption } from "./hold-options.ts";
 import { addInboxItem } from "./inbox.ts";
 
 /**
  * `task answer <id> --from <machine>`: another machine's lead answers only a task it delegated here, or one forwarded
- * here from work it delegated (`upstream`); it never speaks for the user here, and never releases this machine's own
- * holds.
+ * here from work it delegated (`upstream`), or, as this worker's coordinator, this machine's own task whose hold was
+ * raised there (src/records/raise-holds.ts); it never releases any other hold here.
  */
 export function requireDelegator(task: Task, from: string): void {
     requireName("machine", from);
     const by = task.delegatedBy?.machine;
-    if (delegators(task.delegatedBy).includes(from)) return;
+    if (answerers(task).includes(from)) return;
     throw new ToliError(
         by === undefined
-            ? `${task.id} was not delegated here: only this machine's lead or user answers it, not ${from}`
+            ? `${task.id} was not delegated here: only this machine's lead or user (or its coordinator) answers it, not ${from}`
             : `${task.id} was delegated by ${by}, not ${from}: only it may answer`,
     );
 }

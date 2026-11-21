@@ -293,7 +293,9 @@ function hold(argv: string[]): void {
  * `task answer <id> "<answer>" [--from <machine> [--answer-id <id>]]`: record the user's words verbatim, release the
  * task and name every task waiting on it, so the lead that ran this dispatches them in the same turn (no wake: it would
  * dispatch them twice). `--from`: the delegator's lead forwarded it, so a wake is posted; noteLateAnswer when it is not
- * held. `--answer-id`: the delivered item's id; a copy of an answer already applied here is dropped (T2151).
+ * held. `--answer-id`: the delivered item's id; a copy of an answer already applied here is dropped (T2151). A task held
+ * only to carry another machine's question (`heldFrom`, no delegation of its own) is done once answered: the work is
+ * the owner's, where the answer goes.
  */
 function answer(argv: string[]): void {
     const args = new Args(argv, { values: ["from", "answer-id"] });
@@ -304,6 +306,7 @@ function answer(argv: string[]): void {
     let heldFrom: string | undefined;
     let late = false;
     let repeat = false;
+    let carried = false;
     const task = updateTask(args.pos(0, "id"), (entry) => {
         if (answerId !== undefined && entry.answerIds?.includes(answerId)) {
             repeat = true;
@@ -318,8 +321,12 @@ function answer(argv: string[]): void {
         entry.answeredAt = now().toISOString();
         const via = from === undefined ? "" : ` (recorded by ${from}'s lead)`;
         entry.notes.push(`Q: ${entry.question ?? ""}\nA: ${reply}${chosen ? ` (= ${chosen.choice})` : ""}${via}`);
-        entry.status = entry.startedAt === undefined ? "queued" : "active";
         heldFrom = entry.heldFrom;
+        carried = heldFrom !== undefined && entry.delegates?.[heldFrom] === undefined;
+        if (carried) {
+            entry.status = "done";
+            entry.doneAt = entry.answeredAt;
+        } else entry.status = entry.startedAt === undefined ? "queued" : "active";
         delete entry.heldFrom;
     });
     if (repeat) {
@@ -329,8 +336,11 @@ function answer(argv: string[]): void {
     out(describeTask(task));
     if (late) return;
     if (isValidName(task.project)) recordDecision(task, reply);
-    const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
-    out(`unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${brief})`);
+    if (carried) out(`${task.id} done: it carried ${heldFrom}'s question, and the answer goes there`);
+    else {
+        const brief = briefPath(task.project, task.id) ?? `data/projects/${task.project}/briefs/${task.id}.md`;
+        out(`unblocked: dispatch ${task.id} now (toli-dispatch skill; put the answer in its brief, ${brief})`);
+    }
     for (const line of answerWake(task, loadBacklog().tasks, from !== undefined)) out(line);
     forwardEscalatedAnswer(heldFrom, reply);
 }

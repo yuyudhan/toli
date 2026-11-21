@@ -5,7 +5,7 @@
 // through the outbox, so an unreachable delegator gets it from the minute tick; a repeat is applied once.
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { loadFleet, loadMachine } from "../core/config.ts";
+import { coordinatorName, loadFleet, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, requireName, stamp, ToliError, warn } from "../core/util.ts";
 import { sendNow } from "../jobs/outbox.ts";
@@ -116,6 +116,12 @@ export type DelegationUpdate = {
      * the receiving task follows those too.
      */
     forwardedTo?: string[];
+    /**
+     * A worker's own held task raised to its coordinator (src/records/raise-holds.ts): no delegation, the question is
+     * the user's, held in the coordinator's Needs-you queue in the owner's `project`.
+     */
+    forUser?: true;
+    project?: string;
     /** The task's report file, read on the owner. */
     report: string | null;
     /** The wake the delegator's lead gets for a new outcome. */
@@ -141,6 +147,17 @@ export function splitFleetId(id: string): { machine: string | null; id: string }
 /** The machines that may answer a delegated task's question: its delegator and every machine above it. */
 export function delegators(by: DelegatedBy | undefined): string[] {
     return by === undefined ? [] : [by.machine, ...(by.upstream ?? []).map((entry) => entry.machine)];
+}
+
+/**
+ * The machines whose answer this machine takes for `task` (`task answer --from`): a delegated task's delegator and
+ * every machine above it; this machine's own task, raised to the coordinator (src/records/raise-holds.ts), the
+ * coordinator.
+ */
+export function answerers(task: Task): string[] {
+    if (task.delegatedBy !== undefined) return delegators(task.delegatedBy);
+    const coordinator = coordinatorName();
+    return coordinator === null ? [] : [coordinator];
 }
 
 /**
@@ -252,10 +269,17 @@ export function delegationReport(
         if (task.blocks !== undefined) lines.push(`Blocks: ${task.blocks}`);
         lines.push(
             "",
-            `You delegated this work, so you answer it: \`bin/toli task answer ${id} "<answer>"\` (it goes to ${owner},`,
-            `whose lead resumes the work at once). Only a question that needs the user (push, merge, release, money,`,
-            `security, a destructive step, or his taste) goes to him: \`bin/toli task escalate ${id}\` puts it in your`,
-            "Needs-you queue, and his answer there goes to the owner too.",
+            ...(task.delegatedBy === undefined
+                ? [
+                      `${owner} raised this hold for the user: it is in your Needs-you queue (\`bin/toli needs\`), and his`,
+                      `answer there goes to ${owner}, as does \`bin/toli task answer ${id} "<answer>"\`.`,
+                  ]
+                : [
+                      `You delegated this work, so you answer it: \`bin/toli task answer ${id} "<answer>"\` (it goes to ${owner},`,
+                      `whose lead resumes the work at once). Only a question that needs the user (push, merge, release, money,`,
+                      `security, a destructive step, or his taste) goes to him: \`bin/toli task escalate ${id}\` puts it in your`,
+                      "Needs-you queue, and his answer there goes to the owner too.",
+                  ]),
         );
     }
     const notes = task.notes.slice(-3);

@@ -107,6 +107,8 @@ export const paths = {
     wordHolds: () => join(repoRoot(), "state", "word-holds.json"),
     /** Every `talk` this machine sent, one JSON line each: a reply quoting a message answers it (word-holds.ts). */
     talkSent: () => join(repoRoot(), "state", "talk-sent.jsonl"),
+    /** This worker's own holds raised to its coordinator, by task id, with the question raised (raise-holds.ts). */
+    raisedHolds: () => join(repoRoot(), "state", "raised-holds.json"),
     /** The idle spell the idle-machine watchdog last alerted about (src/records/idle-machine.ts). */
     idleMachineState: () => join(repoRoot(), "state", "idle-machine.json"),
     /** When the tick last started `bin/toli fleet check --wake` (src/fleet/oversight.ts). */

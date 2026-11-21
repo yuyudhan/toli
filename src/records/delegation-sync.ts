@@ -4,7 +4,9 @@
 // the `--for` task is too, with the commit and report. A slice (a delegation made while the `--for` task's own jawan
 // works on it) only adds its notes, commit and report. A question stays with this machine's lead, who answers it
 // (`task answer <owner>/T<n>`) or, when only the user can decide, `task escalate`s it into the Needs-you queue; one
-// that asks for the user's word in so many words is held there on arrival (delegated-word.ts).
+// that asks for the user's word in so many words is held there on arrival (delegated-word.ts), and so is a worker's own
+// hold raised to its coordinator (`forUser`, src/records/raise-holds.ts); either is released once the owner's task is
+// no longer held with that question.
 // `task link` attaches a delegation made without `--for`. Repeats are skipped by the owner's `updatedAt`. Work a
 // delegated task forwards on (its own `delegatedTo`, sent as `forwardedTo`) joins the `--for` task's delegations, so
 // the originator follows the live owner, which reports here directly through its `upstream` chain.
@@ -25,7 +27,7 @@ import {
 import { fullText, HANDBACK_FULL_MINUTES, setFull } from "../fleet/full.ts";
 import { cancelQueuedRunsOf, loadBacklog, type Task, updateTask } from "./backlog.ts";
 import { cancelAnswers } from "./delegated-answer.ts";
-import { escalateHold, holdDelegatedWord } from "./delegated-word.ts";
+import { escalateHold, holdDelegatedWord, releaseHeldWord } from "./delegated-word.ts";
 import { linkTaskCommand } from "./delegation-link.ts";
 import {
     type DelegateState,
@@ -173,9 +175,12 @@ function claimWake(id: string, update: DelegationUpdate): boolean {
 /** `delegation update` (update JSON on stdin): what the owner of a delegated task runs here over ssh. */
 export function applyUpdate(update: DelegationUpdate): string {
     const id = fleetId(update.owner, update.id);
-    const local = localTaskFor(update, id);
+    const local = update.forUser === true ? undefined : localTaskFor(update, id);
     const applied = local !== undefined && mirror(local, id, update);
     if (applied) cancelAnswers(update, id);
+    // Only an update newer than the last one seen may close a carried question; an older one arriving late must not.
+    const seen = readJson<SeenFile>(paths.delegatesSeen(), {})[id];
+    const released = seen !== undefined && seen.updatedAt >= update.task.updatedAt ? [] : releaseHeldWord(update, id);
     const word = holdDelegatedWord(update, id, local);
     if (claimWake(id, update)) {
         const after = local === undefined ? undefined : loadBacklog().tasks.find((task) => task.id === local.id);
@@ -184,7 +189,7 @@ export function applyUpdate(update: DelegationUpdate): string {
         addInboxItem(update.owner, update.message.title, [update.message.body, ...yours, ...held].join("\n"));
     }
     const line = `delegation-updated ${id}${local === undefined ? "" : ` ${local.id}${applied ? "" : " (already recorded)"}`}`;
-    return word === null ? line : `${line}\n${word}`;
+    return [line, ...released, ...(word === null ? [] : [word])].join("\n");
 }
 
 /** `task escalate <machine>/T<n>`: a delegated task's question needs the user; hold the `--for` task with it. */
@@ -329,6 +334,11 @@ export function parseUpdate(text: string): DelegationUpdate {
     const delegation: unknown = update.delegation;
     if (delegation !== undefined && (typeof delegation !== "string" || !isValidName(delegation)))
         throw new ToliError("delegation update: delegation must be a delegation id");
+    const forUser: unknown = update.forUser;
+    if (forUser !== undefined && forUser !== true) throw new ToliError("delegation update: forUser must be true");
+    const project: unknown = update.project;
+    if (project !== undefined && (typeof project !== "string" || !isValidName(project)))
+        throw new ToliError("delegation update: project must be a project name");
     const forwards: unknown = update.forwardedTo;
     if (forwards === undefined) return update;
     if (!Array.isArray(forwards)) throw new ToliError("delegation update: forwardedTo must be a list of fleet ids");

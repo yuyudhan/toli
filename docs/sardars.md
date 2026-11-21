@@ -185,7 +185,8 @@ authority never asks: `on <name>'s word`, `act on <name>'s word`, `<name>'s word
 - A delegated task's held question that asks for his word is escalated at once, as `task escalate` would: the `--for`
   task is held with `<owner>/T<n> asks: <question>` and its options. When there is no `--for` task (or it is done,
   dropped, or held for something else), a new held task in its project (else the owner's, see below) carries the
-  question; either way his `task answer` goes to the owner too.
+  question; either way his `task answer` goes to the owner too. A task that only carries the question is done once he
+  answers it, and closes by itself (done, or dropped with the owner's task) once the owner's task no longer asks it.
 - A peer message (`talk`, any message another machine sends to the inbox) becomes a new held task in the sender's
   project: the first registered project the words name (four characters or more), else the project of the newest
   task here delegated to or by that machine, else the only project here. The question is the message's words (its
@@ -228,6 +229,24 @@ delegator follows the slice's task, never the machine it forwarded to. A machine
 delegation to the new task refuses its report (`no delegation of T<n> to <owner>/T<n> is recorded here`); the first
 such refusal stops that task's reports to it (`refusedBy`, and a note `... no longer reports to <machine>`) with one
 "not sent" inbox item, and later status changes send it nothing.
+
+### Holds on a worker reach the coordinator
+
+A held task is a question for the user, and he talks to the coordinator, not to every worker. Each minute tick on a
+worker sends its own held tasks (none delegated to it) to the coordinator, through the outbox like a delegated task's
+update: there each is held once as `<worker>/T<n> asks: <question>`, with its options, in the worker's project, so it
+is in the coordinator's Needs-you queue within a tick (and a pull, for a coordinator that takes no inbound ssh). His
+`task answer T<n>` there is done at once and goes to the worker's task, as does `task answer <worker>/T<n>`; the
+worker takes an answer from its coordinator for its own tasks as from a delegator. Once the worker's task is no
+longer held with that question (answered on either machine, dropped, re-held with another), its next tick sends the
+task as it is and the coordinator's copy closes: done, or dropped with it. What was sent is kept in
+`state/raised-holds.json`.
+
+A delegated task is never sent: its hold goes to its delegator, as above. A delegator that is a worker sends on its
+own held `--for` task (or the task holding the question) the same way, so the user sees the question once, at the
+coordinator, and his answer goes down the chain. A hold whose question came from the coordinator itself (`heldFrom` a
+coordinator task) is not sent back to it, and a delegated task's question for its delegating Sardar, not for the user,
+never reaches him.
 
 ## The shared task list
 
