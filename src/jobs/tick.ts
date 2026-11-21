@@ -6,7 +6,7 @@ import { tryPidLock } from "../core/pid-lock.ts";
 import { now, out, pidAlive, readJson, ToliError } from "../core/util.ts";
 import { resumeDevStacksWhenIdle } from "../fleet/build-slots.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
-import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { keepDiskBeforeWork } from "../fleet/disk-before-work.ts";
 import { currentDiskHold, diskHoldText } from "../fleet/disk-hold.ts";
 import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";

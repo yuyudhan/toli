@@ -102,6 +102,8 @@ export function sandbox(): Sandbox {
     stub("sudo", 'echo "sudo: a password is required" >&2; exit 1');
     // Never the host's NetBird: a fleet probe reads its peers to explain an unreachable machine; a test stubs its own.
     stub("netbird", 'echo "netbird stub: no daemon" >&2; exit 1');
+    // Never the host's Docker: the disk keeper removes unused build-cache volumes; a test stubs its own.
+    stub("docker", 'echo "docker stub: no daemon" >&2; exit 1');
     stub(
         "crontab",
         'if [ "$1" = "-l" ]; then echo "no crontab for test" >&2; else echo "crontab stub: writes refused" >&2; fi; exit 1',

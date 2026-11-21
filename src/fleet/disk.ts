@@ -3,9 +3,11 @@
 // emptied), it deletes rebuildable output only, cheapest to rebuild first and oldest first within each step, until
 // free space is back at the floor:
 //   0. a `<target>.toli-wipe-<ms>` folder a killed keeper renamed aside and never deleted (cargo-lock.ts), whole;
-//   1. build output finished no-mistakes runs left in their worktrees (no-mistakes-runs.ts), then whole `target/`
-//      folders of checkouts nothing uses (no running jawan or live subagent in it, no process working there, no live
-//      build compiling into it: a cargo or rustc, a held heavy-build slot or a running gate, live-builds.ts);
+//   1. build output finished no-mistakes runs left in their worktrees (no-mistakes-runs.ts), then Docker build-cache
+//      volumes no container mounts (docker-volumes.ts), then whole `target/` folders of checkouts nothing uses (no
+//      running jawan or live subagent in it, no process working there, no live build compiling into it: a cargo or
+//      rustc, a held heavy-build slot or a running gate, live-builds.ts); a held clone's target (disk-scan.ts
+//      softHold) only under the emergency level, after step 5;
 //   2. `node_modules/` and `dist/` of those idle checkouts, except a project main clone's `node_modules/` (builds run
 //      there between jobs and cannot reinstall dependencies themselves; cargo rebuilds a wiped `target/` on its own).
 //      One deleted within 6 h that grew back stays over the emergency level: it frees nothing (T2122, disk-state.ts);
@@ -23,8 +25,8 @@
 // Only git-ignored, wholly untracked folders are candidates, so sources, git data and uncommitted work are never
 // touched. A folder a live Docker container mounts (a bind, a volume's mountpoint, a mount hung on it inside a bind)
 // is never deleted at any step, the last resort included (container-mounts.ts). Every action goes to logs/disk.log.
-// It runs inline before every jawan start; the minute tick starts it detached (disk-state.ts keepDiskDetached), so a
-// keeper slowed by a starved disk never holds the tick up.
+// It runs inline before every jawan start; the minute tick starts it detached (disk-before-work.ts), so a keeper
+// slowed by a starved disk never holds the tick up.
 // A live pid in state/disk-keep.pause (touched within 2 h) holds it off. On a full disk it writes nothing before it
 // has freed something, and when it fails anyway the fallback sweeps stale artifacts out of every target nothing uses.
 // capacity.diskKeep false switches all of this off but `bin/toli disk keep` by hand: low disk then only alerts the
@@ -37,35 +39,28 @@ import { out, ToliError, warn } from "../core/util.ts";
 import { dryRun as envDryRun } from "../jobs/os-scheduler.ts";
 import { wipeNow } from "./cargo-lock.ts";
 import { containerUseOnce } from "./container-mounts.ts";
-import { diskAlertBeforeWork, diskKeepSetting } from "./disk-alert.ts";
+import { diskKeepSetting } from "./disk-alert.ts";
 import { playwrightBrowsers, trimSccache } from "./disk-caches.ts";
-import {
-    currentDiskHold,
-    foldersInUse,
-    type InUse,
-    liftDiskHoldWhenFree,
-    releaseDiskHold,
-    settleDiskHold,
-} from "./disk-hold.ts";
+import { currentDiskHold, foldersInUse, type InUse, releaseDiskHold, settleDiskHold } from "./disk-hold.ts";
 import {
     type BuildDir,
     buildDirs,
     checkoutUse,
     currentHolders,
+    type Holders,
     openBelow,
     projectCheckouts,
     sizeGB,
+    softHold,
     wipeLeftovers,
 } from "./disk-scan.ts";
 import {
     claimKeeper,
     DiskLog,
-    describe,
     diskPause,
     expirePause,
     gb,
     KEEPER_LOCK,
-    keepDiskDetached,
     machineFloor,
     PAUSE_EXPIRY_MS,
     pauseHold,
@@ -73,11 +68,11 @@ import {
     releaseKeeper,
 } from "./disk-state.ts";
 import { pruneDocker } from "./docker-prune.ts";
-import { freeBuildVolumes } from "./docker-volumes.ts";
+import { diskCacheVolumes, freeBuildVolumes, freeCacheVolumes } from "./docker-volumes.ts";
+import { targetsInUse } from "./live-builds.ts";
 import { freeRunWorktrees } from "./no-mistakes-runs.ts";
 import { removeTree } from "./remove-tree.ts";
 import { diskEmergencyGB, measureDisk, measureVolume } from "./resources.ts";
-import { fallbackSweep } from "./stale-sweep.ts";
 
 export type KeepOptions = {
     /** Overrides the floor (capacity.diskKeepGB, capped at 15% of the disk); not capped itself. */
@@ -274,15 +269,37 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
             );
         const recent = new RecentDeletions();
         type DeleteIt = (dir: BuildDir, dryRun: boolean) => string | null;
-        /** Delete an idle folder of step 1 or 2; its checkout's use is checked again just before a real deletion. */
-        const idle = (dir: BuildDir, step: string, deleteIt: DeleteIt, holders = currentHolders()): void => {
-            let reason = checkoutUse(dir.checkout, holders, checkouts);
-            if (reason === null && !dryRun) reason = checkoutUse(dir.checkout, currentHolders(), checkouts);
-            if (reason === null) remove(dir.path, step, (dry) => recent.note(dir.path, dry, deleteIt(dir, dry)));
-            else {
-                kept.set(dir.path, { reason, tried: false });
-                say(`skipped ${dir.path}: ${reason}`);
+        /** Why `dir` stays now, and whether only while free disk is over the emergency level (softHold); null: it goes. */
+        const holdOf = (dir: BuildDir, holders: Holders, emergency: boolean): { why: string; soft: boolean } | null => {
+            const used = checkoutUse(dir.checkout, holders, checkouts);
+            if (used !== null) return { why: used, soft: false };
+            const held = emergency || dir.kind !== "target" ? null : softHold(dir.checkout, holders);
+            // A live build compiling into it keeps it at every step: the wipe says so itself (live-builds.ts).
+            if (held === null || targetsInUse([dir.path]).length > 0) return null;
+            return { why: held, soft: true };
+        };
+        /** Targets of held clones left over the emergency level (softHold), tried again under it after step 5. */
+        const softHeld: BuildDir[] = [];
+        /**
+         * Delete an idle folder of step 1 or 2; its checkout's use is checked again just before a real deletion.
+         * `emergency`: free disk is under the emergency level, so a held clone's target (softHold) may go too.
+         */
+        const idle = (
+            dir: BuildDir,
+            step: string,
+            deleteIt: DeleteIt,
+            holders = currentHolders(),
+            emergency = false,
+        ): void => {
+            const hold = holdOf(dir, holders, emergency) ?? (dryRun ? null : holdOf(dir, currentHolders(), emergency));
+            if (hold === null) {
+                remove(dir.path, step, (dry) => recent.note(dir.path, dry, deleteIt(dir, dry)));
+                return;
             }
+            kept.set(dir.path, { reason: hold.why, tried: false });
+            if (hold.soft) softHeld.push(dir);
+            const until = hold.soft ? "; kept until free disk is under the emergency level" : "";
+            say(`skipped ${dir.path}: ${hold.why}${until}`);
         };
         const idleTier = (step: number, kinds: BuildDir["kind"][], deleteIt: DeleteIt): void => {
             const holders = currentHolders();
@@ -295,15 +312,24 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
                     continue;
                 }
                 const label = `step ${step}: idle ${dir.kind}`;
-                const emergency = (): void => idle(dir, `${label}, under the emergency level`, deleteIt);
+                const emergency = (): void =>
+                    idle(dir, `${label}, under the emergency level`, deleteIt, currentHolders(), true);
                 const regrown = recent.regrown(dir.path, free, report.emergencyGB, emergency);
                 if (regrown === null) idle(dir, label, deleteIt, holders);
                 else say(`skipped ${dir.path}: ${regrown}`);
             }
         };
+        const simulate = (size: number): void => {
+            simulated += size;
+        };
         freeRunWorktrees({ dryRun, checkouts, enough, remove, say });
+        // 1, before any checkout's build folder: Docker volumes of build caches no container uses, running or stopped
+        // (T2232: a release lane's 120 GB target went twice while an unused 112 GB cargo-target volume stayed).
+        if (!enough() && freeCacheVolumes({ dryRun, free, stop: enough, simulate }, say, diskCacheVolumes(machine)) > 0)
+            log.open();
         // 1 and 2: idle checkouts. The target wipe still takes cargo's locks once, for builds run from elsewhere.
-        idleTier(1, ["target"], (dir, dry) => wipeNow(dir.path, dry, pauseHold));
+        const wipeTarget: DeleteIt = (dir, dry) => wipeNow(dir.path, dry, pauseHold);
+        idleTier(1, ["target"], wipeTarget);
         idleTier(2, ["node_modules", "dist"], (dir, dry) => {
             const open = openBelow(dir.path);
             if (open.length > 0) return `open files, e.g. ${open.join(", ")}`;
@@ -321,12 +347,12 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         const over = (): boolean => free() >= report.emergencyGB;
         // 1 and 2 again: a regrown folder left alone over the emergency level goes now that free disk is under it.
         recent.underEmergency(over);
-        if (!enough() && !over()) {
-            const simulate = (size: number): void => {
-                simulated += size;
-            };
-            if (freeBuildVolumes({ dryRun, free, over, simulate }, say) > 0) log.open();
-        }
+        if (!enough() && !over() && freeBuildVolumes({ dryRun, free, stop: over, simulate }, say) > 0) log.open();
+        // 1 again, after the idle build volumes of 5: a target its held clone kept (softHold) goes now that free disk
+        // is under the emergency level (docs/disk.md: a full disk deletes the target/ folders nothing uses).
+        for (const dir of softHeld)
+            if (!over())
+                idle(dir, "step 1: idle target, under the emergency level", wipeTarget, currentHolders(), true);
         // 6: the last resort, under the emergency level after 1 to 5: Playwright's downloaded browsers (`playwright
         // install` fetches them again), unless a process holds a file in them open. A build folder in use stays at
         // every step, here too: deleting a gate's node_modules or a jawan's target mid-run costs the whole run (T2030).
@@ -370,31 +396,4 @@ export function keepDisk(options: KeepOptions = {}): KeepReport {
         if (unwritten !== null) warn(`disk keeper: ${unwritten}`);
     }
     return report;
-}
-
-/**
- * Before work starts (each jawan launch): free disk inline. `detached` (the minute tick) only starts the background
- * keeper, to do all of it. With capacity.diskKeep false nothing is deleted: low disk only alerts the inbox
- * (src/fleet/disk-alert.ts). Never throws: disk never stops work.
- */
-export function keepDiskBeforeWork(mode: "inline" | "detached" = "inline"): string | null {
-    let setting: boolean | string = true;
-    try {
-        setting = diskKeepSetting(loadMachine());
-    } catch {
-        // An unreadable config: the keeper below reports it and falls back to sweeping, as it always has.
-    }
-    if (typeof setting === "string") return `disk keeper: ${setting}: deleting nothing`;
-    if (!setting) return diskAlertBeforeWork(mode, envDryRun());
-    if (mode === "detached") return (envDryRun() ? null : liftDiskHoldWhenFree()) ?? keepDiskDetached(envDryRun());
-    let report: KeepReport;
-    try {
-        report = keepDisk();
-    } catch (error) {
-        fallbackSweep(error, false, envDryRun());
-        return `disk keeper failed: ${describe(error)}; swept stale artifacts instead (logs/disk.log)`;
-    }
-    if (!report.ran) return null;
-    const paused = report.jobsPaused ? "; new jobs paused: only build folders in use are left (logs/disk.log)" : "";
-    return `disk keeper: free ${gb(report.freeBeforeGB)} -> ${gb(report.freeAfterGB)} (${floorText(report)})${paused}`;
 }

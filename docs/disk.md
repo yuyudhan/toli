@@ -98,17 +98,19 @@ It stops as soon as free space is back at the floor: no margin on top, since eve
 that is one a build would have reused, and the keeper runs again before the next jawan starts and every minute
 anyway. Within each step it takes the least recently used folders first (by the newest modification time of the
 folder and its direct children: a build rewrites `target/debug`, `node_modules/.bin`), so the output of the work
-going on now goes last. No step takes build output in use. Steps 5 and 6 run only under the emergency level and stop
-as soon as free space is over it. Each item freed is logged with its size and its step (`deleted <path>, freed
-X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0 GB (step 5: idle build volume)`).
+going on now goes last. No step takes build output in use. Steps 5 and 6, and a held clone's `target/` (step 1), run
+only under the emergency level and stop as soon as free space is over it. Each item freed is logged with its size and
+its step (`deleted <path>, freed X GB (step 1: idle target)`, `removed docker volume <name> (23.1 GB), freed 22.0 GB
+(step 5: idle build volume)`).
 
 0. Leftovers of an interrupted target wipe (see 1): every untracked `<name>.toli-wipe-<ms>` folder of a checkout, which
    nothing builds into any more, is deleted whole before anything else, root-owned files through a throwaway container
    as in step 1 (`deleted <path>, freed X GB (step 0: leftover of an interrupted target wipe)`, or `kept <path>: ...`
    with the reason).
 
-1. Build output finished no-mistakes runs left in their worktrees, then whole `target/` folders of project checkouts
-   that nothing uses. A checkout is all registered projects' clones plus their git worktrees. Nothing uses it when no
+1. Build output finished no-mistakes runs left in their worktrees, then Docker volumes of build caches no container
+   uses, then whole `target/` folders of project checkouts that nothing uses. A checkout is all registered projects'
+   clones plus their git worktrees. Nothing uses it when no
    running jawan works in it (or, for a main clone, on its project), no live native subagent's open task records it as
    its workspace (a jawan between two commands runs no process there; `skipped <dir>: T<n>'s jawan <id> works in
 it`; a done or dropped task's old jawan tag holds nothing, since that subagent lives on in the lead session and
@@ -119,6 +121,22 @@ it`; a done or dropped task's old jawan tag holds nothing, since that subagent l
    "Live builds"), so a build or test started from elsewhere is never cut off: the target is kept
    (`kept <target>: cargo (pid N) builds into it (CARGO_TARGET_DIR <dir>)`) and the keeper moves on to the next
    folder.
+
+    Build-cache volumes come before any checkout's `target/` (T2232: a release lane's 120 GB target was wiped twice
+    while an unused 112 GB cargo-target volume sat beside it). A volume is one when its name holds a word of
+    `capacity.diskCacheVolumes` (case-insensitive; default `target`, `cargo`, `node_modules`), its name does not
+    look like data (the data words of step 5), and no container mounts it, running or stopped. Largest first, until
+    free space is back at the floor
+    (`removed docker volume <name> (104.5 GB), freed 104.0 GB (step 1: unused build-cache volume)`). Only where
+    Docker answers (`docker cache volumes: skipped (daemon not reachable)`), never while a pull or build runs; a
+    volume a stopped container still mounts waits for step 5.
+
+    A `target/` in a main clone a live native jawan's open task records as its workspace (a task pinned to the clone,
+    such as a release train, between two commands), or in a checkout where a held heavy-build slot's holder works
+    (whatever target that build compiles into), stays while free space is over the emergency level
+    (`skipped <target>: <why>; kept until free disk is under the emergency level`). Under it, after step 5, it goes
+    like any target nothing uses now (`step 1: idle target, under the emergency level`): a full disk still deletes
+    `target/` folders.
 
     The wipe takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; cargo holds
     them while it compiles) and then checks that no process and no live build (see "Live builds") uses the target.
@@ -323,9 +341,10 @@ A candidate is only a folder named `target`, `node_modules` or `dist` that git l
 (`git ls-files --others --ignored --exclude-standard --directory`), or, in a finished no-mistakes run's worktree, a
 cargo-marked `target` or a `node_modules` inside such an ignored folder (step 1). So it never touches sources, git
 data, tracked `dist/` folders, or uncommitted work. Beyond those folders it deletes only Playwright's browser builds
-and sccache entries. Of Docker's volumes it removes only the idle build-output ones of step 5 (the name and mount
-patterns there), with the stopped containers that mount them; never a volume that may hold data or one a running
-container uses, and nothing outside this account's registered checkouts, no-mistakes run worktrees and its own caches.
+and sccache entries. Of Docker's volumes it removes only the unused build caches of step 1 and the idle build-output
+ones of step 5 (the name and mount patterns there), with the stopped containers that mount them; never a volume that
+may hold data or one a running container uses, and nothing outside this account's registered checkouts, no-mistakes
+run worktrees and its own caches.
 
 It never deletes a build folder a live (running, paused, restarting or just-created) Docker container mounts, at any
 step, the last resort included: a folder that is a bind mount's host folder, holds a volume's mountpoint, or is where
@@ -371,7 +390,15 @@ still shows up in `disk keep` and `doctor`.
 ## Settings
 
 ```json
-{ "capacity": { "diskKeep": true, "diskKeepGB": 60, "diskSweepStaleMinutes": 180, "diskBuildTools": ["my-queue"] } }
+{
+    "capacity": {
+        "diskKeep": true,
+        "diskKeepGB": 60,
+        "diskSweepStaleMinutes": 180,
+        "diskBuildTools": ["my-queue"],
+        "diskCacheVolumes": ["target", "cargo", "node_modules"]
+    }
+}
 ```
 
 `diskKeep` false leaves all deleting to the lead (see above). `diskKeepGB` is the floor in GB, capped at 15% of the
@@ -382,6 +409,9 @@ full disk") deletes it (a positive number of minutes; at 1440 or more, Linux `re
 cargo from above its workspaces: while one runs, a target in a workspace it works in, above or names counts as in
 use. An entry is a program name, matched against every word of a command line by file name (`my-queue` also
 matches a script `/opt/tools/my-queue.ts`), or several words that must follow each other (`my-tool queue`).
+`diskCacheVolumes` (default `["target", "cargo", "node_modules"]`) lists the words that mark a Docker volume a build
+cache by its name, case-insensitive: one no container mounts goes in step 1, before any checkout's `target/`. A name
+that looks like data never counts, whatever word it holds.
 
 Each machine reads its own `config/machine.json`. Machine-private cleanup scripts ([helpers.md](helpers.md)) can
 still run on top of the keeper, but none of them may refuse work on low disk.

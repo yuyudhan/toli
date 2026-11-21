@@ -1,6 +1,9 @@
-// The disk keeper's Docker volume step (src/fleet/disk.ts, step 5): under the emergency level only, after every idle
-// build folder and Docker's build cache (step 3) and before any build folder in use, it removes Docker volumes of
-// rebuildable build output that no running container uses: a compose stack's cargo `target/` or `node_modules`
+// The disk keeper's Docker volume steps (src/fleet/disk.ts). Step 1, under the floor and before any checkout's build
+// folder (T2232): an unused build cache, a volume whose name holds one of capacity.diskCacheVolumes' words (default
+// `target`, `cargo`, `node_modules`; cacheVolumes) that no container mounts, running or stopped, and whose name does
+// not look like data, largest first until free disk is back at the floor. Step 5, under the emergency level only,
+// after every idle build folder and Docker's build cache (step 3) and before any build folder in use: Docker volumes
+// of rebuildable build output that no running container uses: a compose stack's cargo `target/` or `node_modules`
 // cache, rebuilt by its next build. A volume counts as build output only when its name says so (ends in `target`,
 // or holds `cargo` or `node_modules`) or a container mounts it at such a place (`.../target`, `.../node_modules`, a
 // `cargo` folder), and never when its name or any mount point looks like data (a database, uploads, backups: DATA
@@ -9,8 +12,10 @@
 // their other volumes stay), since Docker refuses to remove a volume a container references, but only a container
 // that holds nothing but build output: every mount a named build-output volume (no bind mount, no anonymous or
 // data-looking volume) and an image that is no database or data store (DATA_IMAGE). Any other stopped user keeps the
-// volume, which is then skipped. A running, paused or just-created container keeps its volumes. Like the prune, it never runs while a pull, build or compose up runs.
-import { run } from "../core/util.ts";
+// volume, which is then skipped. A running, paused or just-created container keeps its volumes. Like the prune,
+// neither step runs while a pull, build or compose up runs. Every Docker call goes through DockerApi (hostDocker).
+import type { Machine } from "../core/config.ts";
+import { run, ToliError } from "../core/util.ts";
 import { parseSize } from "./disk-caches.ts";
 import { GIB, gb } from "./disk-state.ts";
 import { dockerBusy } from "./docker-prune.ts";
@@ -182,88 +187,194 @@ export function listContainers(): DockerContainer[] | string {
     return containers ?? `docker container inspect failed (exit ${inspected.code})`;
 }
 
+/** The Docker calls the keeper's volume steps make: the host's `docker` CLI (hostDocker), a fake in tests. */
+export type DockerApi = {
+    /** Why Docker may not be used now (not installed, daemon not reachable, a pull or build runs), or null. */
+    unavailable(): string | null;
+    /** Every volume's name, or why they cannot be listed. */
+    volumes(): string[] | string;
+    /** Every container, running or stopped, with its mounts, or why they cannot be read. */
+    containers(): DockerContainer[] | string;
+    /** Volume sizes (GB) as far as Docker reports them. */
+    volumeSizes(): Map<string, number>;
+    /** Remove a stopped container (never its volumes); why not, when Docker refused. */
+    removeContainer(id: string): string | null;
+    /** Remove a volume; why not, when Docker refused. */
+    removeVolume(name: string): string | null;
+};
+
+/** The host's `docker` CLI. */
+export const hostDocker: DockerApi = {
+    unavailable() {
+        const info = run(["docker", "info", "--format", "{{.ServerVersion}}"], { timeoutMs: 20_000 });
+        if (info.code !== 0) return info.code === 127 ? "not installed" : "daemon not reachable";
+        const busy = dockerBusy();
+        return busy === null ? null : `${busy} is running`;
+    },
+    volumes() {
+        const listed = run(["docker", "volume", "ls", "-q"], { timeoutMs: DOCKER_LIST_TIMEOUT_MS });
+        if (listed.code !== 0) return `docker volume ls failed, exit ${listed.code}`;
+        return listed.stdout
+            .split("\n")
+            .map((name) => name.trim())
+            .filter((name) => VOLUME_NAME.test(name));
+    },
+    containers: listContainers,
+    volumeSizes() {
+        return parseVolumeSizes(run(["docker", "system", "df", "-v"], { timeoutMs: DOCKER_DF_TIMEOUT_MS }).stdout);
+    },
+    removeContainer(id) {
+        const gone = run(["docker", "rm", id], { timeoutMs: DOCKER_REMOVE_TIMEOUT_MS });
+        return gone.code === 0 ? null : firstLine(gone.stderr || gone.stdout);
+    },
+    removeVolume(name) {
+        const gone = run(["docker", "volume", "rm", name], { timeoutMs: DOCKER_REMOVE_TIMEOUT_MS });
+        return gone.code === 0 ? null : firstLine(gone.stderr || gone.stdout);
+    },
+};
+
+/** Default words whose presence in a Docker volume's name marks it a build cache (capacity.diskCacheVolumes). */
+export const DEFAULT_CACHE_VOLUME_WORDS: readonly string[] = ["target", "cargo", "node_modules"];
+
+/** `capacity.diskCacheVolumes` (config/machine.json): the words marking a Docker volume a build cache by its name. */
+export function diskCacheVolumes(machine: Machine): readonly string[] {
+    const raw: unknown = machine.capacity?.diskCacheVolumes;
+    if (raw === undefined) return DEFAULT_CACHE_VOLUME_WORDS;
+    if (!Array.isArray(raw) || !raw.every((word) => typeof word === "string" && word.trim() !== ""))
+        throw new ToliError("config/machine.json capacity.diskCacheVolumes must be a list of non-empty strings");
+    return raw;
+}
+
+/**
+ * The unused build caches among `names`: a named volume whose name holds one of `words` (case-insensitive), whose
+ * name does not look like data, and that no container mounts, running or stopped (nothing to remove first).
+ */
+export function cacheVolumes(names: string[], containers: DockerContainer[], words: readonly string[]): BuildVolume[] {
+    const lowered = words.map((word) => word.toLowerCase());
+    const mounted = new Set(
+        containers.flatMap((container) =>
+            container.mounts.flatMap((mount) => (mount.type === "volume" ? [mount.volume] : [])),
+        ),
+    );
+    return names
+        .filter((name) => !ANONYMOUS.test(name) && !mounted.has(name) && !DATA.test(name))
+        .filter((name) => lowered.some((word) => name.toLowerCase().includes(word)))
+        .map((name) => ({ name, sizeGB: null, stopped: [] }));
+}
+
 export type BuildVolumeContext = {
     dryRun: boolean;
     /** Free disk now, GB. */
     free: () => number;
-    /** True once free disk is over the emergency level: the step stops. */
-    over: () => boolean;
+    /** True once free disk is back where the step aims (the floor, or the emergency level): the step stops. */
+    stop: () => boolean;
     /** Count `sizeGB` as freed (a dry run). */
     simulate: (sizeGB: number) => void;
 };
 
-const STEP = "step 5: idle build volume";
+/** One volume step: what its lines are called, its step label, and which volumes it may remove. */
+type VolumeStep = {
+    what: string;
+    label: string;
+    pick: (names: string[], containers: DockerContainer[]) => { volumes: BuildVolume[]; kept: string[] };
+};
 
 /** Remove idle build-output volumes until free disk is over the emergency level (see the top); how many went. */
-export function freeBuildVolumes(context: BuildVolumeContext, say: (line: string) => void): number {
-    const info = run(["docker", "info", "--format", "{{.ServerVersion}}"], { timeoutMs: 20_000 });
-    if (info.code !== 0) {
-        say(`docker volumes: skipped (${info.code === 127 ? "not installed" : "daemon not reachable"})`);
+export function freeBuildVolumes(
+    context: BuildVolumeContext,
+    say: (line: string) => void,
+    docker: DockerApi = hostDocker,
+): number {
+    const step = { what: "docker volumes", label: "step 5: idle build volume", pick: buildVolumes };
+    return freeVolumes(step, context, say, docker);
+}
+
+/**
+ * The keeper's step 1, before any checkout's build folder: remove unused build-cache volumes (cacheVolumes, named by
+ * `words`), largest first, until free disk is back at the floor; how many went.
+ */
+export function freeCacheVolumes(
+    context: BuildVolumeContext,
+    say: (line: string) => void,
+    words: readonly string[],
+    docker: DockerApi = hostDocker,
+): number {
+    const step = {
+        what: "docker cache volumes",
+        label: "step 1: unused build-cache volume",
+        pick: (names: string[], containers: DockerContainer[]) => ({
+            volumes: cacheVolumes(names, containers, words),
+            kept: [],
+        }),
+    };
+    return freeVolumes(step, context, say, docker);
+}
+
+function freeVolumes(
+    step: VolumeStep,
+    context: BuildVolumeContext,
+    say: (line: string) => void,
+    docker: DockerApi,
+): number {
+    const unavailable = docker.unavailable();
+    if (unavailable !== null) {
+        say(`${step.what}: skipped (${unavailable})`);
         return 0;
     }
-    const busy = dockerBusy();
-    if (busy !== null) {
-        say(`docker volumes: skipped (${busy} is running)`);
+    const names = docker.volumes();
+    if (typeof names === "string") {
+        say(`${step.what}: skipped (${names})`);
         return 0;
     }
-    const listed = run(["docker", "volume", "ls", "-q"], { timeoutMs: DOCKER_LIST_TIMEOUT_MS });
-    if (listed.code !== 0) {
-        say(`docker volumes: skipped (docker volume ls failed, exit ${listed.code})`);
-        return 0;
-    }
-    const names = listed.stdout
-        .split("\n")
-        .map((name) => name.trim())
-        .filter((name) => VOLUME_NAME.test(name));
-    const containers = listContainers();
+    const containers = docker.containers();
     if (typeof containers === "string") {
-        say(`docker volumes: skipped (${containers})`);
+        say(`${step.what}: skipped (${containers})`);
         return 0;
     }
-    const { volumes, kept } = buildVolumes(names, containers);
+    const { volumes, kept } = step.pick(names, containers);
     for (const line of kept) say(line);
     if (volumes.length === 0) {
-        say("docker volumes: none holds idle build output");
+        say(`${step.what}: none holds idle build output`);
         return 0;
     }
     // Largest first, so the fewest volumes go; a size `docker system df` does not report sorts last.
-    const sizes = parseVolumeSizes(run(["docker", "system", "df", "-v"], { timeoutMs: DOCKER_DF_TIMEOUT_MS }).stdout);
+    const sizes = docker.volumeSizes();
     for (const volume of volumes) volume.sizeGB = sizes.get(volume.name) ?? null;
     volumes.sort((a, b) => (b.sizeGB ?? -1) - (a.sizeGB ?? -1));
     let removed = 0;
     for (const volume of volumes) {
-        if (context.over()) break;
+        if (context.stop()) break;
         const size = volume.sizeGB === null ? "size unknown" : gb(volume.sizeGB);
         if (context.dryRun) {
             for (const container of volume.stopped)
                 say(`would remove stopped container ${container.name} (it mounts docker volume ${volume.name})`);
-            say(`would remove docker volume ${volume.name} (${size}, ${STEP})`);
+            say(`would remove docker volume ${volume.name} (${size}, ${step.label})`);
             context.simulate(volume.sizeGB ?? 0);
             removed += 1;
             continue;
         }
         const before = context.free();
-        const refusal = removeVolume(volume, say);
+        const refusal = removeVolume(volume, say, docker);
         if (refusal !== null) {
             say(`kept docker volume ${volume.name}: ${refusal}`);
             continue;
         }
         removed += 1;
         const freed = gb(Math.max(0, context.free() - before));
-        say(`removed docker volume ${volume.name} (${size}), freed ${freed} (${STEP})`);
+        say(`removed docker volume ${volume.name} (${size}), freed ${freed} (${step.label})`);
     }
     return removed;
 }
 
 /** Remove `volume` and, first, the stopped containers that mount it; why not, when Docker refused. */
-function removeVolume(volume: BuildVolume, say: (line: string) => void): string | null {
+function removeVolume(volume: BuildVolume, say: (line: string) => void, docker: DockerApi): string | null {
     for (const container of volume.stopped) {
-        const gone = run(["docker", "rm", container.id], { timeoutMs: DOCKER_REMOVE_TIMEOUT_MS });
-        if (gone.code !== 0) return `docker rm ${container.name} failed: ${firstLine(gone.stderr || gone.stdout)}`;
+        const refused = docker.removeContainer(container.id);
+        if (refused !== null) return `docker rm ${container.name} failed: ${refused}`;
         say(`removed stopped container ${container.name} (it mounts docker volume ${volume.name})`);
     }
-    const result = run(["docker", "volume", "rm", volume.name], { timeoutMs: DOCKER_REMOVE_TIMEOUT_MS });
-    return result.code === 0 ? null : `docker volume rm failed: ${firstLine(result.stderr || result.stdout)}`;
+    const refused = docker.removeVolume(volume.name);
+    return refused === null ? null : `docker volume rm failed: ${refused}`;
 }
 
 export const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";

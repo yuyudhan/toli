@@ -22,7 +22,7 @@ import { join, resolve } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
-import { keepDiskBeforeWork } from "../fleet/disk.ts";
+import { keepDiskBeforeWork } from "../fleet/disk-before-work.ts";
 import { currentDiskHold } from "../fleet/disk-hold.ts";
 import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
 import { LEAD_TURN_ENV } from "../fleet/full.ts";

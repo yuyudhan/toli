@@ -28,7 +28,7 @@ import { briefStallMinutes, stallText, watchStall } from "../jawans/progress.ts"
 import { loadRun, runMinuteMs, updateRun } from "../jawans/runs.ts";
 import { HARNESS_STOP_GRACE_MS, type StopRoot, stopTree } from "../jawans/stop.ts";
 import { ISSUED_BY_ENV, ISSUED_TASK_ENV } from "../records/push-log.ts";
-import { keepDiskBeforeWork } from "./disk.ts";
+import { keepDiskBeforeWork } from "./disk-before-work.ts";
 import {
     DELEGATE_POINTER,
     EXEC_MAX_MINUTES_ENV,

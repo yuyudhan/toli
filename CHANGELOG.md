@@ -26,6 +26,17 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli push` no longer runs a project's pre-push check in a checkout a release train is using: it refuses a
+  checkout on a `release/*` branch, or one a live jawan holds (the release catch-up's own check: a spawn run working
+  there, or a live native subagent whose task records it as its workspace), naming who holds it. The train itself
+  pushes with `--release-train`; a task's own jawan names its task with `--task` (docs/projects.md "Git hooks",
+  T2232).
+- The disk keeper frees unused Docker build caches before any checkout's `target/`: a volume whose name holds
+  `target`, `cargo` or `node_modules` (`capacity.diskCacheVolumes`), whose name does not look like data, and that no
+  container mounts, running or stopped, now goes in step 1, largest first, only where Docker answers and never with
+  `capacity.diskKeep` false. A `target/` in a main clone a live native jawan's task works in, or in a checkout a held
+  heavy-build slot's build works in, stays until free disk is under the emergency level; a full disk still deletes it
+  (docs/disk.md "What it deletes, in order", T2232).
 - A delegated task's reports no longer pile up while its delegator is unreachable. Every change to the task (a note
   copied from the machine it was forwarded to, a new status) queued one more update, so a delegator away for an hour
   got a dozen copies; each update carries the whole task, so a new one now replaces the one still queued for that

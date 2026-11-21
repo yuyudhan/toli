@@ -387,6 +387,14 @@ would otherwise skip without a word, which is how pushes went out unverified bef
 for the rare repo whose declared hook is meant to stay off on this machine. Other declared hooks that are not
 installed only warn. A repo that declares no hooks gets no `hooks` line, item or warning.
 
+`bin/toli push` also refuses a checkout a release train owns (T2232), since the project's pre-push hook may run its
+full check there and hold the train for hours: one on a `release/*` branch (`refusing to push <p>: projects/<p> is on
+release/<v>, a release train's branch; only the train pushes it (--release-train)`), or one a live jawan holds, by the
+release catch-up's own check (a spawn run working in it, or a live native subagent whose open task records it as its
+workspace; never the pushing run itself, `TOLI_RUN_ID`, nor the task named with `--task`): `refusing to push <p>:
+projects/<p> is held (<who> works in it); ...`. The train itself passes `--release-train`. This covers every push toli
+makes, the catch-up jawan's included. toli keeps no separate train or tag lock.
+
 ## Data layout
 
     data/projects/<name>/

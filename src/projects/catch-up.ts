@@ -110,15 +110,17 @@ export function catchUpTargets(project: Project, clone: string, main: string): T
 
 /**
  * Who holds checkout `dir`, or null: a live `bin/toli spawn` run working in it (never the calling run, TOLI_RUN_ID),
- * or a live task's native subagent whose recorded workspace it is.
+ * or a live task's native subagent whose recorded workspace it is (never `ownTask`, the task the caller acts for).
+ * The catch-up and `bin/toli push` (src/forge/forge.ts) both read it.
  */
-export function checkoutHolder(dir: string, at: Date = now()): string | null {
+export function checkoutHolder(dir: string, at: Date = now(), ownTask: string | null = null): string | null {
     const self = process.env.TOLI_RUN_ID;
     const live = activeRuns().find((entry) => entry.id !== self && samePath(entry.cwd, dir));
     if (live !== undefined) return `jawan run ${live.id} works in it`;
     const grace = staleTaskMinutes();
     const task = loadBacklog().tasks.find(
         (entry) =>
+            entry.id !== ownTask &&
             LIVE.includes(entry.status) &&
             entry.workspace !== undefined &&
             samePath(entry.workspace.path, dir) &&

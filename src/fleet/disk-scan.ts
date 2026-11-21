@@ -13,6 +13,7 @@ import { gitWorktrees } from "../projects/workspace.ts";
 import { agentState, nativeAgent } from "../records/agents.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { staleTaskMinutes } from "../records/stale.ts";
+import { busySlots } from "./build-queue.ts";
 import { procCwds, procOpenFiles } from "./disk-proc.ts";
 
 /** One working tree of a registered project: its main clone or one of the clone's git worktrees. */
@@ -131,13 +132,15 @@ function newestChildMtime(dir: string, own: number): number {
 
 /**
  * What uses checkouts right now: running jawans' directories and projects, the task worktrees live native subagents
- * work in, the checkouts running gates check, and every process's working directory.
+ * work in, the checkouts running gates check, every process's working directory, and where each held heavy-build
+ * slot's holder works.
  */
 export type Holders = {
     runs: { cwd: string; project: string | null; id: string }[];
     tasks: { path: string; why: string }[];
     gates: { dir: string; why: string }[];
     cwds: Map<string, string>;
+    slots: { cwd: string; why: string }[];
 };
 
 export function currentHolders(): Holders {
@@ -148,7 +151,11 @@ export function currentHolders(): Holders {
         dir: real(gate.dir),
         why: `a gate of ${gate.project} (pid ${gate.pid}) runs in it`,
     }));
-    return { runs, tasks: subagentWorkspaces(), gates, cwds: processCwds() };
+    const slots = busySlots().map((slot) => ({
+        cwd: real(slot.cwd),
+        why: `heavy-build slot ${slot.slot} (pid ${slot.pid}) is held for a build in it`,
+    }));
+    return { runs, tasks: subagentWorkspaces(), gates, cwds: processCwds(), slots };
 }
 
 /**
@@ -210,6 +217,18 @@ export function checkoutUse(checkout: Checkout, holders: Holders, all: Checkout[
         if (within(cwd, checkout.path)) return `process ${pid} runs in ${cwd}`;
     }
     return null;
+}
+
+/**
+ * Why `checkout`'s `target/` folders stay while free disk is over the emergency level, or null (T2232): a live native
+ * jawan whose open task's recorded workspace is this main clone (a task pinned to it, such as a release train, between
+ * two commands), or a held heavy-build slot whose holder works in the checkout, whatever target it builds into. Under
+ * the emergency level they go like any idle target: a full disk deletes the build folders nothing uses now.
+ */
+export function softHold(checkout: Checkout, holders: Holders): string | null {
+    const task = checkout.main ? holders.tasks.find((entry) => within(entry.path, checkout.path)) : undefined;
+    if (task !== undefined) return task.why;
+    return holders.slots.find((entry) => within(entry.cwd, checkout.path))?.why ?? null;
 }
 
 /** Paths below `dir` that any process other than this one holds open (`lsof -Fpn`), at most `limit` of them. */

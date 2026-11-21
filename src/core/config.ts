@@ -34,6 +34,12 @@ export type CapacityConfig = {
      */
     diskBuildTools?: string[];
     /**
+     * Words whose presence in a Docker volume's name (case-insensitive) marks it a build cache: one no container
+     * mounts goes before any checkout's build folder (src/fleet/docker-volumes.ts; default target, cargo,
+     * node_modules). A name that looks like data never counts.
+     */
+    diskCacheVolumes?: string[];
+    /**
      * Parallel compile jobs per cargo run (`CARGO_BUILD_JOBS` inside a build slot and for jawans, mirrored in
      * ~/.cargo/config.toml; default the cores split evenly over the build slots).
      */

@@ -13,10 +13,7 @@ import type { OutsideBuild } from "./outside-builds.ts";
 import { availabilityLine } from "./pick.ts";
 import { localQueue, type Queue } from "./queue.ts";
 
-/**
- * The machine's load thresholds; `autoResume`, `stallMinutes`, `diskKeep`, `diskSweepStaleMinutes`, `diskBuildTools`,
- * `gateStallMinutes`, `buildMemoryMax` and `commitHookTimeoutSeconds` are not ones (each has its own reader).
- */
+/** The machine's load thresholds: CapacityConfig without the keys below, which have their own readers. */
 export type Capacity = Required<
     Omit<
         CapacityConfig,
@@ -25,6 +22,7 @@ export type Capacity = Required<
         | "diskKeep"
         | "diskSweepStaleMinutes"
         | "diskBuildTools"
+        | "diskCacheVolumes"
         | "gateStallMinutes"
         | "buildMemoryMax"
         | "commitHookTimeoutSeconds"
