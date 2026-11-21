@@ -116,8 +116,16 @@ export type Machine = {
      * subagents run jawans and a headless lead turn starts none. `idleSessionMinutes` (default 60,
      * src/fleet/idle-session.ts): a live interactive session that has left a wake unread this long is flagged by the
      * digest and doctor and no longer holds back due jobs; it keeps the inbox, so no headless lead turn runs beside it.
+     * `silentSessionMinutes` (default 20, same file): a live interactive session that has taken no wake for this long
+     * (its extension stopped fetching them) is shown by `lead status` and alerted to the coordinator once per episode.
      */
-    lead?: { balanceMinutes?: number; balanceGap?: number; dispatch?: string; idleSessionMinutes?: number };
+    lead?: {
+        balanceMinutes?: number;
+        balanceGap?: number;
+        dispatch?: string;
+        idleSessionMinutes?: number;
+        silentSessionMinutes?: number;
+    };
     /**
      * Peer messaging over HTTPS (src/peer/, docs/peers.md): the listener's `port` (default 47123), `bind` ("private",
      * the default: the private-range addresses of the VPN and LAN interfaces, never a container or VM bridge; or a

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { calls, deliver, lead, once } from "./lead-stub.ts";
 
@@ -187,6 +187,42 @@ describe("lead run --once", () => {
         expect(take()).toHaveLength(0);
         writeFileSync(state, JSON.stringify({ turns: 4, pid: null, ompPid: null }));
         expect(take()).toHaveLength(1);
+    });
+
+    test("a turn record whose processes are gone, or whose pid now names a later process, is cleared and holds nothing", () => {
+        const setup = lead();
+        const { box } = setup;
+        mkdirSync(join(box.root, "state", "lead"), { recursive: true });
+        const state = join(box.root, "state", "lead", "state.json");
+        const gone = Bun.spawnSync(["true"]).pid;
+        // A record a reboot left behind: its pid now belongs to a process started after the record was written.
+        const reused = Bun.spawn(["sleep", "60"]);
+        try {
+            writeFileSync(state, JSON.stringify({ turns: 450, lastExit: 1, pid: reused.pid, ompPid: gone }));
+            const hourAgo = new Date(Date.now() - 3_600_000);
+            utimesSync(state, hourAgo, hourAgo);
+            const session = join(box.root, "state", "session.json");
+            writeFileSync(session, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+            deliver(box, "message from m2", "hello");
+            // The interactive session takes its wake: the dead record holds nothing.
+            const wake = JSON.parse(box.ok(["wake", "--json", "--pid", String(process.pid)])) as { items: unknown[] };
+            expect(wake.items).toHaveLength(1);
+            const status = JSON.parse(box.ok(["lead", "status", "--json"], { env: { TOLI_SCHEDULER: "crontab" } }));
+            expect(status).toMatchObject({ turnPid: null, interactivePid: process.pid });
+
+            // The next pass clears the record and says so; with the session closed, a headless turn runs.
+            rmSync(session);
+            deliver(box, "later from m2", "later body");
+            once(box);
+            const log = readFileSync(join(box.root, "logs", "lead.log"), "utf8");
+            expect(log).toContain(
+                `lead turn record named pid ${reused.pid} (omp pid ${gone}), which no longer runs: cleared`,
+            );
+            expect(calls(setup)[0]).toContain("later body");
+            expect(JSON.parse(readFileSync(state, "utf8"))).toMatchObject({ turns: 451, pid: null, ompPid: null });
+        } finally {
+            reused.kill();
+        }
     });
 
     test('under lead.dispatch "subagents" the turn starts no jawan, and what it leaves unacked wakes the interactive session', () => {

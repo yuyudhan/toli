@@ -16,18 +16,32 @@ function elapsedMs(text: string): number {
     return ((((days ?? 0) * 24 + (hours ?? 0)) * 60 + (minutes ?? 0)) * 60 + (seconds ?? 0)) * 1000;
 }
 
+type ProcessInfo = { startMs: number; command: string };
+
 /**
- * When `pid` started (ms since the epoch, to the second) and its command line; null when ps cannot say. The elapsed
+ * When `pid` started (ms since the epoch, to the second) and its command line; "absent" when ps lists no such process
+ * (on Linux a thread's id answers a liveness probe yet is no process ps lists), null when ps cannot say. The elapsed
  * time, not `lstart`, so no time zone comes into it.
  */
-function processInfo(pid: number): { startMs: number; command: string } | null {
+function processInfo(pid: number): ProcessInfo | "absent" | null {
     if (!Number.isInteger(pid) || pid <= 0) return null;
     const result = run(["ps", "-o", "etime=", "-o", "args=", "-p", String(pid)], { env: { LC_ALL: "C" } });
-    const match = /^\s*(\S+)\s+(.*)$/.exec(result.stdout.trim());
+    const listed = result.stdout.trim();
+    if (result.code === 1 && listed === "") return "absent";
+    const match = /^\s*(\S+)\s+(.*)$/.exec(listed);
     if (result.code !== 0 || match === null) return null;
     const elapsed = elapsedMs(match[1] ?? "");
     if (Number.isNaN(elapsed)) return null;
     return { startMs: Date.now() - elapsed, command: match[2] ?? "" };
+}
+
+/** Whether `info`'s process started no later than `file` was last written; `unreadable` when the file cannot be read. */
+function startedBeforeWrite(info: ProcessInfo, file: string, unreadable: boolean): boolean {
+    try {
+        return info.startMs <= statSync(file).mtimeMs + ELAPSED_SLACK_MS;
+    } catch {
+        return unreadable;
+    }
 }
 
 /**
@@ -38,15 +52,22 @@ function processInfo(pid: number): { startMs: number; command: string } | null {
 export function toliHolds(pid: number, file: string): boolean {
     if (!pidAlive(pid)) return false;
     const info = processInfo(pid);
+    if (info === "absent") return false;
     if (info === null) return true;
     if (!/toli/.test(info.command)) return false;
-    let writtenMs: number;
-    try {
-        writtenMs = statSync(file).mtimeMs;
-    } catch {
-        return true;
-    }
-    return info.startMs <= writtenMs + ELAPSED_SLACK_MS;
+    return startedBeforeWrite(info, file, true);
+}
+
+/**
+ * Whether `pid`, read from `file`, can still be the process that wrote it, whatever it runs: alive, a process ps lists,
+ * and started no later than the file was last written. After a reboot a recorded pid usually names another program
+ * started later, or a thread of one; where ps cannot say, liveness alone decides.
+ */
+export function recordedPidRuns(pid: number, file: string): boolean {
+    if (!pidAlive(pid)) return false;
+    const info = processInfo(pid);
+    if (info === "absent") return false;
+    return info === null || startedBeforeWrite(info, file, true);
 }
 
 /**
@@ -56,12 +77,8 @@ export function toliHolds(pid: number, file: string): boolean {
  */
 export function recordedProcessRuns(pid: number, file: string, command: RegExp): boolean {
     const info = processInfo(pid);
-    if (info === null || !command.test(info.command)) return false;
-    try {
-        return info.startMs <= statSync(file).mtimeMs + ELAPSED_SLACK_MS;
-    } catch {
-        return false;
-    }
+    if (info === null || info === "absent" || !command.test(info.command)) return false;
+    return startedBeforeWrite(info, file, false);
 }
 
 /** The pid written in `lockPath`, or 0 when it is absent or unreadable. */

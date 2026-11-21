@@ -32,7 +32,9 @@ import {
     writeCrontab,
 } from "../jobs/os-scheduler.ts";
 import { LEAD_TURN_ENV } from "./full.ts";
+import { type SilentSession, silentSession, silentSessionText } from "./idle-session.ts";
 import { interactiveLeadPid, readLeadState, turnPid } from "./lead-state.ts";
+import { silentAlertFor } from "./silent-alert.ts";
 
 export const LEAD_LABEL = "com.toli.lead";
 export const LEAD_CRON_TAG = "# toli lead";
@@ -246,10 +248,17 @@ export type LeadStatus = LeadServiceStatus & {
     turnPid: number | null;
     /** A failed turn's wake text waits in state/lead/pending.md for the next pass. */
     pendingWake: boolean;
+    /**
+     * The interactive session when it has taken no wake for `lead.silentSessionMinutes`, with the coordinator alerted
+     * about it (`alertedTo` null on the coordinator itself) and when; both null before the tick has alerted.
+     */
+    silent: (SilentSession & { alertedTo: string | null; alertedAt: string | null }) | null;
 };
 
 export function leadStatus(): LeadStatus {
     const state = readLeadState();
+    const silent = silentSession();
+    const alert = silent === null ? null : silentAlertFor(silent);
     return {
         ...leadServiceStatus(),
         interactivePid: interactiveLeadPid(),
@@ -259,6 +268,7 @@ export function leadStatus(): LeadStatus {
         turns: state.turns,
         turnPid: turnPid(state),
         pendingWake: existsSync(paths.leadPending()),
+        silent: silent === null ? null : { ...silent, alertedTo: alert?.to ?? null, alertedAt: alert?.at ?? null },
     };
 }
 
@@ -274,5 +284,15 @@ export function printStatus(status: LeadStatus): void {
     );
     if (status.turnPid !== null) out(`turn in progress: pid ${status.turnPid}`);
     out(`pending wake: ${status.pendingWake ? paths.leadPending() : "none"}`);
+    if (status.silent !== null) {
+        const { alertedTo, alertedAt } = status.silent;
+        let alerted = "the next tick raises it";
+        if (alertedAt !== null)
+            alerted =
+                alertedTo === null
+                    ? `logged at ${alertedAt} (this is the coordinator: nobody to alert)`
+                    : `${alertedTo} alerted at ${alertedAt}`;
+        out(`silent: interactive session ${silentSessionText(status.silent)}; ${alerted}`);
+    }
     if (!status.installed) out("warn: the lead service is not installed (bin/toli lead install)");
 }

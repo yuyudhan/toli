@@ -3,7 +3,8 @@
 import { existsSync, rmSync } from "node:fs";
 import { ancestry } from "../core/ancestry.ts";
 import { paths } from "../core/paths.ts";
-import { pidAlive, readJson, withLock } from "../core/util.ts";
+import { recordedPidRuns } from "../core/pid-lock.ts";
+import { pidAlive, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 import { liveSession } from "../harness/session.ts";
 
 /**
@@ -36,11 +37,29 @@ export function readLeadState(): LeadState {
     return { ...EMPTY_STATE, ...readJson<Partial<LeadState>>(paths.leadState(), {}) };
 }
 
-/** The pid of a headless turn in progress, or null. */
+/**
+ * The pid of a headless turn in progress, or null. A recorded pid counts only while it can still be the process the
+ * record named (recordedPidRuns): after a reboot the pid in a surviving record usually belongs to another program, or
+ * to a thread of one, and must never hold the inbox.
+ */
 export function turnPid(state: LeadState): number | null {
-    if (state.pid !== null && pidAlive(state.pid)) return state.pid;
-    if (state.ompPid !== null && pidAlive(state.ompPid)) return state.ompPid;
+    const file = paths.leadState();
+    if (state.pid !== null && recordedPidRuns(state.pid, file)) return state.pid;
+    if (state.ompPid !== null && recordedPidRuns(state.ompPid, file)) return state.ompPid;
     return null;
+}
+
+/**
+ * Clear a turn record whose processes are gone (a service killed mid-turn, a reboot), so it never reads as a turn in
+ * progress; its wake stays in pending.md for the next turn. Returns the line to log, or null when there was none. The
+ * caller holds the lead lock.
+ */
+export function clearDeadTurnLocked(): string | null {
+    const state = readLeadState();
+    if ((state.pid === null && state.ompPid === null) || turnPid(state) !== null) return null;
+    writeJsonAtomic(paths.leadState(), { ...state, pid: null, ompPid: null } satisfies LeadState);
+    const omp = state.ompPid === null ? "" : ` (omp pid ${state.ompPid})`;
+    return `lead turn record named pid ${state.pid ?? "none"}${omp}, which no longer runs: cleared`;
 }
 
 export function leadLock(): string {

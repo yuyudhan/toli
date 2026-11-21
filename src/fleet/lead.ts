@@ -17,6 +17,7 @@ import { fullCommand } from "./full.ts";
 import { installLeadService, leadStatus, printStatus, uninstallLeadService } from "./lead-service.ts";
 import {
     attachPidLocked,
+    clearDeadTurnLocked,
     inboxHolderLocked,
     type LeadAttach,
     type LeadState,
@@ -40,14 +41,17 @@ const ATTACH_POLL_MS = 2_000;
 /**
  * Claim the next headless turn, or null when there is nothing to do: something else holds the inbox (an interactive
  * session, attended or sitting at a prompt, a `lead attach`, or a turn already running: inboxHolderLocked), or no wake
- * items and no pending text. The wake is taken here, under the lead lock, so two passes never take the same items and
- * a session's `toli wake` never takes them beside this turn; the combined text is written to pending.md before the
- * turn so a turn that fails, or a service that dies mid-turn, leaves it for the next pass. Under `lead.dispatch:
+ * items and no pending text. A turn record whose processes are gone is cleared first, and logged. The wake is taken
+ * here, under the lead lock, so two passes never take the same items and a session's `toli wake` never takes them
+ * beside this turn; the combined text is written to pending.md before the turn so a turn that fails, or a service
+ * that dies mid-turn, leaves it for the next pass. Under `lead.dispatch:
  * "subagents"` the take moves only the headless marks, so the interactive session is still woken by what this turn
  * leaves unacknowledged.
  */
 function claimTurn(): Claim | null {
     return withLock(leadLock(), () => {
+        const cleared = clearDeadTurnLocked();
+        if (cleared !== null) logLine(cleared);
         if (inboxHolderLocked() !== null) return null;
         // A peer's batch is being applied: wait until it is all in, so it wakes this lead once.
         if (receivingNow()) return null;

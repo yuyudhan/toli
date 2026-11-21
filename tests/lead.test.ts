@@ -190,6 +190,7 @@ describe("lead status and attach", () => {
             turns: 0,
             turnPid: null,
             pendingWake: false,
+            silent: null,
         });
         deliver(box, "message from m2", "hello");
         once(box);

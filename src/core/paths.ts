@@ -111,6 +111,8 @@ export const paths = {
     raisedHolds: () => join(repoRoot(), "state", "raised-holds.json"),
     /** The idle spell the idle-machine watchdog last alerted about (src/records/idle-machine.ts). */
     idleMachineState: () => join(repoRoot(), "state", "idle-machine.json"),
+    /** The silent-session episode the tick last alerted about (src/fleet/silent-alert.ts). */
+    leadSilentAlert: () => join(repoRoot(), "state", "lead", "silent-alert.json"),
     /** When the tick last started `bin/toli fleet check --wake` (src/fleet/oversight.ts). */
     fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
     fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),

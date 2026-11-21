@@ -38,17 +38,29 @@ Every 15 seconds the service makes one pass:
 1. One claim on the inbox at a time, so two Sardars never act on the same items: a headless turn in progress (its
    pid in `state/lead/state.json`), else the live interactive lead session (`state/session.json`, registered by the
    omp extension), else a `lead attach` in progress. Each counts only while its pid is alive, and whichever starts
-   first holds it. While a session or attach holds it the service does nothing: that session takes the wakes
-   itself, as before. The record belongs to the first live session: another interactive omp started in toli's root
-   (a jawan driving `omp` in tmux, a second terminal) neither replaces it nor removes it when it exits, and takes no
-   wakes (`toli wake --pid`), and the extension re-registers every minute, so a record lost any other way comes back
-   while the lead runs. A session opened while a headless turn runs takes no wake until that turn ends. A live
-   session holds the inbox however long it leaves its wakes unread (an omp left open for days, one sitting at a
-   permission prompt): no headless turn ever runs beside it. Once an inbox item or job result has stayed
-   unacknowledged for `lead.idleSessionMinutes` (default 60) after it arrived and after the session registered, the
-   digest (`idle session: ...`) and doctor (`lead-session`) flag it until the session acknowledges its wakes or
-   closes, and the tick (`bin/toli job tick`) runs due jobs headless instead of leaving them to it. It is the
-   user's session: toli never stops it.
+   first holds it. A turn's pid counts only while it can still be the process the record named: one ps does not list
+   (on Linux a thread's id answers a liveness probe) or that started after `state/lead/state.json` was last written
+   (a reboot gave the pid to another program) is gone. The next pass clears such a record, with a line in
+   `logs/lead.log` (`lead turn record named pid ..., which no longer runs: cleared`); until then it holds nothing, so
+   neither the session's `toli wake` nor a headless turn waits on it. While a session or attach holds it the service
+   does nothing: that session takes the wakes itself, as before. The record belongs to the first live session:
+   another interactive omp started in toli's root (a jawan driving `omp` in tmux, a second terminal) neither replaces
+   it nor removes it when it exits, and takes no wakes (`toli wake --pid`), and the extension re-registers every
+   minute, so a record lost any other way comes back while the lead runs. A session opened while a headless turn runs
+   takes no wake until that turn ends. A live session holds the inbox however long it leaves its wakes unread (an omp
+   left open for days, one sitting at a permission prompt): no headless turn ever runs beside it. Once an inbox item
+   or job result has stayed unacknowledged for `lead.idleSessionMinutes` (default 60) after it arrived and after the
+   session registered, the digest (`idle session: ...`) and doctor (`lead-session`) flag it until the session
+   acknowledges its wakes or closes, and the tick (`bin/toli job tick`) runs due jobs headless instead of leaving them
+   to it. It is the user's session: toli never stops it.
+   A session whose extension has not even taken a wake (inbox items and job results above its delivered marks in
+   `state/acks.json`) for `lead.silentSessionMinutes` (default 20) after the oldest arrived is silent: not busy with a
+   long turn but deaf to its inbox. `lead status` shows it on a `silent:` line (its pid, the minutes without a take,
+   how many wait and since when; `silent` in `--json`), and on a worker the minute tick sends the coordinator one
+   inbox item per episode, `Sardar on <machine> silent N min, M wakes pending`; on the coordinator it is logged in
+   `logs/tick.log`. The episode ends when the session takes a wake or closes; the next silence alerts again. Wakes
+   reach the session by polling (the extension runs `toli wake` on its tick), never by a file watch, so a lost
+   inotify watch cannot silence it.
 2. Otherwise it takes the new wake items (`bin/toli wake`: inbox items such as delegations, delegated-task results,
    messages from other leads and finished jawans, plus job results) exactly once, and runs one headless turn of the
    lead conversation (`omp -p --resume <the conversation>`) with the wake message, the lead guidance, and the

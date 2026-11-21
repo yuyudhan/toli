@@ -12,6 +12,7 @@ import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import type { RunRecord } from "../fleet/resources.ts";
 import { keepSccache } from "../fleet/sccache-keep.ts";
+import { alertSilentSession } from "../fleet/silent-alert.ts";
 import { choiceText } from "../harness/models.ts";
 import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
@@ -240,6 +241,8 @@ export async function tick(): Promise<void> {
     logStep("release catch-up scan not started", () => startDueCatchUpScan());
     // A worker's own holds go to its coordinator's Needs-you queue, where the user is (records/raise-holds.ts).
     logStep("holds not raised to the coordinator", raiseHolds);
+    // An interactive Sardar that takes no wake leaves the inbox unread: the coordinator hears of it (silent-alert.ts).
+    logStep("silent session check failed", alertSilentSession);
     try {
         const fleet = await runDueFleetCheck();
         if (fleet) log(fleet);
