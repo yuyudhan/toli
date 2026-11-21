@@ -148,7 +148,7 @@ the interactive Sardar's subagents.
     catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--json]
     workspace prepare T<n> [--reset | --same-branch] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
-    push <project> [--task T<n>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
+    push <project> [--task T<n>] [--branch <b>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok]
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
     gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json]
     push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
@@ -178,7 +178,8 @@ the interactive Sardar's subagents.
   machine and task, the owner's quoted word; inside `exec`, the issuing machine and task by default), and `digest`
   shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog. `push`
   refuses when the repo declares a pre-push hook git would not run (`--no-hooks-ok` pushes anyway) and warns about
-  any other declared hook that is not installed ([projects.md](projects.md#git-hooks)).
+  any other declared hook that is not installed ([projects.md](projects.md#git-hooks)); `--branch <b>` refuses, before
+  any hook or gate runs, when the checkout is on another branch (the release catch-up's push lines name it).
 - `gate run` runs a long verification command (a gate, such as `just verify all`) once per tree and recipe: a gate
   that already passed on HEAD's tree (at any commit with the same files) is skipped, a running one is waited on instead
   of started twice, and a new one runs in the background so it survives its caller, in one heavy-build slot at one

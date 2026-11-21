@@ -69,6 +69,8 @@ function latestRelease(clone: string, ref: string): { tag: string; sha: string }
 
 /** A long-lived branch of the project on this machine: where it is checked out, and the live task it belongs to. */
 export type Target = { branch: string; dir: string | null; task: string | null };
+/** A target whose branch is checked out on this machine: the only kind a catch-up jawan is handed. */
+export type CheckedOut = Target & { dir: string };
 
 /**
  * The branches a release catches up here, never `main` itself: the project's fixed `branch` (a same-branch project
@@ -108,8 +110,24 @@ export function checkoutHolder(dir: string, at: Date = now()): string | null {
     return task === undefined ? null : `${task.id}'s jawan ${task.agent} works in it`;
 }
 
+/**
+ * Who holds `target`'s checkout, or null: a holder of the checkout itself, else of the project clone, where the
+ * catch-up jawan runs (a live run of the project works there, whichever branch it is on).
+ */
+export function targetHolder(target: CheckedOut, clone: string, at: Date = now()): string | null {
+    const own = checkoutHolder(target.dir, at);
+    if (own !== null || samePath(target.dir, clone)) return own;
+    const holder = checkoutHolder(clone, at);
+    return holder === null ? null : `${relative(paths.root(), clone)}: ${holder}`;
+}
+
 /** The catch-up jawan's brief for `targets`, written to the project's briefs; returns its path. */
-function writeBrief(project: Project, release: { tag: string; sha: string }, main: string, targets: Target[]): string {
+function writeBrief(
+    project: Project,
+    release: { tag: string; sha: string },
+    main: string,
+    targets: CheckedOut[],
+): string {
     const name = project.name;
     const file = join(paths.projectBriefsDir(name), `catch-up-${release.tag}.md`);
     const notes = relative(paths.root(), paths.projectNotes(name));
@@ -118,8 +136,7 @@ function writeBrief(project: Project, release: { tag: string; sha: string }, mai
             ? `the quick checks ${notes} names (format, lint, guards; never a full build or test suite)`
             : `\`${project.catchUpChecks}\``;
     const branches = targets.map(
-        (target) =>
-            `- ${target.branch}${target.task === null ? "" : ` (${target.task})`}: ${target.dir ?? "not checked out here"}`,
+        (target) => `- ${target.branch}${target.task === null ? "" : ` (${target.task})`}: ${target.dir}`,
     );
     mkdirSync(paths.projectBriefsDir(name), { recursive: true });
     writeFileSync(
@@ -147,14 +164,17 @@ function writeBrief(project: Project, release: { tag: string; sha: string }, mai
             "## Steps",
             "",
             `1. Run \`bin/toli catch-up merge ${name} --tag ${release.tag}\`. It merges ${release.tag} into each branch's`,
-            "   checkout through `bin/toli commit`'s `--merge`, skips a checkout another live jawan holds (the next scan",
-            "   retries it), and refuses a conflict without touching the work (the task gets a note).",
-            `2. In each checkout it merged, run ${checks}. Heavy commands go under \`bin/toli build-slot --\`.`,
-            "   A failure: keep that merge local and report the output.",
+            "   checkout through `bin/toli commit`'s `--merge`, skips a checkout another live jawan holds or that is no",
+            "   longer on its branch (the next scan retries it), and refuses a conflict without touching the work (the",
+            "   task gets a note).",
+            `2. Only in a checkout it reports merged, run ${checks}. Heavy commands go under \`bin/toli build-slot --\`.`,
+            "   A failure: keep that merge local and report the output. A branch it did not merge gets no check, build",
+            "   or push here.",
             "3. Push only a branch the plan prints a `push` line for, with exactly that command, after its checks",
-            "   passed. Never --no-verify, never --force, never main, never a branch not already on origin.",
-            "4. Report the tag and, per branch: merged sha, up to date, held, conflict files, checks, pushed or kept",
-            "   local and why.",
+            "   passed: it names the branch (`--branch`) and refuses when the checkout is on any other. Never",
+            "   --no-verify, never --force, never main, never a branch not already on origin.",
+            "4. Report the tag and, per branch: merged sha, up to date, skipped or held, conflict files, checks, pushed",
+            "   or kept local and why.",
             "",
             "Do nothing else: no other branch, no rebase, reset, stash or conflict resolution; a conflict stays with",
             "its owner.",
@@ -172,7 +192,7 @@ function startCatchUp(
     project: Project,
     release: { tag: string; sha: string },
     main: string,
-    targets: Target[],
+    targets: CheckedOut[],
 ): { run: string | undefined; line: string } {
     const brief = writeBrief(project, release, main, targets);
     if (machineDispatch() === "subagents") {
@@ -227,10 +247,18 @@ function scanProject(project: Project, fetch: boolean, at: Date): string[] {
                 ...lines,
                 `${label}: ${lagging.map((target) => target.branch).join(", ")} already had a catch-up for this release (see its report)`,
             ];
-        const ready: Target[] = [];
+        const ready: CheckedOut[] = [];
         for (const target of behind) {
-            const holder = target.dir === null ? null : checkoutHolder(target.dir, at);
-            if (holder === null) ready.push(target);
+            if (target.dir === null) {
+                const on = currentBranch(clone) ?? "a detached HEAD";
+                lines.push(
+                    `${label}: ${target.branch}: skipped: not checked out here (${relative(paths.root(), clone)} is on ${on}), tried again next scan`,
+                );
+                continue;
+            }
+            const checkedOut = { ...target, dir: target.dir };
+            const holder = targetHolder(checkedOut, clone, at);
+            if (holder === null) ready.push(checkedOut);
             else lines.push(`${label}: ${target.branch}: held (${holder}), tried again next scan`);
         }
         if (ready.length === 0) return lines;

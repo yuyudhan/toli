@@ -1,22 +1,23 @@
 // `bin/toli catch-up merge <project> --tag <vX.Y.Z>`, run by the release catch-up jawan (src/projects/catch-up.ts):
 // merge the tagged release into each long-lived branch's checkout on this machine through `bin/toli commit`'s
 // `--merge` (safeCommit), and print the plan the jawan follows next: the quick checks to run and, per branch, either
-// the one push command it may run after them or why the merge stays local. It never pushes. A conflict is found with
-// `git merge-tree` before anything is written, so the work is never touched; the branch's task gets a note. A checkout
-// another live jawan holds is skipped and handed back to the next scan. Also `bin/toli catch-up scan`.
+// the one push command it may run after them (naming the branch, so it refuses a checkout on any other) or why the
+// merge stays local. It never pushes. A conflict is found with `git merge-tree` before anything is written, so the work
+// is never touched; the branch's task gets a note. A checkout not on its branch, or one another live jawan holds (it or
+// the project clone), is skipped and handed back to the next scan. Also `bin/toli catch-up scan`.
 import { relative } from "node:path";
 import { Args } from "../core/args.ts";
-import { git, nulPaths, resolveSha } from "../core/git.ts";
+import { currentBranch, git, nulPaths, resolveSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, ToliError } from "../core/util.ts";
 import { updateTask } from "../records/backlog.ts";
 import {
     catchUpTargets,
-    checkoutHolder,
     RELEASE_TAG,
     releaseBranch,
     scanCatchUp,
     type Target,
+    targetHolder,
     updateCatchUpState,
 } from "./catch-up.ts";
 import { safeCommit } from "./commit.ts";
@@ -73,7 +74,8 @@ function pushPlan(project: Project, target: Target, remote: Set<string> | null):
         return {
             keepLocal: `no standing push grant for ${project.name} (bin/toli project set ${project.name} --standing-push yes, on the user's word)`,
         };
-    return { push: `bin/toli push ${project.name}${target.task === null ? "" : ` --task ${target.task}`}` };
+    const task = target.task === null ? "" : ` --task ${target.task}`;
+    return { push: `bin/toli push ${project.name} --branch ${target.branch}${task}` };
 }
 
 function mergeTarget(
@@ -92,8 +94,9 @@ function mergeTarget(
     });
     if (git(clone, ["merge-base", "--is-ancestor", sha, head]).code === 0)
         return outcome("up to date", `up to date (has ${tag})`);
-    if (target.dir === null) return outcome("not checked out", "not checked out on this machine; nothing merged");
-    const holder = checkoutHolder(target.dir, now());
+    if (target.dir === null || currentBranch(target.dir) !== target.branch)
+        return outcome("not checked out", "not checked out on this machine; nothing merged");
+    const holder = targetHolder({ ...target, dir: target.dir }, clone, now());
     if (holder !== null) return outcome("held", holder);
     const tried = git(clone, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", head, sha]);
     if (tried.code === 1) {
@@ -124,7 +127,10 @@ function mergeTarget(
     }
 }
 
-/** Merge release `tag` into every long-lived branch of `name` on this machine; a held branch goes back to the scan. */
+/**
+ * Merge release `tag` into every long-lived branch of `name` on this machine; a branch found held or not checked out
+ * goes back to the scan.
+ */
 export function mergeRelease(name: string, tag: string): CatchUpOutcome[] {
     if (!RELEASE_TAG.test(tag)) throw new ToliError(`--tag must be a release tag vX.Y.Z, got "${tag}"`);
     const project = findProject(name);
@@ -138,10 +144,12 @@ export function mergeRelease(name: string, tag: string): CatchUpOutcome[] {
     const outcomes = catchUpTargets(project, clone, main).map((target) =>
         mergeTarget(project, clone, { tag, sha }, target, remote),
     );
-    const held = outcomes.filter((entry) => entry.result === "held").map((entry) => entry.branch);
+    const handBack = outcomes
+        .filter((entry) => entry.result === "held" || entry.result === "not checked out")
+        .map((entry) => entry.branch);
     updateCatchUpState((state) => {
         const entry = state.projects[name];
-        if (entry?.tag === tag) entry.attempted = entry.attempted.filter((branch) => !held.includes(branch));
+        if (entry?.tag === tag) entry.attempted = entry.attempted.filter((branch) => !handBack.includes(branch));
     });
     return outcomes;
 }

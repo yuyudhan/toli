@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { currentBranch, git, gitOk, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
@@ -227,7 +227,8 @@ function requirePushAuthority(project: string, word: string | null): void {
 /**
  * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Refused
  * unless `--word` quotes the user's word for this push or the project has a standing push grant on this machine. Runs
- * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. A push that moved
+ * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. `--branch <b>`
+ * refuses, before any hook or gate runs, when that checkout is on another branch. A push that moved
  * origin's branch is recorded in this machine's push log (src/records/push-log.ts), attributed with `--by`/`--for`/
  * `--word` (or the issuing machine and task `bin/toli exec` put in the environment). With `--gate "<recipe>"` the gate
  * runs first and the push happens only once it passed on HEAD's tree (gatePush, src/forge/gate-hook.ts); a pre-push
@@ -241,16 +242,19 @@ function requirePushAuthority(project: string, word: string | null): void {
  */
 export async function pushCommand(argv: string[]): Promise<void> {
     const args = new Args(argv, {
-        values: [TASK_FLAG, "by", "for", "word", "gate", "gate-wait"],
+        values: [TASK_FLAG, "branch", "by", "for", "word", "gate", "gate-wait"],
         booleans: ["no-hooks-ok"],
     });
     args.maxPositional(1);
     const project = args.pos(0, "project");
     const { dir, task } = workDir(project, args.str(TASK_FLAG));
+    const branch = requireBranch(dir, "push");
+    const expected = args.str("branch");
+    if (expected !== undefined && expected !== branch)
+        throw new ToliError(`refusing: ${relative(paths.root(), dir)} is on ${branch}, not ${expected}; not pushed`);
     const attribution = pushAttribution(args, task?.id);
     requirePushAuthority(project, attribution.word);
     requirePushHooks(project, dir, args.bool("no-hooks-ok"));
-    const branch = requireBranch(dir, "push");
     const ref = `refs/heads/${branch}`;
     const recipe = args.str("gate");
     const { env: gateEnv, skipHookAt } =

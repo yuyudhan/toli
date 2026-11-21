@@ -274,18 +274,24 @@ behind main between releases.
   machine whose `lead.dispatch` is `subagents`, the brief goes to the lead's inbox instead). While that run is live
   no second one starts, whatever new tag appears; each branch is handed to one run per release. A machine marked
   full starts none until it is not. state/catch-up.json keeps what was handed out.
-- **Held checkouts.** A checkout another live jawan works in (a spawn run's directory, or a live subagent's task
-  workspace) is skipped, by the scan and again by the jawan, and tried on the next scan.
+- **Checked out and free, or skipped.** The jawan runs in the project clone and touches only branches checked out on
+  this machine. A branch that is not (a same-branch clone switched to another branch, say a release train's) is
+  `skipped: not checked out here`: no jawan starts for it, nothing is merged, checked, built or pushed, and the next
+  scan tries again. A checkout another live jawan works in (a spawn run's directory, or a live subagent's task
+  workspace), or a worktree branch while a live run works in the project clone itself, is held: skipped by the scan
+  and again by the jawan, and tried on the next scan.
 - **The merge.** The jawan runs `bin/toli catch-up merge <p> --tag <tag>`: per branch, a `git merge-tree` dry run
   first; a conflict merges nothing, leaves the work as it was, notes the conflicting files on the branch's task (its
   owner merges before the next push), and is in the jawan's report to this machine's Sardar. A clean merge lands
   through `bin/toli commit`'s `--merge` with the project's commit hooks (rule 6), in the branch's own checkout.
-- **Checks and push.** The jawan then runs the quick checks, `bin/toli project set <p> --catch-up-checks "<command>"`
-  (else the ones the project's notes name; heavy commands under `bin/toli build-slot`). It pushes a branch only when
-  the plan prints a `push` line for it: the branch is already on origin, it is not main, and the project has a
-  standing push grant on this machine (`--standing-push yes`); the push is `bin/toli push`, with the normal hooks,
-  never forced. Otherwise, or when a check fails, the merge stays local and the report says why. The scan and the
-  tick never merge or push.
+- **Checks and push.** In each checkout it merged, the jawan then runs the quick checks,
+  `bin/toli project set <p> --catch-up-checks "<command>"` (else the ones the project's notes name; heavy commands
+  under `bin/toli build-slot`). It pushes a branch only when the plan prints a `push` line for it: the branch is
+  already on origin, it is not main, and the project has a standing push grant on this machine
+  (`--standing-push yes`); the push is
+  `bin/toli push <p> --branch <b>` with the normal hooks, never forced, and refuses before any hook runs when the
+  checkout is on another branch. Otherwise, or when a check fails, the merge stays local and the report says why. The
+  scan and the tick never merge or push.
 - **Boxes that cannot run the push gate.** A catch-up push runs the project's pre-push hook like any push. Where that
   hook checks everything main changed in the merge (heavy builds and tests a small machine's capacity forbids), the
   catch-up must not depend on it: declare the merge-in push light in the hook (`# toli-light-push: NAME=VALUE`,
