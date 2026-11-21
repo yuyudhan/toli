@@ -347,13 +347,14 @@ function updateOf(item: OutboxItem): { id: string; forTask?: string } | null {
 }
 
 /**
- * Drop the reports of task `id` to `to` still queued (T2226): the one about to go carries the task as it is now, all
- * they had and more, so a delegator unreachable for hours gets one update, not one per change. One a process is
- * sending right now is not queued and goes as it is.
+ * Drop the reports of task `id` to `to` still queued, but `sent`, the one just written (T2226): it carries the task as
+ * it is now, all they had and more, so a delegator unreachable for hours gets one update, not one per change. It runs
+ * after `sent` is written, so a crash in between leaves at least one report queued. One a process is sending right now
+ * is not queued and goes as it is.
  */
-function dropWaitingReports(id: string, to: { machine: string; task?: string }): void {
+function dropOlderReports(id: string, to: { machine: string; task?: string }, sent: string): void {
     for (const { file, item } of queuedItems()) {
-        if (item.to?.name !== to.machine) continue;
+        if (file === `${sent}.json` || item.to?.name !== to.machine) continue;
         const update = updateOf(item);
         if (update?.id === id && update.forTask === to.task) rmSync(join(paths.outboxDir(), file), { force: true });
     }
@@ -375,12 +376,12 @@ export function reportToDelegator(task: Task): void {
             continue;
         }
         const update = delegationUpdate(owner, task, to);
-        dropWaitingReports(task.id, to);
         const id = to.machine === by.machine ? `update-${task.id}-${at}` : `update-${task.id}-${to.machine}-${at}`;
         // The envelope title is a label within TITLE_MAX (a receiver before T2119 refuses a longer one); the update
         // carries the task's whole title, and the receiver's inbox item is its message.title.
         const label = fitTitle(update.message.title);
         const sent = sendNow(owner, target, "update", label, JSON.stringify(update), id);
+        dropOlderReports(task.id, to, id);
         if (sent.delivered || sent.pulled) continue;
         // A refusal is final: the item already sits in state/outbox/cancelled/, and src/records/report-refusal.ts
         // stopped this task's reports to a machine that records no delegation of it.
