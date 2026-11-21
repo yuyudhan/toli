@@ -70,22 +70,36 @@ function leadParagraph(body: string): string {
 
 /**
  * Whether an item carries a decision for the user: a held task or a word asked of them, or a body naming a question
- * for them by name, a decision needed or what needs them, or asking a question: one that names them (`<user>, keep
- * it?`) or a `Should I/we ...?`. toli's own boilerplate about holds says "the user", so a phrase with "the user"
- * alone does not count, nor a negated one: `Decision needed: none`, `Needs you: nothing new`, `no decision needed`,
- * `nothing needs you`, an empty `Needs you (0):` digest header.
+ * for them by name, a decision needed or what needs them, or asking them: a question that names them (`<user>, keep
+ * it?`), a `Should I/we`, `Shall I/we`, `Can you` or `Do you want me to` question, `please approve`, `needs your
+ * decision`. toli's own boilerplate about holds says "the user", so a phrase with "the user" alone does not count.
+ * A decision line is negated only when the negation is all its line says (`Decision needed: none.`, `Needs you:
+ * nothing new`, `no decision needed`, `nothing needs you`, an empty `Needs you (0):` digest header); anything more
+ * (`no rush, but approve ...`, `no-go or go`, `n/a for now; later ...`) keeps it, since a lost ask costs more than a
+ * false mark.
  */
 function needsYou(title: string, body: string, user: string): boolean {
     if (HELD_TITLE.test(title)) return true;
     const name = escapeRegExp(user);
     // A question is the rest of its sentence up to a `?`, never past `.`, `!` or a line end.
-    const asks = `question for ${name}\\b|\\b${name}\\b[^.!?\\n]*\\?|\\bshould (i|we)\\b[^.!?\\n]*\\?`;
-    if (new RegExp(asks, "i").test(body)) return true;
+    const question = "[^.!?\\n]*\\?";
+    const asks = [
+        `question for ${name}\\b`,
+        `\\b${name}\\b${question}`,
+        `\\b(should|shall) (i|we)\\b${question}`,
+        `\\b(can you|do you want (me|us) to)\\b${question}`,
+        "\\bplease approve\\b",
+        "\\bneeds your decision\\b",
+    ];
+    if (new RegExp(asks.join("|"), "i").test(body)) return true;
+    // What may close a negated line: a parenthetical and a full stop.
+    const tail = "\\s*(\\([^)\\n]*\\))?\\s*[.!]?\\s*$";
+    const negatedAfter = new RegExp(`^\\s*(\\(0\\)|[:-]\\s*(none|nothing( new| more| further)?|no|n/a)${tail})`, "i");
     for (const match of body.matchAll(new RegExp(`decision needed|\\bneeds (you|${name})\\b`, "gi"))) {
         const before = body.slice(0, match.index).split("\n").at(-1) ?? "";
         const after = body.slice(match.index + match[0].length).split("\n", 1)[0] ?? "";
         const negated =
-            /\b(no|nothing)\s+$/i.test(before) || /^\s*(\(0\)|[:-]?\s*(none|nothing|no|n\/a)\b)/i.test(after);
+            (/\b(no|nothing)\s+$/i.test(before) && new RegExp(`^${tail}`).test(after)) || negatedAfter.test(after);
         if (!negated) return true;
     }
     return false;

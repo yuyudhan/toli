@@ -178,6 +178,31 @@ describe("compact wake (Hide Sardar chatter)", () => {
         ]);
     });
 
+    test("a decision line is negated only when the negation is all it says: asks after 'no rush, but' stay marked", () => {
+        const asks = [
+            "Needs you: no rush, but approve T5 before Friday.",
+            "Decision needed: no-go or go on the release.",
+            "Decision needed: nothing urgent, but confirm the mapping.",
+            "Decision needed - n/a for now; later pick a region.",
+            "Please approve the release notes.",
+            "Can you check the staging login?",
+            "Shall I merge it tonight?",
+            "Do you want me to retry the import?",
+            "This needs your decision on the region.",
+        ];
+        const negated = [
+            "Decision needed: none.",
+            "Needs Robin: nothing new",
+            "Needs you: none",
+            "no decision needed",
+            "nothing needs you",
+        ];
+        const marks = (words: string): boolean =>
+            compact([inboxItem(at(1), "m2", "job daily-report", `Report done.\n\n${words}`)]).includes("- [needs you]");
+        expect(asks.filter((words) => !marks(words))).toEqual([]);
+        expect(negated.filter(marks)).toEqual([]);
+    });
+
     test("the ack commands close the message unchanged, covering exactly the items shown", () => {
         const message = compact([inboxItem(at(1), "m2", "message from m2", "m2: note")]);
         expect(message.split("\n").slice(-3)).toEqual([
