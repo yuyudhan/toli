@@ -1,5 +1,6 @@
 // `bin/toli project set`: record the user's delivery, base branch, forge, workspace strategy, task-branch pattern,
-// standing-grant, live-stack, role, release-priority, commit-hook time-limit and release catch-up answers.
+// standing-grant, live-stack, role, release-priority, slot-at-heavy-step, commit-hook time-limit and release catch-up
+// answers.
 import { Args } from "../core/args.ts";
 import { currentBranch, git, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
@@ -53,7 +54,7 @@ function parseForgeHost(value: string | undefined): string | null | undefined {
     return value.toLowerCase();
 }
 
-/** `--standing-push` / `--standing-pr` / `--live-stack` / `--release-priority`: yes or no. */
+/** `--standing-push` / `--standing-pr` / `--live-stack` / `--release-priority` / `--slot-at-heavy-step`: yes or no. */
 function parseYesNo(value: string | undefined, flag: string): boolean | undefined {
     if (value === undefined) return undefined;
     if (value !== "yes" && value !== "no") throw new ToliError(`${flag} must be yes or no, got "${value}"`);
@@ -193,6 +194,7 @@ function setAll(args: Args): void {
         "live-stack",
         "role",
         "release-priority",
+        "slot-at-heavy-step",
         "hook-timeout",
         "catch-up",
         "catch-up-checks",
@@ -231,6 +233,7 @@ export function projectSetCommand(argv: string[]): void {
             "live-stack",
             "role",
             "release-priority",
+            "slot-at-heavy-step",
             "hook-timeout",
             "catch-up",
             "catch-up-checks",
@@ -257,6 +260,7 @@ export function projectSetCommand(argv: string[]): void {
     const liveStack = parseYesNo(args.str("live-stack"), "--live-stack");
     const role = parseRole(args.str("role"));
     const releasePriority = parseYesNo(args.str("release-priority"), "--release-priority");
+    const slotAtHeavyStep = parseYesNo(args.str("slot-at-heavy-step"), "--slot-at-heavy-step");
     const hookTimeout = parseHookTimeout(args.str("hook-timeout"));
     const catchUp = parseCatchUp(args.str("catch-up"));
     const catchUpChecks = parseCatchUpChecks(args.str("catch-up-checks"));
@@ -278,6 +282,7 @@ export function projectSetCommand(argv: string[]): void {
             liveStack,
             role,
             releasePriority,
+            slotAtHeavyStep,
             hookTimeout,
             catchUp,
             catchUpChecks,
@@ -288,7 +293,8 @@ export function projectSetCommand(argv: string[]): void {
         throw new ToliError(
             "nothing to set: pass --mode <m>, --branch <b>|none, --base-branch <b>|none, --task-branch <pattern>|none, --forge <f>|none, " +
                 "--forge-host <h>|none, --workspace <s>, --standing-push yes|no, --standing-pr yes|no, " +
-                "--live-stack yes|no, --role full|verify-only, --release-priority yes|no or " +
+                "--live-stack yes|no, --role full|verify-only, --release-priority yes|no, " +
+                "--slot-at-heavy-step yes|no or " +
                 "--hook-timeout <seconds>|none|default, --catch-up yes|no|default, --catch-up-checks <command>|none, " +
                 "--catch-up-push yes|no, --catch-up-trailer '<Key>: <text>'|none " +
                 "(or --all --workspace <s>)",
@@ -329,6 +335,8 @@ export function projectSetCommand(argv: string[]): void {
             else if (role === "full") delete project.role;
             if (releasePriority === true) project.releasePriority = true;
             else if (releasePriority === false) delete project.releasePriority;
+            if (slotAtHeavyStep === true) project.slotAtHeavyStep = true;
+            else if (slotAtHeavyStep === false) delete project.slotAtHeavyStep;
             if (hookTimeout === null) delete project.hookTimeoutSeconds;
             else if (hookTimeout !== undefined) project.hookTimeoutSeconds = hookTimeout;
             if (catchUp === null) delete project.catchUp;

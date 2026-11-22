@@ -8,6 +8,14 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A project's push check no longer waits in line for a heavy-build slot before its cheap steps. A project whose gate
+  recipes and pre-push hook run their heavy steps (cargo, a test suite) through `bin/toli build-slot --` sets
+  `bin/toli project set <p> --slot-at-heavy-step yes`; its gate runner and `bin/toli push` then run the guards,
+  spelling, formatting, type checks and lint without a slot, take one at the first heavy step and hold it to the
+  check's end, so a check failing on a cheap step never queues at all. A check waiting there logs
+  `toli: still waiting for a heavy-build slot` every third of its stall minutes, so the wait is never taken for a
+  stall. One speed review measured a 1.9-minute check waiting 18.4 minutes for the slot, and 18 minutes of steps
+  taking 65 (docs/fleet.md "Heavy-build slots", T2257).
 - A paired peer whose listener was off for a moment (`peer listen off`, then on) is pushed to again once it is back.
   A pull made while its listener was off marked it pull-only (`inbound: false` in the sender's `config/peers.json`),
   and nothing cleared that while its listener ran, so a send to it only queued, waiting for the tick's retry or a pull

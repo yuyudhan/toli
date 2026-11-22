@@ -20,6 +20,7 @@ import { buildsOutsideSlots, busyBuildSlots, POLL_MS, slotHolder, takeInTurn } f
 import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
+import { deferredSlotRun, slotFromRun } from "./heavy-step-slot.ts";
 import { waitForLentBuilds } from "./lent-slots.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
 import { heldCargoSlot, heldFile, holderHolds } from "./outside-builds.ts";
@@ -215,14 +216,16 @@ export async function slotForRunner(pid: number): Promise<number> {
 }
 
 /**
- * Return only once process `pid` runs in a heavy-build slot: the enclosing one (`enclosingSlot`), or one a detached
+ * Return only once process `pid` runs in a heavy-build slot: the slot of the check it is a heavy step of
+ * (`deferredSlotRun`, src/fleet/heavy-step-slot.ts), the enclosing one (`enclosingSlot`), or one a detached
  * holder (`holdForCargo`) takes for it, started when none is waiting yet, saying once that it waits and once which
  * release-priority run it gives way to. Its slot's number, or null when it runs without one: in a live-stack
  * project's checkout, without flock(2), or once `pid` is gone.
  */
 async function slotForProcess(pid: number, keepStacks: boolean): Promise<number | null> {
     if (liveStackProjectAt(process.cwd()) !== null) return null;
-    const enclosing = enclosingSlot();
+    const run = deferredSlotRun();
+    const enclosing = (run === null ? null : await slotFromRun(run)) ?? enclosingSlot();
     if (enclosing !== null) {
         await waitForLentBuilds(enclosing);
         return enclosing;

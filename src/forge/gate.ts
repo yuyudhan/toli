@@ -15,7 +15,8 @@ import { type Machine, machineSettings } from "../core/config.ts";
 import { checkoutDirty, git, headSha, treeSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
-import { launchInScope, scopeFailedWarning, withBuildSlot } from "../fleet/build-slots.ts";
+import { launchInScope, scopeFailedWarning } from "../fleet/build-slots.ts";
+import { withCheckSlot } from "../fleet/check-slot.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import type { Argv } from "../jawans/scope.ts";
 import {
@@ -299,7 +300,7 @@ export async function runGateProcess(file: string): Promise<void> {
     // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
     process.on("SIGHUP", () => {});
     // The recipe may run the project's browser tests against its local stack: keep that stack running (T1492).
-    await withBuildSlot(record.dir, record.project, async ({ env: slotEnv, scope }) => {
+    await withCheckSlot(record.dir, record.project, record.stallMinutes, async ({ env: slotEnv, scope }) => {
         const recipe: Argv = ["sh", "-c", record.recipe];
         const env = { ...process.env, ...slotEnv };
         const launch = launchInScope(scope, recipe);

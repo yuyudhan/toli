@@ -9,8 +9,8 @@ import { standingText } from "./strategy.ts";
 
 /**
  * `branch=`, `base-branch=`, `task-branch=`, `forge=`, `forge-host=`, `standing=`, `live-stack=`, `role=`,
- * `release-priority=`, `hook-timeout=`, `catch-up=`, `catch-up-checks=`, `catch-up-push=`, `catch-up-trailer=` labels
- * for the fields set.
+ * `release-priority=`, `slot-at-heavy-step=`, `hook-timeout=`, `catch-up=`, `catch-up-checks=`, `catch-up-push=`,
+ * `catch-up-trailer=` labels for the fields set.
  */
 export function overrideLabels(project: Project): string[] {
     return [
@@ -23,6 +23,7 @@ export function overrideLabels(project: Project): string[] {
         ...(project.liveStack ? ["live-stack=yes"] : []),
         ...(project.role ? [`role=${project.role}`] : []),
         ...(project.releasePriority ? ["release-priority=yes"] : []),
+        ...(project.slotAtHeavyStep ? ["slot-at-heavy-step=yes"] : []),
         ...(project.hookTimeoutSeconds === undefined
             ? []
             : [`hook-timeout=${project.hookTimeoutSeconds === "none" ? "none" : `${project.hookTimeoutSeconds}s`}`]),
@@ -47,6 +48,7 @@ export function projectListCommand(argv: string[]): void {
                 standing: entry.standing ?? { push: false, pr: false },
                 liveStack: entry.liveStack === true,
                 releasePriority: entry.releasePriority === true,
+                slotAtHeavyStep: entry.slotAtHeavyStep === true,
                 hookTimeoutSeconds: entry.hookTimeoutSeconds ?? null,
                 catchUp: entry.catchUp ?? null,
                 catchUpChecks: entry.catchUpChecks ?? null,

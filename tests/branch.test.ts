@@ -74,6 +74,7 @@ describe("fixed working branch", () => {
                 standing: { push: false, pr: false },
                 liveStack: false,
                 releasePriority: false,
+                slotAtHeavyStep: false,
                 hookTimeoutSeconds: null,
                 catchUp: null,
                 catchUpChecks: null,

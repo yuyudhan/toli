@@ -59,7 +59,7 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     project list [--json] | path <name>
     project set <name> [--mode <m>] [--branch <b>|none] [--base-branch <b>|none] [--task-branch <pattern>|none]
                 [--forge github|gitlab|bitbucket|none] [--forge-host <h>|none] [--workspace same-branch|branch-per-task|worktree-per-task] [--standing-push yes|no]
-                [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no]
+                [--standing-pr yes|no] [--live-stack yes|no] [--role full|verify-only] [--release-priority yes|no] [--slot-at-heavy-step yes|no]
                 [--hook-timeout <seconds>|none|default] [--catch-up yes|no|default] [--catch-up-checks <command>|none] [--catch-up-push yes|no]
                 [--catch-up-trailer '<Key>: <text>'|none] [--keep]
     project set --all --workspace <strategy> [--keep]
@@ -75,7 +75,10 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
   `git -C <clone> switch <b>` command when it cannot ([delivery.md](delivery.md#delivery-modes)). `--live-stack yes`
   puts the project in live-stack mode ([projects.md](projects.md#live-stack-mode)). `--release-priority yes` makes
   other projects' heavy builds on this machine wait while the project's `--work release` run runs
-  ([fleet.md](fleet.md#release-priority)). `--hook-timeout <seconds>|none|default` sets how long each of the
+  ([fleet.md](fleet.md#release-priority)). `--slot-at-heavy-step yes` says the project's gate recipes and pre-push
+  hook run their heavy steps through `bin/toli build-slot --`: they run without a heavy-build slot until their first
+  heavy step and hold one from there to their end ([fleet.md](fleet.md#heavy-build-slots)).
+  `--hook-timeout <seconds>|none|default` sets how long each of the
   project's commit hooks may run under `bin/toli commit` (`none`: no limit; `default`: back to the machine's
   `capacity.commitHookTimeoutSeconds`, 300 s when unset; [projects.md](projects.md#git-hooks)). `--catch-up no` stops
   the release catch-up for the project on this machine (`default`: on again), and `--catch-up-checks "<command>"` names

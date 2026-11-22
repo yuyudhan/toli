@@ -41,6 +41,9 @@ export type HookTimeout = number | "none";
  * `role`: `verify-only` when this machine takes no ship work for the project (docs/projects.md "Verify-only machines").
  * `releasePriority`: while the project's `--work release` run runs, other projects' heavy builds on this machine wait
  * for it (docs/fleet.md "Release priority", src/fleet/release-priority.ts).
+ * `slotAtHeavyStep`: the project's checks (gate recipes, pre-push hook) run their heavy steps through `bin/toli
+ * build-slot`, so they run without a heavy-build slot until their first heavy step and hold one from there to their
+ * end (src/fleet/heavy-step-slot.ts).
  * `hookTimeoutSeconds`: how long each of the project's commit hooks may run under `bin/toli commit` (`none`: no
  * limit); absent, the machine's capacity.commitHookTimeoutSeconds applies (src/projects/commit-hooks.ts).
  * `catchUp`: whether a new release tag starts a catch-up jawan here (absent: on; docs/projects.md "Release catch-up");
@@ -71,6 +74,7 @@ export type Project = {
     liveStack?: true;
     role?: "verify-only";
     releasePriority?: true;
+    slotAtHeavyStep?: true;
     hookTimeoutSeconds?: HookTimeout;
     catchUp?: boolean;
     catchUpChecks?: string;
@@ -107,6 +111,7 @@ export function loadProjects(): Project[] {
             liveStack,
             role,
             releasePriority,
+            slotAtHeavyStep,
             hookTimeoutSeconds,
             catchUp,
             catchUpChecks,
@@ -131,6 +136,7 @@ export function loadProjects(): Project[] {
             ...(liveStack === true ? { liveStack: true as const } : {}),
             ...(role === "verify-only" ? { role } : {}),
             ...(releasePriority === true ? { releasePriority: true as const } : {}),
+            ...(slotAtHeavyStep === true ? { slotAtHeavyStep: true as const } : {}),
             ...(hookTimeoutSeconds === undefined ? {} : { hookTimeoutSeconds }),
             ...(typeof catchUp === "boolean" ? { catchUp } : {}),
             ...(catchUpChecks ? { catchUpChecks } : {}),

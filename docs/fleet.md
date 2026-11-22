@@ -319,6 +319,18 @@ check starts runs inside that slot at once. On Linux the whole check (the gate's
 hook) also runs in the slot's memory-capped scope below, so every cargo it starts shares that one cap; the runner
 still watches the recipe's own process tree for stalls. A live-stack project's checkout skips the slot here too.
 
+A project whose check runs its heavy steps through `bin/toli build-slot --` (its cargo and test-suite steps, or its
+cargo through the shim or the rustc wrapper) declares it with `bin/toli project set <p> --slot-at-heavy-step yes`.
+Its gate runner and its `bin/toli push` then run the check without a slot, exporting their pid as
+`TOLI_DEFERRED_SLOT`, so its cheap steps (guards, spelling, formatting, type checks, lint) never wait in line, and a
+check that fails on one, or never reaches a heavy step, never queues. Its first heavy step asks the run for the slot;
+the run waits in line once (`toli: waiting for a heavy-build slot (N busy)`, then `toli: still waiting ...` every
+third of the gate's stall minutes, at most five, so the wait never reads as a stall; every five minutes for a push),
+pauses the stacks as any slot does and holds the slot until the check ends, so every later step runs in it without
+queueing again. Each heavy step runs at one slot's share in its own memory-capped scope; the check's cheap steps run
+outside any scope. Order the check's cheap steps first, so the slot is held only from the first heavy step on
+(src/fleet/heavy-step-slot.ts, T2257).
+
 On Linux with a systemd user manager, each build also runs in its own user scope,
 `toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with
 `systemd-run --user --scope --collect -p MemoryMax=<cap> -p MemorySwapMax=0`. The build cannot swap: without

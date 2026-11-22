@@ -6,7 +6,7 @@ import { currentBranch, git, gitOk, headSha, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { addressName } from "../core/persona.ts";
 import { out, platform, printJson, run, runInherit, ToliError, warn } from "../core/util.ts";
-import { runInSlot, withBuildSlot } from "../fleet/build-slots.ts";
+import { runCheckInSlot } from "../fleet/check-slot.ts";
 import { activeHookPath, lightPushCondition } from "../projects/hooks.ts";
 import { requirePushHooks } from "../projects/hooks-gates.ts";
 import { type Forge, findProject, loadProjects, type Project, projectCloneDir } from "../projects/projects.ts";
@@ -235,13 +235,13 @@ function requirePushAuthority(project: string, word: string | null): void {
  * put in the environment). With `--gate "<recipe>"` the gate runs first and the push happens only once it passed on
  * HEAD's tree (gatePush, src/forge/gate-hook.ts); a pre-push hook that only repeats it is skipped for exactly the
  * gated commit. A project whose pre-push hook runs pushes in one heavy-build slot and its memory-capped scope
- * (src/fleet/build-slots.ts), since the hook may run the long check itself: its cargo gets one slot's share of the
- * cores even through `just` without toli's cargo shim, and a `bin/toli gate run` it starts rides on that slot, unless
- * the hook declares the push light under the environment it runs in (`# toli-light-push: NAME=VALUE`,
- * lightPushCondition) or once the gate recipes it declares its only heavy steps passed on HEAD's tree
- * (`# toli-light-push-after-gate: <recipe>`, slotFreePushSha, decided before queueing). A push is refused when the repo
- * declares a pre-push hook (src/projects/hooks.ts) that git would not run, so the project's own check never silently
- * skips; `--no-hooks-ok` pushes anyway. Other declared hooks that are not installed only warn.
+ * (runCheckInSlot, src/fleet/check-slot.ts; from its first heavy step with `--slot-at-heavy-step yes`), since the hook
+ * may run the long check itself: its cargo gets one slot's share even through `just` without toli's cargo shim, and a
+ * `bin/toli gate run` it starts rides on that slot, unless the hook declares the push light under its environment
+ * (`# toli-light-push: NAME=VALUE`, lightPushCondition) or once the gate recipes it declares its only heavy steps
+ * passed on HEAD's tree (`# toli-light-push-after-gate: <recipe>`, slotFreePushSha, decided before queueing). A push is
+ * refused when the repo declares a pre-push hook (src/projects/hooks.ts) that git would not run, so the project's own
+ * check never silently skips; `--no-hooks-ok` pushes anyway. Other declared hooks that are not installed only warn.
  */
 export async function pushCommand(argv: string[]): Promise<void> {
     const args = new Args(argv, {
@@ -278,7 +278,7 @@ export async function pushCommand(argv: string[]): Promise<void> {
     const push = ["git", "-C", dir, "push", ...flags, "origin", `${pinned ?? ref}:${ref}`];
     const code =
         hook !== null && light === null && pinned === null
-            ? await withBuildSlot(dir, project, ({ env, scope }) => runInSlot(push, { ...gateEnv, ...env }, scope))
+            ? await runCheckInSlot(dir, project, push, gateEnv)
             : await runInherit(push, { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push origin ${branch} failed (exit ${code})`);
     if (pinned !== null) {

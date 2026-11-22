@@ -9,7 +9,9 @@
 // catches a cargo that bypassed the shim: its `rustc -vV` probe waits until a detached holder holds a slot for that
 // cargo until it exits (src/fleet/cargo-slot.ts). A gate's runner (src/forge/gate.ts) and `bin/toli push` with a
 // pre-push hook (src/forge/forge.ts) hold one for their whole run, so a project's push check gets one slot's share even
-// when it calls cargo directly. On Linux with a user manager each build (and each such push check) runs in its own
+// when it calls cargo directly; a project that declares its check takes the slot at its first heavy step runs its
+// cheap steps without one and holds one from that step to the check's end (src/fleet/check-slot.ts,
+// src/fleet/heavy-step-slot.ts). On Linux with a user manager each build (and each such push check) runs in its own
 // systemd scope capped at `capacity.buildMemoryMax` (src/jawans/scope.ts), so an OOM kill takes the build, not the
 // session that started it, and a Node tool in it gets a heap cap that fits there (`nodeHeapEnv`). A project's dev
 // containers that rebuild on save are paused or stopped while any slot is held (src/fleet/stack-pause.ts); every
@@ -32,10 +34,11 @@ import { busyBuildSlots, slotHolder, slotWaiters, takeInTurn } from "./build-que
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo, slotForRunner } from "./cargo-slot.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
+import { DEFERRED_SLOT_ENV, deferredSlotRun, slotFromRun } from "./heavy-step-slot.ts";
 import { waitForLentBuilds } from "./lent-slots.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
 import { projectAt, realOrNull, within } from "./release-priority.ts";
-import { capacityFor } from "./resources.ts";
+import { type Capacity, capacityFor } from "./resources.ts";
 import { pauseDevStacks, resumeDevStacks } from "./stack-pause.ts";
 
 export const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
@@ -213,12 +216,21 @@ export function stackUserOf(cwd: string, command: string[]): string | null {
     return /^cargo(-[\w-]+)?$/.test(basename(command[0] ?? "")) ? null : projectAt(cwd);
 }
 
+/** This machine's slots, compile jobs per slot and each build's memory cap in MB (0: none). */
+export function slotSizing(): { capacity: Capacity; memoryMaxMB: number } {
+    // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
+    const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
+    const capacity = capacityFor(machine, availableParallelism());
+    return { capacity, memoryMaxMB: buildMemoryMaxMB(machine, Math.floor(totalmem() / MB)) };
+}
+
 /**
  * Run `body` in a heavy-build slot, waiting (never failing) in arrival order while every slot is busy; `body` gets
  * `slotShareEnv`, `nodeHeapEnv` and `TOLI_BUILD_SLOT` set to the slot's number, and the slot's scope. Inside a slot
  * already (`enclosingSlot`) it runs at once with only `TOLI_BUILD_SLOT` set to that slot, so a nested build never
  * waits on its own slot; with `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still
- * at one slot's share.
+ * at one slot's share. A heavy step of a check run without a slot (`deferredSlotRun`, src/fleet/heavy-step-slot.ts)
+ * takes that run's slot instead, waiting until the run holds it, and runs in it at one slot's share in its own scope.
  * Every live-stack project's stack auto-rebuild and every declared dev stack is paused while it runs
  * (`whileLiveStacksPaused`, `pauseDevStacks`), except the stack of `stackUser` (null: none), the project whose local
  * stack `body`'s command uses, which is kept running (`whileStackInUse`).
@@ -228,20 +240,25 @@ export async function withBuildSlot<T>(
     stackUser: string | null,
     body: (held: HeldSlot) => Promise<T>,
 ): Promise<T> {
-    const enclosing = enclosingSlot();
+    const run = deferredSlotRun();
+    const runSlot = run === null ? null : await slotFromRun(run);
+    const enclosing = runSlot === null ? enclosingSlot() : null;
     if (enclosing !== null) {
         await waitForLentBuilds(enclosing);
         return await body({ env: { TOLI_BUILD_SLOT: String(enclosing) }, scope: null });
     }
-    // Readable before `init`: an uninitialised machine gets the default slots, never a failed build.
-    const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
-    const capacity = capacityFor(machine, availableParallelism());
-    const memoryMaxMB = buildMemoryMaxMB(machine, Math.floor(totalmem() / MB));
+    const { capacity, memoryMaxMB } = slotSizing();
     const share: Record<string, string> = { ...slotShareEnv(process.env, capacity.cargoJobs) };
+    const capped = { ...share, ...nodeHeapEnv(process.env, memoryMaxMB) };
+    if (runSlot !== null) {
+        // The run holds the slot and pauses the stacks; a build this step starts rides on the step's slot.
+        await waitForLentBuilds(runSlot);
+        const env = { ...capped, TOLI_BUILD_SLOT: String(runSlot), [DEFERRED_SLOT_ENV]: "" };
+        return await body({ env, scope: { slot: runSlot, memoryMaxMB } });
+    }
     const unslotted = (held: HeldSlot): Promise<T> =>
         whileStackInUse(stackUser, () => whileLiveStacksPaused(() => body(held)));
     if (liveStackProjectAt(cwd) !== null) return await unslotted({ env: share, scope: null });
-    const capped = { ...share, ...nodeHeapEnv(process.env, memoryMaxMB) };
     const lock = flock();
     if (lock === null) {
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
