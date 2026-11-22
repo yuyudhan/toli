@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { JawanRun } from "../src/jawans/runs.ts";
-import { CARGO_SHIM, runs, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
+import { CARGO_SHIM, runs, type Started, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
 
 const WAITING = "waiting for rel's release run r-rel to end (release priority)";
@@ -115,5 +115,41 @@ describe("release priority", () => {
         expect(result.code).toBe(0);
         expect(result.stderr).not.toContain("release run");
         expect(ran(log, "b")).toBe(true);
+    }, 60_000);
+
+    test("builds that gave way keep their arrival order once the release run ends (T2276)", async () => {
+        const { box, log, rel, other } = priorityBox();
+        const live = supervisor();
+        releaseRun(box, rel, live.pid);
+        // The release project's own builds hold both slots, so the waiters queue once the run ends.
+        const holders = ["h1", "h2"].map((label) =>
+            start(box, [CARGO_SHIM, "build"], { STUB_LABEL: label, STUB_SLEEP: "300" }, rel),
+        );
+        const waiters: Started[] = [];
+        try {
+            await until("both slots held", () => ran(log, "h1") && ran(log, "h2"));
+            for (const label of ["w1", "w2", "w3"]) {
+                const waiter = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: label }, other);
+                waiters.push(waiter);
+                await until(`${label} giving way`, () => waiter.stderr.join("").includes(WAITING));
+            }
+            live.kill();
+            await until("every waiter in line", () =>
+                waiters.every((waiter) => waiter.stderr.join("").includes("waiting for a heavy-build slot")),
+            );
+            writeFileSync(`${log}.done-h1`, "");
+            const results = await Promise.all(waiters.map((waiter) => waiter.done));
+            expect(results.map((result) => result.code)).toEqual([0, 0, 0]);
+            const order = runs(log)
+                .map((run) => run.label)
+                .filter((label) => label.startsWith("w"));
+            expect(order).toEqual(["w1", "w2", "w3"]);
+        } finally {
+            live.kill();
+            writeFileSync(`${log}.done-h1`, "");
+            writeFileSync(`${log}.done-h2`, "");
+            for (const waiter of waiters) waiter.proc.kill();
+            await Promise.all(holders.map((holder) => holder.done));
+        }
     }, 60_000);
 });

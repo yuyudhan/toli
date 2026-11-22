@@ -2,32 +2,38 @@
 // merge the tagged release into each long-lived branch's checkout on this machine through `bin/toli commit`'s
 // `--merge` (safeCommit), and print the plan the jawan follows next: the quick checks to run and, per branch, either
 // the one push command it may run after them (naming the branch, so it refuses a checkout on any other) or why the
-// merge stays local. It never pushes. A conflict is found with `git merge-tree` before anything is written, so the work
-// is never touched; the branch's task gets a note. A checkout not on its branch, or one another live jawan holds (it or
-// the project clone), is skipped and handed back to the next scan. Also `bin/toli catch-up scan`.
+// merge stays local, and the `catch-up undo` line that takes the merge back should the checks fail. It never pushes.
+// A conflict is found with `git merge-tree` before anything is written, so the work is never touched; the branch's
+// task gets a note. A checkout not on its branch, one another live jawan holds (it or the project clone), one with work
+// not on origin, or one an open task already plans the merge for (`standDown`) is skipped and handed back to the next
+// scan. Also `bin/toli catch-up scan`.
+import { realpathSync } from "node:fs";
 import { relative } from "node:path";
 import { Args } from "../core/args.ts";
 import { currentBranch, git, nulPaths, resolveSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, ToliError } from "../core/util.ts";
 import { updateTask } from "../records/backlog.ts";
+import { refExists } from "./base-branch.ts";
 import {
     catchUpTargets,
     landedSkip,
+    mainRef,
     RELEASE_TAG,
     releaseBranch,
     scanCatchUp,
     type Target,
-    targetHolder,
     updateCatchUpState,
 } from "./catch-up.ts";
+import { catchUpMergeTag, catchUpSubject, standDown } from "./catch-up-hold.ts";
 import { safeCommit } from "./commit.ts";
 import { hookLimit } from "./commit-hooks.ts";
 import { findProject, type Project, projectCloneDir } from "./projects.ts";
 
 /**
  * What became of one branch. `push`: the one command the jawan may run once the checks passed; `keepLocal`: why the
- * merge stays on this machine. Both are set only for a branch merged now.
+ * merge stays on this machine; `undo`: the command that takes the merge back should the checks fail. All are set only
+ * for a branch merged now.
  */
 export type CatchUpOutcome = Target & {
     result: "up to date" | "landed" | "not checked out" | "held" | "conflict" | "refused" | "merged";
@@ -36,6 +42,7 @@ export type CatchUpOutcome = Target & {
     checks?: string;
     push?: string;
     keepLocal?: string;
+    undo?: string;
 };
 
 /** The placeholders a `--catch-up-trailer` may use, filled in per merge. */
@@ -48,7 +55,7 @@ const TRAILER_PLACEHOLDER = new RegExp(`\\{(${TRAILER_FIELDS.join("|")})\\}`, "g
  * so a commit-msg hook that demands a trailer on such a merge sees it. The hook still runs and judges the message.
  */
 function catchUpMessage(project: Project, fields: TrailerFields): string {
-    const subject = `Merge ${fields.tag} into ${fields.branch}`;
+    const subject = catchUpSubject(fields.tag, fields.branch);
     if (project.catchUpTrailer === undefined) return subject;
     const trailer = project.catchUpTrailer.replace(TRAILER_PLACEHOLDER, (_, key: keyof TrailerFields) => fields[key]);
     return `${subject}\n\n${trailer}`;
@@ -101,6 +108,7 @@ function mergeTarget(
     release: { tag: string; sha: string; base: string },
     target: Target,
     remote: Set<string> | null,
+    ownTask: string | null,
 ): CatchUpOutcome {
     const { tag, sha, base } = release;
     const head = `refs/heads/${target.branch}`;
@@ -115,7 +123,7 @@ function mergeTarget(
     if (landed !== null) return outcome("landed", `${landed}; nothing merged`);
     if (target.dir === null || currentBranch(target.dir) !== target.branch)
         return outcome("not checked out", "not checked out on this machine; nothing merged");
-    const holder = targetHolder({ ...target, dir: target.dir }, clone, now());
+    const holder = standDown(project, clone, mainRef(clone, base), tag, { ...target, dir: target.dir }, now(), ownTask);
     if (holder !== null) return outcome("held", holder);
     const tried = git(clone, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", head, sha]);
     if (tried.code === 1) {
@@ -138,6 +146,7 @@ function mergeTarget(
                 project.catchUpChecks ??
                 `the quick checks ${relative(paths.root(), paths.projectNotes(project.name))} names`,
             ...pushPlan(project, target, remote),
+            undo: `bin/toli catch-up undo ${project.name} --branch ${target.branch} --merge ${committed.sha.slice(0, 12)}`,
         };
     } catch (error) {
         if (!(error instanceof ToliError)) throw error;
@@ -153,9 +162,10 @@ function mergeTarget(
 
 /**
  * Merge release `tag` into every long-lived branch of `name` on this machine; a branch found held or not checked out
- * goes back to the scan.
+ * goes back to the scan. `ownTask`: the task this catch-up was dispatched on, whose own jawan never holds it. Each
+ * merge made is recorded in state/catch-up.json, the only commits `undoMerge` takes back.
  */
-export function mergeRelease(name: string, tag: string): CatchUpOutcome[] {
+export function mergeRelease(name: string, tag: string, ownTask: string | null = null): CatchUpOutcome[] {
     if (!RELEASE_TAG.test(tag)) throw new ToliError(`--tag must be a release tag vX.Y.Z, got "${tag}"`);
     const project = findProject(name);
     const clone = projectCloneDir(name);
@@ -166,16 +176,66 @@ export function mergeRelease(name: string, tag: string): CatchUpOutcome[] {
     if (main === null) throw new ToliError(`no release branch known for ${name} (project set --base-branch <b>)`);
     const remote = originBranches(clone);
     const outcomes = catchUpTargets(project, clone, main).map((target) =>
-        mergeTarget(project, clone, { tag, sha, base: main }, target, remote),
+        mergeTarget(project, clone, { tag, sha, base: main }, target, remote, ownTask),
     );
     const handBack = outcomes
         .filter((entry) => entry.result === "held" || entry.result === "not checked out")
         .map((entry) => entry.branch);
+    const merges = outcomes.flatMap((entry) => (entry.merged === undefined ? [] : [entry.merged]));
     updateCatchUpState((state) => {
-        const entry = state.projects[name];
-        if (entry?.tag === tag) entry.attempted = entry.attempted.filter((branch) => !handBack.includes(branch));
+        const known = state.projects[name];
+        const entry = known?.tag === tag ? known : { tag, sha, attempted: [] };
+        state.projects[name] = entry;
+        entry.attempted = entry.attempted.filter((branch) => !handBack.includes(branch));
+        if (merges.length > 0) entry.merges = [...(entry.merges ?? []), ...merges];
     });
     return outcomes;
+}
+
+/**
+ * `catch-up undo <project> --branch <b> --merge <sha>`: take back a catch-up merge whose checks failed, leaving the
+ * checkout as the merge found it. Only a merge this machine's catch-up recorded making for the project's current
+ * release, that is still the branch's tip (nothing on top), not on origin's copy of the branch, in a checkout on that
+ * branch: the branch moves back to the merge's first parent with `git reset --keep`, which refuses rather than lose a
+ * change in the work tree. The branch's task gets a note. Any other commit is never touched.
+ */
+export function undoMerge(name: string, branch: string, merge: string): string {
+    const project = findProject(name);
+    const clone = projectCloneDir(name);
+    const sha = resolveSha(clone, merge);
+    if (sha === null) throw new ToliError(`refusing: no commit ${merge} in projects/${name}; nothing undone`);
+    const short = sha.slice(0, 12);
+    const recorded = updateCatchUpState((state) => state.projects[name]?.merges?.includes(sha) === true);
+    const tag = catchUpMergeTag(clone, sha, branch);
+    if (!recorded || tag === null)
+        throw new ToliError(
+            `refusing: ${short} is not a merge this machine's catch-up made into ${branch}; nothing undone`,
+        );
+    const main = releaseBranch(project, clone);
+    const target = main === null ? undefined : catchUpTargets(project, clone, main).find((t) => t.branch === branch);
+    if (target === undefined || target.dir === null || currentBranch(target.dir) !== branch)
+        throw new ToliError(`refusing: ${branch} is not checked out on this machine; nothing undone`);
+    const tip = resolveSha(clone, `refs/heads/${branch}`);
+    if (tip !== sha)
+        throw new ToliError(
+            `refusing: ${branch} has moved past the catch-up merge ${short} (now at ${tip?.slice(0, 12) ?? "nothing"}); nothing undone, the merge stays with its owner`,
+        );
+    const remote = `refs/remotes/origin/${branch}`;
+    if (refExists(clone, remote) && git(clone, ["merge-base", "--is-ancestor", sha, remote]).code === 0)
+        throw new ToliError(`refusing: the catch-up merge ${short} is on origin/${branch} already; nothing undone`);
+    const parent = resolveSha(clone, `${sha}^1`);
+    if (parent === null) throw new ToliError(`refusing: ${short} has no first parent; nothing undone`);
+    const reset = git(target.dir, ["reset", "--quiet", "--keep", parent]);
+    if (reset.code !== 0)
+        throw new ToliError(
+            `refusing: git reset --keep ${parent.slice(0, 12)} would lose changes in ${relative(realpathSync(paths.root()), target.dir)} (${(reset.stderr || reset.stdout).trim()}); nothing undone`,
+        );
+    updateCatchUpState((state) => {
+        const entry = state.projects[name];
+        if (entry?.merges !== undefined) entry.merges = entry.merges.filter((made) => made !== sha);
+    });
+    tellOwner(name, target, tag, `failed its checks, so the catch-up undid its merge ${short}`);
+    return `${branch}: undid the catch-up merge ${short}; back at ${parent.slice(0, 12)}, as the merge found it`;
 }
 
 function outcomeText(entry: CatchUpOutcome): string[] {
@@ -189,10 +249,14 @@ function outcomeText(entry: CatchUpOutcome): string[] {
         ...(entry.checks === undefined ? [] : [`  checks: ${entry.checks}`]),
         ...(entry.push === undefined ? [] : [`  push (after the checks pass): ${entry.push}`]),
         ...(entry.keepLocal === undefined ? [] : [`  keep local: ${entry.keepLocal}`]),
+        ...(entry.undo === undefined ? [] : [`  if the checks fail: ${entry.undo}`]),
     ];
 }
 
-/** `toli catch-up scan [<project>] [--no-fetch]` | `merge <project> --tag <vX.Y.Z> [--json]`. */
+const USAGE =
+    "usage: toli catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--task <T-id>] [--json] | undo <project> --branch <b> --merge <sha>";
+
+/** `toli catch-up scan [<project>] [--no-fetch]` | `merge ...` | `undo ...` (USAGE). */
 export function catchUpCommand(argv: string[]): number {
     const [sub, ...rest] = argv;
     if (sub === "scan") {
@@ -205,14 +269,24 @@ export function catchUpCommand(argv: string[]): number {
         return 0;
     }
     if (sub === "merge") {
-        const args = new Args(rest, { values: ["tag"], booleans: ["json"] });
+        const args = new Args(rest, { values: ["tag", "task"], booleans: ["json"] });
         args.maxPositional(1);
         const tag = args.str("tag");
         if (tag === undefined) throw new ToliError("catch-up merge needs --tag <vX.Y.Z>");
-        const outcomes = mergeRelease(args.pos(0, "project"), tag);
+        const outcomes = mergeRelease(args.pos(0, "project"), tag, args.str("task") ?? process.env.TOLI_TASK ?? null);
         if (args.bool("json")) printJson(outcomes);
         else out(outcomes.length === 0 ? "no long-lived branch here" : outcomes.flatMap(outcomeText).join("\n"));
         return 0;
     }
-    throw new ToliError("usage: toli catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--json]");
+    if (sub === "undo") {
+        const args = new Args(rest, { values: ["branch", "merge"] });
+        args.maxPositional(1);
+        const branch = args.str("branch");
+        const merge = args.str("merge");
+        if (branch === undefined || merge === undefined)
+            throw new ToliError("catch-up undo needs --branch <b> --merge <sha>");
+        out(undoMerge(args.pos(0, "project"), branch, merge));
+        return 0;
+    }
+    throw new ToliError(USAGE);
 }

@@ -11,8 +11,9 @@
 # would deadlock both. The probe of a cargo inside one that holds a slot (cargo-clippy's cargo check, a build script's
 # cargo, a test binary's) finds that holder through the process ancestry and goes straight on; inside a slot a
 # `bin/toli build-slot` (or anything else) took, `build-slot --cargo` finds it (src/fleet/enclosing-slot.ts:
-# TOLI_BUILD_SLOT naming a busy slot, or the slot's holder among the cargo's ancestors) and returns
-# at once; a TOLI_BUILD_SLOT naming a slot nobody holds never skips the queue.
+# TOLI_BUILD_SLOT naming a busy slot and TOLI_BUILD_SLOT_HOLDER its holder, or the slot's holder among the cargo's
+# ancestors) and returns at once; a TOLI_BUILD_SLOT naming a slot nobody holds, or another holder's, never skips the
+# queue.
 #
 # Every crate compilation in a slot then takes one job of the slot's job pool (state/build-slots/jobs-<slot>, sized at
 # the slot's share of compile jobs, src/fleet/build-queue.ts `jobPoolDir`) and frees it when it ends, so the cargos in

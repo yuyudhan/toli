@@ -151,7 +151,7 @@ the interactive Sardar's subagents.
     commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
       (--resolved -- [<conflicted paths>] [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers; a clean merge too)
     branch <project> <branch>
-    catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--json]
+    catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--task T<n>] [--json] | undo <project> --branch <b> --merge <sha>
     workspace prepare T<n> [--reset | --same-branch] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
     forge <project> [--json]
     push <project> [--task T<n>] [--branch <b>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok] [--release-train]
@@ -172,9 +172,9 @@ the interactive Sardar's subagents.
 - `branch` creates a new branch in the clone and switches to it.
 - `catch-up scan` fetches each project's main and tags and, for a new `vX.Y.Z` release, starts one catch-up jawan for
   the branches behind it (the tick runs it every 10 minutes; run it by hand on a release notice). `catch-up merge` is
-  that jawan's step: it merges the tag into each long-lived branch's checkout and prints the checks to run and, per
-  branch, the one push it may make or why the merge stays local; it never pushes itself
-  ([projects.md](projects.md#release-catch-up)).
+  that jawan's step: it merges the tag into each long-lived branch's checkout no one else is working in and prints the
+  checks to run and, per branch, the one push it may make or why the merge stays local, and the `catch-up undo` that
+  takes that merge back if the checks fail; it never pushes itself ([projects.md](projects.md#release-catch-up)).
 - `workspace` prepares, lists, and prunes per-task branches and worktrees
   ([projects.md](projects.md#workspace-strategy)).
 - `forge`, `push`, `pr`: GitHub, GitLab, and Bitbucket Cloud; never forced, and only on your word or a standing

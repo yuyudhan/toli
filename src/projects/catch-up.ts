@@ -15,14 +15,13 @@ import { machineDispatch } from "../fleet/dispatch.ts";
 import { currentFull } from "../fleet/full.ts";
 import { activeRuns } from "../jawans/runs.ts";
 import { spawnJawan } from "../jawans/spawn.ts";
-import { agentState, nativeAgent } from "../records/agents.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
-import { staleTaskMinutes } from "../records/stale.ts";
 import { originDefault, refExists } from "./base-branch.ts";
+import { standDown } from "./catch-up-hold.ts";
 import { loadProjects, type Project } from "./projects.ts";
 import { perTask } from "./strategy.ts";
-import { gitWorktrees, samePath } from "./workspace.ts";
+import { gitWorktrees } from "./workspace.ts";
 import { LIVE } from "./workspace-toggle.ts";
 
 /** How often the tick starts a scan (each one fetches every project's main and tags). */
@@ -34,10 +33,11 @@ export const RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 
 /**
- * A project's last catch-up: the release it is for, the jawan run started for it, and the branches already handed to
- * a run for that release (each is tried once per release; a branch found held is handed back for the next scan).
+ * A project's last catch-up: the release it is for, the jawan run started for it, the branches already handed to a
+ * run for that release (each is tried once per release; a branch found held is handed back for the next scan), and the
+ * merges `catch-up merge` made for it (`merges`), the only commits `catch-up undo` may take back.
  */
-export type CatchUpEntry = { tag: string; sha: string; run?: string; attempted: string[] };
+export type CatchUpEntry = { tag: string; sha: string; run?: string; attempted: string[]; merges?: string[] };
 type CatchUpState = { lastScan?: string; projects: Record<string, CatchUpEntry> };
 
 /** Read-modify-write state/catch-up.json under its lock. */
@@ -108,39 +108,6 @@ export function catchUpTargets(project: Project, clone: string, main: string): T
     return [...targets.values()];
 }
 
-/**
- * Who holds checkout `dir`, or null: a live `bin/toli spawn` run working in it (never the calling run, TOLI_RUN_ID),
- * or a live task's native subagent whose recorded workspace it is (never `ownTask`, the task the caller acts for).
- * The catch-up and `bin/toli push` (src/forge/forge.ts) both read it.
- */
-export function checkoutHolder(dir: string, at: Date = now(), ownTask: string | null = null): string | null {
-    const self = process.env.TOLI_RUN_ID;
-    const live = activeRuns().find((entry) => entry.id !== self && samePath(entry.cwd, dir));
-    if (live !== undefined) return `jawan run ${live.id} works in it`;
-    const grace = staleTaskMinutes();
-    const task = loadBacklog().tasks.find(
-        (entry) =>
-            entry.id !== ownTask &&
-            LIVE.includes(entry.status) &&
-            entry.workspace !== undefined &&
-            samePath(entry.workspace.path, dir) &&
-            nativeAgent(entry) &&
-            agentState(entry, at, grace).state === "live",
-    );
-    return task === undefined ? null : `${task.id}'s jawan ${task.agent} works in it`;
-}
-
-/**
- * Who holds `target`'s checkout, or null: a holder of the checkout itself, else of the project clone, where the
- * catch-up jawan runs (a live run of the project works there, whichever branch it is on).
- */
-export function targetHolder(target: CheckedOut, clone: string, at: Date = now()): string | null {
-    const own = checkoutHolder(target.dir, at);
-    if (own !== null || samePath(target.dir, clone)) return own;
-    const holder = checkoutHolder(clone, at);
-    return holder === null ? null : `${relative(paths.root(), clone)}: ${holder}`;
-}
-
 /** The catch-up jawan's brief for `targets`, written to the project's briefs; returns its path. */
 function writeBrief(
     project: Project,
@@ -183,21 +150,23 @@ function writeBrief(
             "",
             "## Steps",
             "",
-            `1. Run \`bin/toli catch-up merge ${name} --tag ${release.tag}\`. It merges ${release.tag} into each branch's`,
-            "   checkout through `bin/toli commit`'s `--merge`, skips a checkout another live jawan holds or that is no",
-            "   longer on its branch (the next scan retries it), and refuses a conflict without touching the work (the",
-            "   task gets a note).",
+            `1. Run \`bin/toli catch-up merge ${name} --tag ${release.tag}\` (dispatched on a task, add \`--task <T-id>\`).`,
+            `   It merges ${release.tag} into each branch's checkout through \`bin/toli commit\`'s \`--merge\`, skips a`,
+            "   checkout another live jawan holds, one with work not on origin, one an open task already plans this merge",
+            "   for, or one no longer on its branch (the next scan retries it), and refuses a conflict without touching",
+            "   the work (the task gets a note).",
             `2. Only in a checkout it reports merged, run ${checks}. Heavy commands go under \`bin/toli build-slot --\`.`,
-            "   A failure: keep that merge local and report the output. A branch it did not merge gets no check, build",
-            "   or push here.",
+            "   A failure: run that branch's `if the checks fail` line, its `undo` line, which takes back only that merge",
+            "   and leaves the checkout as the merge found it, and report the output of both. A branch it did not merge",
+            "   gets no check, build or push here.",
             "3. Push only a branch the plan prints a `push` line for, with exactly that command, after its checks",
             "   passed: it names the branch (`--branch`) and refuses when the checkout is on any other. Never",
             "   --no-verify, never --force, never main, never a branch not already on origin.",
-            "4. Report the tag and, per branch: merged sha, up to date, skipped or held, conflict files, checks, pushed",
-            "   or kept local and why.",
+            "4. Report the tag and, per branch: merged sha, up to date, skipped or held, conflict files, checks, pushed,",
+            "   kept local or undone, and why.",
             "",
-            "Do nothing else: no other branch, no rebase, reset, stash or conflict resolution; a conflict stays with",
-            "its owner.",
+            "Do nothing else: no other branch, no rebase, reset (but the `undo` line), stash or conflict resolution; a",
+            "conflict stays with its owner.",
             "",
         ].join("\n"),
     );
@@ -219,7 +188,7 @@ function startCatchUp(
         addInboxItem(
             loadMachine().name,
             `catch-up ${project.name} ${release.tag}`,
-            `${project.name} released ${release.tag}. Dispatch the catch-up jawan brief ${relative(paths.root(), brief)} as a subagent (lead.dispatch is "subagents").`,
+            `${project.name} released ${release.tag}. Dispatch the catch-up jawan brief ${relative(paths.root(), brief)} as a subagent (lead.dispatch is "subagents"); recorded on a task, its \`catch-up merge\` takes \`--task <T-id>\`.`,
         );
         return { run: undefined, line: "brief posted to the lead's inbox to dispatch" };
     }
@@ -283,7 +252,7 @@ function scanProject(project: Project, fetch: boolean, at: Date): string[] {
                 continue;
             }
             const checkedOut = { ...target, dir: target.dir };
-            const holder = targetHolder(checkedOut, clone, at);
+            const holder = standDown(project, clone, ref, release.tag, checkedOut, at, null);
             if (holder === null) ready.push(checkedOut);
             else lines.push(`${label}: ${target.branch}: held (${holder}), tried again next scan`);
         }

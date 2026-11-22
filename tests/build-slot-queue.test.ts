@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { holdSlot, type Run, runs, type Started, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
 import type { Sandbox } from "./helpers.ts";
 
@@ -41,5 +42,17 @@ describe("build slot waiters, first come first served", () => {
         const results = await Promise.all([first.done, third.done, fourth.done, fifth.done]);
         expect(results.map((result) => result.code)).toEqual([0, 0, 0, 0]);
         expect(runs(log).map((run) => run.label)).toEqual(["a", "w1", "w3", "w4", "w5"]);
+    }, 60_000);
+
+    test("a lost ticket counter never puts a newcomer ahead of a waiter (T2276)", async () => {
+        const { box, log } = slotBox(1, 3);
+        const holder = await holdSlot(box, log);
+        const first = await waitInLine(box, "w1");
+        rmSync(join(box.root, "state", "build-slots", "queue", "next"));
+        const second = await waitInLine(box, "w2");
+        writeFileSync(`${log}.done-a`, "");
+        const results = await Promise.all([holder.done, first.done, second.done]);
+        expect(results.map((result) => result.code)).toEqual([0, 0, 0]);
+        expect(runs(log).map((run) => run.label)).toEqual(["a", "w1", "w2"]);
     }, 60_000);
 });

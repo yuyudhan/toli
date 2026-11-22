@@ -1,29 +1,20 @@
 // The heavy-build slots' locks and line (docs/fleet.md "Heavy-build slots"): a slot is a flock(2) on
 // state/build-slots/<n>.lock, and a waiter holds a numbered ticket in state/build-slots/queue/ (also a flock, so a waiter
-// that dies leaves the line with it); only the oldest live ticket may take a free slot. src/fleet/build-slots.ts runs
-// commands in a slot, src/fleet/cargo-slot.ts holds one for a cargo that bypassed the shim. A holder writes where its
-// build runs into the slot's lock file, so the disk keeper never deletes the target it builds into (live-builds.ts),
-// and the slot's share of compile jobs into its job pool (`jobPoolDir`), which toli's rustc wrapper
-// (bin/shims/toli-rustc-wrapper) holds every crate compilation of every cargo in the slot to.
+// that dies leaves the line with it; src/fleet/build-line.ts); only the oldest live ticket may take a free slot.
+// src/fleet/build-slots.ts runs commands in a slot, src/fleet/cargo-slot.ts holds one for a cargo that bypassed the
+// shim. A holder writes where its build runs into the slot's lock file, so the disk keeper never deletes the target it
+// builds into (live-builds.ts), and the slot's share of compile jobs into its job pool (`jobPoolDir`), which toli's
+// rustc wrapper (bin/shims/toli-rustc-wrapper) holds every crate compilation of every cargo in the slot to.
 // Every slot number ever used counts while held (a build keeps its slot when `capacity.buildSlots` drops), and so does
 // each heavy build running outside the slots (src/fleet/outside-builds.ts): a waiter takes a slot only while all of
 // them together number fewer than `capacity.buildSlots`. A slot whose command has run nothing for a while (blocked on
 // a lock the waiter's build may hold) does not count, so a waiter never deadlocks against it (src/fleet/idle-slots.ts);
 // that command's next build then waits for the build lent its slot (src/fleet/lent-slots.ts).
-import {
-    closeSync,
-    ftruncateSync,
-    mkdirSync,
-    openSync,
-    readdirSync,
-    readFileSync,
-    unlinkSync,
-    writeFileSync,
-    writeSync,
-} from "node:fs";
+import { closeSync, ftruncateSync, mkdirSync, openSync, readdirSync, readFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { paths } from "../core/paths.ts";
-import { ToliError, warn, writeTextAtomic } from "../core/util.ts";
+import { warn, writeTextAtomic } from "../core/util.ts";
+import { firstInLine, leaveLine, placeInLine, type Ticket, takeTicket } from "./build-line.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { besideIdleText, type IdleWatch, idleSlots, idleWatch } from "./idle-slots.ts";
 import {
@@ -42,10 +33,6 @@ export const POLL_MS = 500;
 
 const slotFile = (index: number): string => join(paths.buildSlotsDir(), `${index + 1}.lock`);
 const SLOT = /^(\d+)\.lock$/;
-const queueDir = (): string => join(paths.buildSlotsDir(), "queue");
-const queueLockFile = (): string => join(paths.buildSlotsDir(), "queue.lock");
-const TICKET = /^(\d+)\.wait$/;
-const ticketFile = (seq: number): string => join(queueDir(), `${seq}.wait`);
 
 /**
  * Slot `slot`'s job pool (counting from 1): its `size` file holds the slot's share of compile jobs, and each job taken
@@ -54,9 +41,6 @@ const ticketFile = (seq: number): string => join(queueDir(), `${seq}.wait`);
  * before it compiles and frees it after, so all of them together compile at most `size` crates at once.
  */
 export const jobPoolDir = (slot: number): string => join(paths.buildSlotsDir(), `jobs-${slot}`);
-
-/** A waiter's place in line: its number and the fd holding the flock on its ticket file. */
-type Ticket = { seq: number; fd: number };
 
 /** Where a slot's build runs: its working directory and the CARGO_TARGET_DIR it builds into (resolved), if set. */
 export type SlotHolder = { cwd: string; targetDir: string | null };
@@ -74,79 +58,6 @@ export function slotHolder(cwd: string, env: Record<string, string | undefined> 
 export type BusySlot = SlotHolder & { slot: number; pid: number; beside: number[] };
 
 /**
- * Run `body` holding the queue lock, which every ticket taken, checked or left goes through, so a ticket is never
- * seen between its file's creation and its owner's flock on it.
- */
-function withQueueLock<T>(lock: Flock, body: () => T): T {
-    mkdirSync(queueDir(), { recursive: true });
-    const fd = openSync(queueLockFile(), "a");
-    try {
-        if (lock(fd, LOCK_EX) !== 0) throw new ToliError(`toli: cannot lock ${queueLockFile()}`);
-        return body();
-    } finally {
-        closeSync(fd);
-    }
-}
-
-/** Join the line: the next number from the queue's counter, its ticket file created and flocked by this process. */
-function takeTicket(lock: Flock): Ticket {
-    return withQueueLock(lock, () => {
-        const counter = join(queueDir(), "next");
-        let text = "";
-        try {
-            text = readFileSync(counter, "utf8").trim();
-        } catch {
-            // No ticket taken yet on this machine: start at 0.
-        }
-        let seq = /^\d+$/.test(text) ? Number(text) : 0;
-        for (;;) {
-            const fd = openSync(ticketFile(seq), "a");
-            if (lock(fd, LOCK_EX | LOCK_NB) === 0) {
-                writeFileSync(counter, `${seq + 1}\n`);
-                return { seq, fd };
-            }
-            // Only a lost counter makes a number repeat; a live owner keeps its ticket, this waiter takes the next.
-            closeSync(fd);
-            seq += 1;
-        }
-    });
-}
-
-/** Whether `ticket` is the oldest live one. A ticket ahead whose owner died (its flock is free) is removed. */
-function firstInLine(ticket: Ticket, lock: Flock): boolean {
-    return withQueueLock(lock, () => {
-        const ahead = readdirSync(queueDir())
-            .flatMap((name) => {
-                const match = TICKET.exec(name);
-                return match === null ? [] : [Number(match[1])];
-            })
-            .filter((seq) => seq < ticket.seq)
-            .sort((a, b) => a - b);
-        for (const seq of ahead) {
-            let fd: number;
-            try {
-                fd = openSync(ticketFile(seq), "r");
-            } catch {
-                continue; // Left the line meanwhile.
-            }
-            const dead = lock(fd, LOCK_EX | LOCK_NB) === 0;
-            if (dead) unlinkSync(ticketFile(seq));
-            closeSync(fd);
-            if (!dead) return false;
-        }
-        return true;
-    });
-}
-
-/** Leave the line: the ticket file removed and its flock released. */
-function leaveLine(ticket: Ticket, lock: Flock): void {
-    withQueueLock(lock, () => {
-        unlinkSync(ticketFile(ticket.seq));
-        closeSync(ticket.fd);
-    });
-}
-
-/**
  * Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait, and once
  * which builds outside the slots it waits for. `waiter` is the process the slot is for (its own ancestors are never
  * waited for). Gives up (null) once `wanted` says the slot is no longer needed. The slot taken gets one slot's share
@@ -154,7 +65,7 @@ function leaveLine(ticket: Ticket, lock: Flock): void {
  * idle window (`idleSlots`) does not count, so a build it waits on never waits for it; the waiter says so, naming it.
  * A build that gives way to a release-priority run (src/fleet/release-priority.ts) waits for it outside the line, and
  * leaves the line to wait again when one starts before its turn comes, so it never holds up the release's own builds
- * behind its ticket.
+ * behind its ticket; it keeps the number it arrived with, so it rejoins the line ahead of every build that came later.
  */
 export async function takeInTurn(
     capacity: Pick<Capacity, "buildSlots" | "cargoJobs">,
@@ -164,9 +75,11 @@ export async function takeInTurn(
     wanted: () => boolean = () => true,
 ): Promise<{ index: number; fd: number } | null> {
     const watch = idleWatch();
+    let place = placeInLine(lock);
     for (;;) {
         if (!(await giveWayToPriorityRelease(holder.cwd, wanted))) return null;
-        const ticket = takeTicket(lock);
+        const ticket = takeTicket(lock, place);
+        place = ticket.seq;
         try {
             const taken = await waitForTurn(capacity, lock, holder, waiter, wanted, ticket, watch);
             if (taken !== "give way") return taken;
@@ -372,23 +285,4 @@ export function busySlots(): BusySlot[] {
 export function busyBuildSlots(): number {
     const lock = flock();
     return lock === null ? 0 : heldSlots(lock).size;
-}
-
-/** Whether a build waits in line for a slot: a ticket in the queue whose owner is alive (its flock is held). */
-export function slotWaiters(lock: Flock): boolean {
-    return withQueueLock(lock, () =>
-        readdirSync(queueDir()).some((name) => {
-            if (!TICKET.test(name)) return false;
-            let fd: number;
-            try {
-                fd = openSync(join(queueDir(), name), "r");
-            } catch {
-                return false; // Left the line meanwhile.
-            }
-            const alive = lock(fd, LOCK_EX | LOCK_NB) !== 0;
-            if (!alive) lock(fd, LOCK_UN);
-            closeSync(fd);
-            return alive;
-        }),
-    );
 }

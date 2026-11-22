@@ -81,7 +81,7 @@ const USAGE = `usage: bin/toli <command> [args]
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
     (--resolved -- [<conflicted paths>] [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers; a clean merge too)
-  catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--json]
+  catch-up scan [<project>] [--no-fetch] | merge <project> --tag <vX.Y.Z> [--task T<n>] [--json] | undo <project> --branch <b> --merge <sha>
   branch <project> <branch>
   workspace prepare T<n> [--reset | --same-branch] [--json] | list [--project <p>] [--json] | prune [--project <p>] [--json]
   self sync [--json] | status [--json]

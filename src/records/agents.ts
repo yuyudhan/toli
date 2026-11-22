@@ -209,3 +209,18 @@ export function agentState(task: Task & { agent: string }, at: Date, graceMinute
     if (at.getTime() - Date.parse(recorded) < graceMinutes * 60_000) return { state: "live" };
     return { state: "silent", since: recorded, evidence: null };
 }
+
+/**
+ * Whether a native harness subagent works on `task` now: the task is active, its jawan a native agent (`nativeAgent`)
+ * whose `agentState` is live, and it waits on nothing (`task wait`). The signal capacity.maxRuns counts native
+ * subagents by (src/fleet/queue.ts subagentJawans); the release catch-up stands down for one on its project
+ * (src/projects/catch-up.ts).
+ */
+export function workingSubagent(task: Task, at: Date, graceMinutes: number): task is Task & { agent: string } {
+    return (
+        task.status === "active" &&
+        nativeAgent(task) &&
+        task.waitingOn === undefined &&
+        agentState(task, at, graceMinutes).state === "live"
+    );
+}

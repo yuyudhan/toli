@@ -98,4 +98,26 @@ describe("nested heavy builds", () => {
             ["c", expect.stringMatching(/^[12]$/), "build"],
         ]);
     }, 30_000);
+
+    test("a TOLI_BUILD_SLOT naming a slot another build holds waits in line (T2276)", async () => {
+        const { box, log } = slotBox(1, 3);
+        const holder = await holdSlot(box, log);
+        // Left in an environment by an earlier holder of slot 1 (or with no holder named), it is not this slot's.
+        const stale = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "b", TOLI_BUILD_SLOT: "1" });
+        const foreign = start(box, toliArgs("build-slot", "--", "cargo", "check"), {
+            STUB_LABEL: "c",
+            TOLI_BUILD_SLOT: "1",
+            TOLI_BUILD_SLOT_HOLDER: String(process.pid),
+        });
+        await until("both waiting", () =>
+            [stale, foreign].every((build) => build.stderr.join("").includes("waiting for a heavy-build slot")),
+        );
+        expect(runs(log).map((run) => run.label)).toEqual(["a"]);
+        writeFileSync(`${log}.done-a`, "");
+        const results = await Promise.all([holder.done, stale.done, foreign.done]);
+        expect(results.map((result) => result.code)).toEqual([0, 0, 0]);
+        const order = runs(log);
+        for (let i = 1; i < order.length; i++)
+            expect((order[i] as Run).start).toBeGreaterThanOrEqual((order[i - 1] as Run).end);
+    }, 30_000);
 });

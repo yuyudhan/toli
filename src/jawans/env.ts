@@ -199,11 +199,12 @@ export function leadBuildEnv(
  * another cargo ahead of the shim on PATH, and every cargo run, a pre-push hook's of a plain `git push` included, gets
  * one slot's share of the cores (`slotShareEnv`): `CARGO_BUILD_JOBS` at the machine's `capacity.cargoJobs`, the one
  * setting for this machine (an inherited value only ever lowers it), and the test-thread caps. An inherited
- * `TOLI_BUILD_SLOT` (and a compile job, `TOLI_BUILD_JOB`) is dropped: a jawan's builds never ride on a slot it did not
- * take. A live-stack project's jawan (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim or the
- * wrapper, at the same share: the machine's one build is the running stack's, its own scoped test builds share the
- * checkout's build folder, where cargo's lock already runs them one at a time, so they never also wait for a
- * heavy-build slot. `preload`: whether the Node preload stub is there to `--require` (`ensureNodePreloadStub`).
+ * `TOLI_BUILD_SLOT` and `TOLI_BUILD_SLOT_HOLDER` (and a compile job, `TOLI_BUILD_JOB`) are dropped: a jawan's builds
+ * never ride on a slot it did not take. A live-stack project's jawan (`liveStack`, docs/projects.md "Live-stack mode")
+ * runs without the shim or the wrapper, at the same share: the machine's one build is the running stack's, its own
+ * scoped test builds share the checkout's build folder, where cargo's lock already runs them one at a time, so they
+ * never also wait for a heavy-build slot. `preload`: whether the Node preload stub is there to `--require`
+ * (`ensureNodePreloadStub`).
  */
 export function jawanEnv(
     base: Record<string, string | undefined>,
@@ -218,6 +219,7 @@ export function jawanEnv(
     delete env.CLAUDE_CODE_ENTRYPOINT;
     delete env.CARGO_TARGET_DIR;
     delete env.TOLI_BUILD_SLOT;
+    delete env.TOLI_BUILD_SLOT_HOLDER;
     delete env.TOLI_BUILD_JOB;
     // The run's own task is set by its supervisor (src/jawans/supervise.ts); an inherited one is never this run's.
     delete env.TOLI_TASK;

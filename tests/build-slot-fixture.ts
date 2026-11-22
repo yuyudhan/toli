@@ -117,6 +117,14 @@ export async function holdSlot(box: Sandbox, log: string): Promise<Started> {
     return holder;
 }
 
+/** The pid slot `slot`'s holder recorded in its lock file, which its `TOLI_BUILD_SLOT_HOLDER` names. */
+export function slotHolderPid(box: Sandbox, slot: number): number {
+    const record: unknown = JSON.parse(readFileSync(join(box.root, "state", "build-slots", `${slot}.lock`), "utf8"));
+    if (typeof record !== "object" || record === null || !("pid" in record) || typeof record.pid !== "number")
+        throw new Error(`slot ${slot}'s lock file records no holder pid`);
+    return record.pid;
+}
+
 /** A systemd-run that logs its arguments and execs the command after `--`, as one that makes the scope does. */
 export const workingSystemdRun = (scopeLog: string): string =>
     [

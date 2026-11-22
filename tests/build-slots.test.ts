@@ -16,6 +16,7 @@ import {
     scopeBox,
     scopeLines,
     slotBox,
+    slotHolderPid,
     start,
     TERMINAL_CGROUP,
     toliArgs,
@@ -143,11 +144,10 @@ describe("build slots", () => {
     test("a nested heavy build inside a slot never waits on it", async () => {
         const { box, log } = slotBox(1, 3);
         const holder = await holdSlot(box, log);
-        const nested = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "b", TOLI_BUILD_SLOT: "1" });
-        const viaToli = start(box, toliArgs("build-slot", "--", "cargo", "check"), {
-            STUB_LABEL: "c",
-            TOLI_BUILD_SLOT: "1",
-        });
+        // A detached builder of the slot's command carries the slot's number and its holder, as the command exports them.
+        const marker = { TOLI_BUILD_SLOT: "1", TOLI_BUILD_SLOT_HOLDER: String(slotHolderPid(box, 1)) };
+        const nested = start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "b", ...marker });
+        const viaToli = start(box, toliArgs("build-slot", "--", "cargo", "check"), { STUB_LABEL: "c", ...marker });
         const [shimmed, direct] = await Promise.all([nested.done, viaToli.done]);
         holder.proc.kill("SIGKILL");
         expect([shimmed.code, direct.code]).toEqual([0, 0]);

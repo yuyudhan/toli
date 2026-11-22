@@ -5,7 +5,7 @@
 import { relative } from "node:path";
 import { paths } from "../core/paths.ts";
 import { now, ToliError } from "../core/util.ts";
-import { checkoutHolder } from "../projects/catch-up.ts";
+import { checkoutHolder } from "../projects/catch-up-hold.ts";
 
 /** A release train's branch, `release/<version>` (src/fleet/releases.ts reads one as a cut in progress). */
 const RELEASE_BRANCH = /^release\//;

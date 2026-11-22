@@ -1,6 +1,6 @@
 // T2232: a nightly `bin/toli push` in the clone a release train was using ran the project's full pre-push check and
 // held the train up for hours. A push refuses a checkout on a `release/*` branch, or one a live jawan holds (the
-// catch-up's own check, src/projects/catch-up.ts checkoutHolder); the train itself pushes with `--release-train`.
+// catch-up's own check, src/projects/catch-up-hold.ts checkoutHolder); the train itself pushes with `--release-train`.
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

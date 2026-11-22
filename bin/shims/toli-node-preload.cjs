@@ -4,11 +4,12 @@
 // slot takes one before its tests run, the way toli's cargo shim and rustc wrapper make a cargo build take one:
 // `bin/toli build-slot --runner <this pid>` waits in line until a detached holder holds a slot for this process
 // (src/fleet/cargo-slot.ts slotForRunner) and frees it once this process exits, however it exits; inside a slot
-// already (TOLI_BUILD_SLOT naming a busy slot, or its holder among this process's ancestors) it returns at once. The
-// holder leaves the project's dev and live stacks running, which its tests may talk to. The runner then exports the
-// slot as TOLI_BUILD_SLOT, so its workers and any build it starts run in that slot instead of queueing again. Watch
-// and UI modes never end on their own, so they never take a slot. Every other Node process, and Bun (which ignores
-// NODE_OPTIONS' `--require`), returns at once. It never fails: a runner runs even when toli cannot take a slot.
+// already (TOLI_BUILD_SLOT naming a busy slot and TOLI_BUILD_SLOT_HOLDER its holder, or its holder among this process's
+// ancestors) it returns at once. The holder leaves the project's dev and live stacks running, which its tests may talk
+// to. The runner then exports the slot as TOLI_BUILD_SLOT, so its workers and any build it starts run in that slot
+// instead of queueing again. Watch and UI modes never end on their own, so they never take a slot. Every other Node
+// process, and Bun (which ignores NODE_OPTIONS' `--require`), returns at once. It never fails: a runner runs even when
+// toli cannot take a slot.
 "use strict";
 
 (() => {

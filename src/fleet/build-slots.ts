@@ -29,11 +29,12 @@ import { ToliError, warn } from "../core/util.ts";
 import { slotShareEnv } from "../jawans/env.ts";
 import { type Argv, inBuildScope } from "../jawans/scope.ts";
 import { loadProjects } from "../projects/projects.ts";
+import { slotWaiters } from "./build-line.ts";
 import { checkBuildPlace } from "./build-place.ts";
-import { busyBuildSlots, slotHolder, slotWaiters, takeInTurn } from "./build-queue.ts";
+import { busyBuildSlots, slotHolder, takeInTurn } from "./build-queue.ts";
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { holdForCargo, slotForCargo, slotForRunner } from "./cargo-slot.ts";
-import { enclosingSlot } from "./enclosing-slot.ts";
+import { enclosingSlot, slotMarker } from "./enclosing-slot.ts";
 import { DEFERRED_SLOT_ENV, deferredSlotRun, slotFromRun } from "./heavy-step-slot.ts";
 import { waitForLentBuilds } from "./lent-slots.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
@@ -226,14 +227,14 @@ export function slotSizing(): { capacity: Capacity; memoryMaxMB: number } {
 
 /**
  * Run `body` in a heavy-build slot, waiting (never failing) in arrival order while every slot is busy; `body` gets
- * `slotShareEnv`, `nodeHeapEnv` and `TOLI_BUILD_SLOT` set to the slot's number, and the slot's scope. Inside a slot
- * already (`enclosingSlot`) it runs at once with only `TOLI_BUILD_SLOT` set to that slot, so a nested build never
- * waits on its own slot; with `cwd` in a live-stack project's checkout it runs at once without a slot or scope, still
- * at one slot's share. A heavy step of a check run without a slot (`deferredSlotRun`, src/fleet/heavy-step-slot.ts)
- * takes that run's slot instead, waiting until the run holds it, and runs in it at one slot's share in its own scope.
- * Every live-stack project's stack auto-rebuild and every declared dev stack is paused while it runs
- * (`whileLiveStacksPaused`, `pauseDevStacks`), except the stack of `stackUser` (null: none), the project whose local
- * stack `body`'s command uses, which is kept running (`whileStackInUse`).
+ * `slotShareEnv`, `nodeHeapEnv` and `slotMarker` (`TOLI_BUILD_SLOT`, the slot's number, and its holder), and the
+ * slot's scope. Inside a slot already (`enclosingSlot`) it runs at once with only that slot's `slotMarker` set, so a
+ * nested build never waits on its own slot; with `cwd` in a live-stack project's checkout it runs at once without a
+ * slot or scope, still at one slot's share. A heavy step of a check run without a slot (`deferredSlotRun`,
+ * src/fleet/heavy-step-slot.ts) takes that run's slot instead, waiting until the run holds it, and runs in it at one
+ * slot's share in its own scope. Every live-stack project's stack auto-rebuild and every declared dev stack is paused
+ * while it runs (`whileLiveStacksPaused`, `pauseDevStacks`), except the stack of `stackUser` (null: none), the project
+ * whose local stack `body`'s command uses, which is kept running (`whileStackInUse`).
  */
 export async function withBuildSlot<T>(
     cwd: string,
@@ -245,7 +246,7 @@ export async function withBuildSlot<T>(
     const enclosing = runSlot === null ? enclosingSlot() : null;
     if (enclosing !== null) {
         await waitForLentBuilds(enclosing);
-        return await body({ env: { TOLI_BUILD_SLOT: String(enclosing) }, scope: null });
+        return await body({ env: slotMarker(enclosing), scope: null });
     }
     const { capacity, memoryMaxMB } = slotSizing();
     const share: Record<string, string> = { ...slotShareEnv(process.env, capacity.cargoJobs) };
@@ -253,7 +254,7 @@ export async function withBuildSlot<T>(
     if (runSlot !== null) {
         // The run holds the slot and pauses the stacks; a build this step starts rides on the step's slot.
         await waitForLentBuilds(runSlot);
-        const env = { ...capped, TOLI_BUILD_SLOT: String(runSlot), [DEFERRED_SLOT_ENV]: "" };
+        const env = { ...capped, ...slotMarker(runSlot), [DEFERRED_SLOT_ENV]: "" };
         return await body({ env, scope: { slot: runSlot, memoryMaxMB } });
     }
     const unslotted = (held: HeldSlot): Promise<T> =>
@@ -268,7 +269,7 @@ export async function withBuildSlot<T>(
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;
-        const env = { ...capped, TOLI_BUILD_SLOT: String(slot) };
+        const env = { ...capped, ...slotMarker(slot, process.pid) };
         return await whileStackInUse(stackUser, () => {
             pauseDevStacks();
             return whileLiveStacksPaused(() => body({ env, scope: { slot, memoryMaxMB } }));

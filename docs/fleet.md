@@ -276,8 +276,9 @@ Many cargo builds at once make every one of them slow, and slow builds hit time 
 `capacity.cargoJobs` (default `max(1, floor(cpus / buildSlots))`: 6 on 18 cores, 4 on 4) compile jobs per slot, so
 all slots busy use about every core once. Setting either key in `config/machine.json` overrides its default.
 
-`bin/toli build-slot -- <command>` takes a free slot, runs the command with `CARGO_BUILD_JOBS` at one slot's share and
-`TOLI_BUILD_SLOT` set to the slot's number, and frees the slot when the command ends. A lower `CARGO_BUILD_JOBS` the
+`bin/toli build-slot -- <command>` takes a free slot, runs the command with `CARGO_BUILD_JOBS` at one slot's share,
+`TOLI_BUILD_SLOT` set to the slot's number and `TOLI_BUILD_SLOT_HOLDER` to its holder's pid, and frees the slot when
+the command ends. A lower `CARGO_BUILD_JOBS` the
 caller set stands (`CARGO_BUILD_JOBS=1` for a crate whose rustc jobs do not fit the slot's memory side by side); a
 higher one never raises the share. The test harnesses get the same share: `RUST_TEST_THREADS`,
 `NEXTEST_TEST_THREADS`, `VITEST_MAX_WORKERS` (Vitest 4) and `VITEST_MAX_THREADS` / `VITEST_MAX_FORKS` (earlier
@@ -288,19 +289,23 @@ has no environment variable for its workers, so a Jest suite keeps its own `--ma
 the heap cap below. When every slot is busy it prints
 `waiting for a heavy-build slot (N busy)` once and waits for one; it never fails for lack of a slot. Waiters are served
 in arrival order: each holds a numbered ticket in `state/build-slots/queue/` and only the oldest live one takes a slot
-that frees, so a later build never passes an earlier one. A slot is a lock on `state/build-slots/<n>.lock` held by the
+that frees, so a later build never passes an earlier one. A new number is past the queue's counter and past every
+ticket in the queue, so a lost counter never puts a newcomer ahead of a waiter; a build that gives way to a
+release-priority run (below) keeps the number it arrived with and rejoins ahead of every build that came after it. A
+slot is a lock on `state/build-slots/<n>.lock` held by the
 `build-slot` process, and a ticket is a lock held the same way, so a holder or waiter that is killed or crashes frees
 its slot or its place in line at once. The lock files stay once made, one per slot number ever used (a `2.lock` on a
 machine now at one slot is from when it had two); only the lock on a file says its slot is busy. A held slot counts
 whatever its number: a build that took slot 2 before `capacity.buildSlots` dropped to 1 keeps the next build waiting
 until it ends, and counts in `builds <busy>/<total>`. Inside a slot already, it runs the command at once in that slot:
 a nested build never waits on its own slot, so `bin/toli build-slot -- sh -c 'bin/toli build-slot -- cargo check'`
-takes one slot, not two. A process is inside a slot when its `TOLI_BUILD_SLOT` names a busy slot (so a builder a
-test kit detached from the slot's process tree still counts), or when a busy slot's holder (the pid in its lock
-file, or a cargo holding one through the rustc wrapper below) is that process or one of its ancestors (so a layer
-that dropped the variable, such as `env -u` or a script that rebuilds its environment, changes nothing). The cargo
-shim and the rustc wrapper ask the same question through `build-slot`. A slot is busy only while its holder holds
-its lock, so a `TOLI_BUILD_SLOT` left by a holder that died, naming a slot nobody holds now, never skips the line.
+takes one slot, not two. A process is inside a slot when its `TOLI_BUILD_SLOT` names a busy slot and its
+`TOLI_BUILD_SLOT_HOLDER` that slot's holder (so a builder a test kit detached from the slot's process tree still
+counts), or when a busy slot's holder (the pid in its lock file, or a cargo holding one through the rustc wrapper
+below) is that process or one of its ancestors (so a layer that dropped the variables, such as `env -u` or a script
+that rebuilds its environment, changes nothing). The cargo shim and the rustc wrapper ask the same question through
+`build-slot`. A slot is busy only while its holder holds its lock, so a `TOLI_BUILD_SLOT` left by a holder that died
+never skips the line, whether it names a slot nobody holds now or one another build has taken since (T2276).
 
 A slot's command may itself wait on a lock of its own: a project's recipe under `bin/toli build-slot` (or a gate's)
 that waits for the project's test-database lock, held by a plain `just test` elsewhere whose cargo, through the shim,

@@ -279,9 +279,15 @@ behind main between releases.
 - **Checked out and free, or skipped.** The jawan runs in the project clone and touches only branches checked out on
   this machine. A branch that is not (a same-branch clone switched to another branch, say a release train's) is
   `skipped: not checked out here`: no jawan starts for it, nothing is merged, checked, built or pushed, and the next
-  scan tries again. A checkout another live jawan works in (a spawn run's directory, or a live subagent's task
-  workspace), or a worktree branch while a live run works in the project clone itself, is held: skipped by the scan
-  and again by the jawan, and tried on the next scan.
+  scan tries again. A branch is held, skipped by the scan and again by the jawan and tried on the next scan, while:
+  another live jawan works in its checkout (a running spawn run's directory, or a live subagent's task workspace; a
+  queued run works nowhere yet), or a live run works in the project clone itself; a live native subagent is recorded
+  on an active task of the project (`task start --agent`, the same signal `capacity.maxRuns` counts), wherever it
+  works; its checkout has uncommitted changes to tracked files, or commits on neither `origin/<branch>` nor main other
+  than earlier catch-up merges (`1 commit on <b> not on origin/<b>`; a branch origin lacks is judged by its changes
+  alone); or an open (queued or active) task of the project already plans this merge: its title or brief
+  (`briefs/T<n>.md`) names the tag, or a catch-up note handed it the merge. A catch-up dispatched on a task passes
+  `--task <T-id>` (a spawn run's `TOLI_TASK` counts), so that task's own jawan never holds it.
 - **The merge.** The jawan runs `bin/toli catch-up merge <p> --tag <tag>`: per branch, a `git merge-tree` dry run
   first; a conflict merges nothing, leaves the work as it was, notes the conflicting files on the branch's task (its
   owner merges before the next push), and is in the jawan's report to this machine's Sardar. A clean merge lands
@@ -300,8 +306,14 @@ behind main between releases.
   already on origin, it is not main, and the project has a standing push grant on this machine
   (`--standing-push yes`); the push is
   `bin/toli push <p> --branch <b>` with the normal hooks, never forced, and refuses before any hook runs when the
-  checkout is on another branch. Otherwise, or when a check fails, the merge stays local and the report says why. The
-  scan and the tick never merge or push.
+  checkout is on another branch. Otherwise the merge stays local and the report says why. The scan and the tick
+  never merge or push.
+- **A merge whose checks fail is undone.** The plan prints, per merged branch,
+  `if the checks fail: bin/toli catch-up undo <p> --branch <b> --merge <sha>`, and the jawan runs it on a failure.
+  It takes back only a merge this machine's catch-up recorded making (state/catch-up.json), only while it is still
+  the branch's tip and not on origin's copy of the branch: the branch moves back to the merge's first parent with
+  `git reset --keep`, which refuses rather than lose a change in the work tree, and the branch's task gets a note. A
+  merge with work on top of it, or any commit it did not make, is refused and left as it is.
 - **Boxes that cannot run the push gate.** A catch-up push runs the project's pre-push hook like any push. Where that
   hook checks everything main changed in the merge (heavy builds and tests a small machine's capacity forbids), the
   catch-up must not depend on it: declare the merge-in push light in the hook (`# toli-light-push: NAME=VALUE`,
@@ -390,10 +402,10 @@ installed only warn. A repo that declares no hooks gets no `hooks` line, item or
 `bin/toli push` also refuses a checkout a release train owns (T2232), since the project's pre-push hook may run its
 full check there and hold the train for hours: one on a `release/*` branch (`refusing to push <p>: projects/<p> is on
 release/<v>, a release train's branch; only the train pushes it (--release-train)`), or one a live jawan holds, by the
-release catch-up's own check (a spawn run working in it, or a live native subagent whose open task records it as its
-workspace; never the pushing run itself, `TOLI_RUN_ID`, nor the task named with `--task`): `refusing to push <p>:
-projects/<p> is held (<who> works in it); ...`. The train itself passes `--release-train`. This covers every push toli
-makes, the catch-up jawan's included. toli keeps no separate train or tag lock.
+release catch-up's own check (a spawn run working in it, not one still queued, or a live native subagent whose open
+task records it as its workspace; never the pushing run itself, `TOLI_RUN_ID`, nor the task named with `--task`):
+`refusing to push <p>: projects/<p> is held (<who> works in it); ...`. The train itself passes `--release-train`. This
+covers every push toli makes, the catch-up jawan's included. toli keeps no separate train or tag lock.
 
 ## Data layout
 
