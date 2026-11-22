@@ -94,6 +94,7 @@ parents, message or author):
     bin/toli gate run <project> [--task T<n>] --recipe "just verify all" [--stall <minutes>] [--json]
     bin/toli gate check <project> [--task T<n>] [--sha <commit>] --recipe "just verify all" [--json]
     bin/toli gate status <project> [--json]
+    bin/toli gate stop <sha|id>
     bin/toli push <project> --gate "just verify all"
 
 - `gate run` works in the same checkout as `push` and keys the result on the tree of its HEAD commit and the exact
@@ -105,15 +106,40 @@ parents, message or author):
 - Already running on this tree (another jawan or hook started it): it waits for that run and exits with its result.
   It never starts a second copy.
 - Otherwise it starts the gate in a background runner of its own, then waits for it. The runner outlives whoever
-  started it: a jawan ending, a hook being killed, Ctrl-C or a dropped ssh session leave the gate running, and the
-  next `gate run` (or `gate check`) picks up its result.
-- A gate has no time limit. It is stopped only when it makes no progress for `--stall` minutes (default
+  started it: a hook being killed, Ctrl-C or a dropped ssh session leave the gate running, and the next `gate run` (or
+  `gate check`) picks up its result. A jawan ending is the exception, below.
+- A gate has no fixed time limit. It is stopped when it makes no progress for `--stall` minutes (default
   `capacity.gateStallMinutes` in `config/machine.json`, 30 when unset): its log did not grow, its checkout did not
   change and its processes burned under 10 CPU seconds, the same check that finds a stuck jawan run. It is then
   recorded `stalled` with the reason, once all its processes are gone: SIGTERM first, SIGKILL after 10 seconds to
   any that outlive it (a child ignoring SIGTERM after its shell died). A gate that keeps printing, or keeps working
   silently (a build linking for half an hour before any test prints), runs as long as it needs; a hung one (no
   output, no CPU) is stopped.
+- A runaway gate is stopped the same way and recorded `runaway`, with the reason, instead of being left to finish: one
+  whose recipe has run over 3 times its estimate (the median time of the recipe's last 5 passes in that project,
+  `estimateMs` in the record; at least one minute; a recipe that never passed has no estimate), or one that has
+  printed failure lines for 30 minutes, none more than 10 minutes apart. A failure line is one common test runners
+  and compilers print for a failure: `FAIL`/`FAILED` or a cross mark leading the line, `... FAILED`, `(fail)`, a
+  nonzero `<n> failed` count, `error[E<n>]:` or `error TS<n>:`. Both decisions are `runaway` lines in
+  `logs/gates.log`. The estimate counts only the recipe's own time, not the wait for a heavy-build slot before it
+  starts; a recipe that queues for a slot partway through (`--slot-at-heavy-step`) counts that wait in both.
+- A gate started by a `bin/toli spawn` jawan belongs to that jawan: the record lists the runs that started or joined
+  it (`owners`). When the last of them ends (it finished, failed, was killed with `bin/toli run kill`, or its session
+  ended) and no run continues it (an automatic resume after a stall, time limit or network fault, or the run that
+  replaced it with `spawn --replace`; a later `bin/toli resume` comes too late to keep it), nobody waits on the gate
+  any more, so toli stops its runner and every process the runner started: SIGTERM, then
+  SIGKILL after 20 seconds. It records the gate `killed` with the reason (`stopped by toli: its jawan (<run>) ended`),
+  writes a `stopped` line in `logs/gates.log` and a line in the run's log. The run's supervisor does this as the run
+  ends; the minute tick catches a run whose supervisor died. A gate anyone else started or joined (a person, the lead,
+  a hook outside a jawan) has no owners and is never stopped this way.
+- toli signals a recorded runner only while its pid still is that runner: the same pid, started when the record says
+  (`pidStartedAt`), running `gate runner <its record>`. A pid the system has since handed to another process is never
+  signalled; the record is then marked `killed` (its runner is gone), so nothing attaches to it.
+- `gate stop <sha|id>` stops one such gate by hand: a running gate named by its id (the last column of `gate status`)
+  or a prefix of its commit or tree. It stops only a runner toli recorded for jawans that are all gone, the way the
+  supervisor would. It refuses, changing nothing, a gate a live jawan owns (naming the run and its task), a gate no
+  jawan owns, and a selector that matches no running gate or several. It is for toli's own recorded runners only;
+  every other process stays under hard rule 2 of AGENTS.md.
 - A checkout that is not exactly its commit (changed tracked files, or untracked files that are not ignored) is
   refused: the result would not belong to any commit. A pass also counts only if the checkout is still exactly that
   commit when the gate ends; if HEAD moved or files changed while it ran, it is recorded `failed` with the reason.

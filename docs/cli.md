@@ -156,7 +156,7 @@ the interactive Sardar's subagents.
     forge <project> [--json]
     push <project> [--task T<n>] [--branch <b>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok] [--release-train]
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
-    gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json]
+    gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json] | stop <sha|id>
     push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
     push-log list [--json]
     pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
@@ -192,10 +192,15 @@ the interactive Sardar's subagents.
   that already passed on HEAD's tree (at any commit with the same files) is skipped, a running one is waited on instead
   of started twice, and a new one runs in the background so it survives its caller, in one heavy-build slot at one
   slot's share of the cores. It never times out; only a gate with no new output, checkout change or CPU use for
-  `--stall` minutes (`capacity.gateStallMinutes`, default 30) is stopped. `gate check` exits 0 only when this machine's
-  gate runner recorded a sealed pass of the recipe on the tree (HEAD's, which must be exactly the checkout, or
-  `--sha`'s commit), for pre-push hooks; a record edited or copied by hand is refused. `gate status` lists a project's
-  gates, newest first. `push --gate "<recipe>"` runs the gate first and pushes only once it passed; a checkout with
+  `--stall` minutes (`capacity.gateStallMinutes`, default 30) is stopped (`stalled`), and a runaway one: over 3 times
+  the median of the recipe's last passes, or printing failures for 30 minutes (`runaway`). A gate only
+  `bin/toli spawn` jawans started or joined is stopped when the last of them ends without a continuation. `gate check`
+  exits 0 only when this machine's gate runner recorded a sealed pass of the recipe on the tree (HEAD's, which must be
+  exactly the checkout, or `--sha`'s commit), for pre-push hooks; a record edited or copied by hand is refused.
+  `gate status` lists a project's gates, newest first, each with its id last. `gate stop <sha|id>` stops a running
+  gate runner toli recorded for jawans that are all gone, and refuses one a live jawan owns (naming it) or no jawan
+  owns; it touches only toli's own recorded runners. `push --gate "<recipe>"` runs the gate first and pushes only once
+  it passed; a checkout with
   uncommitted edits (other jawans' in a shared clone) is waited on for `--gate-wait` minutes (default 30, 0 refuses at
   once) until they are committed; a pre-push hook that runs only that recipe is skipped (`--no-verify`) for the exact
   gated commit from a clean checkout, and any other push whose project has a pre-push hook runs in one heavy-build

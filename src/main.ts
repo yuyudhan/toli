@@ -87,7 +87,7 @@ const USAGE = `usage: bin/toli <command> [args]
   forge <project> [--json]
   push <project> [--task T<n>] [--branch <b>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"] [--no-hooks-ok] [--release-train]
   gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
-  gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json]
+  gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json] | stop <sha|id>
   push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
   push-log list [--json]
   pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]

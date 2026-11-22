@@ -6,9 +6,10 @@
 // capacity.stallMinutes, src/jawans/progress.ts), hits its explicit limit without a report, or stops on a rate/usage
 // limit is resumed: the same omp session continues (`omp --resume`), up to capacity.autoResume times per chain. One
 // that ends on a network fault is requeued the same way, to start once the network is back (src/jawans/network.ts).
-// When a harness exits, the automation browsers its run left open are closed (src/jawans/browsers.ts). The freed slot
-// starts the oldest queued run.
-import { closeSync, existsSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+// When a harness exits, the automation browsers its run left open are closed (src/jawans/browsers.ts); when the run
+// ends without a continuation, the gates it started or joined that no live jawan waits on are stopped
+// (src/forge/gate-owner.ts). The freed slot starts the oldest queued run.
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { availableParallelism, constants } from "node:os";
 import { relative } from "node:path";
 import { loadMachine, type Machine } from "../core/config.ts";
@@ -16,6 +17,7 @@ import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { now, warn } from "../core/util.ts";
 import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../fleet/resources.ts";
+import { stopOrphanedGates } from "../forge/gate-owner.ts";
 import { harnessConfig } from "../harness/harness.ts";
 import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.ts";
 import { isLiveStack } from "../projects/projects.ts";
@@ -338,6 +340,12 @@ export async function superviseRun(id: string): Promise<void> {
         outlive();
         closeSync(logFd);
         removeRun(id);
+    }
+    // A gate this run started or joined has nobody waiting on it now, unless a continuation of the run does.
+    try {
+        for (const note of await stopOrphanedGates(id)) appendFileSync(initial.logPath, `\n[toli] ${note}\n`);
+    } catch (error) {
+        warn(`stopping the gates of ${id} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     // The finished run freed a slot.
     try {

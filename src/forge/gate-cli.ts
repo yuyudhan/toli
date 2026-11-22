@@ -1,4 +1,4 @@
-// `bin/toli gate run|check|status`: the command line of src/forge/gate.ts's gates and their proofs.
+// `bin/toli gate run|check|status|stop`: the command line of src/forge/gate.ts's gates and their proofs.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
@@ -8,6 +8,7 @@ import { out, printJson, ToliError, warn } from "../core/util.ts";
 import { toliSelfCheckout } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import { changesText, checkoutChanges, runGate, runGateProcess } from "./gate.ts";
+import { gateId, gateStop } from "./gate-owner.ts";
 import { type GateRecord, logDecision, outcomeText, provenPass, reconcile, recordFile, short } from "./gate-record.ts";
 
 const TASK_FLAG = "task";
@@ -98,28 +99,45 @@ function gateStatus(argv: string[]): number {
     const records = existsSync(dir)
         ? readdirSync(dir)
               .filter((name) => name.endsWith(".json"))
-              .map((name) => reconcile(join(dir, name)))
-              .filter((record): record is GateRecord => record !== null)
-              .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+              .map((name) => ({ id: gateId(name), record: reconcile(join(dir, name)) }))
+              .filter((entry): entry is { id: string; record: GateRecord } => entry.record !== null)
+              .sort((a, b) => b.record.startedAt.localeCompare(a.record.startedAt))
         : [];
     if (args.bool("json")) {
-        printJson(records);
+        printJson(records.map(({ record }) => record));
         return 0;
     }
     if (records.length === 0) {
         out(`no gates recorded for ${project}`);
         return 0;
     }
-    for (const record of records)
+    // The id last: `bin/toli gate stop <id>` takes it.
+    for (const { id, record } of records)
         out(
-            [record.status, short(record.sha), record.startedAt, record.endedAt ?? "-", record.recipe, record.log].join(
-                "\t",
-            ),
+            [
+                record.status,
+                short(record.sha),
+                record.startedAt,
+                record.endedAt ?? "-",
+                record.recipe,
+                record.log,
+                id,
+            ].join("\t"),
         );
     return 0;
 }
 
-/** `bin/toli gate run|check|status`; `gate runner <record>` is the detached runner `gate run` starts. */
+/** `bin/toli gate stop <sha|id>`: stop a running gate runner toli recorded for jawans that are all gone. */
+async function gateStopCommand(argv: string[]): Promise<number> {
+    const args = new Args(argv);
+    args.maxPositional(1);
+    const { code, text } = await gateStop(args.pos(0, "sha or gate id"));
+    if (code === 0) out(text);
+    else warn(`toli: ${text}`);
+    return code;
+}
+
+/** `bin/toli gate run|check|status|stop`; `gate runner <record>` is the detached runner `gate run` starts. */
 export async function gateCommand(argv: string[]): Promise<number> {
     const [sub, ...rest] = argv;
     switch (sub) {
@@ -129,6 +147,8 @@ export async function gateCommand(argv: string[]): Promise<number> {
             return gateCheck(rest);
         case "status":
             return gateStatus(rest);
+        case "stop":
+            return await gateStopCommand(rest);
         case "runner": {
             const args = new Args(rest);
             args.maxPositional(1);
@@ -136,6 +156,6 @@ export async function gateCommand(argv: string[]): Promise<number> {
             return 0;
         }
         default:
-            throw new ToliError("usage: bin/toli gate run|check|status <project> ...");
+            throw new ToliError("usage: bin/toli gate run|check|status <project> ... | gate stop <sha|id>");
     }
 }

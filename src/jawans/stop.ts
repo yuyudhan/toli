@@ -9,7 +9,7 @@
 // and the root's process group only while the root or a matching earlier member still is in it (a group id cannot be
 // reused while the group has members). Children of those are found through their parent pid on every look, so a
 // child forked during the grace is stopped too, and one orphaned since an earlier look is still known by identity.
-import { run } from "../core/util.ts";
+import { pidAlive, run } from "../core/util.ts";
 import { parseCpuTime } from "./progress.ts";
 
 /** After SIGTERM, how long a stopped harness (omp saving its session) gets before SIGKILL. */
@@ -20,6 +20,8 @@ const POLL_MS = 100;
 const PS_TIMEOUT_MS = 20_000;
 /** Start times come from `ps` elapsed time in whole seconds: two readings of one process differ by under this. */
 export const SAME_START_MS = 2_000;
+/** How long before its recorded spawn time a recorded process may have started (spawn returning late on a loaded box). */
+const SPAWN_SLACK_MS = 10_000;
 
 /** The run's root process: its pid and when it was spawned (taken right after spawn returned). */
 export type StopRoot = { pid: number; spawnedAtMs: number };
@@ -136,4 +138,54 @@ export async function stopTree(
     if (await waitGone(root, known, graceMs, "SIGTERM")) return [];
     if (await waitGone(root, known, KILL_WAIT_MS, "SIGKILL")) return [];
     return look(root, known) ?? [...known.keys()];
+}
+
+/** A process a record names: its pid, when it was spawned (ms since the epoch) and texts its command line holds. */
+export type RecordedProcess = { pid: number; spawnedAtMs: number; command: string[] };
+
+/**
+ * Whether `recorded.pid` still is the recorded process in `ps -p <pid> -o pid=,ppid=,pgid=,stat=,etime=,args=` output
+ * taken at `nowMs`: alive (not a zombie), started by the time it was spawned (a pid the system handed to another
+ * process since started later) and not long before it, and running the recorded command.
+ */
+export function stillRecorded(psOutput: string, nowMs: number, recorded: RecordedProcess): boolean {
+    const row = parseRows(psOutput, nowMs).get(recorded.pid);
+    return (
+        row !== undefined &&
+        !row.zombie &&
+        row.startMs < recorded.spawnedAtMs + SAME_START_MS &&
+        row.startMs > recorded.spawnedAtMs - SPAWN_SLACK_MS &&
+        recorded.command.every((part) => row.args.includes(part))
+    );
+}
+
+/**
+ * Whether the recorded process still runs (`alive`), provably does not (`gone`: no process has its pid, or another
+ * process does now) or cannot be told (`unknown`: `ps` failed on a live pid).
+ */
+export type RecordedState = "alive" | "gone" | "unknown";
+
+/** stillRecorded against the live process table. */
+export function recordedState(recorded: RecordedProcess): RecordedState {
+    if (!pidAlive(recorded.pid)) return "gone";
+    // -ww: the whole command line, however long, so the recorded parts are never cut off.
+    const ps = run(["ps", "-ww", "-p", String(recorded.pid), "-o", "pid=,ppid=,pgid=,stat=,etime=,args="], {
+        timeoutMs: PS_TIMEOUT_MS,
+    });
+    if (ps.code !== 0 || ps.stdout.trim() === "") return pidAlive(recorded.pid) ? "unknown" : "gone";
+    return stillRecorded(ps.stdout, Date.now(), recorded) ? "alive" : "gone";
+}
+
+/**
+ * Stop a process a record names, and everything it started (stopTree), only while recordedState says it is `alive`: a
+ * recorded pid that is gone, belongs to another process now or cannot be checked is never signalled. Resolves to that
+ * state when nothing was signalled, else to stopTree's survivors.
+ */
+export async function stopRecorded(
+    recorded: RecordedProcess,
+    graceMs: number,
+): Promise<number[] | Exclude<RecordedState, "alive">> {
+    const state = recordedState(recorded);
+    if (state !== "alive") return state;
+    return await stopTree({ pid: recorded.pid, spawnedAtMs: recorded.spawnedAtMs }, graceMs, { unreaped: false });
 }

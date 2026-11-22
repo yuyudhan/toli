@@ -13,6 +13,7 @@ import { runDueFleetCheck } from "../fleet/oversight.ts";
 import type { RunRecord } from "../fleet/resources.ts";
 import { keepSccache } from "../fleet/sccache-keep.ts";
 import { alertSilentSession } from "../fleet/silent-alert.ts";
+import { stopOrphanedGates } from "../forge/gate-owner.ts";
 import { choiceText } from "../harness/models.ts";
 import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
@@ -231,6 +232,12 @@ export async function tick(): Promise<void> {
     logStep("queued jawan runs not started", () => drainQueue({ diskKept: true }));
     // Every jawan reports to this machine's lead: a run that ended without posting its outcome is posted now.
     logStep("unreported jawan runs not posted", reportUnpostedRuns);
+    // A gate whose jawans all ended is stopped by the last one's supervisor; this catches a run whose supervisor died.
+    try {
+        for (const note of await stopOrphanedGates()) log(note);
+    } catch (error) {
+        log(`orphaned gates not stopped: ${error instanceof Error ? error.message : String(error)}`);
+    }
     // Oversight never pauses: dead jawans re-dispatched once (records/redispatch.ts), stale tasks posted, fleet check.
     logStep("dead runs not re-dispatched", () => redispatchDeadRuns(loadBacklog().tasks));
     logStep("stale task check failed", () => surfaceStaleTasks(loadBacklog().tasks));

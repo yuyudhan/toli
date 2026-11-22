@@ -15,12 +15,16 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { paths } from "../core/paths.ts";
 import { now, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 
-/** `stalled`: stopped by the runner for going silent; `killed`: stopped by a signal, or its runner vanished. */
-export type GateStatus = "running" | "passed" | "failed" | "stalled" | "killed";
+/**
+ * `stalled`: stopped by the runner for going silent; `runaway`: stopped by the runner for running over 3 times its
+ * estimate or printing failures for 30 minutes (src/forge/gate-supervise.ts); `killed`: stopped by a signal, by toli
+ * because every jawan that started or joined it ended (src/forge/gate-owner.ts), or its runner vanished.
+ */
+export type GateStatus = "running" | "passed" | "failed" | "stalled" | "runaway" | "killed";
 
 export type GateRecord = {
     project: string;
@@ -34,13 +38,24 @@ export type GateRecord = {
     status: GateStatus;
     /** The runner's pid; null only while its caller is starting it. */
     pid: number | null;
+    /** When the runner was spawned (right after spawn returned): with `pid`, the runner's identity. */
+    pidStartedAt?: string;
     startedAt: string;
+    /**
+     * The `bin/toli spawn` runs (TOLI_RUN_ID) that started or joined this gate, in that order. Absent when anyone else
+     * started or joined it: then no jawan owns it and toli never stops it for a jawan ending.
+     */
+    owners?: string[];
     endedAt: string | null;
     /** When the runner last saw the log grow. */
     lastOutputAt: string | null;
     exitCode: number | null;
     log: string;
     stallMinutes: number;
+    /** How long the recipe should take (ms): the median of its recent passes' recipeMs; absent without passes. */
+    estimateMs?: number;
+    /** How long the recipe itself ran (ms, not counting the wait for a build slot); set when it ends. */
+    recipeMs?: number;
     /** Why a gate that did not pass stopped. */
     reason?: string;
     /** HMAC of the pass (see sealPass); present only on a record the gate runner marked `passed`. */
@@ -143,32 +158,69 @@ export function reconcile(file: string): GateRecord | null {
     });
 }
 
+/** Every gate record file on this machine, of every project; an unreadable store or project folder reads as none. */
+export function allRecordFiles(): string[] {
+    const root = paths.gatesDir("");
+    const files: string[] = [];
+    let projects: string[];
+    try {
+        projects = readdirSync(root);
+    } catch {
+        return files;
+    }
+    for (const project of projects) {
+        try {
+            for (const name of readdirSync(join(root, project)))
+                if (name.endsWith(".json")) files.push(join(root, project, name));
+        } catch {
+            // Not a project's folder.
+        }
+    }
+    return files;
+}
+
 /**
  * Every gate running on this machine now (`gate run`, `push --gate`, the pre-push hook): a `running` record of any
  * project whose runner is alive. Read-only; an unreadable store or record reads as none.
  */
 export function runningGates(): GateRecord[] {
-    const root = paths.gatesDir("");
-    const running: GateRecord[] = [];
-    let projects: string[];
+    return allRecordFiles()
+        .map((file) => readRecord(file))
+        .filter(
+            (record): record is GateRecord =>
+                record?.status === "running" && record.pid !== null && pidAlive(record.pid),
+        );
+}
+
+/** How many of a recipe's latest passes its estimate takes the median of. */
+const ESTIMATE_PASSES = 5;
+
+/**
+ * How long `recipe` should take in `project` (ms): the median of the recipe's latest proven passes on any tree, each
+ * its recipeMs (or, recorded before that, its whole time from start to end); undefined when it never passed here.
+ */
+export function recipeEstimateMs(project: string, recipe: string): number | undefined {
+    const dir = paths.gatesDir(project);
+    // Record files are <tree>-<recipe hash>.json: the recipe's records on every tree share this suffix.
+    const suffix = basename(recordFile(project, "", recipe));
+    let names: string[];
     try {
-        projects = readdirSync(root);
+        names = readdirSync(dir).filter((name) => name.endsWith(suffix));
     } catch {
-        return running;
+        return undefined;
     }
-    for (const project of projects) {
-        let files: string[];
-        try {
-            files = readdirSync(join(root, project)).filter((name) => name.endsWith(".json"));
-        } catch {
-            continue; // Not a project's folder.
-        }
-        for (const file of files) {
-            const record = readJson<GateRecord | null>(join(root, project, file), null);
-            if (record?.status === "running" && record.pid !== null && pidAlive(record.pid)) running.push(record);
-        }
-    }
-    return running;
+    const passes = names
+        .map((name) => readRecord(join(dir, name)))
+        .filter((record): record is GateRecord => provenPass(record, project, record?.tree ?? "", recipe))
+        .sort((a, b) => (b.endedAt ?? "").localeCompare(a.endedAt ?? ""))
+        .slice(0, ESTIMATE_PASSES)
+        .map((record) => record.recipeMs ?? Date.parse(record.endedAt ?? "") - Date.parse(record.startedAt))
+        .filter((ms) => Number.isFinite(ms) && ms > 0)
+        .sort((a, b) => a - b);
+    const middle = Math.floor(passes.length / 2);
+    const upper = passes[middle];
+    if (upper === undefined) return undefined;
+    return passes.length % 2 === 1 ? upper : ((passes[middle - 1] ?? upper) + upper) / 2;
 }
 
 export function short(sha: string): string {

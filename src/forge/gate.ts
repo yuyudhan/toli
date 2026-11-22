@@ -3,11 +3,13 @@
 // state/gates/<project>/; a passed one is never run again, a running one is attached to, never started twice. A pass
 // carries a proof only this installation's runner can write (src/forge/gate-record.ts): a pre-push hook asks
 // `bin/toli gate check` for it, so an environment variable set by hand never skips anything. The gate itself runs
-// under a detached runner (`bin/toli gate runner <record>`) that outlives its caller (a jawan ending, a hook timing
-// out, ssh dropping) and has no time limit: it only stops a gate that made no progress for the stall minutes
+// under a detached runner (`bin/toli gate runner <record>`) that outlives its caller (a hook timing out, ssh
+// dropping) and has no fixed time limit: it stops a gate that made no progress for the stall minutes
 // (config/machine.json capacity.gateStallMinutes): its log did not grow, its checkout did not change and its process
-// tree burned almost no CPU (the jawan stall check, src/jawans/progress.ts). A build that links silently for a long
-// time keeps its gate alive through its CPU use.
+// tree burned almost no CPU (the jawan stall check, src/jawans/progress.ts), and one that runs away (over 3 times the
+// median of its recent passes, or printing failures for 30 minutes, src/forge/gate-supervise.ts). A build that links
+// silently for a long time keeps its gate alive through its CPU use. A gate only `bin/toli spawn` jawans started or
+// joined is stopped by toli once all of them ended (src/forge/gate-owner.ts).
 import { spawn as spawnChild } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -19,12 +21,14 @@ import { launchInScope, scopeFailedWarning } from "../fleet/build-slots.ts";
 import { withCheckSlot } from "../fleet/check-slot.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import type { Argv } from "../jawans/scope.ts";
+import { currentRun, joinGate } from "./gate-owner.ts";
 import {
     type GateRecord,
     logDecision,
     outcomeText,
     provenPass,
     readRecord,
+    recipeEstimateMs,
     reconcile,
     recordFile,
     sealPass,
@@ -104,6 +108,8 @@ function startRunner(file: string, record: GateRecord): GateRecord {
         return record;
     }
     record.pid = pid;
+    // The real clock, not now() (which tests may fix): it is compared with the process table's start times.
+    record.pidStartedAt = new Date().toISOString();
     writeJsonAtomic(file, record);
     return record;
 }
@@ -207,14 +213,18 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
     const sha = headSha(input.dir);
     const tree = treeSha(input.dir);
     const file = recordFile(input.project, tree, input.recipe);
+    const run = currentRun();
     const decided = withLock(`${file}.lock`, (): { record: GateRecord; action: "skip" | "attach" | "start" } => {
         const existing = readRecord(file);
         if (provenPass(existing, input.project, tree, input.recipe) && existing !== null)
             return { record: existing, action: "skip" };
         if (existing?.status === "passed")
             logDecision(existing, "forged", `${file} says passed but carries no valid proof; running the gate again`);
-        if (existing?.status === "running" && existing.pid !== null && pidAlive(existing.pid))
+        if (existing?.status === "running" && existing.pid !== null && pidAlive(existing.pid)) {
+            joinGate(existing, run);
+            writeJsonAtomic(file, existing);
             return { record: existing, action: "attach" };
+        }
         const record = startRunner(file, {
             project: input.project,
             sha,
@@ -224,6 +234,7 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
             status: "running",
             pid: null,
             startedAt: now().toISOString(),
+            ...(run === null ? {} : { owners: [run] }),
             endedAt: null,
             lastOutputAt: null,
             exitCode: null,
@@ -291,8 +302,8 @@ export async function gateForPush(input: GateRun, waitMinutes: number): Promise<
 
 /**
  * The detached runner: in one heavy-build slot (cargo via `just` too) and that slot's memory-capped systemd scope where
- * the host has one, run the recipe; stop it only when it stalls. A recipe whose scope systemd-run could not make never
- * ran: it runs once more without the scope, after one warning line in the log.
+ * the host has one, run the recipe; stop it only when it stalls or runs away. A recipe whose scope systemd-run could
+ * not make never ran: it runs once more without the scope, after one warning line in the log.
  */
 export async function runGateProcess(file: string): Promise<void> {
     const record = readRecord(file);
@@ -301,18 +312,25 @@ export async function runGateProcess(file: string): Promise<void> {
     process.on("SIGHUP", () => {});
     // The recipe may run the project's browser tests against its local stack: keep that stack running (T1492).
     await withCheckSlot(record.dir, record.project, record.stallMinutes, async ({ env: slotEnv, scope }) => {
+        // The runaway limit (src/forge/gate-supervise.ts) follows the recipe's passes up to the moment it starts.
+        const estimateMs = recipeEstimateMs(record.project, record.recipe);
+        const supervised = updateRecord(file, (entry) => {
+            if (estimateMs === undefined) delete entry.estimateMs;
+            else entry.estimateMs = estimateMs;
+        });
         const recipe: Argv = ["sh", "-c", record.recipe];
         const env = { ...process.env, ...slotEnv };
         const launch = launchInScope(scope, recipe);
-        let run = await superviseRecipe(file, record, launch.argv, { ...env, ...launch.env });
+        let run = await superviseRecipe(file, supervised, launch.argv, { ...env, ...launch.env });
         if (launch.scopeFailed() && run.stopped === null) {
             appendFileSync(record.log, `${scopeFailedWarning(run.end.code ?? 1)}\n`);
-            run = await superviseRecipe(file, record, recipe, env);
+            run = await superviseRecipe(file, supervised, recipe, env);
         }
-        const { end, stopped, survivors } = run;
+        const { end, stopped, survivors, elapsedMs } = run;
         const final = updateRecord(file, (entry) => {
             entry.endedAt = now().toISOString();
             entry.exitCode = end.code;
+            entry.recipeMs = elapsedMs;
             if (stopped !== null) {
                 entry.status = stopped.status;
                 entry.reason =
