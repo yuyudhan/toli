@@ -134,6 +134,8 @@ export function sandbox(): Sandbox {
         TOLI_JOURNAL: "off",
         // Harnesses start without the host user's login shell (src/core/login-env.ts); a test turns it on.
         TOLI_LOGIN_ENV: "off",
+        // Nor the host user's tool folders (~/.cargo/bin, ~/.bun/bin, ...: src/core/tool-path.ts); a test turns them on.
+        TOLI_TOOL_DIRS: "off",
         // The disk keeper's last resort deletes Playwright's browsers: never the host's.
         PLAYWRIGHT_BROWSERS_PATH: join(root, ".playwright"),
         // The disk keeper frees build output no-mistakes runs left in their worktrees: never the host's runs.

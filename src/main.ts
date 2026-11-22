@@ -1,4 +1,5 @@
 import { dropInheritedGitEnv } from "./core/git-env.ts";
+import { adoptUserToolDirs } from "./core/tool-path.ts";
 import { out, ToliError, warn } from "./core/util.ts";
 import { buildSlotCommand } from "./fleet/build-slots.ts";
 import { delegateCommand } from "./fleet/delegate.ts";
@@ -355,13 +356,12 @@ function wantsHelp(argv: readonly string[]): boolean {
 }
 
 /**
- * Dispatch one CLI invocation; resolves to the process exit code. Toli finds every repository by its path, so it first
- * drops the repository-locating git variables (GIT_DIR, GIT_INDEX_FILE, ...) it inherited: no git call or program it
- * starts sees them (T2052). `commit` and `push` say so once, since the shell that exported one still misleads its own
- * git.
+ * Dispatch one CLI invocation; resolves to its exit code. It first drops the inherited repository-locating git variables
+ * (GIT_DIR, ...; T2052) and appends the user's tool folders PATH lacks (src/core/tool-path.ts, T2266) for all it starts.
  */
 export async function main(argv: string[]): Promise<number> {
     const inherited = dropInheritedGitEnv();
+    adoptUserToolDirs();
     const [command, ...rest] = argv;
     if (inherited.length > 0 && command !== undefined && Object.hasOwn(GIT_WRITING_COMMANDS, command)) {
         const them = inherited.length === 1 ? "it" : "them";

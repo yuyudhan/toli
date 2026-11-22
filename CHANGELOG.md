@@ -8,6 +8,14 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A run the lead service or the tick starts now finds the toolchains under the home folder. Started with the service's
+  minimal PATH, catch-up jawans lacked `~/.cargo/bin`, so `bin/toli commit` refused every staged `Cargo.lock` until
+  the jawan put it on PATH by hand. Every toli command now appends the tool folders its PATH lacks and that exist
+  (`$CARGO_HOME/bin` or `~/.cargo/bin`, `$BUN_INSTALL/bin` or `~/.bun/bin`, `~/.local/bin`, `~/bin`,
+  `/opt/homebrew/bin`, `/usr/local/bin`) as it starts, whatever started it, so jawans, catch-ups, jobs, gates, pushes
+  and commit checks all get them; they go after the existing PATH, so a jawan's cargo shim stays first. A `Cargo.lock`
+  check that finds no cargo now refuses with `cargo not found on PATH` and the PATH it searched (docs/harnesses.md
+  "Service environment", T2266).
 - A machine's queue now counts the tasks parked for a free jawan slot there. A lead at cap that recorded its waiting
   pieces with `bin/toli task wait T<n> --on "next free slot (3/3 busy)"` showed only its queued tasks, so one worker
   with 11 such pieces behind 3 busy slots read as 3 deep in `fleet queues`, and another machine moved more work to it.

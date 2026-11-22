@@ -241,9 +241,11 @@ export function checkLockFiles(
             cwd: dirname(join(attempt.staged(), file)),
             timeoutMs: LOCK_CHECK_TIMEOUT_MS,
         });
+        // 127: no cargo on PATH, or toli's cargo shim found no real cargo after it on PATH.
         if (cargo.code === 127)
             throw new ToliError(
-                `refusing: ${file} is staged but cargo is not on PATH to check it (cargo metadata --locked)`,
+                `refusing: cargo not found on PATH, so the staged ${file} cannot be checked (cargo metadata --locked); ` +
+                    `install Rust (rustup) or put cargo's folder on PATH. PATH: ${process.env.PATH ?? ""}`,
             );
         if (cargo.code !== 0)
             throw new ToliError(
