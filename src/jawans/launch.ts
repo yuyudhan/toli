@@ -267,15 +267,14 @@ function launch(id: string): JawanRun {
  * Record a new run, name it as its task's agent, and start it if a jawan slot is free, no disk hold pauses new jobs
  * (src/fleet/disk-hold.ts), no network hold applies and its earliest start has come; always with `now`. Otherwise it
  * stays `queued`. `guard` runs under the slots lock before the run is recorded, so a refusal it throws sees every run
- * recorded before (two starts in the same second: src/jawans/tag-owner.ts).
+ * recorded before (two starts in the same second: src/jawans/tag-owner.ts); what it returns amends the run.
  */
-export function startOrQueue(input: NewRun, options: { now: boolean; guard?: () => void }): JawanRun {
+export function startOrQueue(input: NewRun, options: { now: boolean; guard?: () => Partial<NewRun> }): JawanRun {
     keepDiskBeforeWork();
     const hold = options.now ? null : networkHold();
     if (hold?.line) warn(hold.line);
     return withLock(paths.lock(SLOTS_LOCK), () => {
-        options.guard?.();
-        const run = recordRun(input);
+        const run = recordRun({ ...input, ...options.guard?.() });
         const task = run.task;
         // The task names its jawan, so the digest can flag active tasks nobody is working on (queued runs count).
         if (task !== null && loadBacklog().tasks.some((entry) => entry.id === task))
@@ -303,19 +302,22 @@ export function startOrQueue(input: NewRun, options: { now: boolean; guard?: () 
  * next dispatch instead of looking dispatched. Under the slots lock, so a queued run cannot start meanwhile.
  */
 export function stopRun(id: string): JawanRun {
-    return withLock(paths.lock(SLOTS_LOCK), () => {
-        const wasQueued = loadRun(id).status === "queued";
-        const run = killRun(id);
-        const task = run.task;
-        if (wasQueued && task !== null && loadBacklog().tasks.some((entry) => entry.id === task))
-            updateTask(task, (entry) => {
-                if (entry.status !== "active" || entry.agent !== run.id) return;
-                entry.status = "queued";
-                delete entry.agent;
-                delete entry.dispatchedAt;
-            });
-        return run;
-    });
+    return withLock(paths.lock(SLOTS_LOCK), () => stopRunLocked(id));
+}
+
+/** stopRun for a caller already holding the slots lock (spawn --replace's guard in startOrQueue). */
+export function stopRunLocked(id: string): JawanRun {
+    const wasQueued = loadRun(id).status === "queued";
+    const run = killRun(id);
+    const task = run.task;
+    if (wasQueued && task !== null && loadBacklog().tasks.some((entry) => entry.id === task))
+        updateTask(task, (entry) => {
+            if (entry.status !== "active" || entry.agent !== run.id) return;
+            entry.status = "queued";
+            delete entry.agent;
+            delete entry.dispatchedAt;
+        });
+    return run;
 }
 
 export type DrainResult = {

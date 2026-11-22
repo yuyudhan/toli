@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { namesTag } from "../src/jawans/tag-owner.ts";
 import { machine, release, runRecord, runs } from "./catch-up-fixture.ts";
 import type { Sandbox } from "./helpers.ts";
+
+/** Task `id` as data/backlog.json holds it. */
+function task(box: Sandbox, id: string): { agent?: string; workspace?: unknown } {
+    const backlog = JSON.parse(readFileSync(join(box.root, "data", "backlog.json"), "utf8")) as {
+        tasks: { id: string; agent?: string; workspace?: unknown }[];
+    };
+    const found = backlog.tasks.find((entry) => entry.id === id);
+    if (found === undefined) throw new Error(`no task ${id}`);
+    return found;
+}
 
 // T2298: at most one merge run per release tag and project clone, whichever source starts it. The release catch-up
 // stands down for a queued or live run whose brief names the tag (a scheduled job's merge run has no task), and
@@ -129,6 +139,43 @@ describe("one merge run per release tag", () => {
         const worktree = join(box.root, "projects", ".worktrees", "alpha", "T1");
         expect(box.ok(["spawn", "--brief", brief, "--cwd", worktree])).toMatch(/^queued j-/);
         expect(runs(box)).toHaveLength(3);
+    });
+
+    test("a refused task spawn leaves the shared clone on its branch: the tag is checked before the workspace", () => {
+        const { box, clone, origin } = machine();
+        release(box, origin, "v1.0.0");
+        box.ok(["catch-up", "scan"]);
+        box.ok(["project", "set", "alpha", "--branch", "none", "--workspace", "branch-per-task"]);
+        box.ok(["task", "add", "alpha", "Parser fix"]);
+        box.ok(["task", "start", "T1"]);
+        const refused = box.toli(["spawn", "--brief", mergeBrief(box, "v1.0.0"), "--task", "T1"]);
+        expect(refused.stderr).toContain("merges v1.0.0 on alpha; one merge run per release tag and clone");
+        expect(box.git(clone, ["branch", "--show-current"])).toBe("nightly");
+        expect(task(box, "T1").workspace).toBeUndefined();
+        expect(runs(box)).toHaveLength(1);
+    });
+
+    test("spawn --replace racing a catch-up scan never stops the old run and is then refused", async () => {
+        const { box, origin } = machine();
+        box.ok(["task", "add", "alpha", "Parser fix"]);
+        box.ok(["task", "start", "T1"]);
+        const old = box.ok(["spawn", "--brief", textBrief(box, "fix", "# Parser fix\n"), "--task", "T1"]);
+        const oldId = /^queued (j-\S+):/.exec(old)?.[1] ?? "";
+        release(box, origin, "v1.0.0");
+        const [scan, spawn] = await Promise.all([
+            box.toliAsync(["catch-up", "scan"]),
+            box.toliAsync(["spawn", "--brief", mergeBrief(box, "v1.0.0"), "--task", "T1", "--replace"]),
+        ]);
+        expect(scan.code).toBe(0);
+        const oldRun = runs(box).find((run) => run.id === oldId);
+        if (spawn.code === 0) {
+            expect(oldRun?.status).toBe("killed");
+            expect(scan.stdout).toContain("nightly: held (run ");
+        } else {
+            expect(spawn.stderr).toContain("refusing: release catch-up run ");
+            expect(oldRun?.status).toBe("queued");
+            expect(task(box, "T1").agent).toBe(oldId);
+        }
     });
 
     test("a tag matches as a whole release name, its regex characters literal", () => {

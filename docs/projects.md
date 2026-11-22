@@ -287,7 +287,9 @@ behind main between releases.
   job's merge run needs no task. In turn `bin/toli spawn` refuses a run whose brief merges a tag a queued or live
   catch-up run merges, naming that run (`refusing: release catch-up run <id> (queued) merges <tag> on <p>`). Both
   check under the jawan-slots lock spawn records runs under, so of two starts in the same second the later one sees
-  the first. A run for another tag is not affected.
+  the first. A task run is checked where it will work before its workspace is prepared, so a refused spawn never
+  switches the shared clone, and `--replace` stops the task's live run only under that lock once the check passed, so
+  a refused spawn never leaves the task without its jawan. A run for another tag is not affected.
 - **Checked out and free, or skipped.** The jawan runs in the project clone and touches only branches checked out on
   this machine. A branch that is not (a same-branch clone switched to another branch, say a release train's) is
   `skipped: not checked out here`: no jawan starts for it, nothing is merged, checked, built or pushed, and the next

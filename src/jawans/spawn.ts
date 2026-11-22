@@ -33,11 +33,11 @@ import {
     usageText,
 } from "../harness/models.ts";
 import { findProject, isLiveStack } from "../projects/projects.ts";
-import { prepareWorkspace } from "../projects/workspace.ts";
+import { plannedWorkspacePath, prepareWorkspace } from "../projects/workspace.ts";
 import { workspaceBrief } from "../projects/workspace-brief.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { continueRun } from "./continue.ts";
-import { jawanSlots, startOrQueue, stopRun } from "./launch.ts";
+import { jawanSlots, startOrQueue, stopRun, stopRunLocked } from "./launch.ts";
 import { heldHost } from "./network.ts";
 import { briefStallMinutes } from "./progress.ts";
 import {
@@ -168,8 +168,13 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
     const resolved = planSpawn(options);
     loadMachine();
     const superseded = resolved.task === null ? [] : liveRunsToReplace(resolved.task, options.replace === true);
-    // The base brief: what the tag claim reads, before the Workspace block below.
-    const brief = resolved.brief;
+    // A non-scout task run works in its task's workspace, prepared below.
+    const own = resolved.project !== null && resolved.work !== "scout" ? resolved.task : null;
+    // One merge run per release tag and clone (src/jawans/tag-owner.ts): asked where the run will work before its
+    // workspace is prepared (a refused spawn never switched the shared clone), and again under the slots lock.
+    const where = own === null ? resolved.cwd : plannedWorkspacePath(own);
+    const claim = { project: resolved.project, cwd: where, brief: resolved.brief, catchUp: options.catchUp };
+    refuseOwnedTag(claim);
     // Ship briefs carry a goal contract (docs/brief-template.md `## Goal`); a missing one is warned about, not refused.
     if (resolved.work === "ship" && !/^## Goal\b/m.test(resolved.brief))
         warn(
@@ -180,17 +185,17 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
         warn(
             `${resolved.project} runs in live-stack mode but the brief ${options.briefPath} has no "## Live stack" section (docs/brief-template.md); spawning anyway`,
         );
-    if (resolved.task !== null && resolved.project !== null && resolved.work !== "scout") {
-        const workspace = prepareWorkspace(resolved.task);
+    if (own !== null && resolved.project !== null) {
+        const workspace = prepareWorkspace(own);
         resolved.cwd = workspace.path;
-        resolved.brief = `${resolved.brief.trimEnd()}\n${workspaceBrief(resolved.project, resolved.task, workspace)}`;
+        resolved.brief = `${resolved.brief.trimEnd()}\n${workspaceBrief(resolved.project, own, workspace)}`;
     }
-    // One merge run per release tag and clone (src/jawans/tag-owner.ts): asked where the run will work, before a run
-    // is superseded, and again under the slots lock, where a run started in the same second is already recorded.
-    const claim = { project: resolved.project, cwd: resolved.cwd, brief, catchUp: options.catchUp };
-    refuseOwnedTag(claim);
-    // `--replace`: each live run is stopped as `run kill` does; its id goes on the replacement's record.
-    const replaced = superseded.map((run) => stopRun(run.id).id);
+    // `--replace`: the live runs are stopped as `run kill` does under the same lock, only once the claim held there,
+    // so a refused spawn never left the task without its jawan; their ids go on the replacement's record.
+    const guard = (): { replaces?: string[] } => {
+        refuseOwnedTag({ ...claim, cwd: resolved.cwd });
+        return superseded.length === 0 ? {} : { replaces: superseded.map((live) => stopRunLocked(live.id).id) };
+    };
     const run = startOrQueue(
         {
             harness: resolved.harness,
@@ -204,13 +209,12 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
             maxMinutes: options.maxMinutes ?? null,
             baseBrief: resolved.brief,
             extra: options.extra ?? "",
-            ...(replaced.length === 0 ? {} : { replaces: replaced }),
             ...(options.first === true ? { first: true } : {}),
             ...(options.catchUp === undefined ? {} : { catchUp: options.catchUp }),
         },
-        { now: options.now === true, guard: () => refuseOwnedTag(claim) },
+        { now: options.now === true, guard },
     );
-    for (const id of replaced)
+    for (const id of run.replaces ?? [])
         updateRun(id, (record) => {
             record.replacedBy = run.id;
         });

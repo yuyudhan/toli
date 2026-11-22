@@ -241,6 +241,45 @@ function pinSameBranch(project: Project, task: Task, clone: string): TaskWorkspa
 }
 
 /**
+ * Which workspace prepareWorkspace gives `task`, decided without touching anything: the one recorded (`kept`: a live
+ * task prepared under another strategy keeps it), the clone pinned on the project's branch, the clone a live task's
+ * work is already on, or a new one per the project's strategy.
+ */
+type WorkspaceChoice =
+    | { kind: "kept" | "ready"; workspace: TaskWorkspace }
+    | { kind: "pinned" | "branch-per-task" | "worktree-per-task" | "same-branch" };
+
+function chooseWorkspace(project: Project, task: Task, clone: string, pinned: boolean): WorkspaceChoice {
+    const recorded = task.workspace;
+    if (
+        !pinned &&
+        recorded !== undefined &&
+        recorded.strategy !== project.workspace &&
+        LIVE.includes(task.status) &&
+        existsSync(recorded.path)
+    )
+        return { kind: "kept", workspace: recorded };
+    if (pinned) return { kind: "pinned" };
+    const live = cloneOfLiveTask(project, task, clone);
+    return live === null ? { kind: project.workspace } : { kind: "ready", workspace: live };
+}
+
+/**
+ * Where a jawan of task `taskId` would work once prepareWorkspace ran, without preparing anything: `spawn` asks its
+ * release-tag claim (src/jawans/tag-owner.ts) here first, so a refused spawn never switched the shared clone.
+ */
+export function plannedWorkspacePath(taskId: string): string {
+    const id = taskId.toUpperCase();
+    const task = loadBacklog().tasks.find((entry) => entry.id === id);
+    if (!task) throw new ToliError(`unknown task "${taskId}" (see \`bin/toli task list\`)`);
+    const project = findProject(task.project);
+    const clone = projectCloneDir(task.project);
+    const choice = chooseWorkspace(project, task, clone, task.workspace?.pinned === true);
+    if (choice.kind === "kept" || choice.kind === "ready") return choice.workspace.path;
+    return choice.kind === "worktree-per-task" ? paths.taskWorktree(project.name, task.id) : clone;
+}
+
+/**
  * Prepare (idempotently) and record the workspace of a task per its project's strategy; returns where its jawans
  * work. Serialized per project, with `project set --workspace` too (src/projects/set.ts), so a strategy switch never
  * lands in the middle of a prepare and two spawns cannot both switch the shared clone. A live task prepared under
@@ -266,30 +305,25 @@ export function prepareWorkspace(
             refuseWhileToggled(project, task.id);
             resetRecorded(project, task, clone);
         }
-        const recorded = task.workspace;
-        const pinned = options.sameBranch === true || recorded?.pinned === true;
-        if (
-            !pinned &&
-            recorded !== undefined &&
-            recorded.strategy !== project.workspace &&
-            LIVE.includes(task.status) &&
-            existsSync(recorded.path)
-        )
-            return recorded;
+        const pinned = options.sameBranch === true || task.workspace?.pinned === true;
+        const choice = chooseWorkspace(project, task, clone, pinned);
+        if (choice.kind === "kept") return choice.workspace;
         if (!pinned) refuseWhileToggled(project, task.id);
-        const workspace: TaskWorkspace = pinned
-            ? pinSameBranch(project, task, clone)
-            : (cloneOfLiveTask(project, task, clone) ??
-              (project.workspace === "branch-per-task"
-                  ? prepareBranch(project, task, clone)
-                  : project.workspace === "worktree-per-task"
-                    ? prepareWorktree(project, task, clone)
-                    : {
-                          strategy: "same-branch",
-                          path: clone,
-                          branch: project.branch ?? currentBranch(clone),
-                          base: null,
-                      }));
+        const workspace: TaskWorkspace =
+            choice.kind === "ready"
+                ? choice.workspace
+                : choice.kind === "pinned"
+                  ? pinSameBranch(project, task, clone)
+                  : choice.kind === "branch-per-task"
+                    ? prepareBranch(project, task, clone)
+                    : choice.kind === "worktree-per-task"
+                      ? prepareWorktree(project, task, clone)
+                      : {
+                            strategy: "same-branch",
+                            path: clone,
+                            branch: project.branch ?? currentBranch(clone),
+                            base: null,
+                        };
         updateTask(id, (entry) => {
             entry.workspace = workspace;
         });

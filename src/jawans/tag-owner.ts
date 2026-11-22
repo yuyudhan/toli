@@ -6,7 +6,7 @@
 // (src/projects/catch-up-hold.ts standDown). A brief counts only where a line of it states a merge of the tag
 // (`mergesTag`), and a run in a task worktree never counts: it works on its task's branch, not the clone's.
 import { existsSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { paths } from "../core/paths.ts";
 import { ToliError } from "../core/util.ts";
 import { baseBriefOf } from "./launch.ts";
@@ -45,8 +45,12 @@ export type TagClaim = {
 /** The queued or live run that owns a release tag, and why. */
 export type TagOwner = { run: JawanRun; why: string };
 
+/** `path` with symlinks resolved, through its nearest existing parent for a path not made yet (a planned worktree). */
 function real(path: string): string {
-    return existsSync(path) ? realpathSync(path) : resolve(path);
+    const absolute = resolve(path);
+    if (existsSync(absolute)) return realpathSync(absolute);
+    const parent = dirname(absolute);
+    return parent === absolute ? absolute : join(real(parent), basename(absolute));
 }
 
 /**
