@@ -32,19 +32,21 @@ const SLOT_NOTE_MAX_MINUTES = 5;
 
 /**
  * Run `body`, a project's check (a gate's recipe, a push running its pre-push hook), as `withBuildSlot` does: in one
- * heavy-build slot for its whole run. A `project` that declares its check takes the slot at its first heavy step
- * (`project set --slot-at-heavy-step yes`) runs it under `withSlotAtHeavyStep` instead, saying it still waits every
- * third of the gate's `stallMinutes` (null: a push, no stall check), at most every `SLOT_NOTE_MAX_MINUTES`, so the
- * wait never reads as a stall. `project`'s own stack is kept running either way (`whileStackInUse`).
+ * heavy-build slot for its whole run, waiting in line only while `wanted` holds. A `project` that declares its check
+ * takes the slot at its first heavy step (`project set --slot-at-heavy-step yes`) runs it under `withSlotAtHeavyStep`
+ * instead, saying it still waits every third of the gate's `stallMinutes` (null: a push, no stall check), at most every
+ * `SLOT_NOTE_MAX_MINUTES`, so the wait never reads as a stall; such a check is stopped by ending `body`. `project`'s
+ * own stack is kept running either way (`whileStackInUse`).
  */
 export async function withCheckSlot<T>(
     cwd: string,
     project: string,
     stallMinutes: number | null,
     body: (held: HeldSlot) => Promise<T>,
+    wanted: () => boolean = () => true,
 ): Promise<T> {
     if (!loadProjects().some((entry) => entry.name === project && entry.slotAtHeavyStep === true))
-        return await withBuildSlot(cwd, project, body);
+        return await withBuildSlot(cwd, project, body, wanted);
     const noteMinutes = Math.min(SLOT_NOTE_MAX_MINUTES, (stallMinutes ?? Number.POSITIVE_INFINITY) / 3);
     return await withSlotAtHeavyStep(cwd, project, noteMinutes * runMinuteMs(), body);
 }

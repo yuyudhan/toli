@@ -1,8 +1,9 @@
-// One supervised run of a gate's recipe (src/forge/gate.ts): in its own process group, its output appended to the
-// gate's log, stopped when it makes no progress for the stall minutes (the jawan stall check,
+// One supervised run of a gate's recipe (src/forge/gate-runner.ts): in its own process group, its output appended to
+// the gate's log, stopped when it makes no progress for the stall minutes (the jawan stall check,
 // src/jawans/progress.ts), when it runs away (over RUNAWAY_FACTOR times its estimate, not counting time its heavy step
 // waits in line for a heavy-build slot, or printing failures for FAILING_MINUTES: a red gate on an overloaded machine
-// can take hours to finish failing), or when its runner gets SIGTERM/SIGINT.
+// can take hours to finish failing), when its runner gets SIGTERM/SIGINT, or when nothing waits on the gate any more
+// (src/forge/gate-caller.ts).
 import { type ChildProcess, spawn as spawnChild } from "node:child_process";
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { now } from "../core/util.ts";
@@ -90,14 +91,15 @@ function minutesText(ms: number, minuteMs: number): string {
 
 /**
  * Run `argv` (the recipe, or systemd-run starting it in its scope) for the gate recorded in `file`, in its own process
- * group with `env`, output appended to the gate's log; stop it only when it stops making progress, runs away or the
- * runner gets SIGTERM/SIGINT.
+ * group with `env`, output appended to the gate's log; stop it only when it stops making progress, runs away, the
+ * runner gets SIGTERM/SIGINT, or `callersGone` aborts (nothing waits on the gate any more; its reason is the stop's).
  */
 export async function superviseRecipe(
     file: string,
     record: GateRecord,
     argv: Argv,
     env: NodeJS.ProcessEnv,
+    callersGone?: AbortSignal,
 ): Promise<RecipeRun> {
     const minuteMs = runMinuteMs();
     const pollMs = Math.max(50, Math.min(1000, (record.stallMinutes * minuteMs) / 10));
@@ -130,6 +132,9 @@ export async function superviseRecipe(
         (signal) => [signal, () => stop("killed", `its runner got ${signal}`)] as const,
     );
     for (const [signal, handler] of handlers) process.on(signal, handler);
+    const onCallersGone = (): void => stop("killed", String(callersGone?.reason));
+    if (callersGone?.aborted) onCallersGone();
+    else callersGone?.addEventListener("abort", onCallersGone, { once: true });
     const decoder = new TextDecoder();
     let size = statSync(record.log).size;
     let partial = "";
@@ -205,6 +210,7 @@ export async function superviseRecipe(
         clearInterval(output);
         stopWatch();
         for (const [signal, handler] of handlers) process.off(signal, handler);
+        callersGone?.removeEventListener("abort", onCallersGone);
     }
 }
 

@@ -8,6 +8,18 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A gate runner no longer outlives the push or `gate run` that started it, and a cancelled gate no longer keeps its
+  heavy-build slot. The detached runner was built to outlive its caller, so a gate whose push was cancelled, or had
+  landed another way, ran on with nobody waiting: a jawan's pre-push `just test all` held a machine's only slot for
+  1h41m, and a gate cancelled while queued took slot 1 and held it for 1h55m. Now each gate record lists the
+  processes waiting on it (`callers`, pid and start time). A caller that comes back within a minute joins the same
+  run, but once every caller has been gone for a minute the runner leaves the slot's line (the recipe never runs) or
+  stops its recipe's whole process group and frees the slot, recording the gate `killed` with the reason. A pid
+  since handed to another process is not taken for a caller, and a caller is never signalled. `gate stop` also stops,
+  at once, a gate whose callers are all gone (the way to cancel one), and refuses while a caller still waits. A
+  `bin/toli push` (or `build-slot --`) stopped by SIGTERM, SIGINT or SIGHUP now stops its command's whole process
+  tree, so a pre-push hook's check never runs on orphaned after `git push` was stopped (docs/delivery.md "Gates",
+  docs/fleet.md, T2310).
 - A jawan brief sent with `bin/toli talk` is no longer held as a question for the receiving machine's user. Verify
   briefs sent in parts quoted the template's `task hold ... --option "<choice> => <what happens then>"` line, so the
   receiving toli read toli's own hold format and held each part as `<machine> asks for the user's word: ...` with the

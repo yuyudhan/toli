@@ -28,6 +28,7 @@ import { paths } from "../core/paths.ts";
 import { ToliError, warn } from "../core/util.ts";
 import { slotShareEnv } from "../jawans/env.ts";
 import { type Argv, inBuildScope } from "../jawans/scope.ts";
+import { stopTree } from "../jawans/stop.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { slotWaiters } from "./build-line.ts";
 import { checkBuildPlace } from "./build-place.ts";
@@ -100,9 +101,15 @@ export type BuildScope = { slot: number; memoryMaxMB: number };
 /** What a command run in a slot gets: the variables to add to its environment, and its scope (null: none). */
 export type HeldSlot = { env: Record<string, string>; scope: BuildScope | null };
 
+/** After a termination signal, how long a command run in a slot and everything it started get before SIGKILL. */
+const FORWARD_STOP_GRACE_MS = 10_000;
+
 /**
- * Spawn `argv` with this process's stdio plus `env`, passing termination signals on: its exit code (a child ended by
- * a signal resolves to 128 + its number, as a shell reports it) and whether a signal was passed on meanwhile.
+ * Spawn `argv` with this process's stdio plus `env`, stopping it and everything it started on a termination signal:
+ * its exit code (a child ended by a signal resolves to 128 + its number, as a shell reports it) and whether a signal
+ * came meanwhile. A signal stops the child's whole tree (stopTree: SIGTERM, SIGKILL after the grace), not the child
+ * alone, so what the child started (a pre-push hook under `git push`, a test runner under `just`) never runs on
+ * orphaned once the child is gone; the child gets the signal itself too.
  */
 async function spawnForwarding(
     argv: string[],
@@ -114,20 +121,30 @@ async function spawnForwarding(
         stdout: "inherit",
         stderr: "inherit",
     });
+    const spawnedAtMs = Date.now();
     let signalled = false;
+    const stopping: Promise<number[]>[] = [];
     const handlers = FORWARDED_SIGNALS.map(
         (signal) =>
             [
                 signal,
                 () => {
                     signalled = true;
-                    child.kill(signal);
+                    // The tree is read before the child gets the signal: once it is gone, its children are orphans
+                    // no parent pid leads to any more. A reaped child's pid may be someone else's: never signalled.
+                    if (stopping.length === 0 && child.exitCode === null && child.signalCode === null)
+                        stopping.push(
+                            stopTree({ pid: child.pid, spawnedAtMs }, FORWARD_STOP_GRACE_MS, { unreaped: true }),
+                        );
+                    if (signal !== "SIGTERM") child.kill(signal);
                 },
             ] as const,
     );
     for (const [signal, handler] of handlers) process.on(signal, handler);
     try {
-        return { code: await child.exited, signalled };
+        const code = await child.exited;
+        await Promise.all(stopping);
+        return { code, signalled };
     } finally {
         for (const [signal, handler] of handlers) process.off(signal, handler);
     }
@@ -240,6 +257,7 @@ export async function withBuildSlot<T>(
     cwd: string,
     stackUser: string | null,
     body: (held: HeldSlot) => Promise<T>,
+    wanted: () => boolean = () => true,
 ): Promise<T> {
     const run = deferredSlotRun();
     const runSlot = run === null ? null : await slotFromRun(run);
@@ -265,7 +283,7 @@ export async function withBuildSlot<T>(
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
         return await unslotted({ env: capped, scope: { slot: 0, memoryMaxMB } });
     }
-    const held = await takeInTurn(capacity, lock, slotHolder(cwd), process.pid);
+    const held = await takeInTurn(capacity, lock, slotHolder(cwd), process.pid, wanted);
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;

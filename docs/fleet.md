@@ -383,6 +383,10 @@ killed it, is reported as without a scope. A nested build
 `/bin/sh` creates `state/build-slots/scope-<pid>.started` and then execs the build; when systemd-run exits without it
 (it could not make the scope: no user session bus over ssh, no lingering), the build never ran, so it runs once
 without a scope after one warning line. A build that ran and failed reports its own exit code and is not run again.
+A command run in a slot (`bin/toli build-slot --`, the `git push` of a `bin/toli push` with a pre-push hook) that
+gets SIGTERM, SIGINT or SIGHUP through toli stops with everything it started: toli reads its process tree, sends
+SIGTERM to all of it (the received signal to the command itself too) and SIGKILL after 10 seconds to what is left, so
+a pre-push hook's check never runs on, orphaned, after its push was stopped.
 `TOLI_BUILD_SCOPE=off` turns the scope off. `systemctl --user list-units 'toli-build-*'` lists the running ones;
 `systemctl --user show` on a scope already gone (`--collect`) reports the defaults (`MemoryMax=infinity`), not its cap.
 

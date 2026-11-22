@@ -3,24 +3,23 @@
 // state/gates/<project>/; a passed one is never run again, a running one is attached to, never started twice. A pass
 // carries a proof only this installation's runner can write (src/forge/gate-record.ts): a pre-push hook asks
 // `bin/toli gate check` for it, so an environment variable set by hand never skips anything. The gate itself runs
-// under a detached runner (`bin/toli gate runner <record>`) that outlives its caller (a hook timing out, ssh
-// dropping) and has no fixed time limit: it stops a gate that made no progress for the stall minutes
+// under a detached runner (`bin/toli gate runner <record>`, src/forge/gate-runner.ts) that outlives a caller who comes
+// back (a hook timing out, ssh dropping, a retried push), but stops once every caller has been gone for a minute
+// (src/forge/gate-caller.ts), and has no fixed time limit: it stops a gate that made no progress for the stall minutes
 // (config/machine.json capacity.gateStallMinutes): its log did not grow, its checkout did not change and its process
 // tree burned almost no CPU (the jawan stall check, src/jawans/progress.ts), and one that runs away (over 3 times the
 // median of its recent passes, or printing failures for 30 minutes, src/forge/gate-supervise.ts). A build that links
 // silently for a long time keeps its gate alive through its CPU use. A gate only `bin/toli spawn` jawans started or
 // joined is stopped by toli once all of them ended (src/forge/gate-owner.ts).
 import { spawn as spawnChild } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Machine, machineSettings } from "../core/config.ts";
 import { checkoutDirty, git, headSha, treeSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, pidAlive, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
-import { launchInScope, scopeFailedWarning } from "../fleet/build-slots.ts";
-import { withCheckSlot } from "../fleet/check-slot.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
-import type { Argv } from "../jawans/scope.ts";
+import { addCaller, thisCaller } from "./gate-caller.ts";
 import { currentRun, joinGate } from "./gate-owner.ts";
 import {
     type GateRecord,
@@ -29,14 +28,10 @@ import {
     outcomeText,
     provenPass,
     readRecord,
-    recipeEstimateMs,
     reconcile,
     recordFile,
-    sealPass,
     short,
-    updateRecord,
 } from "./gate-record.ts";
-import { superviseRecipe } from "./gate-supervise.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
@@ -232,6 +227,7 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
                 if (existing.status === "stopping") return { record: existing, action: "wait" };
                 if (existing.status === "running") {
                     joinGate(existing, run);
+                    addCaller(existing);
                     writeJsonAtomic(file, existing);
                     return { record: existing, action: "attach" };
                 }
@@ -246,6 +242,7 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
                 pid: null,
                 startedAt: now().toISOString(),
                 ...(run === null ? {} : { owners: [run] }),
+                callers: [thisCaller()],
                 endedAt: null,
                 lastOutputAt: null,
                 exitCode: null,
@@ -322,76 +319,4 @@ export async function gateForPush(input: GateRun, waitMinutes: number): Promise<
             `refusing to push: HEAD moved to ${short(headSha(input.dir))} (another tree) while the gate ran on ${short(gate.sha)}; run the push again`,
         );
     }
-}
-
-/**
- * The detached runner: in one heavy-build slot (cargo via `just` too) and that slot's memory-capped systemd scope where
- * the host has one, run the recipe; stop it only when it stalls or runs away. A recipe whose scope systemd-run could
- * not make never ran: it runs once more without the scope, after one warning line in the log.
- */
-export async function runGateProcess(file: string): Promise<void> {
-    const record = readRecord(file);
-    if (record === null) throw new ToliError(`gate record ${file} is gone`);
-    // A closed terminal or dropped ssh session never stops a gate; only silence (or SIGTERM/SIGINT) does.
-    process.on("SIGHUP", () => {});
-    // The recipe may run the project's browser tests against its local stack: keep that stack running (T1492).
-    await withCheckSlot(record.dir, record.project, record.stallMinutes, async ({ env: slotEnv, scope }) => {
-        // The runaway limit (src/forge/gate-supervise.ts) follows the recipe's passes up to the moment it starts.
-        const estimateMs = recipeEstimateMs(record.project, record.recipe);
-        const supervised = updateRecord(file, (entry) => {
-            if (estimateMs === undefined) delete entry.estimateMs;
-            else entry.estimateMs = estimateMs;
-        });
-        const recipe: Argv = ["sh", "-c", record.recipe];
-        const env = { ...process.env, ...slotEnv };
-        const launch = launchInScope(scope, recipe);
-        let run = await superviseRecipe(file, supervised, launch.argv, { ...env, ...launch.env });
-        if (launch.scopeFailed() && run.stopped === null) {
-            appendFileSync(record.log, `${scopeFailedWarning(run.end.code ?? 1)}\n`);
-            run = await superviseRecipe(file, supervised, recipe, env);
-        }
-        const { end, stopped, survivors, elapsedMs, slotWaitMs } = run;
-        const final = updateRecord(file, (entry) => {
-            entry.endedAt = now().toISOString();
-            entry.exitCode = end.code;
-            entry.recipeMs = elapsedMs;
-            entry.slotWaitMs = slotWaitMs;
-            if (stopped !== null) {
-                entry.status = stopped.status;
-                entry.reason =
-                    survivors.length === 0
-                        ? stopped.reason
-                        : `${stopped.reason}; pid ${survivors.join(", ")} outlived SIGKILL`;
-            } else if (end.error !== undefined) {
-                entry.status = "failed";
-                entry.reason = `could not run it: ${end.error}`;
-            } else if (end.signal !== null) {
-                entry.status = "killed";
-                entry.reason = `it was killed by ${end.signal}`;
-            } else if (end.code !== 0) {
-                entry.status = "failed";
-            } else {
-                // A pass counts only if the checkout still was exactly the tree when the gate ended.
-                const head = headSha(entry.dir);
-                const changes = checkoutChanges(entry.dir);
-                if (treeSha(entry.dir) !== entry.tree) {
-                    entry.status = "failed";
-                    entry.reason = `HEAD moved to ${short(head)} (another tree) while it ran, so the pass may not hold for ${short(entry.tree)}`;
-                } else if (changes !== null) {
-                    entry.status = "failed";
-                    entry.reason = `the checkout changed while it ran (${changesText(changes)}), so the pass may not hold for ${short(entry.sha)}`;
-                } else {
-                    // A pass the runner cannot seal (an unsafe or broken state/gate-key) is no pass anyone can reuse.
-                    entry.status = "passed";
-                    try {
-                        sealPass(entry);
-                    } catch (error) {
-                        entry.status = "failed";
-                        entry.reason = `the pass could not be sealed: ${error instanceof Error ? error.message : String(error)}`;
-                    }
-                }
-            }
-        });
-        logDecision(final, final.status, outcomeText(final));
-    });
 }

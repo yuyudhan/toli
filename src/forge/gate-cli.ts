@@ -7,9 +7,10 @@ import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError, warn } from "../core/util.ts";
 import { toliSelfCheckout } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
-import { changesText, checkoutChanges, runGate, runGateProcess } from "./gate.ts";
+import { changesText, checkoutChanges, runGate } from "./gate.ts";
 import { gateId, gateStop } from "./gate-owner.ts";
 import { type GateRecord, logDecision, outcomeText, provenPass, reconcile, recordFile, short } from "./gate-record.ts";
+import { runGateProcess } from "./gate-runner.ts";
 
 const TASK_FLAG = "task";
 
@@ -127,7 +128,7 @@ function gateStatus(argv: string[]): number {
     return 0;
 }
 
-/** `bin/toli gate stop <sha|id>`: stop a running gate runner toli recorded for jawans that are all gone. */
+/** `bin/toli gate stop <sha|id>`: stop a running gate runner toli recorded whose jawans or callers are all gone. */
 async function gateStopCommand(argv: string[]): Promise<number> {
     const args = new Args(argv);
     args.maxPositional(1);

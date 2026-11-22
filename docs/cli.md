@@ -194,13 +194,15 @@ the interactive Sardar's subagents.
   slot's share of the cores. It never times out; only a gate with no new output, checkout change or CPU use for
   `--stall` minutes (`capacity.gateStallMinutes`, default 30) is stopped (`stalled`), and a runaway one: over 3 times
   the median of the recipe's last passes and then quiet for 5 minutes, or printing runners' failure lines for 30
-  minutes (`runaway`; slot waits count in neither). A gate only
+  minutes (`runaway`; slot waits count in neither). A gate whose callers (each `gate run` or `push --gate` that
+  started or joined it) have all been gone for a minute is stopped too, freeing its heavy-build slot. A gate only
   `bin/toli spawn` jawans started or joined is stopped when the last of them ends without a continuation. `gate check`
   exits 0 only when this machine's gate runner recorded a sealed pass of the recipe on the tree (HEAD's, which must be
   exactly the checkout, or `--sha`'s commit), for pre-push hooks; a record edited or copied by hand is refused.
   `gate status` lists a project's gates, newest first, each with its id last. `gate stop <sha|id>` stops a running
-  gate runner toli recorded for jawans that are all gone, and refuses one a live jawan owns (naming it) or no jawan
-  owns; it touches only toli's own recorded runners. `push --gate "<recipe>"` runs the gate first and pushes only once
+  gate runner toli recorded for jawans that are all gone, or one whose callers are all gone (cancelling a gate), and
+  refuses one a live jawan owns or a live caller waits on (naming it) or no jawan owns; it touches only toli's own
+  recorded runners. `push --gate "<recipe>"` runs the gate first and pushes only once
   it passed; a checkout with
   uncommitted edits (other jawans' in a shared clone) is waited on for `--gate-wait` minutes (default 30, 0 refuses at
   once) until they are committed; a pre-push hook that runs only that recipe is skipped (`--no-verify`) for the exact

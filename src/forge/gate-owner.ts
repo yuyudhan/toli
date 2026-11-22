@@ -18,6 +18,7 @@ import { paths } from "../core/paths.ts";
 import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { ACTIVE, type JawanRun, listRuns } from "../jawans/runs.ts";
 import { stopRecorded } from "../jawans/stop.ts";
+import { callersGoneText, liveCaller } from "./gate-caller.ts";
 import {
     allRecordFiles,
     type GateRecord,
@@ -196,8 +197,11 @@ function selectGates(selector: string): { file: string; record: GateRecord }[] {
 }
 
 /**
- * `bin/toli gate stop <sha|id>`: stop one running gate runner toli recorded for jawans that are all gone. Refuses a
- * gate a live jawan owns (naming it), one no jawan owns, and a selector that names no running gate or several.
+ * `bin/toli gate stop <sha|id>`: stop one running gate runner toli recorded that nothing needs any more: every jawan
+ * that started or joined it ended, or every process that waited on it (`gate run`, `push --gate`) is gone, as after a
+ * cancelled push; the runner would stop it a minute later itself (src/forge/gate-caller.ts). Refuses a gate a live
+ * jawan owns or a live caller waits on (naming it), one no jawan owns that callers were never recorded for, and a
+ * selector that names no running gate or several.
  */
 export async function gateStop(selector: string): Promise<{ code: number; text: string }> {
     const matches = selectGates(selector);
@@ -209,17 +213,24 @@ export async function gateStop(selector: string): Promise<{ code: number; text: 
         );
     const { file, record } = match;
     const owner = liveOwner(record, listRuns());
+    if (owner === null) {
+        const { stopped, text } = await stopRunner(file, record, `\`gate stop\`: ${endedText(record)}`);
+        return { code: stopped ? 0 : 1, text };
+    }
+    const caller = liveCaller(record);
+    if (caller === null) {
+        const { stopped, text } = await stopRunner(file, record, `\`gate stop\`: ${callersGoneText(record)}`);
+        return { code: stopped ? 0 : 1, text };
+    }
+    const waiting = caller === undefined ? "" : `; caller pid ${caller.pid} still waits on it`;
     if (owner === undefined)
         throw new ToliError(
             `refusing: gate ${gateText(file, record)} was started or joined outside any \`bin/toli spawn\` jawan ` +
                 "(or before toli recorded its jawans), so it is not a runner toli recorded for a jawan; " +
-                "`gate stop` stops only those",
+                `\`gate stop\` stops only those, or one nothing waits on${waiting}`,
         );
-    if (owner !== null)
-        throw new ToliError(
-            `refusing: gate ${gateText(file, record)} belongs to live jawan ${owner.id} (${owner.status}` +
-                `${owner.task === null ? "" : `, task ${owner.task}`}); it is stopped when that jawan ends`,
-        );
-    const { stopped, text } = await stopRunner(file, record, `\`gate stop\`: ${endedText(record)}`);
-    return { code: stopped ? 0 : 1, text };
+    throw new ToliError(
+        `refusing: gate ${gateText(file, record)} belongs to live jawan ${owner.id} (${owner.status}` +
+            `${owner.task === null ? "" : `, task ${owner.task}`}); it is stopped when that jawan ends${waiting}`,
+    );
 }

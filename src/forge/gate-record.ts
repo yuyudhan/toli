@@ -52,6 +52,13 @@ export type GateRecord = {
      * started or joined it: then no jawan owns it and toli never stops it for a jawan ending.
      */
     owners?: string[];
+    /**
+     * The processes waiting on this gate (`gate run`, `push --gate`): each one that started or attached to it, with
+     * when it started (the real clock), so a pid the system hands to another process is never taken for it. Once
+     * every one is gone for a minute, the runner stops the gate (src/forge/gate-caller.ts). Absent on a record written
+     * before toli recorded callers.
+     */
+    callers?: GateCaller[];
     endedAt: string | null;
     /** When the runner last saw the log grow. */
     lastOutputAt: string | null;
@@ -72,6 +79,9 @@ export type GateRecord = {
     /** HMAC of the pass (see sealPass); present only on a record the gate runner marked `passed`. */
     proof?: string;
 };
+
+/** A process waiting on a gate: its pid and when it started (ISO, the real clock). */
+export type GateCaller = { pid: number; startedAt: string };
 
 /** The record file of one project, tree and recipe: <tree>-<first 16 hex of the recipe's sha256>.json. */
 export function recordFile(project: string, tree: string, recipe: string): string {

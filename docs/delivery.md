@@ -105,9 +105,17 @@ parents, message or author):
   without running. A failed, stalled or killed gate is never reused: the next `gate run` runs it again.
 - Already running on this tree (another jawan or hook started it): it waits for that run and exits with its result.
   It never starts a second copy.
-- Otherwise it starts the gate in a background runner of its own, then waits for it. The runner outlives whoever
-  started it: a hook being killed, Ctrl-C or a dropped ssh session leave the gate running, and the next `gate run` (or
-  `gate check`) picks up its result. A jawan ending is the exception, below.
+- Otherwise it starts the gate in a background runner of its own, then waits for it. The record lists every process
+  waiting on the gate (`callers`: each `gate run` or `push --gate` that started or joined it, by pid and start time).
+  The runner outlives a caller that comes back: a hook being killed, Ctrl-C or a dropped ssh session leave the gate
+  running, and a `gate run` (or `push --gate`) within a minute joins it, as `gate check` later reads its result. Once
+  every caller has been gone for a minute, nothing waits on the gate any more (a cancelled push, a push that landed
+  another way), so the runner stops it rather than hold a heavy-build slot for nobody: waiting in line, it leaves the
+  line and its recipe never runs; running, its recipe's whole process group and every process it started get SIGTERM,
+  then SIGKILL after 10 seconds, and the slot is free. The gate is recorded `killed` with the reason (`nothing waits
+on it any more: ... is gone`), and a `callers-gone` line goes to `logs/gates.log`. A caller is known by its pid and
+  start time, so a pid the system has since handed to another process does not keep the gate alive, and a caller is
+  never signalled. A jawan ending is a second case, below.
 - A gate has no fixed time limit. It is stopped when it makes no progress for `--stall` minutes (default
   `capacity.gateStallMinutes` in `config/machine.json`, 30 when unset): its log did not grow, its checkout did not
   change and its processes burned under 10 CPU seconds, the same check that finds a stuck jawan run. It is then
@@ -149,10 +157,12 @@ parents, message or author):
   (`pidStartedAt`), running `gate runner <its record>`. A pid the system has since handed to another process is never
   signalled; the record is then marked `killed` (its runner is gone), so nothing attaches to it.
 - `gate stop <sha|id>` stops one such gate by hand: a running gate named by its id (the last column of `gate status`)
-  or a prefix of its commit or tree. It stops only a runner toli recorded for jawans that are all gone, the way the
-  supervisor would. It refuses, changing nothing, a gate a live jawan owns (naming the run and its task), a gate no
-  jawan owns, and a selector that matches no running gate or several. It is for toli's own recorded runners only;
-  every other process stays under hard rule 2 of AGENTS.md.
+  or a prefix of its commit or tree. It stops only a runner toli recorded that nothing needs any more: one whose
+  jawans are all gone, the way the supervisor would, or one whose callers are all gone, at once rather than after the
+  runner's minute (the way to cancel a gate: stop its push or `gate run`, then `gate stop`). It refuses, changing
+  nothing, a gate a live jawan owns (naming the run and its task) or a live caller waits on (naming its pid), a gate no
+  jawan owns whose callers were never recorded (an older record), and a selector that matches no running gate or
+  several. It is for toli's own recorded runners only; every other process stays under hard rule 2 of AGENTS.md.
 - A checkout that is not exactly its commit (changed tracked files, or untracked files that are not ignored) is
   refused: the result would not belong to any commit. A pass also counts only if the checkout is still exactly that
   commit when the gate ends; if HEAD moved or files changed while it ran, it is recorded `failed` with the reason.
