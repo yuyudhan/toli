@@ -9,7 +9,7 @@ import { out, platform, printJson, run, runInherit, ToliError, warn } from "../c
 import { runCheckInSlot } from "../fleet/check-slot.ts";
 import { activeHookPath, lightPushCondition } from "../projects/hooks.ts";
 import { requirePushHooks } from "../projects/hooks-gates.ts";
-import { type Forge, findProject, loadProjects, type Project, projectCloneDir } from "../projects/projects.ts";
+import { type Forge, findProject, type Project, projectCloneDir } from "../projects/projects.ts";
 import { workDir } from "../projects/workspace.ts";
 import { appendPush, pushAttribution, pushLine } from "../records/push-log.ts";
 import { BitbucketClient, bitbucketCredentials, bitbucketCredentialsHelp } from "./bitbucket.ts";
@@ -24,7 +24,8 @@ import {
 } from "./cli.ts";
 import { parseGateWait } from "./gate.ts";
 import { gatePush, slotFreePushSha } from "./gate-hook.ts";
-import { requirePushCheckout } from "./push-checkout.ts";
+import { requirePushAuthority, requirePushCheckout } from "./push-checkout.ts";
+import { pushTag } from "./push-tag.ts";
 
 /** `--task T<n>`: the project command acts on that task's workspace (its worktree or task branch). */
 const TASK_FLAG = "task";
@@ -211,21 +212,6 @@ function requireBranch(dir: string, action: string): string {
 }
 
 /**
- * Hard rule 1: refuse a push that carries neither the user's `--word` nor the project's standing push grant on this
- * machine (`bin/toli project set <p> --standing-push yes`, kept in this machine's project entry).
- */
-function requirePushAuthority(project: string, word: string | null): void {
-    if (word !== null) return;
-    if (loadProjects().find((entry) => entry.name === project)?.standing?.push === true) return;
-    const user = addressName();
-    throw new ToliError(
-        `refusing to push ${project}: no --word and no standing push grant for ${project} on this machine. ` +
-            `Pass --word "<${user}'s word>" quoting ${user}'s word for this push, or have ${user} grant it with ` +
-            `\`bin/toli project set ${project} --standing-push yes\``,
-    );
-}
-
-/**
  * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Refused
  * unless `--word` quotes the user's word for this push or the project has a standing push grant on this machine. Runs
  * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. `--branch <b>`,
@@ -242,21 +228,29 @@ function requirePushAuthority(project: string, word: string | null): void {
  * passed on HEAD's tree (`# toli-light-push-after-gate: <recipe>`, slotFreePushSha, decided before queueing). A push is
  * refused when the repo declares a pre-push hook (src/projects/hooks.ts) that git would not run, so the project's own
  * check never silently skips; `--no-hooks-ok` pushes anyway. Other declared hooks that are not installed only warn.
+ * `--tag <name>` pushes that one local tag instead of the branch (pushTag, src/forge/push-tag.ts), under the same
+ * authority, checkout and hook checks; it runs no gate itself.
  */
 export async function pushCommand(argv: string[]): Promise<void> {
     const args = new Args(argv, {
-        values: [TASK_FLAG, "branch", "by", "for", "word", "gate", "gate-wait"],
+        values: [TASK_FLAG, "branch", "by", "for", "word", "gate", "gate-wait", "tag"],
         booleans: ["no-hooks-ok", "release-train"],
     });
     args.maxPositional(1);
     const project = args.pos(0, "project");
     const { dir, task } = workDir(project, args.str(TASK_FLAG));
-    const branch = requireBranch(dir, "push");
+    const tag = args.str("tag");
+    if (tag !== undefined && args.str("gate") !== undefined)
+        throw new ToliError(
+            "push --tag runs no gate: gate the tagged commit with `bin/toli gate run` first; its sealed pass is what lets the tag push skip the pre-push hook",
+        );
+    const branch = tag === undefined ? requireBranch(dir, "push") : (currentBranch(dir) ?? "HEAD");
     const checkout = { expected: args.str("branch"), train: args.bool("release-train"), ownTask: task?.id ?? null };
     requirePushCheckout(project, dir, branch, checkout);
     const attribution = pushAttribution(args, task?.id);
     requirePushAuthority(project, attribution.word);
     requirePushHooks(project, dir, args.bool("no-hooks-ok"));
+    if (tag !== undefined) return await pushTag(project, dir, tag, attribution);
     const ref = `refs/heads/${branch}`;
     const recipe = args.str("gate");
     const { env: gateEnv, skipHookAt } =

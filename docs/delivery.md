@@ -70,7 +70,7 @@ them.
 
     bin/toli forge <project> [--json]                  # forge, host, repo path, CLI/credential readiness
     bin/toli branch <project> <branch>                 # create a new work branch in the clone and switch to it
-    bin/toli push <project> [--task T<n>] [--gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
+    bin/toli push <project> [--task T<n>] [--tag <name> | --gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
                                                        # git push -u origin <current branch>; never forced; logged in
                                                        # data/pushes.jsonl, shown in bin/toli digest
     bin/toli push-log add <project> [--by <machine>] [--for T<n>] [--word "..."]   # log a raw git push made here
@@ -210,6 +210,20 @@ it runs only <recipe>, which passed on <sha> (tree ..., proof ...)` and logs a `
   only the gate, the reason also says what happens to its gate step: when the hook asks `gate check`, it is skipped
   where the hook asks `bin/toli gate check <project> --sha <pushed sha> --recipe "<recipe>"`; when it never asks, the
   reason says `so a gate step in it reruns` and names that guard.
+- `push <p> --tag <name>` pushes one local tag and nothing else: the object the tag names now, to origin's
+  `refs/tags/<name>`, never `--tags`, never forced (a tag origin already holds is left alone; one it holds at another
+  object is refused, since a pushed tag is never moved). It runs no gate (`--gate` beside it is refused): gate the
+  commit before tagging it. A release tag usually lands on a tree the gate already passed, the gated release commit or
+  a merge of exactly it, and a hook that runs the project's full check on every tag would rerun hours of checks on
+  that tree. So a hook declares the gate recipes that are everything it checks on a push of tags alone, one per line:
+  `# toli-tag-push-after-gate: <recipe>`, the recipe's exact text. When the push carries only tags, the hook declares
+  at least one such recipe, and each has a sealed pass on the tree of the tagged commit, toli prints
+  `push: skipping the pre-push hook <path>: the push carries only tags, and <recipe> on tree ... passed, ...`, logs a
+  `hook-skip` line in `logs/gates.log` and pushes exactly that tag with `git push --no-verify`.
+  Otherwise it prints `push: running the pre-push hook: <why>` (no declaration, a tree no gate passed on) and the hook
+  runs as on a branch push: without a slot when it declares itself light, else in a heavy-build slot. The declaration
+  is the project's word that its hook checks nothing else on a tag push, so a hook whose tag path also runs a secret
+  scan or a tag-name check must not declare it. The push is recorded in the push log under `refs/tags/<name>`.
 
 A project whose own pre-push hook runs the same long check skips that step, and only that step, when toli already
 passed it on the trees the push lands; the hook's other steps (a secret scan, a quick lint) run on every push. toli

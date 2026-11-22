@@ -70,7 +70,9 @@ The brief quotes their word and asks the jawan to:
       `bin/toli pr status <p> <id>` until CI is green, then `bin/toli pr merge <p> <id>`;
     - or a local fast-forward/merge if the recipe says so, followed by `bin/toli push <p>` from the main branch.
 6. **Tag**: `git -C projects/<p> tag -a <tag> -m "<tag>" <main-branch-commit>` then
-   `git -C projects/<p> push origin refs/tags/<tag>` (one tag, never `--tags`, never `-f`).
+   `bin/toli push <p> --tag <tag>` (one tag, never `--tags`, never `-f`): when the project's pre-push hook declares its
+   tag-push gate (`# toli-tag-push-after-gate: <recipe>`) and that gate passed on the tagged tree, the hook's rerun is
+   skipped with the proof named; otherwise the hook runs as usual. Never `--no-verify` by hand.
 7. **Staging smoke.** After the deploy the recipe describes, run its smoke checks against staging (headless browser
    for UI, read-only requests for APIs), and save evidence (screenshots, responses) under `data/projects/<project>/reports/`.
 8. **Issue updates** (when the recipe names a tracker). Move each issue in the release to the state the recipe names

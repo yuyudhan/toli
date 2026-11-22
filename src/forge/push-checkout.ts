@@ -1,11 +1,29 @@
-// Which checkout `bin/toli push` may push from, decided before any hook or gate runs. `--branch <b>`: the checkout
-// must be on that branch (the release catch-up's push lines name it). A release train's checkout (T2232): a push whose
-// pre-push hook runs the project's full check where a release train works holds the train up for hours, so a checkout
-// on a `release/*` branch, or one a live jawan holds, is refused unless the train itself pushes (`--release-train`).
+// Which checkout `bin/toli push` may push from, and on whose word, decided before any hook or gate runs. `--branch <b>`:
+// the checkout must be on that branch (the release catch-up's push lines name it). A release train's checkout (T2232):
+// a push whose pre-push hook runs the project's full check where a release train works holds the train up for hours,
+// so a checkout on a `release/*` branch, or one a live jawan holds, is refused unless the train itself pushes
+// (`--release-train`).
 import { relative } from "node:path";
 import { paths } from "../core/paths.ts";
+import { addressName } from "../core/persona.ts";
 import { now, ToliError } from "../core/util.ts";
 import { checkoutHolder } from "../projects/catch-up-hold.ts";
+import { loadProjects } from "../projects/projects.ts";
+
+/**
+ * Hard rule 1: refuse a push that carries neither the user's `--word` nor the project's standing push grant on this
+ * machine (`bin/toli project set <p> --standing-push yes`, kept in this machine's project entry).
+ */
+export function requirePushAuthority(project: string, word: string | null): void {
+    if (word !== null) return;
+    if (loadProjects().find((entry) => entry.name === project)?.standing?.push === true) return;
+    const user = addressName();
+    throw new ToliError(
+        `refusing to push ${project}: no --word and no standing push grant for ${project} on this machine. ` +
+            `Pass --word "<${user}'s word>" quoting ${user}'s word for this push, or have ${user} grant it with ` +
+            `\`bin/toli project set ${project} --standing-push yes\``,
+    );
+}
 
 /** A release train's branch, `release/<version>` (src/fleet/releases.ts reads one as a cut in progress). */
 const RELEASE_BRANCH = /^release\//;

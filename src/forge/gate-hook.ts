@@ -6,7 +6,7 @@
 // hook doing more skips only its own gate step, by asking `bin/toli gate check --sha` for it (T598): toli cannot run
 // part of a hook, and only the hook knows which of its steps is the gate, so the reason says whether it asks.
 import { readFileSync } from "node:fs";
-import { headSha, treeSha } from "../core/git.ts";
+import { headSha, resolveSha, treeSha } from "../core/git.ts";
 import { out, warn } from "../core/util.ts";
 import { activeHookPath } from "../projects/hooks.ts";
 import { changesText, checkoutChanges, type GateRun, gateForPush } from "./gate.ts";
@@ -88,14 +88,14 @@ const LIGHT_AFTER_GATE = /^#\s*toli-light-push-after-gate:[ \t]*(\S[^\n]*?)\s*$/
 /**
  * The commit `bin/toli push` may push, running the pre-push `hook` of `dir` without a heavy-build slot, because every
  * gate recipe the hook declares its only heavy steps (`# toli-light-push-after-gate: <recipe>` lines, each guarded in
- * the hook by `bin/toli gate check`) has a sealed pass on the tree of HEAD, so the hook skips them: HEAD's sha, which
- * the push must then push exactly. Null when the hook declares none or one has no pass there (said on stderr), and the
- * push keeps its slot. Decided before the push queues, so it never waits for a slot only to skip its gate (T2211).
+ * the hook by `bin/toli gate check`) has a sealed pass on the tree of `sha` (default HEAD), so the hook skips them:
+ * that sha, which the push must then push exactly. Null when the hook declares none or one has no pass there (said on
+ * stderr), and the push keeps its slot. Decided before the push queues, so it never waits for a slot only to skip its
+ * gate (T2211).
  */
-export function slotFreePushSha(project: string, dir: string, hook: string): string | null {
+export function slotFreePushSha(project: string, dir: string, hook: string, sha = headSha(dir)): string | null {
     const recipes = [...readFileSync(hook, "utf8").matchAll(LIGHT_AFTER_GATE)].map(([, recipe]) => recipe ?? "");
     if (recipes.length === 0) return null;
-    const sha = headSha(dir);
     const tree = treeSha(dir, sha);
     const proofs: string[] = [];
     for (const recipe of recipes) {
@@ -113,6 +113,53 @@ export function slotFreePushSha(project: string, dir: string, hook: string): str
             `on tree ${short(tree)} (commit ${short(sha)}): pushing exactly that commit without a heavy-build slot`,
     );
     return sha;
+}
+
+/**
+ * `# toli-tag-push-after-gate: <recipe>`: a gate recipe (exact text) whose sealed pass on a tag's tree is everything the
+ * hook checks when a push carries only tags.
+ */
+const TAG_AFTER_GATE = /^#\s*toli-tag-push-after-gate:[ \t]*(\S[^\n]*?)\s*$/gm;
+
+/** One ref a push updates: the object it sends (a sha) and the remote ref it lands as (`refs/tags/v1.2.3`). */
+export type PushedRef = { object: string; remote: string };
+
+/**
+ * Whether a push of exactly `refs` may skip the pre-push `hook` of `dir` (T2288): every ref is a tag, the hook declares
+ * the gate recipes that are all it checks on such a push (`# toli-tag-push-after-gate: <recipe>` lines, the project's
+ * word about its own hook), and each of them has a sealed pass (gate-record.ts) on the tree of every tagged commit. A
+ * tag on a tree the gate already passed would only make the hook repeat that run. Any branch in the push, no
+ * declaration, or a tree without a sealed pass keeps the hook; the reason names the first condition that failed.
+ */
+export function tagPushHookDecision(project: string, dir: string, hook: string, refs: PushedRef[]): HookDecision {
+    if (refs.length === 0) return { skip: false, reason: "the push names no ref" };
+    const branch = refs.find((ref) => !ref.remote.startsWith("refs/tags/"));
+    if (branch !== undefined) return { skip: false, reason: `the push also carries ${branch.remote}, not only tags` };
+    const recipes = [...readFileSync(hook, "utf8").matchAll(TAG_AFTER_GATE)].map(([, recipe]) => recipe ?? "");
+    if (recipes.length === 0)
+        return { skip: false, reason: `${hook} declares no \`# toli-tag-push-after-gate: <recipe>\` for a tag push` };
+    const proofs: string[] = [];
+    for (const ref of refs) {
+        const tag = ref.remote.slice("refs/tags/".length);
+        const commit = resolveSha(dir, ref.object);
+        if (commit === null) return { skip: false, reason: `tag ${tag} names no commit` };
+        const tree = treeSha(dir, commit);
+        for (const recipe of recipes) {
+            const record = readRecord(recordFile(project, tree, recipe));
+            if (record === null || !provenPass(record, project, tree, recipe))
+                return {
+                    skip: false,
+                    reason: `no sealed pass of ${recipe} on tree ${short(tree)} of tag ${tag} (commit ${short(commit)})`,
+                };
+            proofs.push(`${recipe} on tree ${short(tree)} of tag ${tag} (proof ${short(record.proof ?? "")})`);
+        }
+    }
+    return {
+        skip: true,
+        message:
+            `skipping the pre-push hook ${hook}: the push carries only tags, and ${proofs.join(", ")} passed, which ` +
+            "the hook declares is all it checks on a tag push; pushing exactly those tags with --no-verify",
+    };
 }
 
 /**

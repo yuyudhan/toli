@@ -109,6 +109,15 @@ one. See docs/releasing.md.
   waiting one; the variable now counts only with `TOLI_BUILD_SLOT_HOLDER` naming the slot's current holder, which
   every slot holder exports. A lost queue counter no longer gives a newcomer a place ahead of a waiter, and a build
   that gives way to a release-priority run keeps its arrival place (docs/fleet.md "Heavy-build slots", T2276).
+- A release tag on a tree the gate already passed no longer reruns the project's whole pre-push check. A plain
+  `git push origin refs/tags/<tag>` ran a 90-minute `just verify all` on a tag whose tree had a sealed gate pass, and
+  was stopped and pushed with `--no-verify` by hand. `bin/toli push <p> --tag <name>` now pushes exactly one local tag
+  (never `--tags`, never moving a tag origin holds) and skips the pre-push hook with `--no-verify` only when the push
+  carries only tags, the hook declares the gate recipes that are all it checks on a tag push
+  (`# toli-tag-push-after-gate: <recipe>`) and each has a sealed pass on the tagged tree; it says so with the proof
+  and logs `hook-skip` in `logs/gates.log`. A tag on a tree no gate passed on, a hook without the declaration, or a
+  push that also carries a branch runs the hook as before. The release skill tags through it (docs/delivery.md
+  "Gates: long checks run once per tree", T2288).
 
 ## v0.7.1 - 2026-11-21
 
