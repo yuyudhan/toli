@@ -199,6 +199,21 @@ describe("task commands in process", () => {
                 "got 5",
             ],
             [["hold", "T1", "--question", "q", "--option", "no arrow", "--option", "x => y"], "--option must be"],
+            // T2300: the template's placeholders left in an option are no choice for the user.
+            [
+                [
+                    "hold",
+                    "T1",
+                    "--question",
+                    "q",
+                    ...["--option", "<choice> => <what happens then>", "--option", "<choice> => <what happens then>"],
+                ],
+                "is the template's placeholder",
+            ],
+            [
+                ["hold", "T1", "--question", "q", "--option", "yes => ship it", "--option", "no => <then>"],
+                "is the template's placeholder",
+            ],
             [
                 ["hold", "T1", "--question", "q", "--option", "a => b", "--option", "c => d", "--recommend", "e"],
                 "--recommend must be",

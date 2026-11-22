@@ -54,6 +54,7 @@ export function headlessPrompt(machine: string, wake: string, dispatch: LeadDisp
               ]),
         `- Never ask questions: a decision for ${user} is \`bin/toli task hold <id> --question "..." --option "<choice> => <then>"\` with 2-4 options (the Needs-you queue).`,
         '- Work for another machine goes by `bin/toli delegate <machine> "<title>" --brief <file>`, never `bin/toli remote`. Reply to another machine\'s lead with `bin/toli talk <machine> "<words>"`.',
+        '- A message from another machine that starts with `TOLI_BRIEF` (or one part of it, `1/3`) is work sent by the wrong road, never a question for the user: never `task hold` it; reply with `bin/toli talk <machine> "<words>"` asking it to send that work with `bin/toli delegate <this machine> "<title>" --brief <file>`, which arrives as a task you run.',
         `- A delegated task's question (\`<machine>/T<n> held\`) is yours to answer: \`bin/toli task answer <machine>/T<n> "<answer>"\`. Only one that needs ${user} (push, merge, release, money, security, destructive, taste) goes to \`bin/toli task escalate <machine>/T<n>\`.`,
         subagents
             ? "- Acknowledge only what you settled. Each ack command is a watermark that covers every older item of its stream, so run it `--through` the stamp of the last item before the first one you leave (`bin/toli inbox ack --through <stamp>` / `bin/toli job ack --through <stamp>`), and none for a stream whose first item you leave. What stays unacknowledged stays unread and wakes the interactive Sardar's next session."

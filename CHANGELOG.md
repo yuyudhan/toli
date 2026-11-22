@@ -8,6 +8,15 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A jawan brief sent with `bin/toli talk` is no longer held as a question for the receiving machine's user. Verify
+  briefs sent in parts quoted the template's `task hold ... --option "<choice> => <what happens then>"` line, so the
+  receiving toli read toli's own hold format and held each part as `<machine> asks for the user's word: ...` with the
+  placeholders as options, and delegation sync carried them to the delegator's Needs-you queue. Now a peer message
+  that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) never asks, a hold quoted with placeholder options
+  is instructions rather than a question, and placeholder options are never parsed; `bin/toli task hold` refuses an
+  option whose choice or outcome is an unfilled `<...>` placeholder; `bin/toli talk` warns when its words start with
+  `TOLI_BRIEF` or run over 4 KB and names `bin/toli delegate <machine> "<title>" --brief <file>`; and the headless lead
+  is told to ask the sender to delegate such a message, never to hold it (docs/sardars.md, T2300).
 - One release now gets one merge run per project clone. A release produced two queued runs in the same second: the
   release catch-up's, and one a scheduled job started with a brief naming the tag but no task, which the catch-up's
   holds never saw (they skipped queued runs and read only tasks). Now the catch-up scan and `catch-up merge` hold a

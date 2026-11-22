@@ -231,3 +231,57 @@ describe("a peer message citing the user's word as authority", () => {
         expect(held(m1).map((task) => task.question)).toEqual([ask]);
     });
 });
+
+// T2300: verify briefs sent with `talk` in parts were held as "m2 asks for the user's word" with the template's
+// `<choice> => <what happens then>` options.
+describe("a jawan brief sent by talk", () => {
+    const HOLD_TEMPLATE = [
+        "Hold the task in the Needs-you format and report, never asking the user directly, only for new scope:",
+        "",
+        '    bin/toli task hold <T-id> --question "<plain words>" \\',
+        '        --option "<choice> => <what happens then>" --option "<choice> => <what happens then>" \\',
+        '        --recommend <n> --blocks "<what waits on the answer>"',
+    ].join("\n");
+    const PARTS = [
+        `TOLI_BRIEF v1 You are the independent verifier for task T766 (part 1/3).\n\n${HOLD_TEMPLATE}`,
+        `(2/3) TOLI_BRIEF v1 continued: read the diff.\n\n${HOLD_TEMPLATE}`,
+        `Part 3/3 of the brief. Landing:\n\n${HOLD_TEMPLATE}`,
+    ];
+
+    test("is never held as a question for the user, on arrival or by the tick", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        ticking(m1, 120);
+        for (const [index, words] of PARTS.entries()) talkItem(m1, "m3", words, 60 - index);
+        m1.ok(["job", "tick"]);
+        expect(held(m1)).toEqual([]);
+        for (const words of PARTS) m2.ok(["talk", "m1", words]);
+        expect(held(m1)).toEqual([]);
+
+        // A real hold in toli's format from a peer still is, with its own options.
+        m2.ok([
+            "talk",
+            "m1",
+            'bin/toli task hold T4 --question "Ship the app today?" --option "yes => ship" --option "no => wait"',
+        ]);
+        expect(held(m1).map((task) => task.options)).toEqual([
+            [
+                { choice: "yes", outcome: "ship" },
+                { choice: "no", outcome: "wait" },
+            ],
+        ]);
+    });
+
+    test("talk warns the sender to use delegate --brief for a brief or an over-4 KB message", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        const sent = m2.toli(["talk", "m1", PARTS[0] ?? ""]);
+        expect(sent.code).toBe(0);
+        expect(sent.stderr).toContain("starts with TOLI_BRIEF");
+        expect(sent.stderr).toContain('bin/toli delegate m1 "<title>" --brief <file>');
+        const long = m2.toli(["talk", "m1", "status: all green. ".repeat(300)]);
+        expect(long.code).toBe(0);
+        expect(long.stderr).toContain("over 4 KB");
+        expect(m2.toli(["talk", "m1", "all green on app"]).stderr).not.toContain("delegate");
+    });
+});

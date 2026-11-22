@@ -2,6 +2,8 @@
 // machine's inbox, which wakes its lead; this is also how leads message each other. Without, this terminal opens that
 // machine's lead conversation (`bin/toli lead attach`, over `ssh -t` for another machine). A person is named by their
 // first name, alone or with this installation's title ("Sam", "Sam <user>"), as their machine shared it (docs/peers.md).
+// Words that are a jawan brief (`TOLI_BRIEF` first) or over 4 KB still go, with a warning to send work by
+// `bin/toli delegate <machine> "<title>" --brief <file>` instead.
 import { Args } from "../core/args.ts";
 import { fleetMachine, inboundOff, inboundOffText, loadFleet, loadMachine, remoteToliCommand } from "../core/config.ts";
 import { persona } from "../core/persona.ts";
@@ -9,7 +11,7 @@ import { isValidName, out, stamp, ToliError, warn } from "../core/util.ts";
 import { queuedText, sendToMachine } from "../jobs/outbox.ts";
 import { loadPeers } from "../peer/store.ts";
 import { addInboxItem } from "../records/inbox.ts";
-import { noteTalkSent } from "../records/word-holds.ts";
+import { isBriefText, noteTalkSent } from "../records/word-holds.ts";
 import { attachLead } from "./lead.ts";
 
 /**
@@ -45,6 +47,22 @@ export function talkTarget(word: string, self: string): string {
     return word;
 }
 
+/** A `talk` longer than this is work to hand over, not a message: it goes by `delegate --brief`. */
+const TALK_MAX_BYTES = 4096;
+
+/** Why `words` should go by `bin/toli delegate ... --brief` instead of `talk` to `machine`, or null when they need not. */
+function talkBriefWarning(machine: string, words: string): string | null {
+    const bytes = Buffer.byteLength(words, "utf8");
+    const why = isBriefText(words)
+        ? "starts with TOLI_BRIEF: a brief is work to run, not a message"
+        : bytes > TALK_MAX_BYTES
+          ? `is ${Math.ceil(bytes / 1024)} KB, over ${TALK_MAX_BYTES / 1024} KB: a message that long is work to hand over`
+          : null;
+    return why === null
+        ? null
+        : `talk: this message ${why}; send work with \`bin/toli delegate ${machine} "<title>" --brief <file>\` (it arrives as a task its lead runs, and its questions come back held)`;
+}
+
 /** The message a lead gets for `words` from `from`, with how to answer. */
 export function talkMessage(from: string, words: string): { title: string; body: string } {
     return {
@@ -66,6 +84,8 @@ export async function talkCommand(argv: string[]): Promise<number> {
     const words = args.positional[1];
     if (words !== undefined) {
         if (words.trim() === "") throw new ToliError("talk: the message is empty");
+        const warning = talkBriefWarning(machineName, words);
+        if (warning !== null) warn(warning);
         const { title, body } = talkMessage(self, words);
         if (machineName === self) {
             out(`posted to this machine's inbox: ${addInboxItem(self, title, body)}`);

@@ -8,13 +8,22 @@ export type HoldOption = { choice: string; outcome: string };
 export const HOLD_OPTIONS_MIN = 2;
 export const HOLD_OPTIONS_MAX = 4;
 
-/** Parse one `--option "<choice> => <what happens then>"`. */
+/** A template placeholder left unfilled, such as `<choice>` or `<what happens then>`: the whole text one `<...>`. */
+export function isPlaceholder(text: string): boolean {
+    return /^<[^<>]+>$/.test(text.trim());
+}
+
+/** Parse one `--option "<choice> => <what happens then>"`; a template placeholder left in either side is refused. */
 export function parseOption(value: string): HoldOption {
     const at = value.indexOf("=>");
     const choice = at === -1 ? "" : value.slice(0, at).trim();
     const outcome = at === -1 ? "" : value.slice(at + 2).trim();
     if (choice === "" || outcome === "")
         throw new ToliError(`--option must be "<choice> => <what happens then>", got "${value}"`);
+    if (isPlaceholder(choice) || isPlaceholder(outcome))
+        throw new ToliError(
+            `--option "${value}" is the template's placeholder: write the real choice and what happens then`,
+        );
     return { choice, outcome };
 }
 
