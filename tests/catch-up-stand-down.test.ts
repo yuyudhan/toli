@@ -84,6 +84,44 @@ describe("catch-up stands down for live work", () => {
         expect(box.ok(["catch-up", "scan"])).toContain("for nightly");
     });
 
+    test("a catch-up note on an open task plans the merge of its own tag only", () => {
+        const { box, origin } = machine();
+        release(box, origin, "v1.0.0");
+        box.ok(["task", "add", "alpha", "Parser work", "--note", "catch-up v0.9.0: merging it into nightly conflicts"]);
+        expect(box.ok(["catch-up", "scan"])).toContain("for nightly");
+        expect(runs(box)).toHaveLength(1);
+
+        const other = machine();
+        release(other.box, other.origin, "v1.0.0");
+        other.box.ok([
+            "task",
+            "add",
+            "alpha",
+            "Parser work",
+            "--note",
+            "catch-up v1.0.0: merging it into nightly conflicts",
+        ]);
+        expect(other.box.ok(["catch-up", "scan"])).toContain(
+            "nightly: held (T1 already plans merging v1.0.0), tried again next scan",
+        );
+        expect(runs(other.box)).toEqual([]);
+    });
+
+    test("undo refuses while the checkout has uncommitted changes, even to a file the merge left alone", () => {
+        const { box, clone, origin } = machine();
+        release(box, origin, "v1.0.0");
+        box.ok(["catch-up", "scan"]);
+        const self = { env: { TOLI_RUN_ID: runs(box)[0]?.id ?? "" } };
+        box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self);
+        const merged = box.git(clone, ["rev-parse", "HEAD"]);
+        writeFileSync(join(clone, "work.txt"), "someone's edit\n");
+        const refused = box.toli(["catch-up", "undo", "alpha", "--branch", "nightly", "--merge", merged], self);
+        expect(refused.code).not.toBe(0);
+        expect(refused.stderr).toContain("refusing: uncommitted changes in projects/alpha; nothing undone");
+        expect(box.git(clone, ["rev-parse", "HEAD"])).toBe(merged);
+        expect(readFileSync(join(clone, "work.txt"), "utf8")).toBe("someone's edit\n");
+    });
+
     test("a merge whose checks failed is undone, and only that merge, leaving the checkout as found", () => {
         const { box, clone, origin } = machine();
         const before = box.git(clone, ["rev-parse", "HEAD"]);

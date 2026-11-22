@@ -196,8 +196,9 @@ export function mergeRelease(name: string, tag: string, ownTask: string | null =
  * `catch-up undo <project> --branch <b> --merge <sha>`: take back a catch-up merge whose checks failed, leaving the
  * checkout as the merge found it. Only a merge this machine's catch-up recorded making for the project's current
  * release, that is still the branch's tip (nothing on top), not on origin's copy of the branch, in a checkout on that
- * branch: the branch moves back to the merge's first parent with `git reset --keep`, which refuses rather than lose a
- * change in the work tree. The branch's task gets a note. Any other commit is never touched.
+ * branch with no uncommitted changes to tracked files (someone's edit there is never carried across the undo): the
+ * branch moves back to the merge's first parent with `git reset --keep`. The branch's task gets a note. Any other
+ * commit is never touched.
  */
 export function undoMerge(name: string, branch: string, merge: string): string {
     const project = findProject(name);
@@ -215,6 +216,14 @@ export function undoMerge(name: string, branch: string, merge: string): string {
     const target = main === null ? undefined : catchUpTargets(project, clone, main).find((t) => t.branch === branch);
     if (target === undefined || target.dir === null || currentBranch(target.dir) !== branch)
         throw new ToliError(`refusing: ${branch} is not checked out on this machine; nothing undone`);
+    const where = relative(realpathSync(paths.root()), target.dir);
+    const changed = git(target.dir, ["diff", "--quiet", "HEAD", "--"]);
+    if (changed.code !== 0)
+        throw new ToliError(
+            changed.code === 1
+                ? `refusing: uncommitted changes in ${where}; nothing undone`
+                : `refusing: the changes in ${where} could not be read; nothing undone`,
+        );
     const tip = resolveSha(clone, `refs/heads/${branch}`);
     if (tip !== sha)
         throw new ToliError(
@@ -228,7 +237,7 @@ export function undoMerge(name: string, branch: string, merge: string): string {
     const reset = git(target.dir, ["reset", "--quiet", "--keep", parent]);
     if (reset.code !== 0)
         throw new ToliError(
-            `refusing: git reset --keep ${parent.slice(0, 12)} would lose changes in ${relative(realpathSync(paths.root()), target.dir)} (${(reset.stderr || reset.stdout).trim()}); nothing undone`,
+            `refusing: git reset --keep ${parent.slice(0, 12)} failed in ${where} (${(reset.stderr || reset.stdout).trim()}); nothing undone`,
         );
     updateCatchUpState((state) => {
         const entry = state.projects[name];

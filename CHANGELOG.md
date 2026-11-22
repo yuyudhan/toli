@@ -101,8 +101,9 @@ one. See docs/releasing.md.
   or while an open task already plans the merge (its title or brief names the tag, or a catch-up note handed it the
   merge); a catch-up dispatched on a task passes `catch-up merge --task <T-id>`. A queued run no longer holds a
   checkout. Each merge's plan prints `if the checks fail: bin/toli catch-up undo <p> --branch <b> --merge <sha>`, which
-  takes back only a merge this machine's catch-up recorded making, only while it is the branch's unpushed tip, with
-  `git reset --keep`, and refuses any other commit (docs/projects.md "Release catch-up", T2276).
+  takes back only a merge this machine's catch-up recorded making, only while it is the branch's unpushed tip and the
+  checkout has no uncommitted changes, with `git reset --keep`, and refuses any other commit (docs/projects.md
+  "Release catch-up", T2276).
 - Heavy builds now really wait their turn for a build slot. A `TOLI_BUILD_SLOT` inherited from an earlier slot holder
   let every build under it run at once whenever another build held that slot number, so later builds kept passing a
   waiting one; the variable now counts only with `TOLI_BUILD_SLOT_HOLDER` naming the slot's current holder, which

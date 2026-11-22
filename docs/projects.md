@@ -311,9 +311,10 @@ behind main between releases.
 - **A merge whose checks fail is undone.** The plan prints, per merged branch,
   `if the checks fail: bin/toli catch-up undo <p> --branch <b> --merge <sha>`, and the jawan runs it on a failure.
   It takes back only a merge this machine's catch-up recorded making (state/catch-up.json), only while it is still
-  the branch's tip and not on origin's copy of the branch: the branch moves back to the merge's first parent with
-  `git reset --keep`, which refuses rather than lose a change in the work tree, and the branch's task gets a note. A
-  merge with work on top of it, or any commit it did not make, is refused and left as it is.
+  the branch's tip, not on origin's copy of the branch, and the checkout has no uncommitted changes to tracked files
+  (someone's edit is never carried across): the branch moves back to the merge's first parent with
+  `git reset --keep`, and the branch's task gets a note. A merge with work on top of it, or any commit it did not
+  make, is refused and left as it is.
 - **Boxes that cannot run the push gate.** A catch-up push runs the project's pre-push hook like any push. Where that
   hook checks everything main changed in the merge (heavy builds and tests a small machine's capacity forbids), the
   catch-up must not depend on it: declare the merge-in push light in the hook (`# toli-light-push: NAME=VALUE`,
