@@ -140,22 +140,21 @@ export function planSpawn(options: SpawnOptions): SpawnPlan {
 }
 
 /**
- * The task's live runs (queued, starting or running) on this machine. listRuns first records runs whose supervisor
- * died as failed, so a dead run left marked running never counts. Without `replace` a live run refuses the spawn: the
- * lead steers it instead of starting a second jawan on the same copy. With `replace` each is stopped as `run kill`
- * does; the ids are returned for the replacement's record.
+ * The task's live runs (queued, starting or running) on this machine, for `replace` to stop once nothing else refuses
+ * the spawn. listRuns first records runs whose supervisor died as failed, so a dead run left marked running never
+ * counts. Without `replace` a live run refuses the spawn: the lead steers it instead of starting a second jawan on the
+ * same copy.
  */
-function supersedeLiveRuns(task: string, replace: boolean): string[] {
+function liveRunsToReplace(task: string, replace: boolean): JawanRun[] {
     const live = activeRuns().filter((run) => run.task === task);
-    if (live.length === 0) return [];
-    if (!replace) {
+    if (live.length > 0 && !replace) {
         const names = live.map((run) => `${run.id} (${run.status})`).join(", ");
         const first = live[0]?.id ?? "";
         throw new ToliError(
             `${task} already has a live jawan: ${names}. Steer it with \`write agent://${first}\`, or pass --replace to stop it and start this one`,
         );
     }
-    return live.map((run) => stopRun(run.id).id);
+    return live;
 }
 
 /**
@@ -168,11 +167,9 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
     if (options.briefPath === undefined) throw new ToliError("spawn needs --brief <file>");
     const resolved = planSpawn(options);
     loadMachine();
-    // One merge run per release tag and clone (src/jawans/tag-owner.ts): asked before a run is superseded or the
-    // workspace touched, and again under the slots lock, where a run started in the same second is already recorded.
-    const claim = { project: resolved.project, cwd: resolved.cwd, brief: resolved.brief, catchUp: options.catchUp };
-    refuseOwnedTag(claim);
-    const replaced = resolved.task === null ? [] : supersedeLiveRuns(resolved.task, options.replace === true);
+    const superseded = resolved.task === null ? [] : liveRunsToReplace(resolved.task, options.replace === true);
+    // The base brief: what the tag claim reads, before the Workspace block below.
+    const brief = resolved.brief;
     // Ship briefs carry a goal contract (docs/brief-template.md `## Goal`); a missing one is warned about, not refused.
     if (resolved.work === "ship" && !/^## Goal\b/m.test(resolved.brief))
         warn(
@@ -188,6 +185,12 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
         resolved.cwd = workspace.path;
         resolved.brief = `${resolved.brief.trimEnd()}\n${workspaceBrief(resolved.project, resolved.task, workspace)}`;
     }
+    // One merge run per release tag and clone (src/jawans/tag-owner.ts): asked where the run will work, before a run
+    // is superseded, and again under the slots lock, where a run started in the same second is already recorded.
+    const claim = { project: resolved.project, cwd: resolved.cwd, brief, catchUp: options.catchUp };
+    refuseOwnedTag(claim);
+    // `--replace`: each live run is stopped as `run kill` does; its id goes on the replacement's record.
+    const replaced = superseded.map((run) => stopRun(run.id).id);
     const run = startOrQueue(
         {
             harness: resolved.harness,

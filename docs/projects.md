@@ -277,13 +277,17 @@ behind main between releases.
   no second one starts, whatever new tag appears; each branch is handed to one run per release. A machine marked
   full starts none until it is not. state/catch-up.json keeps what was handed out.
 - **One merge run per release.** Whichever source starts it, at most one queued or live run merges a tag on a project
-  clone (a run with the project, or one whose `--cwd` is in the clone or a task worktree of it). The scan and
-  `catch-up merge` hold every branch while another such run's brief (its title included) names the tag as a whole
-  word (`held (run <id> (queued) names <tag> in its brief)`): a scheduled job's merge run needs no task. In turn
-  `bin/toli spawn` refuses a run whose brief names a tag a queued or live catch-up run merges, naming that run
-  (`refusing: release catch-up run <id> (queued) merges <tag> on <p>`). Both check under the jawan-slots lock spawn
-  records runs under, so of two starts in the same second the later one sees the first. A run for another tag is not
-  affected.
+  clone (a run with the project, or one whose `--cwd` is in the clone). A brief merges a tag when a line of it, the
+  title included, says merge (merges, merged, merging) and names the tag as a whole release name (`v1.2.3`, never
+  inside `v1.2.30` or `v1.2.3-rc.1`): `# Nightly: merge v1.2.3`, or an explicit `Merges: v1.2.3` line. A brief that
+  only mentions the tag (`Hotfix: regression since v1.2.3`) merges nothing, and a run in a task worktree
+  (`projects/.worktrees/<p>/<T>`) works on its task's branch, so neither counts. A job brief that says only "merge
+  the latest tag" names no tag and is not seen; write the tag into it. The scan and `catch-up merge` hold every
+  branch while another such run merges the tag (`held (run <id> (queued) merges <tag> by its brief)`): a scheduled
+  job's merge run needs no task. In turn `bin/toli spawn` refuses a run whose brief merges a tag a queued or live
+  catch-up run merges, naming that run (`refusing: release catch-up run <id> (queued) merges <tag> on <p>`). Both
+  check under the jawan-slots lock spawn records runs under, so of two starts in the same second the later one sees
+  the first. A run for another tag is not affected.
 - **Checked out and free, or skipped.** The jawan runs in the project clone and touches only branches checked out on
   this machine. A branch that is not (a same-branch clone switched to another branch, say a release train's) is
   `skipped: not checked out here`: no jawan starts for it, nothing is merged, checked, built or pushed, and the next

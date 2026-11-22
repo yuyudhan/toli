@@ -20,10 +20,12 @@ one. See docs/releasing.md.
 - One release now gets one merge run per project clone. A release produced two queued runs in the same second: the
   release catch-up's, and one a scheduled job started with a brief naming the tag but no task, which the catch-up's
   holds never saw (they skipped queued runs and read only tasks). Now the catch-up scan and `catch-up merge` hold a
-  branch while another queued or live run of the clone names the tag in its brief or title, and `bin/toli spawn`
-  refuses a run whose brief names a tag a queued or live catch-up run merges, naming that run. Spawn checks again
-  under the jawan-slots lock it records runs under, so of two starts in the same second the later one sees the
-  first. Runs for other tags are not affected (docs/projects.md "Release catch-up", T2298).
+  branch while another queued or live run of the clone merges the tag by its brief, and `bin/toli spawn` refuses a
+  run whose brief merges a tag a queued or live catch-up run merges, naming that run. A brief merges a tag only on a
+  line that says merge and names it as a whole release name (not inside `v1.2.3-rc.1`), so a hotfix brief that only
+  mentions the release still spawns, and a run in a task worktree never counts. Spawn checks again under the
+  jawan-slots lock it records runs under, so of two starts in the same second the later one sees the first. Runs for
+  other tags are not affected (docs/projects.md "Release catch-up", T2298).
 - A run the lead service or the tick starts now finds the toolchains under the home folder. Started with the service's
   minimal PATH, catch-up jawans lacked `~/.cargo/bin`, so `bin/toli commit` refused every staged `Cargo.lock` until
   the jawan put it on PATH by hand. Every toli command now appends the tool folders its PATH lacks and that exist
