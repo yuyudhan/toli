@@ -272,6 +272,42 @@ describe("a jawan brief sent by talk", () => {
         ]);
     });
 
+    // T2300 round 2: a quoted template beside real options must not switch off the real question.
+    test("a real question quoting the template beside it is still held with its real options", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        const TEMPLATE_LINE =
+            'bin/toli task hold <T-id> --question "<plain words>" --option "<choice> => <what happens then>"';
+        m2.ok([
+            "talk",
+            "m1",
+            `## Question\n\nRestart the app stack?\n1. now => restart\n2. later => wait\n\n## Notes\n\nThe brief said to ask with:\n\n    ${TEMPLATE_LINE}`,
+        ]);
+        m2.ok([
+            "talk",
+            "m1",
+            `bin/toli task hold T4 --question "Ship the app today?" --option "yes => ship" --option "no => wait" (template was: ${TEMPLATE_LINE})`,
+        ]);
+        // Every option a placeholder: a quoted template, which asks nothing.
+        m2.ok(["talk", "m1", `How to ask, from the brief:\n\n    ${TEMPLATE_LINE} --option "<choice> => <then>"`]);
+        expect(held(m1).map((task) => [task.question, task.options])).toEqual([
+            [
+                "Restart the app stack?",
+                [
+                    { choice: "now", outcome: "restart" },
+                    { choice: "later", outcome: "wait" },
+                ],
+            ],
+            [
+                expect.stringContaining("Ship the app today?"),
+                [
+                    { choice: "yes", outcome: "ship" },
+                    { choice: "no", outcome: "wait" },
+                ],
+            ],
+        ]);
+    });
+
     test("talk warns the sender to use delegate --brief for a brief or an over-4 KB message", () => {
         const { m1, m2 } = pair();
         withProject(m1, "app");

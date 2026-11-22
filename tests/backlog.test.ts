@@ -230,6 +230,23 @@ describe("task commands in process", () => {
         inProcess(box.root, () => expect(loadBacklog()).toMatchObject({ nextId: 2, tasks: [{ status: "dropped" }] }));
     });
 
+    // T2300: only a whole `<...>` is a placeholder; a choice naming something in angle brackets is a real one.
+    test("hold accepts an option that only mentions something in angle brackets", () => {
+        const box = project();
+        const task = commandIn(box.root, taskCommand);
+        task(["add", "alpha", "One"]);
+        task(["hold", "T1", "--question", "q", "--option", "merge <T12> first => ship it", "--option", "wait => hold"]);
+        inProcess(box.root, () =>
+            expect(loadBacklog().tasks[0]).toMatchObject({
+                status: "held",
+                options: [
+                    { choice: "merge <T12> first", outcome: "ship it" },
+                    { choice: "wait", outcome: "hold" },
+                ],
+            }),
+        );
+    });
+
     // T1905: a follow-up on a done task had no way to make it active again.
     test("start --reopen makes a done or dropped task active again, noted; plain start names the flag", () => {
         const box = project();

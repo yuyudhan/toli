@@ -19,7 +19,7 @@ import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
 import { listInbox } from "./inbox.ts";
-import { collapse, parseWordQuestion, type WordQuestion } from "./word-question.ts";
+import { collapse, parseWordQuestion, quotesTemplateOnly, type WordQuestion } from "./word-question.ts";
 
 /** One held question: the task holding it and where it came from. */
 type HeldWord = { task: string; at: string; source: string };
@@ -77,9 +77,6 @@ const REPLY_OPTION = /(?:^|[.!?:;]\s+)Reply\s+(?:[`"'][^`"'\n]+[`"']|\(?\d\)?(?!
 /** toli's own hold format: a `## Question` section, or a `task hold ... --question` command line. */
 const HOLD_FORMAT = [/^##\s*Question\s*$/m, /--question\s+["']/];
 
-/** A hold command quoted as a template (`--option "<choice> => ..."`): instructions for how to ask, not a question. */
-const TEMPLATE_OPTION = /--option\s+["']\s*<[^<>"'\n]+>\s*=>/;
-
 /**
  * Whether `text` is a jawan brief (`TOLI_BRIEF v1` first, after an optional part marker such as `1/3` or `(part 2/3)`):
  * work handed over, which goes by `bin/toli delegate <machine> "<title>" --brief <file>`, never a question.
@@ -91,14 +88,14 @@ export function isBriefText(text: string): boolean {
 /**
  * Whether `text` asks for the user's word. A `peer` message (not a delegated task's held question, which asks by
  * being held) asks only in a paragraph that is a question (has a `?`), so a Sardar relaying his rules ("merges still
- * need his word") is not a request; toli's hold format and `Reply <option>` ask in themselves, unless the hold is a
- * template with placeholder options. A jawan brief sent as a peer message asks nothing: it is work to run. A mention
- * that cites his word as authority never asks.
+ * need his word") is not a request; toli's hold format and `Reply <option>` ask in themselves, unless every option the
+ * hold gives is a template placeholder (a quoted template, quotesTemplateOnly). A jawan brief sent as a peer message
+ * asks nothing: it is work to run. A mention that cites his word as authority never asks.
  */
 export function asksForWord(text: string, peer: boolean): boolean {
     if (peer && isBriefText(text)) return false;
     if (REPLY_OPTION.test(text)) return true;
-    if (peer && !TEMPLATE_OPTION.test(text) && HOLD_FORMAT.some((pattern) => pattern.test(text))) return true;
+    if (peer && !quotesTemplateOnly(text) && HOLD_FORMAT.some((pattern) => pattern.test(text))) return true;
     const phrases = wordPhrases();
     return text
         .split(/\n\s*\n/)

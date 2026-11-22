@@ -139,9 +139,10 @@ through `talk <machine> "<words>"` instead. Directly on the machine, the same is
 lead; the message says to reply with `bin/toli talk <this machine> "<reply>"`. That is also how leads talk to each
 other: short messages, queued in `state/outbox/` and retried by the minute tick while the other machine is
 unreachable. Work goes by `bin/toli delegate <machine> "<title>" --brief <file>`, never by `talk`: words that start
-with `TOLI_BRIEF` (a jawan brief) or run over 4 KB still go, with a warning naming `delegate --brief`, and the
-receiving lead never holds them as a question for its user; it asks the sender to delegate them instead. To a
-paired peer they go over HTTPS first, signed, with ssh as the fallback
+with `TOLI_BRIEF` (a jawan brief) or run over 4 KB still go, with a warning naming `delegate --brief`. On receipt
+only the `TOLI_BRIEF` ones are treated differently: the receiving lead never holds such a message as a question for
+its user and asks the sender to delegate it instead (size is not checked there). To a paired peer they go over HTTPS
+first, signed, with ssh as the fallback
 ([peers.md](peers.md#delivery)); to an unpaired fleet machine over ssh. A machine that takes no inbound ssh
 (`inbound: false`) pulls its messages, delegations and results from the others' outboxes every minute instead
 ([fleet.md](fleet.md#machines-that-take-no-inbound-ssh)), or from its paired peers over HTTPS. A message from
@@ -241,8 +242,9 @@ A question that asks for the user's word never waits in the inbox alone: the rec
 Needs-you queue (`bin/toli needs`) on arrival. It asks for his word when it says so (`<name>'s word`, `question for
 <name>`, `needs his word`, `word needed`, `Reply <option>` with a quoted option, a number or yes/no), or, in a peer
 message, when it is in toli's own hold format (a `## Question` section, a `task hold ... --question` line), unless
-its options are the template's placeholders (`--option "<choice> => <what happens then>"`: instructions quoted from
-a brief, not a question). A peer message that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) is a
+every option it gives is the template's placeholder (`--option "<choice> => <what happens then>"`: instructions
+quoted from a brief, not a question); placeholder options beside real ones are ignored and the real ones held. A
+peer message that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) is a
 jawan brief and never asks. In a peer message a phrase asks only in a paragraph that is a question (has a `?`), and
 a phrase citing his word as authority never asks: `on <name>'s word`, `act on <name>'s word`, `<name>'s word
 (2026-11-18): '...'` quoting him, `questions for <name> go to <machine>`. A lead relaying his instructions or the

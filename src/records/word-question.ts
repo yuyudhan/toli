@@ -23,22 +23,42 @@ function freeOption(text: string): HoldOption | null {
     return choice === "" ? null : { choice, outcome };
 }
 
+/** `--option "a => b"` flags, and `N. a => b` (or `- a => b`) lines: the options a message writes as pairs. */
+const FLAGGED = /--option\s+["']([^"'\n]+?)\s*=>\s*([^"'\n]+)["']/g;
+const LISTED = /^\s*(?:\d+[.)]|-)\s*(.+?)\s*=>\s*(.+)$/gm;
+
+/** The `choice => outcome` pairs `pattern` finds in `text`, placeholders included. */
+function writtenPairs(text: string, pattern: RegExp): HoldOption[] {
+    return [...text.matchAll(pattern)].flatMap((match) => {
+        const choice = collapse(match[1] ?? "");
+        const outcome = collapse(match[2] ?? "");
+        return choice === "" || outcome === "" ? [] : [{ choice, outcome }];
+    });
+}
+
+const placeholderOption = (option: HoldOption): boolean =>
+    isPlaceholder(option.choice) || isPlaceholder(option.outcome);
+
+/**
+ * Whether `text` only quotes the hold template: it writes options, and every one of them is a placeholder
+ * (`--option "<choice> => <what happens then>"`). A message with any real option asks with it. Listed options are
+ * read with the `--option` flags taken out, so a wrapped `--option` line is never read as a `- a => b` item.
+ */
+export function quotesTemplateOnly(text: string): boolean {
+    const written = [...writtenPairs(text, FLAGGED), ...writtenPairs(text.replace(FLAGGED, ""), LISTED)];
+    return written.length > 0 && written.every(placeholderOption);
+}
+
 /**
  * The options a message offers: `--option "a => b"`, `N. a => b` lines, `(1) ... (2) ...`, `Reply X to Y`, yes/no.
  * A template placeholder (`<choice> => <what happens then>`) is no option.
  */
 function parseOptions(text: string): HoldOption[] {
     const pairs = (pattern: RegExp): HoldOption[] =>
-        [...text.matchAll(pattern)].flatMap((match) => {
-            const choice = collapse(match[1] ?? "");
-            const outcome = collapse(match[2] ?? "");
-            return choice === "" || outcome === "" || isPlaceholder(choice) || isPlaceholder(outcome)
-                ? []
-                : [{ choice, outcome }];
-        });
-    const flagged = pairs(/--option\s+["']([^"'\n]+?)\s*=>\s*([^"'\n]+)["']/g);
+        writtenPairs(text, pattern).filter((option) => !placeholderOption(option));
+    const flagged = pairs(FLAGGED);
     if (flagged.length > 0) return clampOptions(flagged);
-    const listed = pairs(/^\s*(?:\d+[.)]|-)\s*(.+?)\s*=>\s*(.+)$/gm);
+    const listed = pairs(LISTED);
     if (listed.length > 0) return clampOptions(listed);
     const numbered = [...text.matchAll(/\((\d)\)\s*([\s\S]+?)(?=\s*\(\d\)|\n\n|$)/g)].flatMap((match) => {
         const option = freeOption(match[2] ?? "");

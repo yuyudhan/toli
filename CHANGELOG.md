@@ -12,8 +12,9 @@ one. See docs/releasing.md.
   briefs sent in parts quoted the template's `task hold ... --option "<choice> => <what happens then>"` line, so the
   receiving toli read toli's own hold format and held each part as `<machine> asks for the user's word: ...` with the
   placeholders as options, and delegation sync carried them to the delegator's Needs-you queue. Now a peer message
-  that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) never asks, a hold quoted with placeholder options
-  is instructions rather than a question, and placeholder options are never parsed; `bin/toli task hold` refuses an
+  that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) never asks, a hold whose every option is a
+  placeholder is a quoted template rather than a question, and placeholder options are never parsed (real options
+  beside them still are, and held); `bin/toli task hold` refuses an
   option whose choice or outcome is an unfilled `<...>` placeholder; `bin/toli talk` warns when its words start with
   `TOLI_BRIEF` or run over 4 KB and names `bin/toli delegate <machine> "<title>" --brief <file>`; and the headless lead
   is told to ask the sender to delegate such a message, never to hold it (docs/sardars.md, T2300).
@@ -24,7 +25,9 @@ one. See docs/releasing.md.
   run whose brief merges a tag a queued or live catch-up run merges, naming that run. A brief merges a tag only on a
   line that says merge and names it as a whole release name (not inside `v1.2.3-rc.1`), so a hotfix brief that only
   mentions the release still spawns, and a run in a task worktree never counts. Spawn checks again under the
-  jawan-slots lock it records runs under, so of two starts in the same second the later one sees the first. Runs for
+  jawan-slots lock it records runs under, so of two starts in the same second the later one sees the first. A task
+  run is checked before its workspace is prepared, and `--replace` stops the live run only under that lock once the
+  check passed, so a refused spawn neither switches the shared clone nor leaves the task without its jawan. Runs for
   other tags are not affected (docs/projects.md "Release catch-up", T2298).
 - A run the lead service or the tick starts now finds the toolchains under the home folder. Started with the service's
   minimal PATH, catch-up jawans lacked `~/.cargo/bin`, so `bin/toli commit` refused every staged `Cargo.lock` until
