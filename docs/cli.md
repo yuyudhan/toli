@@ -99,7 +99,7 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     task add <project> "<title>" [--shape ship|scout] [--tier light|standard|deep] [--note "..."]
     task list [--json] [--status queued|active|held|done|dropped] [--project <p>] [--fleet [--cached]]
     task start <id> [--agent <id>] [--reopen] | done <id> [--report <path>] [--commit <sha>] [--note "..."]
-    task wait <id> --on "<what it waits on>"
+    task wait <id> --on "<what it waits on>"   ("slot ..." when only a free slot here: it is queue)
     task pin <id> [--reason "..."] | unpin <id>
     task hold <id> --question "..." --option "<choice> => <what happens then>" (2-4 times) [--recommend <n|choice>] [--blocks "..."] [--reversible]
     task answer <id|machine/T<n>> "<answer>" [--from <machine>] | drop <id>

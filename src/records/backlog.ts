@@ -88,6 +88,7 @@ export type Task = {
      * `task wait --on "<what>"`: the task is active but deliberately waits on something outside a jawan (a deferred
      * spawn, a push, another task, a slice `delegate --for` handed to another machine); oversight reports it as
      * waiting, never as needing a re-dispatch. Recording a new jawan, holding, finishing or dropping the task clears it.
+     * A wait on a free jawan slot here (`--on "slot ..."`, `--on "next free slot"`: src/records/slot-wait.ts) is queue.
      */
     waitingOn?: string;
     /** `task pin`: stays on this machine, never offered to another by the queue balancer; the reason ("" if none). */

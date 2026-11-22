@@ -15,6 +15,7 @@ import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
 import { notify, sendToMachine } from "../jobs/outbox.ts";
 import type { AgentReport } from "./agents.ts";
 import type { Task } from "./backlog.ts";
+import { waitsForSlot } from "./slot-wait.ts";
 
 export const DEFAULT_IDLE_MACHINE_MINUTES = 30;
 
@@ -96,7 +97,9 @@ function alert(waiting: Task[], minutes: number): string {
  */
 export function watchIdleMachine(tasks: Task[], at: Date = now()): IdleMachine {
     const waiting = tasks.filter(
-        (task) => task.status === "queued" || (task.status === "active" && task.waitingOn === undefined),
+        (task) =>
+            task.status === "queued" ||
+            (task.status === "active" && (task.waitingOn === undefined || waitsForSlot(task))),
     );
     if (waiting.length === 0 || !hasMachine()) return { idleMinutes: null, lines: [] };
     const last = lastActivityMs(listRuns(), at);

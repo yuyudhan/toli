@@ -162,9 +162,10 @@ while one is running.
     bin/toli fleet queues [--json]            # every machine's queue, lightest per jawan slot first
     bin/toli pick [--project <p>] [--shape s] [--json]   # the machine for one unit of work; exit 2 with reasons when none
 
-`pick` and `fleet queues` rank machines by queue per jawan slot: queued tasks plus running jawans (spawn runs and
-native subagents recorded with `task start --agent`) plus waiting runs, over `capacity.maxRuns` (active tasks with no
-jawan here, such as a lead's bookkeeping or work delegated elsewhere, and held tasks are not queue). Lightest first;
+`pick` and `fleet queues` rank machines by queue per jawan slot: queued tasks plus tasks parked for a free slot here
+(below) plus running jawans (spawn runs and native subagents recorded with `task start --agent`) plus waiting runs,
+over `capacity.maxRuns` (active tasks with no jawan here, such as a lead's bookkeeping, work delegated elsewhere or a
+wait on anything but a slot here, and held tasks are not queue). Lightest first;
 on equal load a machine with the project's clone wins, then this machine, then name
 order. Left out: an unreachable machine, one whose lead said it is full (`bin/toli lead full`), or one without the
 project's clone when its URL is unknown here; when none is left, `pick` exits 2. Every `lead.balanceMinutes` the
@@ -603,7 +604,8 @@ answer` posts no wake of its own; only an answer forwarded from another machine'
   `bin/toli needs`. A run that ended on its own (done, failed on its harness, `run kill`), a subagent that stopped
   reporting, a machine marked full (`lead full`) and `lead.dispatch` "subagents" are left to the lead as before. The
   tick logs each one (`T<n>: re-dispatched as <run> (queued)`, `T<n>: held, its re-dispatched jawan died too`).
-- **A machine that stopped working.** With queued or active work (not waiting on something) and no agent activity
+- **A machine that stopped working.** With queued or active work (not waiting on something, or waiting only on a
+  free slot here: below) and no agent activity
   for `oversight.idleMachineMinutes` (default 30; activity is a jawan run running, started or ended, a subagent's
   report or a lead turn), the tick also takes a subagent that stopped reporting as dead and re-dispatches it as above.
   When no lead session lives there either (no interactive session, no headless turn), it alerts once per idle spell:
@@ -616,9 +618,20 @@ answer` posts no wake of its own; only an answer forwarded from another machine'
 rate/usage limit`).
 - **Tasks that wait.** `bin/toli task wait T<n> --on "<what>"` marks an active task as deliberately waiting (a
   deferred spawn, a push, another task). Next names it as `waiting on <what>` after the stale tasks, never as a
-  re-dispatch; the tick and `fleet check` leave it out, and `task list` (`--fleet` too) shows `(waiting on: <what>)`
+  re-dispatch; the tick and `fleet check` leave it out (unless it waits on a free slot here, below), and `task list`
+  (`--fleet` too) shows `(waiting on: <what>)`
   on its line. Recording a new jawan or holding the task ends the wait. A machine's own helpers that defer or trigger
   work call it for the tasks they hold back.
+- **Waits on a free slot are queue.** A task parked only until a jawan slot frees here waits on capacity, not on
+  something else: say so with an `--on` text that starts with `slot` (`--on "slot: after T610"`,
+  `--on "slot (3/3 busy)"`) or with `free slot`, optionally after `a`, `the` or `next` and with one word between
+  `free` and `slot` (`--on "a free slot"`, `--on "next free web slot"`). Such a task counts in the machine's queue
+  (`slotWaits` in `resources --json`, `queue 14 (3 queued + 8 waiting for a slot, ...)` in `fleet queues` and
+  `resources`), so `pick`, `fleet queues` and the balancing pass see it, and the pass offers it to a lighter machine;
+  `fleet check` and the idle-machine watchdog treat it as waiting work. A wait on a person, a release, a push or
+  another machine (`--on "a build machine with the clone when a slot frees"` names another machine) is not queue, nor
+  is a held task, nor one a live run here works on (that counts as the run). A machine on an older toli publishes no
+  `slotWaits`; its `depth` stands as it reported it.
 - **Work held on another machine.** `bin/toli delegate <machine> ... --for T<n>` on a task that keeps its own jawan
   (a slice) sets the wait itself: the task waits on `<machine>/T<m> (delegated)`, since the delegated task reports
   back here. Once that delegation is done, dropped or handed back, the task waits on the newest slice still out, or

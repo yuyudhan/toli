@@ -3,19 +3,23 @@ import { now } from "../core/util.ts";
 import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
 import { agentState, delegatedAway, nativeAgent } from "../records/agents.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
+import { waitsForSlot } from "../records/slot-wait.ts";
 import { staleTaskMinutes } from "../records/stale.ts";
 import { currentFull, type Full } from "./full.ts";
 
 /**
  * The machine's work queue: its own backlog's queued, active and held tasks, and its jawans. `depth` is the work
- * waiting on or using its jawans: queued tasks + running jawans + queued runs. `jawansRunning` counts the `bin/toli
- * spawn` runs holding a slot and the native harness subagents working on its tasks (`subagentJawans`), and
- * `subagents` is that second part. Other active tasks are not counted (a lead's bookkeeping tasks, work delegated
- * elsewhere, a task waiting on something). Machines rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its
- * lead takes no more work.
+ * waiting on or using its jawans: queued tasks + tasks parked for a free slot here (`slotWaits`,
+ * src/records/slot-wait.ts) + running jawans + queued runs. `jawansRunning` counts the `bin/toli spawn` runs holding
+ * a slot and the native harness subagents working on its tasks (`subagentJawans`), and `subagents` is that second
+ * part. Other active tasks are not counted (a lead's bookkeeping tasks, work delegated elsewhere, a task waiting on
+ * anything but a slot here).
+ * Machines rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its lead takes no more work.
  */
 export type Queue = {
     queued: number;
+    /** Active tasks parked with `task wait` for a free slot here; absent from machines on an older toli. */
+    slotWaits?: number;
     active: number;
     held: number;
     jawansRunning: number;
@@ -36,12 +40,15 @@ function workedByRuns(runs: JawanRun[]): Set<string> {
 }
 
 /**
- * The queued tasks that wait for a jawan: no run of this machine (running or waiting for a slot) works on them and
- * no other machine has them (an open delegation). Only these count as queue and only these are offered to another lead.
+ * The tasks that wait for a jawan: queued, or parked for a free slot here (`waitsForSlot`), that no run of this machine
+ * (running or waiting for a slot) works on and no other machine has (an open delegation). Only these count as queue and
+ * only these are offered to another lead.
  */
 export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun[] = listRuns()): Task[] {
     const working = workedByRuns(runs);
-    return tasks.filter((task) => task.status === "queued" && !working.has(task.id) && !delegatedAway(task));
+    return tasks.filter(
+        (task) => (task.status === "queued" || waitsForSlot(task)) && !working.has(task.id) && !delegatedAway(task),
+    );
 }
 
 /**
@@ -81,19 +88,22 @@ export function localQueue(): Queue {
     const tasks = loadBacklog().tasks;
     const count = (status: string): number => tasks.filter((task) => task.status === status).length;
     const runs = listRuns();
-    const queued = waitingTasks(tasks, runs).length;
+    const waiting = waitingTasks(tasks, runs);
+    const queued = waiting.filter((task) => task.status === "queued").length;
+    const slotWaits = waiting.length - queued;
     const subagents = subagentJawans(tasks, runs);
     const jawansRunning = runs.filter((entry) => RUNNING.includes(entry.status)).length + subagents;
     const jawansQueued = runs.filter((entry) => entry.status === "queued").length;
     const full = currentFull();
     return {
         queued,
+        slotWaits,
         active: count("active"),
         held: count("held"),
         jawansRunning,
         subagents,
         jawansQueued,
-        depth: queued + jawansRunning + jawansQueued,
+        depth: waiting.length + jawansRunning + jawansQueued,
         ...(full === null ? {} : { full }),
     };
 }
@@ -103,10 +113,15 @@ export function perSlot(depth: number, slots: number): number {
     return Math.round((depth / Math.max(1, slots)) * 100) / 100;
 }
 
-/** `queue <depth> (<q> queued, <r> running + <w> waiting; <a> active, <h> held)`, or `queue unknown`. */
+/**
+ * `queue <depth> (<q> queued[ + <s> waiting for a slot], <r> running + <w> waiting; <a> active, <h> held)`, or
+ * `queue unknown`. The slot waits show only when there are any.
+ */
 export function queueText(queue: Queue | null): string {
     if (queue === null) return "queue unknown";
-    const text = `queue ${queue.depth} (${queue.queued} queued, ${queue.jawansRunning} running + ${queue.jawansQueued} waiting; ${queue.active} active, ${queue.held} held)`;
+    const slotWaits = queue.slotWaits ?? 0;
+    const waits = slotWaits === 0 ? "" : ` + ${slotWaits} waiting for a slot`;
+    const text = `queue ${queue.depth} (${queue.queued} queued${waits}, ${queue.jawansRunning} running + ${queue.jawansQueued} waiting; ${queue.active} active, ${queue.held} held)`;
     return queue.full === undefined ? text : `full: ${queue.full.reason}; ${text}`;
 }
 

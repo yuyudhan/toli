@@ -159,6 +159,8 @@ export function parseResources(text: string): Resources {
         }
         queue = {
             queued: count("queued"),
+            // A peer on an older toli publishes no slotWaits: its depth stands as it reported it.
+            ...(parts.get("slotWaits") === undefined ? {} : { slotWaits: count("slotWaits") }),
             active: count("active"),
             held: count("held"),
             jawansRunning: count("jawansRunning"),

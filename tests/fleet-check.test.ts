@@ -136,4 +136,18 @@ describe("oversight never pauses in away mode", () => {
         expect(output).toContain("; not checked: m3 (");
         expect(box.ok(["fleet", "status"], { env: ENV })).not.toContain("BLIND");
     });
+
+    test("a task parked for a free slot here is waiting work an idle machine can take; other waits are not (T2265)", () => {
+        const at = "2026-03-04T09:00:00.000Z";
+        const box = fleet(remoteSnapshot("m2", { projects: ["alpha"] }));
+        withProject(box, "alpha");
+        box.ok(["task", "add", "alpha", "slot slice"]);
+        box.ok(["task", "add", "alpha", "push slice"]);
+        box.ok(["task", "wait", "T1", "--on", "next free alpha slot (3/3 busy)"], { now: at });
+        box.ok(["task", "wait", "T2", "--on", "the push"], { now: at });
+        stubFleetCheck(box, { stale: [], waiting: [] });
+        const output = box.ok(["fleet", "check"], { env: ENV, now: at });
+        expect(output).toContain("- m2: T1 (alpha, active): slot slice\n");
+        expect(output).not.toContain("push slice");
+    });
 });

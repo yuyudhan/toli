@@ -337,15 +337,18 @@ Rules that keep the list consistent without locks across machines:
     bin/toli lead full [--reason "..."] [--until 2h] | --clear | --status
     bin/toli pick [--project <p>] [--shape ship|scout] [--json]
 
-Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, running
-jawans, queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a jawan plus
+Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, `slotWaits`,
+running jawans, queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a
+jawan plus tasks parked with `task wait` for a free slot here (`slotWaits`: an `--on` text starting with `slot` or
+`[a|the|next] free [<word>] slot`, [fleet.md](fleet.md#oversight)) plus
 running jawans plus queued jawan runs. Running jawans are `bin/toli spawn` runs holding a slot and native harness
 subagents (omp `task`, Claude Code `Agent`) recorded with `bin/toli task start T<n> --agent <id>` that are running now
 (they report running, docs/harnesses.md "Jawan slots"): one per distinct agent id on an active task, unless a live
 spawn run works on that task (then only the run counts). A queued task a
 run already works on, or one delegated to another machine and still open there, is not counted again; active tasks
-with no jawan here (a lead's bookkeeping, work delegated elsewhere, a task waiting on something with `task wait`)
-and held tasks are not queue. `pick` and
+with no jawan here (a lead's bookkeeping, work delegated elsewhere, a task waiting with `task wait` on anything but a
+free slot here) and held tasks are not queue. A machine on an older toli publishes no `slotWaits`; its depth stands as
+it reported it. `pick` and
 `fleet queues` rank machines by depth per jawan slot (`capacity.maxRuns`), lightest first; on equal load a machine
 with the project's clone wins, then this machine, then name order. CPU load, memory and disk are shown for
 information and are never a reason to pass a machine over: a machine busy with builds but with an empty queue gets
@@ -371,7 +374,8 @@ back on arrival with the reason, and the originator's task is queued again. Deta
 
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer
-(`delegate queued work to <machine>`, listing only queued tasks no jawan works on, no other machine has, and that
+(`delegate queued work to <machine>`, listing only queued tasks and slot waits no jawan works on, no other machine
+has, and that
 machine can take: not delegated here by another machine (the balancer never bounces work or delegates it on, so
 verify work that machine delegated never goes back to it), not pinned here, and of a project that machine has a
 clone of: the `projects` its `resources --json` publishes, so a machine that registered only some projects is only
