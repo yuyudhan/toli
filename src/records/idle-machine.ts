@@ -11,11 +11,11 @@ import { fleetMachine, hasMachine, loadMachine, machineSettings } from "../core/
 import { paths } from "../core/paths.ts";
 import { now, readJson, stamp, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { interactiveLeadPid, readLeadState, turnPid } from "../fleet/lead-state.ts";
+import { waitingTasks } from "../fleet/queue.ts";
 import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
 import { notify, sendToMachine } from "../jobs/outbox.ts";
 import type { AgentReport } from "./agents.ts";
 import type { Task } from "./backlog.ts";
-import { waitsForSlot } from "./slot-wait.ts";
 
 export const DEFAULT_IDLE_MACHINE_MINUTES = 30;
 
@@ -96,10 +96,18 @@ function alert(waiting: Task[], minutes: number): string {
  * spell (keyed by the last activity).
  */
 export function watchIdleMachine(tasks: Task[], at: Date = now()): IdleMachine {
+    // A wait (`task wait`) is no waiting work, unless it is a slot wait the queue counts (src/fleet/queue.ts
+    // waitingTasks: not run here, not delegated away).
+    const slotWaits = new Set(
+        waitingTasks(tasks)
+            .filter((task) => task.status === "active")
+            .map((task) => task.id),
+    );
     const waiting = tasks.filter(
         (task) =>
             task.status === "queued" ||
-            (task.status === "active" && (task.waitingOn === undefined || waitsForSlot(task))),
+            (task.status === "active" && task.waitingOn === undefined) ||
+            slotWaits.has(task.id),
     );
     if (waiting.length === 0 || !hasMachine()) return { idleMinutes: null, lines: [] };
     const last = lastActivityMs(listRuns(), at);

@@ -48,8 +48,9 @@ work goes, never CPU, load or memory; there is no locking between jawans.
   `capacity.maxRuns` with `bin/toli spawn` runs. When it says `jawans at cap N/N ...: queue instead`, start no
   native subagent: leave the task queued (`bin/toli task add ...`), delegate it to a shorter queue, or use
   `bin/toli spawn`, which queues the run until a slot frees. A task you park for a free slot here with
-  `bin/toli task wait` takes an `--on` text starting with `slot` (`--on "slot: after T610"`) or `next free slot`,
-  so it still counts in this machine's queue; any other wait text is not queue and other leads would see it as short.
+  `bin/toli task wait` takes an `--on` text starting with `slot` (`--on "slot: after T610"`, `--on "slot (3/3 busy)"`)
+  or `next free slot`, so it still counts in this machine's queue (exact grammar: docs/fleet.md "Waits on a free slot
+  are queue"); any other wait text, or one naming another machine (`on <machine>`), is not queue.
 - Another machine wins: record the task and write its brief as usual (step 4), then, instead of spawning, hand it
   to that machine's Sardar:
 

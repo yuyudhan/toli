@@ -1,4 +1,5 @@
 // A machine's work queue (docs/sardars.md): what ranks machines for new work, published in `resources --json`.
+import { otherFleetMachines } from "../core/config.ts";
 import { now } from "../core/util.ts";
 import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
 import { agentState, delegatedAway, nativeAgent } from "../records/agents.ts";
@@ -42,12 +43,15 @@ function workedByRuns(runs: JawanRun[]): Set<string> {
 /**
  * The tasks that wait for a jawan: queued, or parked for a free slot here (`waitsForSlot`), that no run of this machine
  * (running or waiting for a slot) works on and no other machine has (an open delegation). Only these count as queue and
- * only these are offered to another lead.
+ * only these are offered to another lead; `fleet check` and the idle-machine watchdog take their slot waits from here
+ * too, so the three never disagree.
  */
 export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun[] = listRuns()): Task[] {
     const working = workedByRuns(runs);
+    const others = otherFleetMachines().map((machine) => machine.name);
     return tasks.filter(
-        (task) => (task.status === "queued" || waitsForSlot(task)) && !working.has(task.id) && !delegatedAway(task),
+        (task) =>
+            (task.status === "queued" || waitsForSlot(task, others)) && !working.has(task.id) && !delegatedAway(task),
     );
 }
 

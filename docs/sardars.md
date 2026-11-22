@@ -339,8 +339,8 @@ Rules that keep the list consistent without locks across machines:
 
 Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, `slotWaits`,
 running jawans, queued jawan runs, and `full` when its lead is full). The queue depth is queued tasks waiting for a
-jawan plus tasks parked with `task wait` for a free slot here (`slotWaits`: an `--on` text starting with `slot` or
-`[a|the|next] free [<word>] slot`, [fleet.md](fleet.md#oversight)) plus
+jawan plus tasks parked with `task wait` for a free slot here (`slotWaits`: the `--on` grammar in
+[fleet.md](fleet.md#oversight), "Waits on a free slot are queue") plus
 running jawans plus queued jawan runs. Running jawans are `bin/toli spawn` runs holding a slot and native harness
 subagents (omp `task`, Claude Code `Agent`) recorded with `bin/toli task start T<n> --agent <id>` that are running now
 (they report running, docs/harnesses.md "Jawan slots"): one per distinct agent id on an active task, unless a live
@@ -379,7 +379,9 @@ has, and that
 machine can take: not delegated here by another machine (the balancer never bounces work or delegates it on, so
 verify work that machine delegated never goes back to it), not pinned here, and of a project that machine has a
 clone of: the `projects` its `resources --json` publishes, so a machine that registered only some projects is only
-offered those (`pick` and `delegate` still accept a project whose git URL is registered here). The offer goes to the
+offered those (`pick` and `delegate` still accept a project whose git URL is registered here). Each listed command
+ends in `--for T<n>`, so taking it marks the local task delegated away: it leaves this machine's queue and its
+`fleet check` waiting work. The offer goes to the
 first machine, lightest queue first, still at least the gap below this one that can take some queued task; a full
 one never gets it (above). When no queued task can move, no offer is posted. An offer is posted once per change:
 the same task set offered to the same machine as last time is not posted again (`offered` in

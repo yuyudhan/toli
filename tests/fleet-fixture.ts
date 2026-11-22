@@ -7,7 +7,7 @@ import { type Sandbox, SSH_STUB_ARGS, sandbox, withProject } from "./helpers.ts"
 export const ROOMY = { maxRuns: 50, maxLoadPerCpu: 1000, minMemAvailableMB: 0 };
 
 /** 1 GiB "available" memory from a stubbed vm_stat, so memory never depends on the test host. */
-const VM_STAT = `Mach Virtual Memory Statistics: (page size of 4096 bytes)
+export const VM_STAT = `Mach Virtual Memory Statistics: (page size of 4096 bytes)
 Pages free:                               262144.
 Pages active:                                  1.
 Pages inactive:                                0.

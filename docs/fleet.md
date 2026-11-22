@@ -627,15 +627,21 @@ rate/usage limit`).
   on its line. Recording a new jawan or holding the task ends the wait. A machine's own helpers that defer or trigger
   work call it for the tasks they hold back.
 - **Waits on a free slot are queue.** A task parked only until a jawan slot frees here waits on capacity, not on
-  something else: say so with an `--on` text that starts with `slot` (`--on "slot: after T610"`,
-  `--on "slot (3/3 busy)"`) or with `free slot`, optionally after `a`, `the` or `next` and with one word between
-  `free` and `slot` (`--on "a free slot"`, `--on "next free web slot"`). Such a task counts in the machine's queue
-  (`slotWaits` in `resources --json`, `queue 14 (3 queued + 8 waiting for a slot, ...)` in `fleet queues` and
-  `resources`), so `pick`, `fleet queues` and the balancing pass see it, and the pass offers it to a lighter machine;
-  `fleet check` and the idle-machine watchdog treat it as waiting work. A wait on a person, a release, a push or
-  another machine (`--on "a build machine with the clone when a slot frees"` names another machine) is not queue, nor
-  is a held task, nor one a live run here works on (that counts as the run). A machine on an older toli publishes no
-  `slotWaits`; its `depth` stands as it reported it.
+  something else. Its `--on` text says so when, trimmed and in any case, it (1) starts with `slot`, or with
+  `free slot` optionally after one `a`, `the` or `next`, with at most one word of letters and digits between `free`
+  and `slot` that is not a non-jawan slot kind (`build`, `ci`, `cpu`, `deploy`, `gpu`, `meeting`, `release`,
+  `review`, `test`); (2) then ends, or goes on with `:`, `;`, `,` or `(` (spaces allowed before) or with the word
+  `after`; and (3) nowhere names another fleet machine as `on <machine>`. So `slot`, `slot: after T610`,
+  `slot (3/3 busy)`, `a free slot`, `next free web slot, after T610` count, and `slot 3 on m3`,
+  `next free slot on m3`, `slot (3/3) on m3`, `slot machine`, `slots`, `a slot`, `the next free slot` and
+  `a free gpu slot` do not (src/records/slot-wait.ts holds the same rule as a regular expression). Such a task counts
+  in the machine's queue (`slotWaits` in `resources --json`, `queue 14 (3 queued + 8 waiting for a slot, ...)` in
+  `fleet queues` and `resources`), so `pick`, `fleet queues` and the balancing pass see it, and the pass offers it to
+  a lighter machine with `--for T<n>`, so the taken offer marks the task delegated away. `fleet check` and the
+  idle-machine watchdog take the same slot waits as the queue. A wait on a person, a release, a push or another
+  machine is not queue, nor is a held task, one a live run here works on (that counts as the run) or one delegated to
+  another machine and open there. A machine on an older toli publishes no `slotWaits`; its `depth` stands as it
+  reported it.
 - **Work held on another machine.** `bin/toli delegate <machine> ... --for T<n>` on a task that keeps its own jawan
   (a slice) sets the wait itself: the task waits on `<machine>/T<m> (delegated)`, since the delegated task reports
   back here. Once that delegation is done, dropped or handed back, the task waits on the newest slice still out, or

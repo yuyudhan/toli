@@ -209,7 +209,9 @@ type OfferLine = { id: string; line: string };
  * or delegated on by the balancer; this covers verify work `target` itself delegated), pinned here (`task pin`), of a
  * project `target` has no clone of (its published `projects`: a machine that registered only some projects takes
  * only those, and an unsolicited offer never asks it to clone one), or ship work of a project `target` marked
- * verify-only (verify work goes, with `--verify`). A scout task's command keeps its shape.
+ * verify-only (verify work goes, with `--verify`). A scout task's command keeps its shape. Each command ends in
+ * `--for T<n>`, so taking the offer records the delegation on the local task: it leaves this machine's queue (and
+ * `fleet check`'s waiting work) as delegated away, instead of being counted here and there.
  */
 function delegateLines(target: FleetEntry): OfferLine[] {
     const cloned = new Set(target.resources?.projects ?? []);
@@ -234,6 +236,7 @@ function delegateLines(target: FleetEntry): OfferLine[] {
                 ...(task.project === "" ? [] : [`--project ${shellQuote(task.project)}`]),
                 ...(task.shape === "ship" ? [] : [`--shape ${task.shape}`]),
                 ...(task.verify === true ? ["--verify"] : []),
+                `--for ${task.id}`,
             ].join(" ");
             return { id: task.id, line };
         });

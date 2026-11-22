@@ -34,10 +34,10 @@ import {
 import { listenerProblem } from "../peer/supervise.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
-import { waitsForSlot } from "../records/slot-wait.ts";
 import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
 import { fleetStatus } from "./fleet-probe.ts";
 import { commonNetworkFault, type NetworkFaultGroup, networkFaultLine } from "./network-fault.ts";
+import { waitingTasks } from "./queue.ts";
 import type { FleetEntry } from "./resources.ts";
 
 export const DEFAULT_FLEET_CHECK_MINUTES = 60;
@@ -101,9 +101,15 @@ export function blindText(machines: number, missing: readonly { machine: string 
 /** This machine's stale active tasks and waiting work, from its own backlog, and its peer listener. */
 export function localOversight(tasks: Task[], at: Date = now()): LocalOversight {
     // A task waiting on something (`task wait`) needs no dispatch, so it is neither stale nor waiting work here, unless
-    // it waits only for a free slot here (src/records/slot-wait.ts): an idle machine can take that.
+    // it is a slot wait the queue counts (src/fleet/queue.ts waitingTasks: not run here, not delegated away): an idle
+    // machine can take that.
     const stale = findStaleTasks(tasks, at).filter((task) => task.reason !== "waiting");
     const staleIds = new Set(stale.map((task) => task.id));
+    const slotWaits = new Set(
+        waitingTasks(tasks)
+            .filter((task) => task.status === "active")
+            .map((task) => task.id),
+    );
     return {
         machine: hasMachine() ? loadMachine().name : "(unnamed)",
         stale: stale.map((task) => ({ line: staleLine(task, at), command: redispatchCommand(task) })),
@@ -111,7 +117,7 @@ export function localOversight(tasks: Task[], at: Date = now()): LocalOversight 
             .filter(
                 (task) =>
                     task.status === "queued" ||
-                    waitsForSlot(task) ||
+                    slotWaits.has(task.id) ||
                     (task.status === "active" && staleIds.has(task.id)),
             )
             .map((task) => ({ id: task.id, project: task.project, status: task.status, title: task.title })),

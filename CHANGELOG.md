@@ -21,12 +21,15 @@ one. See docs/releasing.md.
 - A machine's queue now counts the tasks parked for a free jawan slot there. A lead at cap that recorded its waiting
   pieces with `bin/toli task wait T<n> --on "next free slot (3/3 busy)"` showed only its queued tasks, so one worker
   with 11 such pieces behind 3 busy slots read as 3 deep in `fleet queues`, and another machine moved more work to it.
-  A wait whose `--on` text starts with `slot`, or with `free slot` after an optional `a`, `the` or `next` (one word
-  may sit between `free` and `slot`), is now queue: `resources --json` publishes it as `slotWaits` and adds it to
-  `depth`, so `pick`, `fleet queues`, the balancing pass (which now offers it too), `fleet check`'s idle machines and
-  the idle-machine watchdog all see it. Waits on a person, a release, a push or another machine, held tasks and tasks
-  a live run works on still count nothing. A machine on an older toli publishes no `slotWaits` and keeps its own depth
-  (docs/fleet.md "Oversight", T2265).
+  A wait whose `--on` text starts with `slot`, or with `free slot` after at most one `a`, `the` or `next` (one word
+  that is no other slot kind, such as `build` or `gpu`, may sit between `free` and `slot`), and then ends or goes on
+  with `:`, `;`, `,`, `(` or the word `after`, is now queue, unless it names another fleet machine as `on <machine>`:
+  `resources --json` publishes it as `slotWaits` and adds it to `depth`, so `pick`, `fleet queues`, the balancing
+  pass (which now offers it too), `fleet check`'s idle machines and the idle-machine watchdog all see it, and the
+  last two take exactly the slot waits the queue counts. Offer commands now end in `--for T<n>`, so a taken offer
+  marks the task delegated away and it leaves this machine's queue and fleet check. Waits on a person, a release, a
+  push or another machine, held tasks, tasks a live run works on and delegated ones still count nothing. A machine on
+  an older toli publishes no `slotWaits` and keeps its own depth (docs/fleet.md "Oversight", T2265).
 - A gate a jawan started no longer outlives the jawan. When a `bin/toli spawn` run ends (it finished, failed, was
   killed with `bin/toli run kill`, or its session ended) without a continuation, toli stops the gate runners only
   jawans started or joined, with every process they started (SIGTERM, then SIGKILL after 20 seconds), and records
@@ -87,6 +90,21 @@ one. See docs/releasing.md.
   shim, which a lead session and its native subagents inherit as they do the cargo shim. `capacity.maxRuns` still
   counts only subagents recorded on an open task: a lead's scouts and reviewers take no jawan slot. Builders had run
   13 vitest and 16 cargo processes on 12 cores beside one build slot (docs/fleet.md "Heavy-build slots", T2259).
+- A release catch-up no longer merges into a project someone is working in. It saw only `bin/toli spawn` runs, so one
+  merged a release on top of a native subagent's work-in-progress commit, failed its checks and left the merge behind,
+  and a queued one blocked the working jawan's push. A branch is now held, and tried again on a later scan, while a
+  live native subagent is recorded on an active task of the project (the signal `capacity.maxRuns` counts), while its
+  checkout has uncommitted changes or commits not on origin's copy of the branch other than earlier catch-up merges,
+  or while an open task already plans the merge (its title or brief names the tag, or a catch-up note handed it the
+  merge); a catch-up dispatched on a task passes `catch-up merge --task <T-id>`. A queued run no longer holds a
+  checkout. Each merge's plan prints `if the checks fail: bin/toli catch-up undo <p> --branch <b> --merge <sha>`, which
+  takes back only a merge this machine's catch-up recorded making, only while it is the branch's unpushed tip, with
+  `git reset --keep`, and refuses any other commit (docs/projects.md "Release catch-up", T2276).
+- Heavy builds now really wait their turn for a build slot. A `TOLI_BUILD_SLOT` inherited from an earlier slot holder
+  let every build under it run at once whenever another build held that slot number, so later builds kept passing a
+  waiting one; the variable now counts only with `TOLI_BUILD_SLOT_HOLDER` naming the slot's current holder, which
+  every slot holder exports. A lost queue counter no longer gives a newcomer a place ahead of a waiter, and a build
+  that gives way to a release-priority run keeps its arrival place (docs/fleet.md "Heavy-build slots", T2276).
 
 ## v0.7.1 - 2026-11-21
 
