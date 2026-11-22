@@ -84,6 +84,7 @@ export function continueRun(run: JawanRun, options: ContinueOptions): JawanRun {
             resumeReason: options.reason,
             ...(options.notBefore === undefined ? {} : { notBefore: options.notBefore }),
             ...(run.first === true ? { first: true } : {}),
+            ...(run.catchUp === undefined ? {} : { catchUp: run.catchUp }),
         },
         { now: options.now },
     );

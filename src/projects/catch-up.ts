@@ -15,6 +15,7 @@ import { machineDispatch } from "../fleet/dispatch.ts";
 import { currentFull } from "../fleet/full.ts";
 import { activeRuns } from "../jawans/runs.ts";
 import { spawnJawan } from "../jawans/spawn.ts";
+import { TagOwnedError } from "../jawans/tag-owner.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { originDefault, refExists } from "./base-branch.ts";
@@ -175,14 +176,15 @@ function writeBrief(
 
 /**
  * Hand `targets` to one catch-up jawan: spawned (queued while every slot is busy), or, where jawans run only as the
- * interactive Sardar's subagents (`lead.dispatch` "subagents"), posted to the lead's inbox to dispatch.
+ * interactive Sardar's subagents (`lead.dispatch` "subagents"), posted to the lead's inbox to dispatch. `held`: the
+ * spawn found another queued or live run owning the release (src/jawans/tag-owner.ts), so nothing started.
  */
 function startCatchUp(
     project: Project,
     release: { tag: string; sha: string },
     main: string,
     targets: CheckedOut[],
-): { run: string | undefined; line: string } {
+): { run: string | undefined; line: string } | { held: string } {
     const brief = writeBrief(project, release, main, targets);
     if (machineDispatch() === "subagents") {
         addInboxItem(
@@ -192,8 +194,19 @@ function startCatchUp(
         );
         return { run: undefined, line: "brief posted to the lead's inbox to dispatch" };
     }
-    const started = spawnJawan({ briefPath: brief, project: project.name, work: "ship", tier: "light" });
-    return { run: started.id, line: `catch-up run ${started.id} (${started.status})` };
+    try {
+        const started = spawnJawan({
+            briefPath: brief,
+            project: project.name,
+            work: "ship",
+            tier: "light",
+            catchUp: release.tag,
+        });
+        return { run: started.id, line: `catch-up run ${started.id} (${started.status})` };
+    } catch (error) {
+        if (!(error instanceof TagOwnedError)) throw error;
+        return { held: error.owner.why };
+    }
 }
 
 /** One project's scan: fetch its main and tags, then start a catch-up for the branches behind the newest release. */
@@ -259,10 +272,16 @@ function scanProject(project: Project, fetch: boolean, at: Date): string[] {
         if (ready.length === 0) return lines;
         if (currentFull() !== null) return [...lines, `${label}: this machine is marked full; tried again next scan`];
         const started = startCatchUp(project, release, main, ready);
+        const branches = ready.map((target) => target.branch);
+        if ("held" in started)
+            return [
+                ...lines,
+                ...branches.map((branch) => `${label}: ${branch}: held (${started.held}), tried again next scan`),
+            ];
         if (started.run === undefined) delete entry.run;
         else entry.run = started.run;
-        entry.attempted.push(...ready.map((target) => target.branch));
-        return [...lines, `${label}: ${started.line} for ${ready.map((target) => target.branch).join(", ")}`];
+        entry.attempted.push(...branches);
+        return [...lines, `${label}: ${started.line} for ${branches.join(", ")}`];
     });
 }
 

@@ -1,13 +1,15 @@
 // When the release catch-up (src/projects/catch-up.ts, docs/projects.md "Release catch-up") must leave a branch for a
-// later scan: a live run or native subagent works there, its checkout holds work not on origin, or an open task already
-// plans the merge (`standDown`). The scan and `bin/toli catch-up merge` both ask before they touch a branch; `bin/toli
-// push` asks `checkoutHolder` before its pre-push check. Also how a catch-up merge is recognised (`catchUpMergeTag`).
+// later scan: a live run or native subagent works there, a queued or live run already names the release, its checkout
+// holds work not on origin, or an open task already plans the merge (`standDown`). The scan and `bin/toli catch-up
+// merge` both ask before they touch a branch; `bin/toli push` asks `checkoutHolder` before its pre-push check. Also how
+// a catch-up merge is recognised (`catchUpMergeTag`).
 import { readFileSync, realpathSync } from "node:fs";
 import { join, relative } from "node:path";
 import { git, resolveSha } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { now } from "../core/util.ts";
 import { activeRuns } from "../jawans/runs.ts";
+import { namesTag, tagOwner } from "../jawans/tag-owner.ts";
 import { agentState, nativeAgent, workingSubagent } from "../records/agents.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { briefPath, staleTaskMinutes } from "../records/stale.ts";
@@ -98,17 +100,16 @@ function subagentHolder(project: string, at: Date, ownTask: string | null): stri
  * (`catch-up <tag>: ...`, src/projects/catch-up-merge.ts tellOwner).
  */
 function plannedMerge(project: string, tag: string, ownTask: string | null): string | null {
-    const named = new RegExp(`(?<![\\w.])${tag.replaceAll(".", "\\.")}(?!\\w|\\.\\d)`);
     const briefNames = (id: string): boolean => {
         const brief = briefPath(project, id);
-        return brief !== null && named.test(readFileSync(join(paths.root(), brief), "utf8"));
+        return brief !== null && namesTag(readFileSync(join(paths.root(), brief), "utf8"), tag);
     };
     const task = loadBacklog().tasks.find(
         (entry) =>
             entry.project === project &&
             entry.id !== ownTask &&
             (entry.status === "queued" || entry.status === "active") &&
-            (named.test(entry.title) ||
+            (namesTag(entry.title, tag) ||
                 entry.notes.some((note) => note.startsWith(`catch-up ${tag}:`)) ||
                 briefNames(entry.id)),
     );
@@ -143,9 +144,10 @@ function foreignWork(clone: string, mainRef: string, target: CheckedOut): string
 
 /**
  * Why the catch-up of release `tag` must leave `target` for a later scan now, or null (docs/projects.md "Release
- * catch-up"): a live run or native subagent holds its checkout or the clone (`targetHolder`), a native subagent works
- * on the project, an open task already plans this merge, or the checkout holds work not on origin (`mainRef`: where
- * the release branch is read). `ownTask`: the task the catch-up itself was dispatched on, if any.
+ * catch-up"): a live run or native subagent holds its checkout or the clone (`targetHolder`), a queued or live run of
+ * the clone already names the tag in its brief (`tagOwner`: one merge run per release), a native subagent works on the
+ * project, an open task already plans this merge, or the checkout holds work not on origin (`mainRef`: where the
+ * release branch is read). `ownTask`: the task the catch-up itself was dispatched on, if any.
  */
 export function standDown(
     project: Project,
@@ -158,6 +160,7 @@ export function standDown(
 ): string | null {
     return (
         targetHolder(target, clone, at, ownTask) ??
+        tagOwner({ project: project.name, cwd: clone, brief: "", catchUp: tag })?.why ??
         subagentHolder(project.name, at, ownTask) ??
         plannedMerge(project.name, tag, ownTask) ??
         foreignWork(clone, mainRef, target)

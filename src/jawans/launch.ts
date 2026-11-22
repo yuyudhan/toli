@@ -83,6 +83,8 @@ export type NewRun = {
     notBefore?: string | undefined;
     /** `spawn --first`: queued ahead of the runs queued without it; a continuation keeps it. */
     first?: boolean | undefined;
+    /** A release catch-up run: the release tag it merges (src/projects/catch-up.ts; src/jawans/tag-owner.ts). */
+    catchUp?: string | undefined;
 };
 
 function newRunId(at: Date): string {
@@ -192,6 +194,7 @@ export function recordRun(input: NewRun, attached?: AttachedStart): JawanRun {
         ...(input.replaces === undefined ? {} : { replaces: input.replaces }),
         ...(input.notBefore === undefined ? {} : { notBefore: input.notBefore }),
         ...(input.first === true ? { first: true as const } : {}),
+        ...(input.catchUp === undefined ? {} : { catchUp: input.catchUp }),
     };
     mkdirSync(paths.jawansDir(), { recursive: true });
     writeJsonAtomic(paths.jawanRecord(id), run);
@@ -263,13 +266,15 @@ function launch(id: string): JawanRun {
 /**
  * Record a new run, name it as its task's agent, and start it if a jawan slot is free, no disk hold pauses new jobs
  * (src/fleet/disk-hold.ts), no network hold applies and its earliest start has come; always with `now`. Otherwise it
- * stays `queued`.
+ * stays `queued`. `guard` runs under the slots lock before the run is recorded, so a refusal it throws sees every run
+ * recorded before (two starts in the same second: src/jawans/tag-owner.ts).
  */
-export function startOrQueue(input: NewRun, options: { now: boolean }): JawanRun {
+export function startOrQueue(input: NewRun, options: { now: boolean; guard?: () => void }): JawanRun {
     keepDiskBeforeWork();
     const hold = options.now ? null : networkHold();
     if (hold?.line) warn(hold.line);
     return withLock(paths.lock(SLOTS_LOCK), () => {
+        options.guard?.();
         const run = recordRun(input);
         const task = run.task;
         // The task names its jawan, so the digest can flag active tasks nobody is working on (queued runs count).

@@ -5,7 +5,14 @@ import { join } from "node:path";
 import { ROOMY } from "./fleet-fixture.ts";
 import { type Sandbox, sandbox, tempDir, withProject } from "./helpers.ts";
 
-type RunRecord = { id: string; project: string | null; status: string; briefPath: string; cwd: string };
+type RunRecord = {
+    id: string;
+    project: string | null;
+    status: string;
+    briefPath: string;
+    cwd: string;
+    catchUp?: string;
+};
 export type TaskRecord = { id: string; notes: string[] };
 
 const BLOCKER = "j-20261120-080000-aaaa";
@@ -51,6 +58,13 @@ export function runs(box: Sandbox): RunRecord[] {
         .filter((file) => file.endsWith(".json"))
         .map((file) => JSON.parse(readFileSync(join(dir, file), "utf8")) as RunRecord)
         .filter((run) => run.id !== BLOCKER);
+}
+
+/** The `TOLI_RUN_ID` env of the catch-up run for release `tag`: `catch-up merge` run as that jawan. */
+export function asCatchUp(box: Sandbox, tag: string): { env: Record<string, string> } {
+    const run = runs(box).find((entry) => entry.catchUp === tag);
+    if (run === undefined) throw new Error(`no catch-up run for ${tag}`);
+    return { env: { TOLI_RUN_ID: run.id } };
 }
 
 /** The machine fixture: its sandbox, alpha's clone, and alpha's bare origin. */

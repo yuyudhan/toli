@@ -232,6 +232,8 @@ the interactive Sardar's subagents.
   it only reorders the queue, never stops a running run, and still waits for the network hold and `notBefore`.
   `runs` shows each queued run's place (`queue 1 (--first)`).
   A task with a live run refuses a second `spawn --task`; `--replace` stops the live run and starts the new one.
+  A brief naming a release tag that a queued or live release catch-up run of the same project clone merges is refused,
+  naming that run ([projects.md](projects.md#release-catch-up)).
   Runs have no time limit unless given `--max-time`; a run that shows no progress for `capacity.stallMinutes`
   (default 30, or its brief's `Stall: <minutes>` line), or uses its explicit limit, without a report is resumed in the same omp session
   (`capacity.autoResume`, default 3). `resume` lets the lead continue any finished run's session. Under

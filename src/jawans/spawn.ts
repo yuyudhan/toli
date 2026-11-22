@@ -52,6 +52,7 @@ import {
     updateRun,
 } from "./runs.ts";
 import { superviseRun } from "./supervise.ts";
+import { refuseOwnedTag } from "./tag-owner.ts";
 
 const BRIEF_HEADER = "TOLI_BRIEF v1";
 
@@ -75,6 +76,8 @@ export type SpawnOptions = {
     replace?: boolean | undefined;
     /** A section added after the brief (and its Workspace block): toli's re-dispatch of a dead run's task. */
     extra?: string | undefined;
+    /** The release tag a release catch-up run merges (src/projects/catch-up.ts); it then owns that tag on its clone. */
+    catchUp?: string | undefined;
 };
 
 function readBrief(path: string): string {
@@ -165,6 +168,10 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
     if (options.briefPath === undefined) throw new ToliError("spawn needs --brief <file>");
     const resolved = planSpawn(options);
     loadMachine();
+    // One merge run per release tag and clone (src/jawans/tag-owner.ts): asked before a run is superseded or the
+    // workspace touched, and again under the slots lock, where a run started in the same second is already recorded.
+    const claim = { project: resolved.project, cwd: resolved.cwd, brief: resolved.brief, catchUp: options.catchUp };
+    refuseOwnedTag(claim);
     const replaced = resolved.task === null ? [] : supersedeLiveRuns(resolved.task, options.replace === true);
     // Ship briefs carry a goal contract (docs/brief-template.md `## Goal`); a missing one is warned about, not refused.
     if (resolved.work === "ship" && !/^## Goal\b/m.test(resolved.brief))
@@ -196,8 +203,9 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
             extra: options.extra ?? "",
             ...(replaced.length === 0 ? {} : { replaces: replaced }),
             ...(options.first === true ? { first: true } : {}),
+            ...(options.catchUp === undefined ? {} : { catchUp: options.catchUp }),
         },
-        { now: options.now === true },
+        { now: options.now === true, guard: () => refuseOwnedTag(claim) },
     );
     for (const id of replaced)
         updateRun(id, (record) => {

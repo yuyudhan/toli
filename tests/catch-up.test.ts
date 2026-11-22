@@ -3,7 +3,16 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { commitFile, type Machine, machine, release, runRecord, runs, type TaskRecord } from "./catch-up-fixture.ts";
+import {
+    asCatchUp,
+    commitFile,
+    type Machine,
+    machine,
+    release,
+    runRecord,
+    runs,
+    type TaskRecord,
+} from "./catch-up-fixture.ts";
 
 describe("catch-up scan", () => {
     test("a new tag queues one catch-up run per project, never a second while it is live", () => {
@@ -104,7 +113,9 @@ describe("catch-up merge", () => {
         expect(box.ok(["project", "set", "alpha", "--catch-up-push", "no"])).toContain("catch-up-push=no");
         release(box, origin, "v1.2.0");
         box.ok(["catch-up", "scan"]);
-        const local = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.2.0"], self);
+        // The v1.2.0 scan queued a catch-up run of its own (the v1.1.0 merge replaced the v1.0.0 record): it owns
+        // v1.2.0, so the merge runs as that jawan.
+        const local = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.2.0"], asCatchUp(box, "v1.2.0"));
         expect(local).toContain("keep local: catch-up pushes are off for alpha on this machine");
         expect(local).not.toContain("push (after");
     });

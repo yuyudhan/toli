@@ -60,6 +60,8 @@ export type JawanRun = {
     notBefore?: string;
     /** `spawn --first`: queued ahead of the runs queued without it (and kept by its continuations). */
     first?: true;
+    /** A release catch-up run: the release tag it merges; it owns that tag on its clone (src/jawans/tag-owner.ts). */
+    catchUp?: string;
     /** Resume chain: the run this one continues, and its place in the chain (1 for the first continuation). */
     resumeOf?: string;
     resumeCount?: number;
