@@ -95,4 +95,79 @@ describe("bin/toli commit --patch: the working tree follows the commit (T2106)",
         expect(git(dir, ["diff", "--cached", "--name-only"])).toBe("");
         expect(git(dir, ["ls-files", "--others"])).toBe("");
     });
+
+    // T2362: a rename landed as a `--patch` (a `git diff -M` of migration files, the old paths named too) left the old
+    // files in the working tree, untracked and byte-identical to what the commit removed.
+    describe("a rename (T2362)", () => {
+        const seed = { "old.sql": "one\ntwo\nthree\nfour\nfive\n", "other.txt": "other\n" };
+
+        /** The rename of old.sql to new.sql with one line changed, as `git diff -M` writes it; the tree is left clean. */
+        function renamePatch(dir: string): string {
+            git(dir, ["mv", "old.sql", "new.sql"]);
+            writeFileSync(join(dir, "new.sql"), "one\ntwo\nthree\nfour\nfive renumbered\n");
+            git(dir, ["add", "--all"]);
+            const diff = `${git(dir, ["diff", "--cached", "-M"])}\n`;
+            git(dir, ["reset", "--quiet", "--hard", "HEAD"]);
+            expect(diff).toContain("rename from old.sql");
+            return diff;
+        }
+
+        /**
+         * The seed commit added old.sql, so deleting it reads as undoing that commit's lines: allowed, as a rename of a
+         * file added in the last commits must be (`--allow-revert`).
+         */
+        const seeded = (dir: string) => ({ allowRevert: [head(dir)] });
+
+        /** The working tree and index match the commit for both paths: old gone, new tracked, nothing untracked. */
+        function expectClean(dir: string): void {
+            expect(existsSync(join(dir, "old.sql"))).toBe(false);
+            expect(read(dir, "new.sql")).toBe("one\ntwo\nthree\nfour\nfive renumbered\n");
+            expect(git(dir, ["ls-tree", "-r", "--name-only", "HEAD"])).toBe("new.sql\nother.txt");
+            expect(git(dir, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+        }
+
+        test("patched, with the old path named too: the old file is removed from the working tree", () => {
+            const dir = repo(seed);
+            const diff = renamePatch(dir);
+            const stderr = stderrOf(() => {
+                const committed = safeCommit({
+                    dir,
+                    paths: ["old.sql"],
+                    patches: [{ name: "rename.patch", diff }],
+                    message: "Rename",
+                    ...seeded(dir),
+                });
+                expectClean(dir);
+                expect(committed.patched).toEqual(["new.sql", "old.sql"]);
+            });
+            expect(stderr).toBe("");
+        });
+
+        test("patched alone: both sides of the rename are the patch's own paths", () => {
+            const dir = repo(seed);
+            const diff = renamePatch(dir);
+            const stderr = stderrOf(() => {
+                safeCommit({
+                    dir,
+                    paths: [],
+                    patches: [{ name: "rename.patch", diff }],
+                    message: "Rename",
+                    ...seeded(dir),
+                });
+            });
+            expect(stderr).toBe("");
+            expectClean(dir);
+        });
+
+        test("moved in the working tree (git mv), both paths named", () => {
+            const dir = repo(seed);
+            git(dir, ["mv", "old.sql", "new.sql"]);
+            writeFileSync(join(dir, "new.sql"), "one\ntwo\nthree\nfour\nfive renumbered\n");
+            const stderr = stderrOf(() => {
+                safeCommit({ dir, paths: ["old.sql", "new.sql"], message: "Rename", ...seeded(dir) });
+            });
+            expect(stderr).toBe("");
+            expectClean(dir);
+        });
+    });
 });

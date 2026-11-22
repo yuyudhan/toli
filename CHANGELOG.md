@@ -8,6 +8,12 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- `bin/toli commit --patch` of a rename (a `git diff -M` patch) now removes the old file from the working tree. The
+  patch's paths were read from `git apply --numstat`, which names only a rename's new path, so the old file was
+  never brought to the commit: it stayed behind untracked, byte-identical to what the commit removed (a project's two
+  renumbered migrations), and a rename patch alone was refused for changing a path it did not name. The paths are now
+  read from the private index before and after each patch, both sides of a rename included (T2362).
+
 - A gate runner no longer outlives the push or `gate run` that started it, and a cancelled gate no longer keeps its
   heavy-build slot. The detached runner was built to outlive its caller, so a gate whose push was cancelled, or had
   landed another way, ran on with nobody waiting: a jawan's pre-push `just test all` held a machine's only slot for

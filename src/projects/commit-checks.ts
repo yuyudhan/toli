@@ -3,7 +3,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { git, gitOk } from "../core/git.ts";
+import { git, gitOk, gitPaths } from "../core/git.ts";
 import { type RunResult, run, ToliError } from "../core/util.ts";
 import { type Hunk, parseHunks } from "./diff-hunks.ts";
 
@@ -317,15 +317,17 @@ export function checkReverts(
 }
 
 /**
- * Apply each `--patch` diff to the attempt's index in order, naming one that fails; returns every file they touch
- * (both sides of renames).
+ * Apply each `--patch` diff to the attempt's index in order, naming one that fails; returns every file they change,
+ * both sides of a rename (T2362: `git apply --numstat` names only a rename's new path, so its old file stayed in the
+ * working tree). Read from the index itself, before and after each diff.
  */
 export function applyPatches(attempt: Attempt, patches: { name: string; diff: string }[]): string[] {
     return patches.flatMap((patch) => {
-        const files = attempt.gitOk(["apply", "--numstat", "-z", "-"], patch.diff).split("\0");
+        const before = attempt.gitOk(["write-tree"]);
         const applied = attempt.git(["apply", "--cached", "-"], patch.diff);
         if (applied.code !== 0)
             throw new ToliError(`--patch ${patch.name} does not apply: ${(applied.stderr || applied.stdout).trim()}`);
-        return files.flatMap((field) => field.split("\t").slice(2)).filter(Boolean);
+        const after = attempt.gitOk(["write-tree"]);
+        return gitPaths(attempt.dir, ["diff", "--name-only", "-z", "--no-renames", before, after]);
     });
 }
