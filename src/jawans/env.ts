@@ -1,7 +1,7 @@
 // The environment a jawan runs in. Kept apart from supervise.ts, which also delivers outcomes (inbox, outbox), so
 // code that only builds the environment does not load the delivery machinery.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { paths } from "../core/paths.ts";
@@ -110,7 +110,9 @@ export function nodePreloadStub(): string {
 /**
  * Write the stub (`nodePreloadStub`) unless it already holds the same text: true once it is there. Its text is the
  * same for every toli version, only the preload path it names. False when it cannot be written; the caller then leaves
- * the preload out of NODE_OPTIONS, never naming a file that is not there.
+ * the preload out of NODE_OPTIONS, never naming a file that is not there. Every Node process of a session runs the
+ * stub, so its folder is private: folders made for it are 0700, and its folder (and `~/.toli` above the default one)
+ * loses group and world write if it had them, so no one else on a shared-group (umask 002) machine can swap it.
  */
 export function ensureNodePreloadStub(): boolean {
     const stub = nodePreloadStub();
@@ -122,6 +124,12 @@ export function ensureNodePreloadStub(): boolean {
         "",
     ].join("\n");
     try {
+        const dir = dirname(stub);
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        for (const folder of process.env.TOLI_PRELOAD_HOME ? [dir] : [dir, dirname(dir)]) {
+            const mode = statSync(folder).mode & 0o777;
+            if ((mode & 0o022) !== 0) chmodSync(folder, mode & ~0o022);
+        }
         if (existsSync(stub) && readFileSync(stub, "utf8") === text) return true;
         writeTextAtomic(stub, text);
         return true;

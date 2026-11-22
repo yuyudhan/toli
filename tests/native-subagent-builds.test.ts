@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
 import { jawanEnv, leadBuildEnv, nodePreloadOptions, nodePreloadStub } from "../src/jawans/env.ts";
@@ -80,6 +80,18 @@ describe("a lead session's build variables, inherited by its native subagents", 
         );
         expect(node()).toEqual({ code: 0, out: "ok\n" });
         expect(readFileSync(marker, "utf8")).toBe("1");
+    });
+
+    test("the stub's folder is private: made 0700, and a group- or world-writable one is tightened", () => {
+        const { box } = slotBox(1, 3);
+        const home = join(box.root, ".toli-preload", "nested");
+        const env = { ...LEAD, TOLI_PRELOAD_HOME: home };
+        box.ok(["hook", "lead-build-env"], { env });
+        for (const dir of [home, dirname(home)]) expect(statSync(dir).mode & 0o777).toBe(0o700);
+        // A shared-group machine (umask 002) or someone else left it writable: the stub could be swapped.
+        chmodSync(home, 0o777);
+        box.ok(["hook", "lead-build-env"], { env });
+        expect(statSync(home).mode & 0o022).toBe(0);
     });
 
     test("bin/toli hook lead-build-env gives a lead the shim and the machine's cargo jobs, a jawan nothing", () => {
