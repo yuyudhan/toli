@@ -214,7 +214,7 @@ describe("bin/toli commit (R23 safe commits)", () => {
         git(dir, ["switch", "--quiet", "main"]);
         otherJawan(dir, "main-only.txt", "main\n");
         expect(() => safeCommit({ dir, paths: [], merge: "clean", resolved: true, message: "Merge clean" })).toThrow(
-            "merging clean has no conflicts; drop --resolved",
+            "merging clean has no conflicts and names no fixes; drop --resolved",
         );
     });
 

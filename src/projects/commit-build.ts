@@ -51,6 +51,7 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
             : cleanMerge(dir, parent, request.merge, {
                   resolved: request.resolved === true,
                   named: request.paths,
+                  patched: (request.patches ?? []).length > 0,
                   adopted,
               });
     // The named paths and patch apply on top of the merge result; the merge itself needs no naming, except the
@@ -89,9 +90,10 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
             throw new ToliError(`refusing: the staged set changes paths that were not named: ${stray.join(", ")}`);
         const conflicts = merge?.conflicts ?? [];
         // Merge-changed paths the commit changes again on top of the merge result (an evil merge: a refreshed lock
-        // file, fixes to files the ref added). A resolved or adopted merge commits them with it, named for review in
-        // `Merge-amended:` trailers; a clean merge refuses them except lock files (named or patched), whose merged
-        // text can be stale by design and which checkLockFiles still checks.
+        // file, fixes to files the ref added, an allowlist entry the merge left stale). A resolved merge, conflicted
+        // or clean, or an adopted one commits them with it, named for review in `Merge-amended:` trailers; without
+        // `--resolved` a clean merge refuses them except lock files (named or patched), whose merged text can be
+        // stale by design and which checkLockFiles still checks.
         const amended =
             merge === null ? [] : own.filter((file) => merge.files.includes(file) && !conflicts.includes(file));
         const overlap =
@@ -100,7 +102,7 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
                 : amended.filter((file) => !isLockFile(file));
         if (overlap.length > 0)
             throw new ToliError(
-                `refusing: ${overlap.join(", ")} changed by both the merge and the named paths; commit the merge first, then your edits`,
+                `refusing: ${overlap.join(", ")} changed by both the merge and the named paths; name them with --resolved to land the fixes in the merge commit (listed in Merge-amended: trailers), or commit the merge first`,
             );
         if (conflicts.length > 0) {
             const listed = new Set(

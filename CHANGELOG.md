@@ -16,6 +16,14 @@ one. See docs/releasing.md.
   configured so is now tried first, like any peer, then pulls what waits. `bin/toli doctor` warns (`peer-pull-only`)
   about a peer marked pull-only that has not pulled for 10 minutes (docs/peers.md "A peer that takes no inbound
   connection", T2246; found and fixed on a Linux worker's toli, its T657).
+- `bin/toli commit --merge <ref> --resolved` now takes fixes on a clean merge too, not only on a conflicted one: a
+  merge without conflicts can leave a file stale (an allowlist naming a path an earlier merge moved) so that the bare
+  merge fails the project's pre-commit hook, and a fix to a merged file was refused unless it was a lock file. Paths
+  named after `--` and `--patch` diffs now land in the one two-parent merge commit, listed in `Merge-amended:`
+  trailers, under every check a resolved conflicted merge gets (gitleaks on the staged set, the revert check, both
+  hooks, the branch-moved refusal). `--resolved` on a clean merge that names no fix is still refused; without
+  `--resolved` a clean merge still refuses edits to the paths it changes (but lock files), and now says to add it
+  (docs/development.md, T2254).
 
 ## v0.7.1 - 2026-11-21
 

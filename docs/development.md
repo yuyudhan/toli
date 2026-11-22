@@ -23,6 +23,7 @@ bin/toli commit app -m "Merge feature" --merge feature        # a clean two-pare
 bin/toli commit app -m "Merge feature" --merge feature -- Cargo.lock   # plus the lock file the clean merge left stale
 bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs   # conflicts resolved in the tree
 bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Cargo.lock src/b.rs   # plus fixes to merged files
+bin/toli commit app -m "Merge feature" --merge feature --resolved -- allow.txt   # a clean merge plus a fix it needs
 ```
 
 `bin/toli commit` (all projects; `toli` means this checkout, on `develop`) never uses the shared index:
@@ -81,8 +82,9 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Ca
 5. `--merge <ref>` starts the private index from the clean merge of `<ref>` into the tip (`git merge-tree`, which
    touches no index or working tree), records `<ref>` as second parent, and runs every check
    above. It refuses a ref already merged, local changes or untracked files at paths the merge changes (other than
-   the named ones of a `--resolved` merge), and on a clean merge named paths the merge also changes (commit the merge
-   first), except a lock file: a clean merge can leave `Cargo.lock` or `bun.lock` stale (each side's text merges, the
+   the named ones of a `--resolved` merge), and on a clean merge without `--resolved` named paths the merge also
+   changes (name them with `--resolved`, below, or commit the merge first), except a lock file: a clean merge can
+   leave `Cargo.lock` or `bun.lock` stale (each side's text merges, the
    entries both sides need do not; say one side bumps the workspace version and the other adds a crate that inherits
    it), so a regenerated lock file, named after `--` (with or without `--resolved`) or fixed by a `--patch`, replaces
    the merged one, goes through the lock check like any staged lock, and lands in the merge commit, listed in a
@@ -90,11 +92,13 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- src/a.rs Ca
    conflicted merge is refused, naming the conflicted paths and the merge-tree tree (`git show <tree>:<path>` shows
    each with conflict markers). Write the resolved files in the working tree, then run the same commit with
    `--resolved -- <conflicted paths>`: the named files replace the conflicted ones, every conflicted path must be
-   named and free of conflict markers, and every check above runs on the result (`--resolved` on a clean merge is
-   refused unless it names only lock files). A resolved merge may also change paths the
-   merge changed cleanly, named after `--` (their working-tree files) or in a `--patch` applied on top of the merge
-   result: an evil merge, for fixes the bare merge result needs (a refreshed `Cargo.lock`, lint fixes to files the ref
-   added), landed in the one two-parent commit, since the bare merge alone may fail the pre-commit hook. Every check
+   named and free of conflict markers, and every check above runs on the result. A resolved merge may also change
+   paths the merge changed cleanly, named after `--` (their working-tree files) or in a `--patch` applied on top of
+   the merge result: an evil merge, for fixes the bare merge result needs (a refreshed `Cargo.lock`, lint fixes to
+   files the ref added), landed in the one two-parent commit, since the bare merge alone may fail the pre-commit hook.
+   A clean merge takes such fixes the same way, with `--resolved` and no conflicted paths (say it leaves an allowlist
+   naming a file an earlier merge moved, which the pre-commit hook refuses): `--resolved -- <paths you fix>` and/or
+   `--resolved --patch <file>`; `--resolved` on a clean merge that names no fix is refused. Every check
    above still runs. Such paths are listed in the commit's `Merge-amended: <path>` trailers and printed after the
    sha; review them with `git show --remerge-diff <sha> -- <path>`. After the branch moves it checks the merged
    files out into the shared index and working tree (`git restore --source=<commit> --staged --worktree`).

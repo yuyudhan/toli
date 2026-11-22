@@ -88,21 +88,22 @@ describe("bin/toli commit --merge of a clean merge that leaves Cargo.lock stale"
         expect(git(dir, ["status", "--porcelain"])).toBe("");
     });
 
-    test("--resolved on a clean merge still refuses paths other than lock files", () => {
-        const { dir, before } = staleLockMerge();
-        writeFileSync(join(dir, "crates", "piece", "src", "lib.rs"), "pub fn piece() {}\n");
-        expect(() =>
-            safeCommit({
-                dir,
-                paths: ["crates/piece/src/lib.rs"],
-                merge: "upstream",
-                resolved: true,
-                message: "Merge upstream",
-            }),
-        ).toThrow(
-            "merging upstream has no conflicts; drop --resolved (on a clean merge it takes only fixed lock files)",
+    test("--resolved on a clean merge takes fixes to other merged paths with the lock file, as Merge-amended", () => {
+        const { dir, before, upstream, fixed } = staleLockMerge();
+        writeFileSync(join(dir, "Cargo.lock"), fixed);
+        writeFileSync(join(dir, "Cargo.toml"), `${manifest("0.2.0")}# fixed on the merge\n`);
+        const merged = safeCommit({
+            dir,
+            paths: ["Cargo.lock", "Cargo.toml"],
+            merge: "upstream",
+            resolved: true,
+            message: "Merge upstream",
+        });
+        expect(parents(dir, merged.sha)).toEqual([before, upstream]);
+        expect(merged.amended).toEqual(["Cargo.lock", "Cargo.toml"]);
+        expect(git(dir, ["show", "--no-patch", "--format=%B", merged.sha])).toBe(
+            "Merge upstream\n\nMerge-amended: Cargo.lock\nMerge-amended: Cargo.toml",
         );
-        expect(head(dir)).toBe(before);
     });
 
     test("a fixed lock as a --patch on the clean merge lands in the merge commit; a broken one is refused", () => {

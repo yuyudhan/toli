@@ -22,20 +22,20 @@ export type Merge = {
 /**
  * The merge of `ref` into `parent` (`git merge-tree --write-tree`, which touches neither index nor working tree).
  * Refuses a ref already contained in `parent`, a conflicted merge unless `resolved`, `resolved` on a clean merge
- * unless every named path is a lock file, and local changes to the files it changes other than the conflicted ones,
- * the named lock files and, when `resolved`, the named paths (those hold the resolution and its fixes). Named lock
- * files replace the merged text: a lock file can merge cleanly yet miss what both sides added, so the committer's
- * regenerated one goes through `checkLockFiles` instead. An `adopted` merge (`git merge` already wrote it into the
- * working tree) instead refuses merged files not named whose working-tree version differs from the merge result:
- * checking the commit out would overwrite them.
+ * that names no fix (no path, no `patched` diff), and local changes to the files it changes other than the
+ * conflicted ones, the named lock files and, when `resolved`, the named paths (those hold the resolution and its
+ * fixes). Named lock files replace the merged text: a lock file can merge cleanly yet miss what both sides added, so
+ * the committer's regenerated one goes through `checkLockFiles` instead. An `adopted` merge (`git merge` already
+ * wrote it into the working tree) instead refuses merged files not named whose working-tree version differs from the
+ * merge result: checking the commit out would overwrite them.
  */
 export function cleanMerge(
     dir: string,
     parent: string,
     ref: string,
-    options: { resolved: boolean; named: string[]; adopted: boolean },
+    options: { resolved: boolean; named: string[]; patched: boolean; adopted: boolean },
 ): Merge {
-    const { resolved, named, adopted } = options;
+    const { resolved, named, patched, adopted } = options;
     const commit = resolveSha(dir, ref);
     if (commit === null) throw new ToliError(`--merge ${ref}: no such commit`);
     if (git(dir, ["merge-base", "--is-ancestor", commit, parent]).code === 0)
@@ -52,9 +52,9 @@ export function cleanMerge(
                 `Write the resolved files in the working tree (git show ${tree.slice(0, 12)}:<path> shows each with ` +
                 `conflict markers), then run the same commit with --resolved -- ${conflicts.join(" ")}.`,
         );
-    if (merged.code === 0 && resolved && (named.length === 0 || !named.every(isLockFile)))
+    if (merged.code === 0 && resolved && named.length === 0 && !patched)
         throw new ToliError(
-            `refusing: --resolved, but merging ${ref} has no conflicts; drop --resolved (on a clean merge it takes only fixed lock files)`,
+            `refusing: --resolved, but merging ${ref} has no conflicts and names no fixes; drop --resolved (on a clean merge it takes the fixes the merge result needs, after -- or as --patch)`,
         );
     const files = gitPaths(dir, ["diff", "--name-only", "-z", "--no-renames", parent, tree]);
     const regenerated = files.filter((file) => isLockFile(file) && named.includes(file));
@@ -101,7 +101,7 @@ export function cleanMerge(
             .filter(Boolean)
             .map((line) => line.slice(3));
         throw new ToliError(
-            `refusing: local changes to files the merge changes: ${names.length > 0 ? names.join(", ") : checked.join(", ")}; commit or move them first`,
+            `refusing: local changes to files the merge changes: ${names.length > 0 ? names.join(", ") : checked.join(", ")}; commit or move them first, or name your fixes to them with --resolved to land them in the merge commit`,
         );
     }
     return { ref, commit, tree, files, conflicts, adopted };
