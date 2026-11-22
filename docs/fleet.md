@@ -180,7 +180,8 @@ keeper frees build output before work starts instead ([disk.md](disk.md)):
 ```
 
 `capacity.maxRuns` is still a hard cap on jawans on each machine, shared by `bin/toli spawn` runs and the lead's native
-subagents (active tasks recorded with `task start --agent <id>`; [harnesses.md](harnesses.md)): with that many
+subagents (active tasks recorded with `task start --agent <id>`; a scout, reviewer or verifier recorded on no task
+takes no slot, its heavy work waits for a heavy-build slot instead; [harnesses.md](harnesses.md)): with that many
 running, a new spawn (or an automatic continuation) is queued and starts when one ends (`--now` overrides), and
 `resources`, `fleet queues` and the digest say `jawans at cap N/N (...): queue instead`. `capacity.autoResume`
 (default 3) is how many times a chain of runs that stalled (no progress for `capacity.stallMinutes`, default 30) or
@@ -394,7 +395,11 @@ one build slot that only cargo went through). toli's bun shim (`bin/shims/bun`, 
 sends `bun test` through `bin/toli build-slot` and runs every other bun command (`bun run`, `bun install`, `bun x`,
 `bin/toli` itself) straight away with the first real bun after it. Node test runners are reached through
 `NODE_OPTIONS` instead, since a package script puts `node_modules/.bin` ahead of any shim: the same environment
-`--require`s toli's Node preload (`bin/shims/toli-node-preload.cjs`; Bun ignores it). When Node starts Vitest's CLI
+`--require`s a stable stub, `~/.toli/preload/node-<hash>.cjs` (one per checkout; Bun ignores it), which loads toli's
+Node preload (`bin/shims/toli-node-preload.cjs`) while that file exists and does nothing otherwise, so a session
+still carrying the setting after the checkout moved to an older commit never fails to start Node. Every hand-out of
+the variables writes it first (`bin/toli hook lead-build-env`, a jawan's supervisor), as do `bin/toli self sync`,
+`bin/toli upgrade` and `bin/toli commit`; where it cannot be written the setting is left out. When Node starts Vitest's CLI
 (`node_modules/vitest/vitest.mjs` or `.bin/vitest`), Jest's (`jest/bin/jest.js`, `jest-cli/bin/jest.js`) or `playwright
 test`, the preload runs `bin/toli build-slot --runner <its pid>`, which waits in line (printing the same waiting line)
 until a detached holder (`build-slot --hold <pid> --keep-stacks`, as for a cargo that bypassed the shim, below) holds

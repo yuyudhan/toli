@@ -4,11 +4,15 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { nodePreloadOptions } from "../src/jawans/env.ts";
+import { ensureNodePreloadStub, nodePreloadOptions } from "../src/jawans/env.ts";
 import { holdSlot, runs, slotBox, start, until } from "./build-slot-fixture.ts";
+import { tempDir } from "./helpers.ts";
 
-const BUN_SHIM = resolve(import.meta.dir, "..", "bin", "shims", "bun");
 const NODE = Bun.which("node") ?? "node";
+// NODE_OPTIONS names the stable stub, which loads this checkout's preload: written into a temp home, never the host's.
+process.env.TOLI_PRELOAD_HOME = tempDir("preload-home");
+ensureNodePreloadStub();
+const BUN_SHIM = resolve(import.meta.dir, "..", "bin", "shims", "bun");
 
 /** A fake test runner at `node_modules/<path>` under `dir`, appending `<label> <TOLI_BUILD_SLOT or none>` to `log`. */
 function fakeRunner(dir: string, path: string, label: string, log: string): string {

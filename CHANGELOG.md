@@ -58,12 +58,12 @@ one. See docs/releasing.md.
   after the sweep. A release train's or held build slot's clone is neither swept nor deleted over the emergency level;
   under it, it is swept first and goes whole only if that is not enough. One builder's `target/debug/deps` regrew to
   190 GB of stale rlibs from past lane builds, and the keeper's only answer was the whole target (docs/disk.md, T2259).
-- Native subagents now count toward the jawan cap and the heavy-build slots. Every subagent its harness reports
-  running (state/agents/), recorded on a task or not, takes a `capacity.maxRuns` slot; a Node test runner (Vitest,
-  Jest, `playwright test`) takes a heavy-build slot through toli's Node preload in `NODE_OPTIONS`, and `bun test`
-  through toli's bun shim, which a lead session and its native subagents inherit as they do the cargo shim. Builders
-  had run 13 vitest and 16 cargo processes on 12 cores while one build slot and a cap of 1-3 jawans showed free
-  (docs/fleet.md "Heavy-build slots", docs/harnesses.md "Jawan slots", T2259).
+- Native subagents' test suites now wait for a heavy-build slot, as their cargo builds already did: a Node test runner
+  (Vitest, Jest, `playwright test`) through toli's Node preload, `--require`d in `NODE_OPTIONS` by a stable stub
+  (`~/.toli/preload/node-<hash>.cjs`) that does nothing once the preload is gone, and `bun test` through toli's bun
+  shim, which a lead session and its native subagents inherit as they do the cargo shim. `capacity.maxRuns` still
+  counts only subagents recorded on an open task: a lead's scouts and reviewers take no jawan slot. Builders had run
+  13 vitest and 16 cargo processes on 12 cores beside one build slot (docs/fleet.md "Heavy-build slots", T2259).
 
 ## v0.7.1 - 2026-11-21
 

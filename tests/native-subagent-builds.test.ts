@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
-import { jawanEnv, leadBuildEnv, nodePreloadOptions } from "../src/jawans/env.ts";
+import { jawanEnv, leadBuildEnv, nodePreloadOptions, nodePreloadStub } from "../src/jawans/env.ts";
 import { CARGO_SHIM, holdSlot, runs, slotBox, start, until } from "./build-slot-fixture.ts";
 import { tempDir, withProject } from "./helpers.ts";
 
@@ -13,7 +13,7 @@ describe("a lead session's build variables, inherited by its native subagents", 
     test("put toli's shims first on PATH, once, cap cargo jobs and test threads, chain toli's rustc wrapper and preload Node", () => {
         const shims = paths.buildShimsDir();
         const wrapper = join(shims, "toli-rustc-wrapper");
-        const preload = `--require ${join(shims, "toli-node-preload.cjs")}`;
+        const preload = `--require ${nodePreloadStub()}`;
         const home = { CARGO_HOME: "/nonexistent-cargo-home" };
         expect(leadBuildEnv({ ...home, PATH: "/usr/bin:/bin" }, 4)).toEqual({
             PATH: `${shims}:/usr/bin:/bin`,
@@ -35,6 +35,12 @@ describe("a lead session's build variables, inherited by its native subagents", 
         expect(leadBuildEnv({ ...home, NODE_OPTIONS: "--max-old-space-size=512" }, 4).NODE_OPTIONS).toBe(options);
         expect(leadBuildEnv({ ...home, NODE_OPTIONS: options }, 4).NODE_OPTIONS).toBe(options);
         expect(nodePreloadOptions({ NODE_OPTIONS: options })).toBe(options);
+        // An older toli's direct `--require` of the preload gives way to the stub; a stub not written stays out.
+        const direct = `--max-old-space-size=512 --require ${join(shims, "toli-node-preload.cjs")}`;
+        expect(leadBuildEnv({ ...home, NODE_OPTIONS: direct }, 4).NODE_OPTIONS).toBe(options);
+        expect(leadBuildEnv({ ...home, NODE_OPTIONS: options }, 4, false).NODE_OPTIONS).toBe(
+            "--max-old-space-size=512",
+        );
         // The wrapper it replaces is chained to: an inherited one, else cargo's user config's (sccache).
         expect(leadBuildEnv({ ...home, RUSTC_WRAPPER: "sccache" }, 4).TOLI_RUSTC_WRAPPER_NEXT).toBe("sccache");
         const again = { ...home, RUSTC_WRAPPER: wrapper, TOLI_RUSTC_WRAPPER_NEXT: "sccache" };
@@ -50,6 +56,30 @@ describe("a lead session's build variables, inherited by its native subagents", 
         expect(jawanEnv({ PATH: "/usr/bin" }, "j-1", 4).NODE_OPTIONS).toBe(preload);
         expect(jawanEnv(base, "j-1", 4, true).NODE_OPTIONS).toBe("--max-old-space-size=512");
         expect(jawanEnv({ PATH: "/usr/bin", NODE_OPTIONS: preload }, "j-1", 4, true).NODE_OPTIONS).toBeUndefined();
+    });
+
+    test("the stable stub runs node normally with the preload gone, and loads it while it is there (T2259)", () => {
+        const { box } = slotBox(1, 3);
+        const vars = JSON.parse(box.ok(["hook", "lead-build-env"], { env: LEAD })) as Record<string, string>;
+        const stub = join(box.root, ".toli-preload");
+        // Inside a build slot the caller's NODE_OPTIONS already holds a heap cap: the stub's `--require` follows it.
+        expect(vars.NODE_OPTIONS).toContain(`--require ${stub}/node-`);
+        const node = (): { code: number; out: string } => {
+            const ran = Bun.spawnSync([Bun.which("node") ?? "node", "-e", "console.log('ok')"], {
+                env: { PATH: process.env.PATH ?? "", NODE_OPTIONS: vars.NODE_OPTIONS ?? "" },
+            });
+            return { code: ran.exitCode, out: ran.stdout.toString() };
+        };
+        // The sandbox's checkout has no bin/shims/toli-node-preload.cjs: an older commit, a pruned runtime.
+        expect(node()).toEqual({ code: 0, out: "ok\n" });
+        const marker = join(box.root, "preloaded");
+        mkdirSync(join(box.root, "bin", "shims"), { recursive: true });
+        writeFileSync(
+            join(box.root, "bin", "shims", "toli-node-preload.cjs"),
+            `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "1");\n`,
+        );
+        expect(node()).toEqual({ code: 0, out: "ok\n" });
+        expect(readFileSync(marker, "utf8")).toBe("1");
     });
 
     test("bin/toli hook lead-build-env gives a lead the shim and the machine's cargo jobs, a jawan nothing", () => {

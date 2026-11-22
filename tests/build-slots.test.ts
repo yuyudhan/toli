@@ -5,7 +5,7 @@ import type { Machine } from "../src/core/config.ts";
 import { paths } from "../src/core/paths.ts";
 import { buildMemoryMaxMB } from "../src/fleet/build-slots.ts";
 import { capacityFor, type Resources } from "../src/fleet/resources.ts";
-import { jawanEnv, slotShareEnv } from "../src/jawans/env.ts";
+import { jawanEnv, nodePreloadStub, slotShareEnv } from "../src/jawans/env.ts";
 import { buildScopeArgv, buildScopeUnit, inToliBuildCgroup } from "../src/jawans/scope.ts";
 import {
     CARGO_SHIM,
@@ -100,7 +100,7 @@ describe("jawan environment", () => {
             CARGO_CACHE_RUSTC_INFO: "0",
             RUSTC_WRAPPER: join(paths.buildShimsDir(), "toli-rustc-wrapper"),
             TOLI_RUSTC_WRAPPER_NEXT: "",
-            NODE_OPTIONS: `--require ${join(paths.buildShimsDir(), "toli-node-preload.cjs")}`,
+            NODE_OPTIONS: `--require ${nodePreloadStub()}`,
         });
     });
 

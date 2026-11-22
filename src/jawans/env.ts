@@ -1,9 +1,11 @@
 // The environment a jawan runs in. Kept apart from supervise.ts, which also delivers outcomes (inbox, outbox), so
 // code that only builds the environment does not load the delivery machinery.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { paths } from "../core/paths.ts";
+import { writeTextAtomic } from "../core/util.ts";
 import { LEAD_TURN_ENV } from "../fleet/full.ts";
 
 /** toli's rustc wrapper in the cargo shim folder (bin/shims/toli-rustc-wrapper). */
@@ -94,22 +96,67 @@ export function slotShareEnv(base: Record<string, string | undefined>, cargoJobs
 export const NODE_PRELOAD_NAME = "toli-node-preload.cjs";
 
 /**
- * `NODE_OPTIONS` over `base`'s with toli's Node preload `--require`d once, so a Node test runner (Vitest, Jest,
- * `playwright test`) started outside a heavy-build slot takes one before it runs (bin/shims/toli-node-preload.cjs).
- * Node reads a quoted path in NODE_OPTIONS, so a toli root with a space in it works too.
+ * The stable stub NODE_OPTIONS `--require`s instead of the preload itself: `~/.toli/preload/node-<hash>.cjs`, one per
+ * checkout (`TOLI_PRELOAD_HOME` replaces `~/.toli/preload`, for tests). The stub loads the checkout's current preload
+ * when that file exists and does nothing otherwise, so a session still carrying the setting after the checkout moved to
+ * a commit without the preload, or lost it, never fails to start a Node process (`Cannot find module`).
+ */
+export function nodePreloadStub(): string {
+    const hash = createHash("sha256").update(paths.buildShimsDir()).digest("hex").slice(0, 12);
+    const home = process.env.TOLI_PRELOAD_HOME || join(homedir(), ".toli", "preload");
+    return join(home, `node-${hash}.cjs`);
+}
+
+/**
+ * Write the stub (`nodePreloadStub`) unless it already holds the same text: true once it is there. Its text is the
+ * same for every toli version, only the preload path it names. False when it cannot be written; the caller then leaves
+ * the preload out of NODE_OPTIONS, never naming a file that is not there.
+ */
+export function ensureNodePreloadStub(): boolean {
+    const stub = nodePreloadStub();
+    const target = join(paths.buildShimsDir(), NODE_PRELOAD_NAME);
+    const text = [
+        "// toli's Node preload stub (src/jawans/env.ts nodePreloadStub): loads toli's preload while it exists.",
+        '"use strict";',
+        `try { const t = ${JSON.stringify(target)}; if (require("node:fs").existsSync(t)) require(t); } catch {}`,
+        "",
+    ].join("\n");
+    try {
+        if (existsSync(stub) && readFileSync(stub, "utf8") === text) return true;
+        writeTextAtomic(stub, text);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** `--require <path>`, quoted where the path holds a space (Node reads quotes in NODE_OPTIONS). */
+const requireOption = (path: string): string => `--require ${path.includes(" ") ? `"${path}"` : path}`;
+
+/** `base`'s NODE_OPTIONS without toli's preload: the stub's `--require`, or the preload's own from an older toli. */
+export function nodeOptionsWithoutPreload(base: Record<string, string | undefined>): string {
+    let options = base.NODE_OPTIONS ?? "";
+    for (const path of [nodePreloadStub(), join(paths.buildShimsDir(), NODE_PRELOAD_NAME)])
+        options = options.split(requireOption(path)).join("");
+    return options.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * `NODE_OPTIONS` over `base`'s with toli's Node preload stub (`nodePreloadStub`) `--require`d once, so a Node test
+ * runner (Vitest, Jest, `playwright test`) started outside a heavy-build slot takes one before it runs
+ * (bin/shims/toli-node-preload.cjs). The caller writes the stub first (`ensureNodePreloadStub`).
  */
 export function nodePreloadOptions(base: Record<string, string | undefined>): string {
-    const preload = join(paths.buildShimsDir(), NODE_PRELOAD_NAME);
-    const options = (base.NODE_OPTIONS ?? "").trim();
-    if (options.includes(preload)) return options;
-    const require = `--require ${preload.includes(" ") ? `"${preload}"` : preload}`;
+    const options = nodeOptionsWithoutPreload(base);
+    const require = requireOption(nodePreloadStub());
     return options === "" ? require : `${options} ${require}`;
 }
 
 /**
  * The build variables of a lead session (`bin/toli hook lead-build-env`) over its environment `base`: toli's shims
  * (cargo, bun) first on PATH, one heavy-build slot's share of the cores (`slotShareEnv`), toli's rustc wrapper
- * (`rustcWrapperEnv`) and toli's Node preload in NODE_OPTIONS (`nodePreloadOptions`), with `CARGO_CACHE_RUSTC_INFO=0`:
+ * (`rustcWrapperEnv`) and toli's Node preload stub in NODE_OPTIONS (`nodePreloadOptions`; `preload` false, when the
+ * stub could not be written, leaves it out), with `CARGO_CACHE_RUSTC_INFO=0`:
  * cargo otherwise caches its `rustc -vV` probe in the build folder, so a cargo with nothing left to compile (a `cargo
  * test` that only runs its tests and doctests) never calls the wrapper and never takes a slot; uncached, the probe is
  * every cargo's first act and takes the slot before anything runs. The native harness subagents the lead starts (omp
@@ -119,6 +166,7 @@ export function nodePreloadOptions(base: Record<string, string | undefined>): st
 export function leadBuildEnv(
     base: Record<string, string | undefined>,
     cargoJobs: number,
+    preload = true,
 ): SlotShare & {
     PATH: string;
     CARGO_CACHE_RUSTC_INFO: string;
@@ -131,7 +179,7 @@ export function leadBuildEnv(
         ...slotShareEnv(base, cargoJobs),
         CARGO_CACHE_RUSTC_INFO: "0",
         ...rustcWrapperEnv(base),
-        NODE_OPTIONS: nodePreloadOptions(base),
+        NODE_OPTIONS: preload ? nodePreloadOptions(base) : nodeOptionsWithoutPreload(base),
     };
 }
 
@@ -147,13 +195,14 @@ export function leadBuildEnv(
  * take. A live-stack project's jawan (`liveStack`, docs/projects.md "Live-stack mode") runs without the shim or the
  * wrapper, at the same share: the machine's one build is the running stack's, its own scoped test builds share the
  * checkout's build folder, where cargo's lock already runs them one at a time, so they never also wait for a
- * heavy-build slot.
+ * heavy-build slot. `preload`: whether the Node preload stub is there to `--require` (`ensureNodePreloadStub`).
  */
 export function jawanEnv(
     base: Record<string, string | undefined>,
     runId: string,
     cargoJobs: number,
     liveStack = false,
+    preload = true,
 ): Record<string, string | undefined> {
     const env: Record<string, string | undefined> = { ...base, TOLI_ROLE: "jawan", TOLI_RUN_ID: runId };
     // A Claude Code lead exports these; a nested `claude -p` must start as its own top-level session.
@@ -167,7 +216,7 @@ export function jawanEnv(
     // A jawan the headless lead started is not that lead turn: it must never inherit its refusals.
     delete env[LEAD_TURN_ENV];
     Object.assign(env, slotShareEnv(base, cargoJobs));
-    if (!liveStack) return { ...env, ...leadBuildEnv(base, cargoJobs) };
+    if (!liveStack) return { ...env, ...leadBuildEnv(base, cargoJobs, preload) };
     env.PATH = withoutShims(base.PATH).join(delimiter);
     // An inherited toli wrapper (a lead's) gives way to the one it chained to.
     const wrapper = rustcWrapperEnv(base);
@@ -177,7 +226,7 @@ export function jawanEnv(
     }
     delete env.TOLI_RUSTC_WRAPPER_NEXT;
     // An inherited toli Node preload (a lead's) goes too: its test runners never wait for a slot either.
-    const options = (base.NODE_OPTIONS ?? "").replace(nodePreloadOptions({}), "").replace(/\s+/g, " ").trim();
+    const options = nodeOptionsWithoutPreload(base);
     if (options === "") delete env.NODE_OPTIONS;
     else env.NODE_OPTIONS = options;
     return env;

@@ -137,24 +137,38 @@ describe("native subagent jawans share capacity.maxRuns with spawn runs", () => 
         expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
     });
 
-    test("a subagent its harness reports running that no task records takes a jawan slot too (T2259)", () => {
-        // A builder's lead and jawans ran their own native subagents in bulk (13 vitest, 16 cargo on 12 cores) while
-        // none of them counted against capacity.maxRuns: only subagents recorded on a task did.
-        const box = twoSlots(1);
-        const now = "2026-03-04T09:00:00.000Z";
-        agentReport(box, "HelperSub", { pid: process.pid, at: "2026-03-04T08:59:30.000Z" });
-        box.ok(["task", "start", "T1", "--agent", "T11Sub"], { now: "2026-03-04T08:58:00.000Z" });
-        agentReport(box, "T11Sub", { pid: process.pid, at: "2026-03-04T08:59:30.000Z" });
-        // T1's subagent once (recorded and reported), the helper once.
-        expect(queueAt(box, now)).toMatchObject({ jawansRunning: 2, subagents: 2 });
-        expect(box.ok(["resources"], { env: ENV, now })).toContain("jawans at cap 2/2 (2 native subagents)");
-        // An ended helper, and one whose reporting omp is gone, free their slot.
-        agentReport(box, "HelperSub", { pid: process.pid, at: "2026-03-04T08:59:30.000Z", endedAt: now });
-        agentReport(box, "GoneSub", { pid: 999_999_999, at: "2026-03-04T08:59:30.000Z" });
-        expect(queueAt(box, now)).toMatchObject({ jawansRunning: 1, subagents: 1 });
-        // A beat older than three minutes from a live omp: its watch stopped, so it no longer counts either.
-        agentReport(box, "StaleSub", { pid: process.pid, at: "2026-03-04T08:50:00.000Z" });
-        expect(queueAt(box, now)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+    test("a lead's read-only helpers recorded on no task never take a jawan slot: a 1-slot lead still spawns (T2259)", () => {
+        // Heavy work is capped by the heavy-build slots (cargo shim, Node preload, bun shim); counting helpers put a
+        // coordinator at cap with one verifier, and a helper waiting on a run it spawned would deadlock behind itself.
+        const box = fleet(
+            remoteSnapshot("m2", {
+                queue: { queued: 0, active: 0, held: 0, jawansRunning: 0, jawansQueued: 0, depth: 0 },
+            }),
+            { ...ROOMY, maxRuns: 1 },
+        );
+        withProject(box, "x");
+        const at = new Date().toISOString();
+        for (const id of ["ScoutSub", "ReviewSub", "VerifySub"]) agentReport(box, id, { pid: process.pid, at });
+        expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 0, subagents: 0 });
+        box.stub("omp", "sleep 30");
+        const brief = join(box.root, "brief.md");
+        writeFileSync(brief, "TOLI_BRIEF v1\nsay hi\n");
+        const run = JSON.parse(
+            box.ok(["spawn", "--harness", "omp", "--cwd", box.root, "--brief", brief, "--json"], { env: ENV }),
+        ) as { id: string; status: string };
+        try {
+            expect(run.status).not.toBe("queued");
+        } finally {
+            box.ok(["run", "kill", run.id]);
+        }
+    });
+
+    test("an agent id once recorded on a closed task still counts once a live task records it again", () => {
+        const box = twoSlots(2);
+        box.ok(["task", "start", "T1", "--agent", "ReusedSub"]);
+        box.ok(["task", "done", "T1"]);
+        box.ok(["task", "start", "T2", "--agent", "ReusedSub"]);
+        expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
     });
 });
 

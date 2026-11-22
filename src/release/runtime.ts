@@ -35,6 +35,7 @@ import { gitOk, headSha } from "../core/git.ts";
 import { codeRoot, paths, RUNTIME_MARKER } from "../core/paths.ts";
 import { isJsonObject, out, printJson, run, ToliError, writeJsonAtomic, writeTextAtomic } from "../core/util.ts";
 import { fleetSyncText, syncWorkerFleet } from "../fleet/fleet-sync.ts";
+import { ensureNodePreloadStub } from "../jawans/env.ts";
 
 /** Snapshots kept per checkout: the active one and the two before it (a running process may still import from them). */
 const KEEP = 3;
@@ -172,9 +173,12 @@ function prune(store: string, active: string): void {
 
 /**
  * Install the checkout's HEAD as its runtime: build and prove the snapshot (once per commit), then repoint
- * state/runtime atomically. Refuses, leaving the active runtime in place, when the snapshot does not load.
+ * state/runtime atomically. Refuses, leaving the active runtime in place, when the snapshot does not load. Also writes
+ * the Node preload stub sessions `--require` (src/jawans/env.ts `ensureNodePreloadStub`), so install and upgrade leave
+ * it in place.
  */
 export function syncRuntime(checkout: string = paths.root()): Synced {
+    ensureNodePreloadStub();
     const commit = headSha(checkout);
     const store = storeFor(checkout);
     mkdirSync(store, { recursive: true });

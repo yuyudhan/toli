@@ -74,15 +74,13 @@ bring it into the lead's chat as a `[toli wake]` message. On a worker machine th
 coordinator's inbox. Run records live in `state/jawans/<id>.json`.
 
 **Jawan slots.** A machine runs at most `capacity.maxRuns` jawans at once (config/machine.json, default a quarter of
-the cores): running spawn runs plus the native subagents that are running now, one per distinct agent id: those
-recorded with `task start --agent <id>` on an active task no spawn run works on (below), and every other subagent
-its harness reports running now (T2259): a lead's helper subagents, and those a spawn run's own session starts,
-build and test like any jawan. Such an unrecorded one counts while its report in `state/agents/<id>.json` names no
-end and is fresh (an omp beat within 3 minutes from a running omp, a Claude Code hook's within
-`oversight.staleTaskMinutes`); a harness that reports nothing (one this machine cannot see) adds none. Their builds
-and test suites take heavy-build slots through the shims and the Node preload they inherit
-([fleet.md](fleet.md#heavy-build-slots)). A live lead session is no evidence that any one of its subagents runs: one
-interactive session outlives the many subagents it started. The harness
+the cores): running spawn runs plus the lead's native subagents that are running now, one per distinct agent id
+recorded with `task start --agent <id>` on an active task no spawn run works on. A subagent recorded on no open task
+(a lead's scout, reviewer or verifier) takes no jawan slot (T2259): its builds and test suites, if any, wait for a
+heavy-build slot through the shims and the Node preload it inherits ([fleet.md](fleet.md#heavy-build-slots)), and
+counting it would put a one-slot lead at cap with one scout, or deadlock a helper waiting on a run it spawned. A live
+lead session is no evidence that any one of its subagents runs: one interactive session outlives the many subagents
+it started. The harness
 reports each subagent running in `state/agents/<id>.json`, with nothing for the jawan to do. omp: the extension in the
 session that started it reads that session's own async-job list every minute and reports each running `task`
 subagent (the omp pid and the time), then its end once it stops running; it counts while that report is fresh (3

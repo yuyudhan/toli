@@ -126,31 +126,6 @@ export function reportHookEvent(root: string, id: string, event: HookAgentEvent,
     writeReport(root, id, { at: stamp });
 }
 
-/**
- * The native subagents a harness reports running now (state/agents/<id>.json under `root`), whether or not a task
- * records them: no end reported, and a beat from a running omp within AGENT_REPORT_TIMEOUT_MS, or a pid-less report (a
- * Claude Code hook's) within `graceMinutes`. A session's helper subagents and a jawan's own subagents are among them.
- */
-export function reportedRunningAgents(root: string, at: Date, graceMinutes: number): string[] {
-    let files: string[];
-    try {
-        files = readdirSync(join(root, AGENTS_DIR));
-    } catch {
-        return [];
-    }
-    return files.flatMap((file) => {
-        if (!file.endsWith(".json")) return [];
-        const report = readJson<AgentReport | null>(join(root, AGENTS_DIR, file), null);
-        if (report === null || report.endedAt !== undefined || typeof report.at !== "string") return [];
-        const age = at.getTime() - Date.parse(report.at);
-        const fresh =
-            report.pid === undefined
-                ? age < graceMinutes * 60_000
-                : pidAlive(report.pid) && age <= AGENT_REPORT_TIMEOUT_MS;
-        return fresh ? [file.slice(0, -".json".length)] : [];
-    });
-}
-
 /** An open delegation to another machine: one not dropped and not handed back. That machine runs the task. */
 export function delegatedAway(task: Task): boolean {
     return liveDelegations(task).length > 0;

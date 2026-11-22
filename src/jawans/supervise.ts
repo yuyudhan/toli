@@ -27,7 +27,7 @@ import { runTaskEnd } from "../records/task-end.ts";
 import { type Attempt, type ChildExit, KILL_GRACE_MINUTES, outliveSignals, runAttempt } from "./attempt.ts";
 import { autoResume } from "./continue.ts";
 import { LIMIT_STOP, signalDeathText } from "./death.ts";
-import { jawanEnv } from "./env.ts";
+import { ensureNodePreloadStub, jawanEnv } from "./env.ts";
 import { startQueued } from "./launch.ts";
 import { deadlineSection, hasReport, onlyHarnessErrors, usedTimeLimit } from "./limits.ts";
 import {
@@ -252,6 +252,7 @@ export async function superviseRun(id: string): Promise<void> {
         id,
         capacityFor(machine, availableParallelism()).cargoJobs,
         isLiveStack(initial.project),
+        ensureNodePreloadStub(),
     );
     // The one task this jawan may close, hold or drop (src/records/backlog.ts ownTask).
     if (initial.task !== null) env.TOLI_TASK = initial.task;
