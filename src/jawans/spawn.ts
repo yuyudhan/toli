@@ -190,11 +190,12 @@ export function spawnJawan(options: SpawnOptions): JawanRun {
         resolved.cwd = workspace.path;
         resolved.brief = `${resolved.brief.trimEnd()}\n${workspaceBrief(resolved.project, own, workspace)}`;
     }
-    // `--replace`: the live runs are stopped as `run kill` does under the same lock, only once the claim held there,
-    // so a refused spawn never left the task without its jawan; their ids go on the replacement's record.
+    // `--replace`: the live runs still active are stopped as `run kill` does, under the same lock and only once the
+    // claim held there, so a refused spawn never left the task without its jawan; their ids go on the new record.
     const guard = (): { replaces?: string[] } => {
         refuseOwnedTag({ ...claim, cwd: resolved.cwd });
-        return superseded.length === 0 ? {} : { replaces: superseded.map((live) => stopRunLocked(live.id).id) };
+        const live = superseded.filter((entry) => ACTIVE.includes(loadRun(entry.id).status));
+        return live.length === 0 ? {} : { replaces: live.map((entry) => stopRunLocked(entry.id).id) };
     };
     const run = startOrQueue(
         {

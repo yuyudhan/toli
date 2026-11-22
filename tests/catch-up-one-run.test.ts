@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { namesTag } from "../src/jawans/tag-owner.ts";
+import { loadRun, updateRun } from "../src/jawans/runs.ts";
+import { spawnJawan } from "../src/jawans/spawn.ts";
+import * as tagOwner from "../src/jawans/tag-owner.ts";
 import { machine, release, runRecord, runs } from "./catch-up-fixture.ts";
-import type { Sandbox } from "./helpers.ts";
+import { inProcess, type Sandbox } from "./helpers.ts";
 
 /** Task `id` as data/backlog.json holds it. */
 function task(box: Sandbox, id: string): { agent?: string; workspace?: unknown } {
@@ -39,6 +41,26 @@ function mergeBrief(box: Sandbox, tag: string): string {
 }
 
 const HOTFIX = "TOLI_BRIEF v1\n\n# Hotfix: regression since v1.0.0\n";
+
+/** Machine m1 with release v1.0.0 cut, task T1 started and one queued run of a non-merge brief for it. */
+function taskWithQueuedRun(): { box: Sandbox; oldId: string } {
+    const { box, origin } = machine();
+    box.ok(["task", "add", "alpha", "Parser fix"]);
+    box.ok(["task", "start", "T1"]);
+    const old = box.ok(["spawn", "--brief", textBrief(box, "fix", "# Parser fix\n"), "--task", "T1"]);
+    release(box, origin, "v1.0.0");
+    return { box, oldId: /^queued (j-\S+):/.exec(old)?.[1] ?? "" };
+}
+
+/** `spawn --brief <brief> --task T1 --replace` in this process, the sandbox's stub harness on PATH. */
+function spawnIn(box: Sandbox, brief: string): void {
+    inProcess(box.root, () => spawnJawan({ briefPath: brief, task: "T1", replace: true }), {
+        PATH: `${box.stubs}:${process.env.PATH ?? ""}`,
+        TOLI_JAWAN_SCOPE: "off",
+        TOLI_TASK: "",
+        TOLI_RUN_ID: "",
+    });
+}
 
 describe("one merge run per release tag", () => {
     test("a queued run of the clone naming the tag holds the catch-up; one naming another tag does not", () => {
@@ -155,30 +177,50 @@ describe("one merge run per release tag", () => {
         expect(runs(box)).toHaveLength(1);
     });
 
-    test("spawn --replace racing a catch-up scan never stops the old run and is then refused", async () => {
-        const { box, origin } = machine();
-        box.ok(["task", "add", "alpha", "Parser fix"]);
-        box.ok(["task", "start", "T1"]);
-        const old = box.ok(["spawn", "--brief", textBrief(box, "fix", "# Parser fix\n"), "--task", "T1"]);
-        const oldId = /^queued (j-\S+):/.exec(old)?.[1] ?? "";
-        release(box, origin, "v1.0.0");
-        const [scan, spawn] = await Promise.all([
-            box.toliAsync(["catch-up", "scan"]),
-            box.toliAsync(["spawn", "--brief", mergeBrief(box, "v1.0.0"), "--task", "T1", "--replace"]),
-        ]);
-        expect(scan.code).toBe(0);
-        const oldRun = runs(box).find((run) => run.id === oldId);
-        if (spawn.code === 0) {
-            expect(oldRun?.status).toBe("killed");
-            expect(scan.stdout).toContain("nightly: held (run ");
-        } else {
-            expect(spawn.stderr).toContain("refusing: release catch-up run ");
-            expect(oldRun?.status).toBe("queued");
-            expect(task(box, "T1").agent).toBe(oldId);
+    test("spawn --replace refused under the slots lock never stopped the old run: the task keeps its jawan", () => {
+        const { box, oldId } = taskWithQueuedRun();
+        // The outside check passes; the one under the lock finds an owner, as a catch-up recorded in between would.
+        const refuse = spyOn(tagOwner, "refuseOwnedTag")
+            .mockImplementationOnce(() => undefined)
+            .mockImplementationOnce(() => {
+                throw new tagOwner.TagOwnedError({ run: loadRun(oldId), why: "a catch-up recorded meanwhile" });
+            });
+        try {
+            expect(() => spawnIn(box, mergeBrief(box, "v1.0.0"))).toThrow("a catch-up recorded meanwhile");
+            expect(refuse).toHaveBeenCalledTimes(2);
+        } finally {
+            refuse.mockRestore();
         }
+        expect(runs(box).find((run) => run.id === oldId)?.status).toBe("queued");
+        expect(task(box, "T1").agent).toBe(oldId);
+        expect(runs(box)).toHaveLength(1);
+    });
+
+    test("spawn --replace of a run that ended before the slots lock records the new run, stopping nothing", () => {
+        const { box, oldId } = taskWithQueuedRun();
+        // The old run ends between the listing outside the lock and the guard under it.
+        const refuse = spyOn(tagOwner, "refuseOwnedTag")
+            .mockImplementationOnce(() => undefined)
+            .mockImplementationOnce(() => {
+                updateRun(oldId, (record) => {
+                    record.status = "done";
+                });
+            });
+        try {
+            spawnIn(box, textBrief(box, "again", "# Parser fix, again\n"));
+        } finally {
+            refuse.mockRestore();
+        }
+        const all = runs(box);
+        expect(all.find((run) => run.id === oldId)?.status).toBe("done");
+        const next = all.find((run) => run.id !== oldId);
+        expect(next?.status).toBe("queued");
+        expect(next?.replaces).toBeUndefined();
+        expect(task(box, "T1").agent).toBe(next?.id);
     });
 
     test("a tag matches as a whole release name, its regex characters literal", () => {
+        const { namesTag } = tagOwner;
         expect(namesTag("merge v1.2.3.", "v1.2.3")).toBe(true);
         expect(namesTag("merge (v1.2.3)", "v1.2.3")).toBe(true);
         expect(namesTag("merge v1.2.3-rc.1", "v1.2.3")).toBe(false);

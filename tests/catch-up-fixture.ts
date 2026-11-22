@@ -12,6 +12,7 @@ type RunRecord = {
     briefPath: string;
     cwd: string;
     catchUp?: string;
+    replaces?: string[];
 };
 export type TaskRecord = { id: string; notes: string[] };
 

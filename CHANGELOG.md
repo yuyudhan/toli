@@ -27,8 +27,9 @@ one. See docs/releasing.md.
   mentions the release still spawns, and a run in a task worktree never counts. Spawn checks again under the
   jawan-slots lock it records runs under, so of two starts in the same second the later one sees the first. A task
   run is checked before its workspace is prepared, and `--replace` stops the live run only under that lock once the
-  check passed, so a refused spawn neither switches the shared clone nor leaves the task without its jawan. Runs for
-  other tags are not affected (docs/projects.md "Release catch-up", T2298).
+  check passed, so a refused spawn neither switches the shared clone nor leaves the task without its jawan; a run that
+  ended before that lock is left as it is rather than failing the spawn with `<id> is not running`. Runs for other
+  tags are not affected (docs/projects.md "Release catch-up", T2298).
 - A run the lead service or the tick starts now finds the toolchains under the home folder. Started with the service's
   minimal PATH, catch-up jawans lacked `~/.cargo/bin`, so `bin/toli commit` refused every staged `Cargo.lock` until
   the jawan put it on PATH by hand. Every toli command now appends the tool folders its PATH lacks and that exist
