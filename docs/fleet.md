@@ -642,7 +642,9 @@ rate/usage limit`).
   `a free gpu slot` do not (src/records/slot-wait.ts holds the same rule as a regular expression). Such a task counts
   in the machine's queue (`slotWaits` in `resources --json`, `queue 14 (3 queued + 8 waiting for a slot, ...)` in
   `fleet queues` and `resources`), so `pick`, `fleet queues` and the balancing pass see it, and the pass offers it to
-  a lighter machine with `--for T<n>`, so the taken offer marks the task delegated away. `fleet check` and the
+  a lighter machine with `--for T<n>`, so the taken offer marks the task delegated away. A slot wait has no own
+  jawan, even if it still names an earlier subagent, so that delegation is never a slice (below): the task works
+  through it and closes with it. `fleet check` and the
   idle-machine watchdog take the same slot waits as the queue. A wait on a person, a release, a push or another
   machine is not queue, nor is a held task, one a live run here works on (that counts as the run) or one delegated to
   another machine and open there. A machine on an older toli publishes no `slotWaits`; its `depth` stands as it

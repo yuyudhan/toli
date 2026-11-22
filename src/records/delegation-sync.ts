@@ -12,6 +12,7 @@
 // the originator follows the live owner, which reports here directly through its `upstream` chain.
 import { join, relative } from "node:path";
 import { Args } from "../core/args.ts";
+import { otherFleetMachines } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import {
     isValidName,
@@ -40,6 +41,7 @@ import {
 } from "./delegation-report.ts";
 import { addInboxItem } from "./inbox.ts";
 import { delegateWait, rewait, sliceOpen } from "./slice-wait.ts";
+import { waitsForSlot } from "./slot-wait.ts";
 
 /** The last update seen per fleet id (state/delegates.json): decides once whether an update wakes this lead. */
 type SeenFile = Record<string, { updatedAt: string; status: string; question?: string }>;
@@ -211,13 +213,18 @@ function escalate(argv: string[]): void {
 
 /**
  * Whether the task's own jawan works on it: active or held with an agent that is not one of its delegations. A
- * delegation made then is a slice of that work.
+ * delegation made then is a slice of that work. A task parked for a free slot here (src/records/slot-wait.ts) has no
+ * own jawan, whatever agent it still names: a delegation of it (a taken balancing offer) is its delegation.
  */
 function ownJawan(task: Task): boolean {
     return (
         (task.status === "active" || task.status === "held") &&
         task.agent !== undefined &&
-        !(task.delegatedTo ?? []).includes(task.agent)
+        !(task.delegatedTo ?? []).includes(task.agent) &&
+        !waitsForSlot(
+            task,
+            otherFleetMachines().map((machine) => machine.name),
+        )
     );
 }
 

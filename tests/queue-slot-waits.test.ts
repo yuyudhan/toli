@@ -196,6 +196,8 @@ describe("waits on a free slot here are queue (T2265)", () => {
         withProject(m2, "x");
         for (const n of [1, 2, 3]) {
             m1.ok(["task", "add", "x", `piece ${n}`]);
+            // T1 still names the subagent that worked on it before it was parked (a leftover seen in the fleet).
+            if (n === 1) m1.ok(["task", "start", "T1", "--agent", "OldSub"]);
             wait(m1, `T${n}`, "slot (3/3 busy)");
         }
         const briefs = join(m1.root, "data", "projects", "x", "briefs");
@@ -220,5 +222,17 @@ describe("waits on a free slot here are queue (T2265)", () => {
         };
         expect(check.waiting.map((task) => task.id)).toEqual(["T2", "T3"]);
         expect(m2.ok(["task", "list"])).toContain("piece 1");
+        // A slot wait has no own jawan: the taken offer is T1's delegation, not a slice beside the old subagent, so
+        // T1 works through m2/T1 and closes with it.
+        const t1 = (
+            JSON.parse(m1.ok(["task", "list", "--json"])) as {
+                id: string;
+                agent?: string;
+                delegatedTo?: string[];
+                slices?: string[];
+            }[]
+        ).find((task) => task.id === "T1");
+        expect(t1).toMatchObject({ agent: "m2/T1", delegatedTo: ["m2/T1"] });
+        expect(t1?.slices ?? []).toEqual([]);
     });
 });

@@ -28,7 +28,9 @@ one. See docs/releasing.md.
   `resources --json` publishes it as `slotWaits` and adds it to `depth`, so `pick`, `fleet queues`, the balancing
   pass (which now offers it too), `fleet check`'s idle machines and the idle-machine watchdog all see it, and the
   last two take exactly the slot waits the queue counts. Offer commands now end in `--for T<n>`, so a taken offer
-  marks the task delegated away and it leaves this machine's queue and fleet check. Waits on a person, a release, a
+  marks the task delegated away and it leaves this machine's queue and fleet check; a slot wait that still names an
+  earlier subagent counts as having no jawan of its own, so the taken offer is its delegation, not a slice, and it
+  closes with the other machine's work. Waits on a person, a release, a
   push or another machine, held tasks, tasks a live run works on and delegated ones still count nothing. A machine on
   an older toli publishes no `slotWaits` and keeps its own depth (docs/fleet.md "Oversight", T2265).
 - A gate a jawan started no longer outlives the jawan. When a `bin/toli spawn` run ends (it finished, failed, was
