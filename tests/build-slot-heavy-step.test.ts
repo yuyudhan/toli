@@ -4,10 +4,13 @@
 // A cheap step's failure fails the check without ever queueing. Projects without the setting keep one slot for the
 // whole run (tests/build-slot-push.test.ts).
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { holdSlot, runs, slotBox, start, toliArgs, until } from "./build-slot-fixture.ts";
 import { type Sandbox, TOLI_BIN, withProject } from "./helpers.ts";
+
+/** toli's rustc wrapper, cargo's RUSTC_WRAPPER for a cargo that bypasses the shim. */
+const RUSTC_WRAPPER = resolve(import.meta.dir, "..", "bin", "shims", "toli-rustc-wrapper");
 
 // Each test runs a real detached gate runner or git push beside a real slot holder.
 setDefaultTimeout(60_000);
@@ -150,5 +153,36 @@ describe("a check that takes its heavy-build slot at its first heavy step", () =
         expect(result.code).toBe(0);
         expect(waits(result.stderr)).toBe(1);
         expect(runs(log).find((run) => run.label === "p")).toMatchObject({ slot: "1", jobs: "3", args: "test" });
+    });
+
+    // T2257 round 2: a cargo that bypassed the shim reached the run's slot through the rustc wrapper's probe, but its
+    // crate compilations found no slot (no TOLI_BUILD_SLOT, no cargo-<pid>.held) and ran outside the slot's job pool.
+    test("a cargo that bypasses the shim in such a gate compiles in the run's slot's job pool", async () => {
+        const { box, log } = heavyStepProject();
+        const bin = join(box.root, ".cargo", "bin");
+        mkdirSync(bin, { recursive: true });
+        const compiled = join(box.root, ".compiled");
+        const rustc = join(bin, "rustc");
+        writeFileSync(
+            rustc,
+            `#!/bin/sh\n[ "$1" = -vV ] && { echo "rustc 1.90.0 (fake)"; exit 0; }\necho "job=\${TOLI_BUILD_JOB:-none}" >> ${compiled}\n`,
+        );
+        chmodSync(rustc, 0o755);
+        // As cargo does: the `rustc -vV` probe through RUSTC_WRAPPER first, then each crate through it.
+        const cargo = join(bin, "cargo");
+        writeFileSync(
+            cargo,
+            `#!/bin/sh\n"$RUSTC_WRAPPER" ${rustc} -vV >/dev/null || exit 1\n"$RUSTC_WRAPPER" ${rustc} --crate-name demo src/lib.rs\n`,
+        );
+        chmodSync(cargo, 0o755);
+        const holder = await holdSlot(box, log);
+        const gate = box.toliAsync(["gate", "run", "app", "--recipe", `${cargo} build`], {
+            env: { ...UNCAPPED, RUSTC_WRAPPER, TOLI_RUSTC_WRAPPER_NEXT: "" },
+        });
+        await until("the cargo's probe waiting for the busy slot", () => waits(gateLogs(box)) >= 1);
+        writeFileSync(`${log}.done-a`, "");
+        expect((await holder.done).code).toBe(0);
+        expect((await gate).code).toBe(0);
+        expect(lines(compiled)).toEqual([`job=${join(box.root, "state", "build-slots", "jobs-1", "1")}`]);
     });
 });

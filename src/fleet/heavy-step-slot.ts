@@ -7,7 +7,7 @@
 // until the run holds one: the run waits in line itself (src/fleet/build-slots.ts `withSlotAtHeavyStep`) and keeps
 // the slot until the check ends, so every later step of it, heavy or cheap, runs in that one slot without queueing
 // again (`enclosingSlot` finds the run among each step's ancestors).
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { ancestry } from "../core/ancestry.ts";
 import { paths } from "../core/paths.ts";
@@ -51,7 +51,27 @@ export async function slotFromRun(runPid: number): Promise<number | null> {
     }
 }
 
-/** Remove run `runPid`'s request file, at its start (a pid reused after a killed run) and at its end. */
+/**
+ * Remove run `runPid`'s request file and the `cargo-<pid>.held` files naming it as the holder of its heavy steps'
+ * cargos (src/fleet/cargo-slot.ts `slotForProcess`), at its start (a pid reused after a killed run) and at its end.
+ */
 export function clearSlotRequest(runPid: number): void {
     rmSync(slotRequestFile(runPid), { force: true });
+    let names: string[];
+    try {
+        names = readdirSync(paths.buildSlotsDir());
+    } catch {
+        return; // No slot taken yet on this machine.
+    }
+    for (const name of names) {
+        if (!/^cargo-\d+\.held$/.test(name)) continue;
+        const file = join(paths.buildSlotsDir(), name);
+        let holder = "";
+        try {
+            holder = readFileSync(file, "utf8").split(" ")[0] ?? "";
+        } catch {
+            continue; // Removed meanwhile.
+        }
+        if (holder === String(runPid)) rmSync(file, { force: true });
+    }
 }

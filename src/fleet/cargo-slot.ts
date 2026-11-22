@@ -217,15 +217,18 @@ export async function slotForRunner(pid: number): Promise<number> {
 
 /**
  * Return only once process `pid` runs in a heavy-build slot: the slot of the check it is a heavy step of
- * (`deferredSlotRun`, src/fleet/heavy-step-slot.ts), the enclosing one (`enclosingSlot`), or one a detached
- * holder (`holdForCargo`) takes for it, started when none is waiting yet, saying once that it waits and once which
- * release-priority run it gives way to. Its slot's number, or null when it runs without one: in a live-stack
- * project's checkout, without flock(2), or once `pid` is gone.
+ * (`deferredSlotRun`, src/fleet/heavy-step-slot.ts; recorded as `pid`'s `cargo-<pid>.held` naming the check's run as
+ * its holder, so the rustc wrapper's crate compilations take that slot's job pool), the enclosing one
+ * (`enclosingSlot`), or one a detached holder (`holdForCargo`) takes for it, started when none is waiting yet, saying
+ * once that it waits and once which release-priority run it gives way to. Its slot's number, or null when it runs
+ * without one: in a live-stack project's checkout, without flock(2), or once `pid` is gone.
  */
 async function slotForProcess(pid: number, keepStacks: boolean): Promise<number | null> {
     if (liveStackProjectAt(process.cwd()) !== null) return null;
     const run = deferredSlotRun();
-    const enclosing = (run === null ? null : await slotFromRun(run)) ?? enclosingSlot();
+    const runSlot = run === null ? null : await slotFromRun(run);
+    if (run !== null && runSlot !== null) writeTextAtomic(heldFile(pid), `${run} ${runSlot}\n`);
+    const enclosing = runSlot ?? enclosingSlot();
     if (enclosing !== null) {
         await waitForLentBuilds(enclosing);
         return enclosing;
