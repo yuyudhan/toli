@@ -13,11 +13,12 @@ one. See docs/releasing.md.
   the jawan put it on PATH by hand. Every toli command now appends the tool folders its PATH lacks and that exist
   (`$CARGO_HOME/bin` or `~/.cargo/bin`, `$BUN_INSTALL/bin` or `~/.bun/bin`, `~/.local/bin`, `~/bin`,
   `/opt/homebrew/bin`, `/usr/local/bin`) as it starts, whatever started it, so jawans, catch-ups, jobs, gates, pushes
-  and commit checks all get them; they go after the existing PATH, so a jawan's cargo shim stays first. Only a folder
-  owned by the user or root and not world-writable is added, and a PATH entry with a trailing slash counts as the same
-  folder; the `bin/toli` launcher no longer appends bun's folder when PATH already holds it. A `Cargo.lock` check
-  that finds no cargo now refuses with `cargo not found on PATH` and the PATH it searched (docs/harnesses.md "Service
-  environment", T2266).
+  and commit checks all get them; they go after the existing PATH, so a jawan's cargo shim stays first. As ssh's
+  StrictModes asks, a folder is added only when it and each folder above it (up to the home folder, or `/`) are owned
+  by the user or root, not world-writable, and group-writable only for a group the user is in; a PATH entry with a
+  trailing slash counts as the same folder. The `bin/toli` launcher no longer appends bun's folder when PATH already
+  holds it. A `Cargo.lock` check that finds no cargo now refuses with `cargo not found on PATH` and the PATH it
+  searched (docs/harnesses.md "Service environment", T2266).
 - A machine's queue now counts the tasks parked for a free jawan slot there. A lead at cap that recorded its waiting
   pieces with `bin/toli task wait T<n> --on "next free slot (3/3 busy)"` showed only its queued tasks, so one worker
   with 11 such pieces behind 3 busy slots read as 3 deep in `fleet queues`, and another machine moved more work to it.

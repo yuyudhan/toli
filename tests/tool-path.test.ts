@@ -62,10 +62,46 @@ describe("the user's tool folders on PATH", () => {
         const stat = (dir: string) => {
             const real = statSync(dir, { throwIfNoEntry: false });
             if (real === undefined) return undefined;
-            return { isDirectory: () => real.isDirectory(), uid: owners[dir] ?? uid, mode: modes[dir] ?? real.mode };
+            return {
+                isDirectory: () => real.isDirectory(),
+                uid: owners[dir] ?? uid,
+                gid: real.gid,
+                mode: modes[dir] ?? real.mode,
+            };
         };
         const env = { HOME: home, PATH: "/service/bin", CARGO_HOME: "", BUN_INSTALL: "" };
         const path = (withUserToolDirs(env, stat, uid) ?? "").split(delimiter);
+        expect(path).not.toContain(join(home, ".cargo/bin"));
+        expect(path).not.toContain(join(home, ".bun/bin"));
+        expect(path).toContain(join(home, ".local/bin"));
+    });
+
+    test("a folder under a parent others can write to is never added, like ssh's StrictModes", () => {
+        const home = homeWith([".cargo/bin", ".bun/bin", ".local/bin"]);
+        // Real mode bits: ~/.cargo is 0777, so anyone could swap its 0755 bin for one holding their own cargo.
+        chmodSync(join(home, ".cargo"), 0o777);
+        chmodSync(join(home, ".cargo/bin"), 0o755);
+        const uid = process.getuid?.() ?? 0;
+        const groups = process.getgroups?.() ?? [];
+        const foreign = Math.max(0, ...groups) + 4242;
+        // Simulated: ~/.bun is group-writable for a group this user is not in; ~/.local is group-writable for ours.
+        const parents: Record<string, { gid: number; mode: number }> = {
+            [join(home, ".bun")]: { gid: foreign, mode: 0o40775 },
+            [join(home, ".local")]: { gid: groups[0] ?? 0, mode: 0o40775 },
+        };
+        const stat = (dir: string) => {
+            const real = statSync(dir, { throwIfNoEntry: false });
+            if (real === undefined) return undefined;
+            const fake = parents[dir];
+            return {
+                isDirectory: () => real.isDirectory(),
+                uid,
+                gid: fake?.gid ?? real.gid,
+                mode: fake?.mode ?? real.mode,
+            };
+        };
+        const env = { HOME: home, PATH: "/service/bin", CARGO_HOME: "", BUN_INSTALL: "" };
+        const path = (withUserToolDirs(env, stat, uid, groups) ?? "").split(delimiter);
         expect(path).not.toContain(join(home, ".cargo/bin"));
         expect(path).not.toContain(join(home, ".bun/bin"));
         expect(path).toContain(join(home, ".local/bin"));
