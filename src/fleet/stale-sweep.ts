@@ -8,7 +8,7 @@
 // links up-to-date artifacts it has not rewritten for hours, so a partial delete under it breaks that build.
 import { type Dirent, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, type Stats } from "node:fs";
 import { join } from "node:path";
-import { loadMachine } from "../core/config.ts";
+import { loadMachine, type Machine } from "../core/config.ts";
 import { out, platform, run, warn } from "../core/util.ts";
 import { CARGO_LOCKS, LOCK_DEPTH, whileIdle } from "./cargo-lock.ts";
 import {
@@ -21,7 +21,7 @@ import {
     projectCheckouts,
     within,
 } from "./disk-scan.ts";
-import { DiskLog, describe, diskPause, GIB, gb } from "./disk-state.ts";
+import { DiskLog, describe, diskPause, GIB, gb, pauseHold } from "./disk-state.ts";
 import { DEFAULT_DISK_SWEEP_STALE_MINUTES, diskSweepStaleMinutes, procFile } from "./resources.ts";
 import { LIVE_PROBES, type UseProbes } from "./target-use.ts";
 
@@ -180,12 +180,14 @@ export type SweepResult = {
  * Delete every stale entry directly inside the target's artifact folders (see the header) while holding cargo's
  * locks; a target in use is left whole (`kept` says why). Writes nothing, so it also works on a full disk. `dryRun`
  * only counts. `probes` say who uses the target: the live machine unless a test injects its own process list.
+ * `holdOff` gives a reason to leave it whole, checked under the locks (the keeper's state/disk-keep.pause).
  */
 export function sweepStaleArtifacts(
     target: string,
     staleMinutes: number,
     dryRun: boolean,
     probes: UseProbes = LIVE_PROBES,
+    holdOff: () => string | null = () => null,
 ): SweepResult {
     const source = timeSource(target, staleMinutes);
     const result: SweepResult = { artifacts: 0, bytes: 0, by: source.why, failed: [] };
@@ -193,21 +195,14 @@ export function sweepStaleArtifacts(
         target,
         () => deleteStale(target, source.atime, staleMinutes, dryRun, result, probes),
         probes,
+        holdOff,
     );
     if (!outcome.ran) result.kept = outcome.reason;
     return result;
 }
 
-/** The sweep itself, counted into `result`; only ever run under cargo's locks. */
-function deleteStale(
-    target: string,
-    atime: boolean,
-    staleMinutes: number,
-    dryRun: boolean,
-    result: SweepResult,
-    probes: UseProbes,
-): void {
-    const cutoffMs = Date.now() - staleMinutes * 60_000;
+/** Every stale entry directly inside the target's artifact folders, with the bytes it frees. */
+function staleEntries(target: string, atime: boolean, cutoffMs: number): { path: string; bytes: number }[] {
     const stale: { path: string; bytes: number }[] = [];
     for (const root of artifactRoots(target)) {
         let names: string[];
@@ -223,6 +218,60 @@ function deleteStale(
             if (bytes !== null) stale.push({ path, bytes });
         }
     }
+    return stale;
+}
+
+/**
+ * Whether the target holds an artifact a sweep would take now, read without cargo's locks or any process probe, so the
+ * keeper looks for use (locks, processes, container mounts) only in a target with something to sweep.
+ */
+function hasStaleArtifacts(target: string, staleMinutes: number): boolean {
+    const source = timeSource(target, staleMinutes);
+    return staleEntries(target, source.atime, Date.now() - staleMinutes * 60_000).length > 0;
+}
+
+/** What the keeper's step-1 sweep reports into: its dry run, container mounts, simulated GB, log and lines. */
+export type KeeperSweepHooks = {
+    dryRun: boolean;
+    mounted: (path: string) => boolean;
+    simulate: (gb: number) => void;
+    opened: () => void;
+    say: (line: string) => void;
+};
+
+/**
+ * The keeper's sweep of one target before any whole target goes (src/fleet/disk.ts step 1), at the machine's
+ * `capacity.diskSweepStaleMinutes` (the default, said once, when that is invalid). Only a target with something to
+ * sweep is checked for use (a container mount, cargo's locks, processes); one in use stays whole and silent here, since
+ * its wipe says why. Honours state/disk-keep.pause under the locks.
+ */
+export function keeperSweep(machine: Machine, hooks: KeeperSweepHooks): (target: string, step: string) => void {
+    let minutes = DEFAULT_DISK_SWEEP_STALE_MINUTES;
+    try {
+        minutes = diskSweepStaleMinutes(machine);
+    } catch (error) {
+        hooks.say(`${describe(error)}: sweeping what was unused for the default ${minutes} min`);
+    }
+    return (target, step) => {
+        if (!hasStaleArtifacts(target, minutes) || hooks.mounted(target)) return;
+        const swept = sweepStaleArtifacts(target, minutes, hooks.dryRun, LIVE_PROBES, pauseHold);
+        if (swept.kept !== undefined || (swept.artifacts === 0 && swept.failed.length === 0)) return;
+        if (hooks.dryRun) hooks.simulate(swept.bytes / GIB);
+        else if (swept.artifacts > 0) hooks.opened();
+        hooks.say(`${sweepLine(target, minutes, swept, hooks.dryRun)} (${step})`);
+    };
+}
+
+/** The sweep itself, counted into `result`; only ever run under cargo's locks. */
+function deleteStale(
+    target: string,
+    atime: boolean,
+    staleMinutes: number,
+    dryRun: boolean,
+    result: SweepResult,
+    probes: UseProbes,
+): void {
+    const stale = staleEntries(target, atime, Date.now() - staleMinutes * 60_000);
     if (stale.length === 0) return;
     const held = heldOpenBelow(target, Number.POSITIVE_INFINITY, probes.openFiles).map((file) => file.path);
     for (const entry of stale) {

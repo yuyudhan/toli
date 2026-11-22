@@ -30,7 +30,7 @@ import { loadProjects } from "../projects/projects.ts";
 import { checkBuildPlace } from "./build-place.ts";
 import { busyBuildSlots, slotHolder, slotWaiters, takeInTurn } from "./build-queue.ts";
 import { flock, LOCK_UN } from "./cargo-lock.ts";
-import { holdForCargo, slotForCargo } from "./cargo-slot.ts";
+import { holdForCargo, slotForCargo, slotForRunner } from "./cargo-slot.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
 import { waitForLentBuilds } from "./lent-slots.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
@@ -273,16 +273,20 @@ function pidFlag(value: string, flag: string): number {
 /**
  * `bin/toli build-slot -- <command...>`: refuse a build outside the places toli knows (`checkBuildPlace`, AGENTS.md
  * rule 5), then run the command in a heavy-build slot (`withBuildSlot`), in its own memory-capped systemd scope where
- * the host has one; a nested one stays in its parent's scope. `--cargo <pid>` and `--hold <pid>` are toli's rustc
- * wrapper's (`slotForCargo`, `holdForCargo`).
+ * the host has one; a nested one stays in its parent's scope. `--cargo <pid>` and `--hold <pid> [--keep-stacks]` are
+ * toli's rustc wrapper's (`slotForCargo`, `holdForCargo`); `--runner <pid>` is toli's Node preload's, for a test
+ * runner (`slotForRunner`).
  */
 export async function buildSlotCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv, { values: ["cargo", "hold", "cwd"] });
+    const args = new Args(argv, { values: ["cargo", "hold", "cwd", "runner"], booleans: ["keep-stacks"] });
     args.maxPositional(0);
     const cargo = args.str("cargo");
     if (cargo !== undefined) return await slotForCargo(pidFlag(cargo, "--cargo"));
+    const runner = args.str("runner");
+    if (runner !== undefined) return await slotForRunner(pidFlag(runner, "--runner"));
     const hold = args.str("hold");
-    if (hold !== undefined) return await holdForCargo(pidFlag(hold, "--hold"), args.str("cwd") ?? process.cwd());
+    if (hold !== undefined)
+        return await holdForCargo(pidFlag(hold, "--hold"), args.str("cwd") ?? process.cwd(), args.bool("keep-stacks"));
     const command = args.rest;
     if (command.length === 0) throw new ToliError("usage: bin/toli build-slot -- <command...>");
     checkBuildPlace(process.cwd(), command);

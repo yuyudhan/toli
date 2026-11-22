@@ -136,6 +136,26 @@ describe("native subagent jawans share capacity.maxRuns with spawn runs", () => 
         }
         expect(resourcesQueue(box)).toMatchObject({ jawansRunning: 1, subagents: 1 });
     });
+
+    test("a subagent its harness reports running that no task records takes a jawan slot too (T2259)", () => {
+        // A builder's lead and jawans ran their own native subagents in bulk (13 vitest, 16 cargo on 12 cores) while
+        // none of them counted against capacity.maxRuns: only subagents recorded on a task did.
+        const box = twoSlots(1);
+        const now = "2026-03-04T09:00:00.000Z";
+        agentReport(box, "HelperSub", { pid: process.pid, at: "2026-03-04T08:59:30.000Z" });
+        box.ok(["task", "start", "T1", "--agent", "T11Sub"], { now: "2026-03-04T08:58:00.000Z" });
+        agentReport(box, "T11Sub", { pid: process.pid, at: "2026-03-04T08:59:30.000Z" });
+        // T1's subagent once (recorded and reported), the helper once.
+        expect(queueAt(box, now)).toMatchObject({ jawansRunning: 2, subagents: 2 });
+        expect(box.ok(["resources"], { env: ENV, now })).toContain("jawans at cap 2/2 (2 native subagents)");
+        // An ended helper, and one whose reporting omp is gone, free their slot.
+        agentReport(box, "HelperSub", { pid: process.pid, at: "2026-03-04T08:59:30.000Z", endedAt: now });
+        agentReport(box, "GoneSub", { pid: 999_999_999, at: "2026-03-04T08:59:30.000Z" });
+        expect(queueAt(box, now)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+        // A beat older than three minutes from a live omp: its watch stopped, so it no longer counts either.
+        agentReport(box, "StaleSub", { pid: process.pid, at: "2026-03-04T08:50:00.000Z" });
+        expect(queueAt(box, now)).toMatchObject({ jawansRunning: 1, subagents: 1 });
+    });
 });
 
 describe("a native subagent counts as a running jawan until it reports its end or its session dies (T1419, T1820)", () => {

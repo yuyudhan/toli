@@ -1,0 +1,63 @@
+#!/bin/sh
+# toli's bun shim, first on every jawan's and lead session's PATH beside the cargo shim (src/jawans/env.ts), so the
+# native subagents a session starts, which inherit that PATH, go through it too. `bun test` goes through
+# `bin/toli build-slot`, which refuses a test run whose working tree is not a registered clone, a task worktree toli made
+# or toli's own checkout (AGENTS.md rule 5, src/fleet/build-place.ts) and then waits for one of the machine's
+# heavy-build slots (src/fleet/build-slots.ts); inside a slot already (src/fleet/enclosing-slot.ts) it runs at once.
+# Everything else (`bun run`, `bun install`, `bun x`, a script such as bin/toli) goes straight to the real bun: the
+# first bun on PATH that is not this folder's or another copy of this shim (its second line starts "# toli's bun
+# shim"), so a shim never calls itself or another shim.
+shims=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 127
+
+real=""
+set -f
+saved_ifs=$IFS
+IFS=:
+for dir in $PATH; do
+    [ -n "$dir" ] || dir=.
+    if [ ! -f "$dir/bun" ] || [ ! -x "$dir/bun" ]; then
+        continue
+    fi
+    resolved=$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P) || continue
+    [ "$resolved" = "$shims" ] && continue
+    case $(sed -n '2{p;q;}' "$dir/bun" 2>/dev/null) in
+    "# toli's bun shim"*) continue ;;
+    esac
+    real="$dir/bun"
+    break
+done
+IFS=$saved_ifs
+set +f
+# bin/toli finds bun at its usual install paths too: so does the shim, for a PATH that lacks it.
+if [ -z "$real" ]; then
+    for candidate in "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
+        [ -x "$candidate" ] && real=$candidate && break
+    done
+fi
+if [ -z "$real" ]; then
+    echo "toli: bun not found on PATH (outside $shims), in ~/.bun/bin, /opt/homebrew/bin or /usr/local/bin" >&2
+    exit 127
+fi
+
+# The subcommand: the first word that is not a global option (skipping the values of those that take one).
+sub=""
+skip=""
+for arg in "$@"; do
+    if [ -n "$skip" ]; then
+        skip=""
+        continue
+    fi
+    case $arg in
+    --cwd | --config | -c | --env-file | --preload | -r | --tsconfig-override) skip=1 ;;
+    --) break ;;
+    -*) ;;
+    *)
+        sub=$arg
+        break
+        ;;
+    esac
+done
+if [ "$sub" = test ]; then
+    exec "$shims/../toli" build-slot -- "$real" "$@"
+fi
+exec "$real" "$@"

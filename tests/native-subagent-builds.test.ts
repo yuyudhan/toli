@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
-import { leadBuildEnv } from "../src/jawans/env.ts";
+import { jawanEnv, leadBuildEnv, nodePreloadOptions } from "../src/jawans/env.ts";
 import { CARGO_SHIM, holdSlot, runs, slotBox, start, until } from "./build-slot-fixture.ts";
 import { tempDir, withProject } from "./helpers.ts";
 
@@ -10,9 +10,10 @@ import { tempDir, withProject } from "./helpers.ts";
 const LEAD = { TOLI_ROLE: "", NO_MISTAKES_GATE: "" };
 
 describe("a lead session's build variables, inherited by its native subagents", () => {
-    test("put toli's cargo shim first on PATH, once, cap cargo jobs and test threads and chain toli's rustc wrapper", () => {
+    test("put toli's shims first on PATH, once, cap cargo jobs and test threads, chain toli's rustc wrapper and preload Node", () => {
         const shims = paths.buildShimsDir();
         const wrapper = join(shims, "toli-rustc-wrapper");
+        const preload = `--require ${join(shims, "toli-node-preload.cjs")}`;
         const home = { CARGO_HOME: "/nonexistent-cargo-home" };
         expect(leadBuildEnv({ ...home, PATH: "/usr/bin:/bin" }, 4)).toEqual({
             PATH: `${shims}:/usr/bin:/bin`,
@@ -25,9 +26,15 @@ describe("a lead session's build variables, inherited by its native subagents", 
             CARGO_CACHE_RUSTC_INFO: "0",
             RUSTC_WRAPPER: wrapper,
             TOLI_RUSTC_WRAPPER_NEXT: "",
+            NODE_OPTIONS: preload,
         });
         expect(leadBuildEnv({ ...home, PATH: `/bin:${shims}` }, 4).PATH).toBe(`${shims}:/bin`);
         expect(leadBuildEnv(home, 4).PATH).toBe(shims);
+        // The caller's own Node options stay, and the preload is added once.
+        const options = `--max-old-space-size=512 ${preload}`;
+        expect(leadBuildEnv({ ...home, NODE_OPTIONS: "--max-old-space-size=512" }, 4).NODE_OPTIONS).toBe(options);
+        expect(leadBuildEnv({ ...home, NODE_OPTIONS: options }, 4).NODE_OPTIONS).toBe(options);
+        expect(nodePreloadOptions({ NODE_OPTIONS: options })).toBe(options);
         // The wrapper it replaces is chained to: an inherited one, else cargo's user config's (sccache).
         expect(leadBuildEnv({ ...home, RUSTC_WRAPPER: "sccache" }, 4).TOLI_RUSTC_WRAPPER_NEXT).toBe("sccache");
         const again = { ...home, RUSTC_WRAPPER: wrapper, TOLI_RUSTC_WRAPPER_NEXT: "sccache" };
@@ -35,6 +42,14 @@ describe("a lead session's build variables, inherited by its native subagents", 
         const cargoHome = tempDir("cargo-home");
         writeFileSync(join(cargoHome, "config.toml"), '[build]\nrustc-wrapper = "/opt/bin/sccache"\njobs = 4\n');
         expect(leadBuildEnv({ CARGO_HOME: cargoHome }, 4).TOLI_RUSTC_WRAPPER_NEXT).toBe("/opt/bin/sccache");
+    });
+
+    test("a jawan gets the Node preload; a live-stack project's jawan drops an inherited one", () => {
+        const preload = nodePreloadOptions({});
+        const base = { PATH: "/usr/bin", NODE_OPTIONS: `--max-old-space-size=512 ${preload}` };
+        expect(jawanEnv({ PATH: "/usr/bin" }, "j-1", 4).NODE_OPTIONS).toBe(preload);
+        expect(jawanEnv(base, "j-1", 4, true).NODE_OPTIONS).toBe("--max-old-space-size=512");
+        expect(jawanEnv({ PATH: "/usr/bin", NODE_OPTIONS: preload }, "j-1", 4, true).NODE_OPTIONS).toBeUndefined();
     });
 
     test("bin/toli hook lead-build-env gives a lead the shim and the machine's cargo jobs, a jawan nothing", () => {

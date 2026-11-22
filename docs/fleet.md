@@ -366,6 +366,23 @@ their one-letter aliases) through `bin/toli build-slot`, inside a slot too, and 
 first refuses a build outside the clones, toli's task worktrees and toli's checkout
 ([disk.md](disk.md#builds-outside-the-clones)); inside a slot it then runs the command at once.
 
+Test suites take a slot the same way (T2259: native subagents ran 13 vitest processes on one 12-core builder beside
+one build slot that only cargo went through). toli's bun shim (`bin/shims/bun`, first on PATH beside the cargo shim)
+sends `bun test` through `bin/toli build-slot` and runs every other bun command (`bun run`, `bun install`, `bun x`,
+`bin/toli` itself) straight away with the first real bun after it. Node test runners are reached through
+`NODE_OPTIONS` instead, since a package script puts `node_modules/.bin` ahead of any shim: the same environment
+`--require`s toli's Node preload (`bin/shims/toli-node-preload.cjs`; Bun ignores it). When Node starts Vitest's CLI
+(`node_modules/vitest/vitest.mjs` or `.bin/vitest`), Jest's (`jest/bin/jest.js`, `jest-cli/bin/jest.js`) or `playwright
+test`, the preload runs `bin/toli build-slot --runner <its pid>`, which waits in line (printing the same waiting line)
+until a detached holder (`build-slot --hold <pid> --keep-stacks`, as for a cargo that bypassed the shim, below) holds
+a slot for that process and frees it once the process exits, however it exits; the runner then exports the slot as
+`TOLI_BUILD_SLOT`, so its workers and any cargo it starts run in it. Inside a slot already it goes straight on. The
+holder leaves the dev and live stacks running, since the tests may talk to them. Watch and UI modes never end, so
+they never take a slot: Vitest's `watch`, `dev`, `--watch`, `--ui` (and its default watch in an interactive non-CI
+shell without `run`), Jest's `--watch`/`--watchAll`, Playwright's `--ui`. Every other Node process returns at once.
+A live-stack project's jawans run without the shim and the preload. The lead's native subagents inherit both with
+the rest of the build variables (above).
+
 PATH order alone is not enough: a login profile, a harness's shell snapshot or git (its exec path, in a hook) can put
 `~/.cargo/bin` ahead of the shim, and that cargo then never sees the shim. The rustc wrapper catches it: cargo calls
 it for every rustc it runs, whichever cargo PATH found, starting with its `rustc -vV` probe. Cargo caches that probe

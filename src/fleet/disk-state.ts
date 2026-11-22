@@ -28,6 +28,29 @@ export function pauseHold(): string | null {
     return pause === null ? null : `paused by pid ${pause.pid} (state/disk-keep.pause)`;
 }
 
+/**
+ * Log `line`, why the keeper does not run this time, only when its reason (`key`) changed since the last skip
+ * (state/disk-keep.skip), so a minute tick under a long pause or beside a long background keeper writes one line, not
+ * one a minute.
+ */
+export function logSkipOnce(log: DiskLog, key: string, line: string): void {
+    let last = "";
+    try {
+        last = readFileSync(paths.diskKeepSkip(), "utf8");
+    } catch {
+        // Nothing skipped since the keeper last ran.
+    }
+    if (last === key) return;
+    log.add(line);
+    log.open();
+    try {
+        mkdirSync(dirname(paths.diskKeepSkip()), { recursive: true });
+        writeFileSync(paths.diskKeepSkip(), key);
+    } catch {
+        // A full disk: the reason is logged again next time, which is all this costs.
+    }
+}
+
 /** The machine's floor on a volume of `totalGB`: capacity.diskKeepGB, capped by diskKeepFloor. */
 export function machineFloor(machine: Machine, totalGB: number): { floorGB: number; note?: string } {
     return diskKeepFloor(capacityFor(machine, Math.max(1, cpus().length)).diskKeepGB, totalGB);

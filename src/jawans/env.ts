@@ -90,14 +90,31 @@ export function slotShareEnv(base: Record<string, string | undefined>, cargoJobs
     return share;
 }
 
+/** toli's Node preload in the shim folder (bin/shims/toli-node-preload.cjs): Node test runners take a slot. */
+export const NODE_PRELOAD_NAME = "toli-node-preload.cjs";
+
 /**
- * The build variables of a lead session (`bin/toli hook lead-build-env`) over its environment `base`: toli's cargo
- * shim first on PATH, one heavy-build slot's share of the cores (`slotShareEnv`) and toli's rustc wrapper
- * (`rustcWrapperEnv`), with `CARGO_CACHE_RUSTC_INFO=0`: cargo otherwise caches its `rustc -vV` probe in the build
- * folder, so a cargo with nothing left to compile (a `cargo test` that only runs its tests and doctests) never calls
- * the wrapper and never takes a slot; uncached, the probe is every cargo's first act and takes the slot before
- * anything runs. The native harness subagents the lead starts (omp `task`, Claude Code's Agent tool) inherit them, so
- * their heavy cargo commands queue for a heavy-build slot as a `bin/toli spawn` jawan's do.
+ * `NODE_OPTIONS` over `base`'s with toli's Node preload `--require`d once, so a Node test runner (Vitest, Jest,
+ * `playwright test`) started outside a heavy-build slot takes one before it runs (bin/shims/toli-node-preload.cjs).
+ * Node reads a quoted path in NODE_OPTIONS, so a toli root with a space in it works too.
+ */
+export function nodePreloadOptions(base: Record<string, string | undefined>): string {
+    const preload = join(paths.buildShimsDir(), NODE_PRELOAD_NAME);
+    const options = (base.NODE_OPTIONS ?? "").trim();
+    if (options.includes(preload)) return options;
+    const require = `--require ${preload.includes(" ") ? `"${preload}"` : preload}`;
+    return options === "" ? require : `${options} ${require}`;
+}
+
+/**
+ * The build variables of a lead session (`bin/toli hook lead-build-env`) over its environment `base`: toli's shims
+ * (cargo, bun) first on PATH, one heavy-build slot's share of the cores (`slotShareEnv`), toli's rustc wrapper
+ * (`rustcWrapperEnv`) and toli's Node preload in NODE_OPTIONS (`nodePreloadOptions`), with `CARGO_CACHE_RUSTC_INFO=0`:
+ * cargo otherwise caches its `rustc -vV` probe in the build folder, so a cargo with nothing left to compile (a `cargo
+ * test` that only runs its tests and doctests) never calls the wrapper and never takes a slot; uncached, the probe is
+ * every cargo's first act and takes the slot before anything runs. The native harness subagents the lead starts (omp
+ * `task`, Claude Code's Agent tool) inherit them, so their heavy cargo commands, `bun test` and Node test runners queue
+ * for a heavy-build slot as a `bin/toli spawn` jawan's do.
  */
 export function leadBuildEnv(
     base: Record<string, string | undefined>,
@@ -107,12 +124,14 @@ export function leadBuildEnv(
     CARGO_CACHE_RUSTC_INFO: string;
     RUSTC_WRAPPER: string;
     TOLI_RUSTC_WRAPPER_NEXT: string;
+    NODE_OPTIONS: string;
 } {
     return {
         PATH: [paths.buildShimsDir(), ...withoutShims(base.PATH)].join(delimiter),
         ...slotShareEnv(base, cargoJobs),
         CARGO_CACHE_RUSTC_INFO: "0",
         ...rustcWrapperEnv(base),
+        NODE_OPTIONS: nodePreloadOptions(base),
     };
 }
 
@@ -157,5 +176,9 @@ export function jawanEnv(
         else env.RUSTC_WRAPPER = wrapper.TOLI_RUSTC_WRAPPER_NEXT;
     }
     delete env.TOLI_RUSTC_WRAPPER_NEXT;
+    // An inherited toli Node preload (a lead's) goes too: its test runners never wait for a slot either.
+    const options = (base.NODE_OPTIONS ?? "").replace(nodePreloadOptions({}), "").replace(/\s+/g, " ").trim();
+    if (options === "") delete env.NODE_OPTIONS;
+    else env.NODE_OPTIONS = options;
     return env;
 }

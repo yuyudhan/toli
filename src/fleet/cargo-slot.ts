@@ -15,14 +15,14 @@ import { availableParallelism } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
+import { out, pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
 import { buildsOutsideSlots, busyBuildSlots, POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
 import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "./build-slots.ts";
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
 import { waitForLentBuilds } from "./lent-slots.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
-import { heldFile, holderHolds } from "./outside-builds.ts";
+import { heldCargoSlot, heldFile, holderHolds } from "./outside-builds.ts";
 import { priorityReleaseAhead, priorityReleaseText } from "./release-priority.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
@@ -135,12 +135,14 @@ function sweepHolderFiles(lock: Flock): void {
 }
 
 /**
- * `bin/toli build-slot --hold <cargo pid> --cwd <dir>` (detached, started by `slotForCargo`): the one holder of that
- * cargo's slot, recorded as building in `cwd` into this environment's CARGO_TARGET_DIR (the cargo's, inherited). It
- * waits in line, holds the slot while the cargo lives and frees it once the cargo exits, or when it is itself stopped,
- * however (a flock dies with its process).
+ * `bin/toli build-slot --hold <pid> --cwd <dir> [--keep-stacks]` (detached, started by `slotForProcess`): the one
+ * holder of that cargo's (or test runner's) slot, recorded as building in `cwd` into this environment's
+ * CARGO_TARGET_DIR (the cargo's, inherited). It waits in line, holds the slot while the process lives and frees it once
+ * it exits, or when it is itself stopped, however (a flock dies with its process). A cargo's slot pauses the dev and
+ * live stacks as every compile does; a test runner's (`keepStacks`) leaves them running, since its tests may talk to
+ * them (a paused backend accepts a request and never answers it).
  */
-export async function holdForCargo(cargoPid: number, cwd: string): Promise<number> {
+export async function holdForCargo(cargoPid: number, cwd: string, keepStacks = false): Promise<number> {
     const lock = flock();
     if (lock === null) return 1;
     mkdirSync(paths.buildSlotsDir(), { recursive: true });
@@ -158,8 +160,10 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
         if (held !== null) {
             lock(held.fd, LOCK_UN);
             closeSync(held.fd);
-            resumeLiveStacks();
-            resumeDevStacksWhenIdle();
+            if (!keepStacks) {
+                resumeLiveStacks();
+                resumeDevStacksWhenIdle();
+            }
         }
         rmSync(claimFile(cargoPid), { force: true });
         closeSync(claimFd);
@@ -173,8 +177,10 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
             release();
             process.exit(0);
         });
-    pauseDevStacks();
-    pauseLiveStacks();
+    if (!keepStacks) {
+        pauseDevStacks();
+        pauseLiveStacks();
+    }
     writeTextAtomic(heldFile(cargoPid), `${process.pid} ${held.index + 1}\n`);
     while (pidAlive(cargoPid)) await Bun.sleep(POLL_MS);
     release();
@@ -191,40 +197,66 @@ export async function holdForCargo(cargoPid: number, cwd: string): Promise<numbe
  */
 export async function slotForCargo(probingCargo: number): Promise<number> {
     const cargoPid = heavyCargoRun(probingCargo);
-    if (cargoPid === null) return 0;
-    if (liveStackProjectAt(process.cwd()) !== null) return 0;
+    if (cargoPid !== null) await slotForProcess(cargoPid, false);
+    return 0;
+}
+
+/**
+ * `bin/toli build-slot --runner <pid>` (bin/shims/toli-node-preload.cjs, as a Node test runner such as Vitest starts):
+ * hold a heavy-build slot for process `pid` until it exits, as for a cargo that bypassed the shim, its dev and live
+ * stacks left running (`holdForCargo` `keepStacks`), and print the slot's number, which the runner exports as
+ * `TOLI_BUILD_SLOT` so its workers and any build it starts run in that slot. Prints nothing (runs without a slot) in a
+ * live-stack project's checkout or when toli cannot take one.
+ */
+export async function slotForRunner(pid: number): Promise<number> {
+    const slot = await slotForProcess(pid, true);
+    if (slot !== null) out(String(slot));
+    return 0;
+}
+
+/**
+ * Return only once process `pid` runs in a heavy-build slot: the enclosing one (`enclosingSlot`), or one a detached
+ * holder (`holdForCargo`) takes for it, started when none is waiting yet, saying once that it waits and once which
+ * release-priority run it gives way to. Its slot's number, or null when it runs without one: in a live-stack
+ * project's checkout, without flock(2), or once `pid` is gone.
+ */
+async function slotForProcess(pid: number, keepStacks: boolean): Promise<number | null> {
+    if (liveStackProjectAt(process.cwd()) !== null) return null;
     const enclosing = enclosingSlot();
     if (enclosing !== null) {
         await waitForLentBuilds(enclosing);
-        return 0;
+        return enclosing;
     }
     const lock = flock();
-    if (lock === null) return 0; // The shim's `build-slot` says so; every rustc call need not.
+    if (lock === null) return null; // The shim's `build-slot` says so; every rustc call need not.
     mkdirSync(paths.buildSlotsDir(), { recursive: true });
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
     const slots = capacityFor(machine, availableParallelism()).buildSlots;
+    const holderArgs = ["build-slot", "--hold", String(pid), "--cwd", process.cwd()];
+    if (keepStacks) holderArgs.push("--keep-stacks");
     let told = false;
     let toldRelease: string | null = null;
-    while (pidAlive(cargoPid) && !holderHolds(cargoPid)) {
-        if (!claimed(cargoPid, lock)) {
-            const holder = spawnChild(
-                process.execPath,
-                [TOLI_SCRIPT, "build-slot", "--hold", String(cargoPid), "--cwd", process.cwd()],
-                { cwd: paths.root(), detached: true, stdio: "ignore", env: process.env },
-            );
+    while (pidAlive(pid) && !holderHolds(pid)) {
+        if (!claimed(pid, lock)) {
+            const holder = spawnChild(process.execPath, [TOLI_SCRIPT, ...holderArgs], {
+                cwd: paths.root(),
+                detached: true,
+                stdio: "ignore",
+                env: process.env,
+            });
             holder.unref();
         }
         await Bun.sleep(HOLDER_POLL_MS);
-        if (holderHolds(cargoPid)) continue;
+        if (holderHolds(pid)) continue;
         // The holder waits silently (its output goes nowhere): say here what it waits for.
         const ahead = priorityReleaseAhead(process.cwd());
         if (ahead !== null) {
             if (ahead.id !== toldRelease) warn(priorityReleaseText(ahead));
             toldRelease = ahead.id;
-        } else if (!told && busyBuildSlots() + buildsOutsideSlots(cargoPid).length >= slots) {
+        } else if (!told && busyBuildSlots() + buildsOutsideSlots(pid).length >= slots) {
             warn(`toli: waiting for a heavy-build slot (${slots} busy)`);
             told = true;
         }
     }
-    return 0;
+    return heldCargoSlot(pid);
 }

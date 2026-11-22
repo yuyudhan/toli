@@ -109,7 +109,8 @@ its step (`deleted <path>, freed X GB (step 1: idle target)`, `removed docker vo
    with the reason).
 
 1. Build output finished no-mistakes runs left in their worktrees, then Docker volumes of build caches no container
-   uses, then whole `target/` folders of project checkouts that nothing uses. A checkout is all registered projects'
+   uses, then stale artifacts out of the `target/` folders of project checkouts that nothing uses, then those whole
+   `target/` folders, only while free space is still under the floor. A checkout is all registered projects'
    clones plus their git worktrees. Nothing uses it when no
    running jawan works in it (or, for a main clone, on its project), no live native subagent's open task records it as
    its workspace (a jawan between two commands runs no process there; `skipped <dir>: T<n>'s jawan <id> works in
@@ -121,6 +122,17 @@ it`; a done or dropped task's old jawan tag holds nothing, since that subagent l
    "Live builds"), so a build or test started from elsewhere is never cut off: the target is kept
    (`kept <target>: cargo (pid N) builds into it (CARGO_TARGET_DIR <dir>)`) and the keeper moves on to the next
    folder.
+
+    Stale artifacts go before any whole target (T2259: one builder's `target/debug/deps` regrew to 190 GB of hashed
+    rlibs from past lane builds, and the whole target was the keeper's only answer). Oldest target first, the keeper
+    sweeps every entry of `<profile>/{deps,build,.fingerprint,incremental}` that nothing used for
+    `capacity.diskSweepStaleMinutes` (default 180), exactly as the fallback sweep does (see "On a full disk"),
+    under cargo's locks and only when nothing uses the target, re-measuring free disk after each target and stopping
+    once it is back at the floor
+    (`swept N stale artifacts from <target> (unused for 180 min, by mtime: ...), freed X GB (N bytes) (step 1: stale artifacts of an idle target)`).
+    Only a target holding something to sweep is checked for use, and a target in use stays silent here: its wipe says
+    why. A whole target goes after the sweep only if free space is still under the floor. A target a live container
+    mounts is never swept either.
 
     Build-cache volumes come before any checkout's `target/` (T2232: a release lane's 120 GB target was wiped twice
     while an unused 112 GB cargo-target volume sat beside it). A volume is one only by an exact name rule, failing
@@ -144,9 +156,11 @@ it`; a done or dropped task's old jawan tag holds nothing, since that subagent l
     A `target/` in a main clone a live native jawan's open task records as its workspace (a task pinned to the clone,
     such as a release train, between two commands), or in a checkout where a held heavy-build slot's holder works
     (whatever target that build compiles into), stays while free space is over the emergency level
-    (`skipped <target>: <why>; kept until free disk is under the emergency level`). Under it, after step 5, it goes
-    like any target nothing uses now (`step 1: idle target, under the emergency level`): a full disk still deletes
-    `target/` folders.
+    (`skipped <target>: <why>; kept until free disk is under the emergency level`), neither swept nor deleted. Under
+    it, after step 5, its stale artifacts are swept first
+    (`step 1: stale artifacts of a held clone's target, under the emergency level`), and it goes whole like any target
+    nothing uses now (`step 1: idle target, under the emergency level`) only while free space is still under the
+    emergency level: a full disk still deletes `target/` folders.
 
     The wipe takes cargo's own file locks (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`; cargo holds
     them while it compiles) and then checks that no process and no live build (see "Live builds") uses the target.
@@ -418,8 +432,9 @@ still shows up in `disk keep` and `doctor`.
 
 `diskKeep` false leaves all deleting to the lead (see above). `diskKeepGB` is the floor in GB, capped at 15% of the
 size of the volume holding toli (see the top of this page).
-`diskSweepStaleMinutes` is how long an artifact in an idle target must go unused before the fallback sweep (see "On a
-full disk") deletes it (a positive number of minutes; at 1440 or more, Linux `relatime` access times count too).
+`diskSweepStaleMinutes` is how long an artifact in an idle target must go unused before step 1's sweep or the fallback
+sweep (see "On a full disk") deletes it (a positive number of minutes; at 1440 or more, Linux `relatime` access times
+count too).
 `diskBuildTools` (default none) names this machine's own build tools, such as a project's build queue that runs
 cargo from above its workspaces: while one runs, a target in a workspace it works in, above or names counts as in
 use. An entry is a program name, matched against every word of a command line by file name (`my-queue` also

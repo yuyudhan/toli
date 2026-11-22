@@ -1,7 +1,8 @@
 // A machine's work queue (docs/sardars.md): what ranks machines for new work, published in `resources --json`.
+import { paths } from "../core/paths.ts";
 import { now } from "../core/util.ts";
 import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
-import { agentState, delegatedAway, nativeAgent } from "../records/agents.ts";
+import { agentState, delegatedAway, nativeAgent, reportedRunningAgents } from "../records/agents.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { staleTaskMinutes } from "../records/stale.ts";
 import { currentFull, type Full } from "./full.ts";
@@ -45,13 +46,15 @@ export function waitingTasks(tasks: Task[] = loadBacklog().tasks, runs: JawanRun
 }
 
 /**
- * The native harness subagents working on this machine's tasks, one per distinct agent id: active tasks whose jawan
- * was recorded with `task start --agent <id>` (a native agent, src/records/agents.ts) and that is running now: the
- * live lead session that recorded it has not seen it end, or, recorded outside a session, it reports running or was
- * recorded less than the grace minutes ago. Left out: a task a live run works on (counted as that run), one waiting
- * on something (`task wait`), and one whose subagent ended, died with its session or, outside a session, stopped
- * reporting (oversight lists it for a re-dispatch, src/records/stale.ts). This is the same agentState the stale-task
- * check reads, so the two never disagree.
+ * The native harness subagents running on this machine, one per distinct agent id. First those working on its tasks:
+ * active tasks whose jawan was recorded with `task start --agent <id>` (a native agent, src/records/agents.ts) and that
+ * is running now: the live lead session that recorded it has not seen it end, or, recorded outside a session, it
+ * reports running or was recorded less than the grace minutes ago. Left out: a task a live run works on (counted as
+ * that run), one waiting on something (`task wait`), and one whose subagent ended, died with its session or, outside a
+ * session, stopped reporting (oversight lists it for a re-dispatch, src/records/stale.ts). This is the same agentState
+ * the stale-task check reads, so the two never disagree. Then every subagent its harness reports running now that no
+ * task records (`reportedRunningAgents`): a session's helpers and a jawan's own subagents, which build and run tests
+ * like any jawan, so they take jawan slots too.
  */
 export function subagentJawans(
     tasks: Task[],
@@ -71,6 +74,8 @@ export function subagentJawans(
                 : [],
         ),
     );
+    const recorded = new Set(tasks.flatMap((task) => (task.agent === undefined ? [] : [task.agent])));
+    for (const id of reportedRunningAgents(paths.root(), at, graceMinutes)) if (!recorded.has(id)) agents.add(id);
     return agents.size;
 }
 

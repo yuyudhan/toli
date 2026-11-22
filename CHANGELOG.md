@@ -24,6 +24,18 @@ one. See docs/releasing.md.
   hooks, the branch-moved refusal). `--resolved` on a clean merge that names no fix is still refused; without
   `--resolved` a clean merge still refuses edits to the paths it changes (but lock files), and now says to add it
   (docs/development.md, T2254).
+- The disk keeper sweeps stale artifacts out of idle cargo targets before it deletes any target whole: entries of
+  `<profile>/{deps,build,.fingerprint,incremental}` nothing used for `capacity.diskSweepStaleMinutes`, under cargo's
+  locks, re-measuring free disk after each target. A whole target goes only if free disk is still under the floor
+  after the sweep. A release train's or held build slot's clone is neither swept nor deleted over the emergency level;
+  under it, it is swept first and goes whole only if that is not enough. One builder's `target/debug/deps` regrew to
+  190 GB of stale rlibs from past lane builds, and the keeper's only answer was the whole target (docs/disk.md, T2259).
+- Native subagents now count toward the jawan cap and the heavy-build slots. Every subagent its harness reports
+  running (state/agents/), recorded on a task or not, takes a `capacity.maxRuns` slot; a Node test runner (Vitest,
+  Jest, `playwright test`) takes a heavy-build slot through toli's Node preload in `NODE_OPTIONS`, and `bun test`
+  through toli's bun shim, which a lead session and its native subagents inherit as they do the cargo shim. Builders
+  had run 13 vitest and 16 cargo processes on 12 cores while one build slot and a cap of 1-3 jawans showed free
+  (docs/fleet.md "Heavy-build slots", docs/harnesses.md "Jawan slots", T2259).
 
 ## v0.7.1 - 2026-11-21
 
