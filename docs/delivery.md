@@ -115,23 +115,36 @@ parents, message or author):
   any that outlive it (a child ignoring SIGTERM after its shell died). A gate that keeps printing, or keeps working
   silently (a build linking for half an hour before any test prints), runs as long as it needs; a hung one (no
   output, no CPU) is stopped.
-- A runaway gate is stopped the same way and recorded `runaway`, with the reason, instead of being left to finish: one
-  whose recipe has run over 3 times its estimate (the median time of the recipe's last 5 passes in that project,
-  `estimateMs` in the record; at least one minute; a recipe that never passed has no estimate), or one that has
-  printed failure lines for 30 minutes, none more than 10 minutes apart. A failure line is one common test runners
-  and compilers print for a failure: `FAIL`/`FAILED` or a cross mark leading the line, `... FAILED`, `(fail)`, a
-  nonzero `<n> failed` count, `error[E<n>]:` or `error TS<n>:`. Both decisions are `runaway` lines in
-  `logs/gates.log`. The estimate counts only the recipe's own time, not the wait for a heavy-build slot before it
-  starts; a recipe that queues for a slot partway through (`--slot-at-heavy-step`) counts that wait in both.
+- A runaway gate is stopped the same way and recorded `runaway`, with the reason, instead of being left to finish. Both
+  decisions are `runaway` lines in `logs/gates.log`, and neither counts time waiting for a heavy-build slot: not the
+  wait before the recipe starts, nor, in a project set `--slot-at-heavy-step yes`, the time its first heavy step waits
+  in line partway through (the record's `slotWaitMs`; `recipeMs`, which the estimate is the median of, leaves it out).
+- Runaway on time: the recipe has run over 3 times its estimate and then printed nothing for 5 minutes. The estimate is
+  the median time of the recipe's last 5 passes in that project (`estimateMs` in the record; at least one minute; a
+  recipe that never passed has no estimate). A recipe that grew past 3 times but keeps printing is never stopped on
+  time: it passes, and its time joins the median, so the estimate catches up within a few passes. To start the
+  estimate afresh at once, remove the recipe's passed records (`state/gates/<project>/*-<recipe hash>.json`, the hash
+  being the last part of the id `gate status` shows; it costs only the cached passes of other trees) or change the
+  recipe's text, which makes it a new recipe without passes.
+- Runaway on failures: the gate has printed failure lines for 30 minutes, none more than 10 minutes apart. A failure
+  line is one a test runner or compiler prints, anchored where it prints it: a per-test failure (Vitest/Jest
+  `FAIL <file>` or `× <test>`, nextest `FAIL [<time>] <test>`, cargo `test <name> ... FAILED`, pytest
+  `FAILED <file>::<test>`, bun `(fail) <test>`), a final summary with a nonzero count (`test result: FAILED.`,
+  `Tests  <n> failed`, `Tests: <n> failed`, `=== <n> failed ... ===`, Playwright's `<n> failed`), or a compile error
+  (`error[E<n>]:`, `<file>(<line>,<col>): error TS<n>:`). Retried attempts (`(retry ...)`, nextest `TRY <n> FAIL`,
+  `FLAKY`), expected failures (pytest `XFAIL`), `FAIL` inside a word and counts in free text never count; a log with no
+  such line is never stopped for failing.
 - A gate started by a `bin/toli spawn` jawan belongs to that jawan: the record lists the runs that started or joined
   it (`owners`). When the last of them ends (it finished, failed, was killed with `bin/toli run kill`, or its session
   ended) and no run continues it (an automatic resume after a stall, time limit or network fault, or the run that
   replaced it with `spawn --replace`; a later `bin/toli resume` comes too late to keep it), nobody waits on the gate
-  any more, so toli stops its runner and every process the runner started: SIGTERM, then
-  SIGKILL after 20 seconds. It records the gate `killed` with the reason (`stopped by toli: its jawan (<run>) ended`),
-  writes a `stopped` line in `logs/gates.log` and a line in the run's log. The run's supervisor does this as the run
-  ends; the minute tick catches a run whose supervisor died. A gate anyone else started or joined (a person, the lead,
-  a hook outside a jawan) has no owners and is never stopped this way.
+  any more, so toli stops its runner and every process the runner started: SIGTERM, then SIGKILL after 20 seconds.
+  Before it signals anything it re-reads the record under its lock: if a jawan joined the gate since, it leaves the
+  gate running; otherwise it marks it `stopping` in that same write. A `gate run` that finds a `stopping` gate never
+  joins it: it says so, waits for it to end and then starts its own. It records the gate `killed` with the reason
+  (`stopped by toli: its jawan (<run>) ended`), writes a `stopped` line in `logs/gates.log` and a line in the run's log.
+  The run's supervisor does this as the run ends; the minute tick catches a run whose supervisor died. A gate anyone
+  else started or joined (a person, the lead, a hook outside a jawan) has no owners and is never stopped this way.
 - toli signals a recorded runner only while its pid still is that runner: the same pid, started when the record says
   (`pidStartedAt`), running `gate runner <its record>`. A pid the system has since handed to another process is never
   signalled; the record is then marked `killed` (its runner is gone), so nothing attaches to it.

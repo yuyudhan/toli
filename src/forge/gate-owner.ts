@@ -5,18 +5,23 @@
 // (src/jobs/tick.ts). `bin/toli gate stop` stops one such gate by hand. A gate anyone else started or joined (a
 // person, the lead, a hook outside a jawan) has no owners and is never stopped here.
 //
+// A stop first claims the gate under its record's lock (claimForStop): it re-reads the record, backs off when a jawan
+// joined it since the stop decided, and else marks it `stopping` in the same write, so a `gate run` that would join it
+// waits for it to end and starts its own instead.
+//
 // The runner is signalled only while its recorded pid still is that runner: the same pid, started when the record
 // says, running `gate runner <its record>` (src/jawans/stop.ts stopRecorded). A pid the system has since handed to
 // another process is never signalled.
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { paths } from "../core/paths.ts";
-import { now, ToliError } from "../core/util.ts";
+import { now, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { ACTIVE, type JawanRun, listRuns } from "../jawans/runs.ts";
 import { stopRecorded } from "../jawans/stop.ts";
 import {
     allRecordFiles,
     type GateRecord,
+    inProgress,
     logDecision,
     readRecord,
     reconcile,
@@ -72,10 +77,27 @@ export function gateId(file: string): string {
 }
 
 /**
+ * Claim the gate in `file` for a stop decided on `seen`, under the record's lock: only while it is still in progress
+ * under the same runner with exactly the owners the stop saw, it is marked `stopping` in the same write, so no `gate
+ * run` joins it from then on (src/forge/gate.ts waits for it instead). Returns the claimed record, or null when it
+ * ended, changed runner or gained an owner since: the stop then leaves it alone.
+ */
+export function claimForStop(file: string, seen: GateRecord): GateRecord | null {
+    return withLock(`${file}.lock`, () => {
+        const current = readRecord(file);
+        const sameOwners = (current?.owners ?? []).join("\n") === (seen.owners ?? []).join("\n");
+        if (current === null || !inProgress(current.status) || current.pid !== seen.pid || !sameOwners) return null;
+        current.status = "stopping";
+        writeJsonAtomic(file, current);
+        return current;
+    });
+}
+
+/**
  * Stop the runner of the running gate in `file` and everything it started, because `why`; returns what happened, in
- * one line. A runner that is no longer the recorded process is never signalled: its record is marked `killed` (its
- * pid may belong to another process now, which would keep the record `running` and attached to forever), and one that
- * cannot be checked is left as it is.
+ * one line. The gate is claimed first (claimForStop). A runner that is no longer the recorded process is never
+ * signalled: its record is marked `killed` (its pid may belong to another process now, which would keep the record in
+ * progress and waited on forever), and one that cannot be checked is left running.
  */
 async function stopRunner(file: string, record: GateRecord, why: string): Promise<{ stopped: boolean; text: string }> {
     const pid = record.pid;
@@ -86,18 +108,26 @@ async function stopRunner(file: string, record: GateRecord, why: string): Promis
         logDecision(record, "stop-skipped", text);
         return { stopped: false, text };
     }
+    if (claimForStop(file, record) === null) {
+        const text = `gate ${what}: it ended, or a jawan joined it, since toli decided to stop it; left it as it is`;
+        logDecision(record, "stop-skipped", text);
+        return { stopped: false, text };
+    }
     const survivors = await stopRecorded(
         { pid, spawnedAtMs, command: ["gate runner", basename(file)] },
         RUNNER_GRACE_MS,
     );
     if (survivors === "unknown") {
+        updateRecord(file, (entry) => {
+            if (entry.pid === pid && entry.status === "stopping") entry.status = "running";
+        });
         const text = `gate ${what}: could not read the process table to check runner pid ${pid}; signalled nothing`;
         logDecision(record, "stop-skipped", text);
         return { stopped: false, text };
     }
     if (survivors === "gone") {
         updateRecord(file, (entry) => {
-            if (entry.pid !== pid || entry.status !== "running") return;
+            if (entry.pid !== pid || !inProgress(entry.status)) return;
             entry.status = "killed";
             entry.endedAt = now().toISOString();
             entry.reason = `its runner (pid ${pid}) is gone; the pid is not that runner any more`;
@@ -111,7 +141,7 @@ async function stopRunner(file: string, record: GateRecord, why: string): Promis
     const outlived = survivors.length === 0 ? "" : `; pid ${survivors.join(", ")} outlived SIGKILL`;
     const final = updateRecord(file, (entry) => {
         // The runner records its own end on SIGTERM (`killed`); one that ended by itself meanwhile keeps its outcome.
-        if (entry.pid !== pid || (entry.status !== "running" && entry.status !== "killed")) return;
+        if (entry.pid !== pid || (!inProgress(entry.status) && entry.status !== "killed")) return;
         entry.status = "killed";
         entry.endedAt ??= now().toISOString();
         entry.reason = `stopped by toli: ${why}${outlived}`;
@@ -136,7 +166,8 @@ export async function stopOrphanedGates(run?: string): Promise<string[]> {
         .map((file) => ({ file, record: readRecord(file) }))
         .filter(
             (entry): entry is { file: string; record: GateRecord } =>
-                entry.record?.status === "running" &&
+                entry.record !== null &&
+                inProgress(entry.record.status) &&
                 entry.record.owners !== undefined &&
                 (run === undefined || entry.record.owners.includes(run)),
         );
@@ -156,7 +187,8 @@ function selectGates(selector: string): { file: string; record: GateRecord }[] {
         .map((file) => ({ file, record: reconcile(file) }))
         .filter(
             (entry): entry is { file: string; record: GateRecord } =>
-                entry.record?.status === "running" &&
+                entry.record !== null &&
+                inProgress(entry.record.status) &&
                 (gateId(entry.file) === selector ||
                     entry.record.sha.startsWith(selector) ||
                     entry.record.tree.startsWith(selector)),

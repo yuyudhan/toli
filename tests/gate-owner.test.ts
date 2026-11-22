@@ -1,13 +1,14 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pidAlive } from "../src/core/util.ts";
-import { joinGate, liveOwner } from "../src/forge/gate-owner.ts";
+import { claimForStop, joinGate, liveOwner } from "../src/forge/gate-owner.ts";
 import type { GateRecord } from "../src/forge/gate-record.ts";
 import type { JawanRun } from "../src/jawans/runs.ts";
 import { stillRecorded } from "../src/jawans/stop.ts";
-import { gatesLog, recipe, records, setup } from "./gate-fixture.ts";
-import { GIT_ENV, type Sandbox, TOLI_BIN } from "./helpers.ts";
+import { gatesLog, recipe, records, runs, setup } from "./gate-fixture.ts";
+import { GIT_ENV, type Sandbox, TOLI_BIN, tempDir } from "./helpers.ts";
 
 // A stopped runner gets its grace, and gates run real detached runners.
 setDefaultTimeout(90_000);
@@ -159,6 +160,55 @@ describe("gate runners of jawans", () => {
             other.kill("SIGKILL");
         }
     });
+
+    test("a gate being stopped is never joined: a new gate run waits for it to end, then runs its own", async () => {
+        const { box, dir } = setup();
+        writeRun(box, "j2", "running");
+        const verify = recipe(box, "verify", "echo ok");
+        const tree = box.git(dir, ["rev-parse", "HEAD^{tree}"]);
+        const hash = createHash("sha256").update(verify).digest("hex").slice(0, 16);
+        const gates = join(box.root, "state", "gates", "app");
+        mkdirSync(gates, { recursive: true });
+        const file = join(gates, `${tree}-${hash}.json`);
+        // A runner toli is stopping: alive still, the record already `stopping`.
+        const runner = Bun.spawn(["sleep", "300"], { stdout: "ignore", stderr: "ignore" });
+        const stopping: GateRecord = {
+            project: "app",
+            sha: box.git(dir, ["rev-parse", "HEAD"]),
+            tree,
+            recipe: verify,
+            dir,
+            status: "stopping",
+            pid: runner.pid,
+            pidStartedAt: new Date().toISOString(),
+            startedAt: new Date().toISOString(),
+            owners: ["j1"],
+            endedAt: null,
+            lastOutputAt: null,
+            exitCode: null,
+            log: file.replace(/\.json$/, ".log"),
+            stallMinutes: 30,
+        };
+        writeFileSync(file, JSON.stringify(stopping));
+        try {
+            const caller = spawnToli(box, ["gate", "run", "app", "--recipe", verify], { TOLI_RUN_ID: "j2" });
+            // Real time for the caller to decide: what is under test is that it neither joins nor starts meanwhile.
+            await Bun.sleep(3000);
+            expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ status: "stopping", owners: ["j1"] });
+            expect(runs(box)).toBe(0);
+            // Atomically, as toli writes records: the polling caller never reads half a file.
+            writeFileSync(
+                `${file}.tmp`,
+                JSON.stringify({ ...stopping, status: "killed", endedAt: new Date().toISOString() }),
+            );
+            renameSync(`${file}.tmp`, file);
+            expect(await caller.exited).toBe(0);
+            expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ status: "passed", owners: ["j2"] });
+            expect(runs(box)).toBe(1);
+        } finally {
+            runner.kill("SIGKILL");
+        }
+    });
 });
 
 describe("gate owners (in process)", () => {
@@ -193,6 +243,22 @@ describe("gate owners (in process)", () => {
         expect(liveOwner(gate(["a", "d"]), [run("a", "done"), run("d", "starting")])?.id).toBe("d");
         const loop = [run("a", "failed", { resumedBy: "b" }), run("b", "failed", { resumedBy: "a" })];
         expect(liveOwner(gate(["a"]), loop)).toBeNull();
+    });
+
+    test("a stop claims the gate under its lock only while it still runs with the owners the stop saw", () => {
+        const dir = tempDir("gate-claim");
+        const file = join(dir, "t-h.json");
+        writeFileSync(file, JSON.stringify(gate(["a"])));
+        expect(claimForStop(file, gate(["a"]))?.status).toBe("stopping");
+        expect(JSON.parse(readFileSync(file, "utf8")).status).toBe("stopping");
+        // A run joined after the stop read the record: the stop backs off and the gate runs on for it.
+        writeFileSync(file, JSON.stringify(gate(["a", "b"])));
+        expect(claimForStop(file, gate(["a"]))).toBeNull();
+        expect(JSON.parse(readFileSync(file, "utf8")).status).toBe("running");
+        writeFileSync(file, JSON.stringify({ ...gate(["a"]), status: "passed" }));
+        expect(claimForStop(file, gate(["a"]))).toBeNull();
+        writeFileSync(file, JSON.stringify({ ...gate(["a"]), pid: 2 }));
+        expect(claimForStop(file, gate(["a"]))).toBeNull();
     });
 
     test("a jawan joining adds itself; anyone else joining leaves the gate unowned for good", () => {

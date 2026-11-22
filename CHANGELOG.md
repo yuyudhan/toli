@@ -30,9 +30,11 @@ one. See docs/releasing.md.
   jawans started or joined, with every process they started (SIGTERM, then SIGKILL after 20 seconds), and records
   them `killed` with the reason. A runner is signalled only while its recorded pid, start time and command still match,
   so a pid since handed to another process is never signalled. `bin/toli gate stop <sha|id>` does the same by hand
-  for one such gate, and refuses a gate a live jawan owns (naming it) or one no jawan owns. A gate that runs over 3
-  times the median of its recipe's recent passes, or prints failures for 30 minutes, is now stopped and recorded
-  `runaway` instead of being left to finish (docs/delivery.md "Gates: long checks run once per tree", T2256).
+  for one such gate, and refuses a gate a live jawan owns (naming it) or one no jawan owns; a gate being stopped is
+  marked `stopping` under its lock and never joined. A gate that runs over 3 times the median of its recipe's recent
+  passes and then prints nothing for 5 minutes, or prints runners' failure lines for 30 minutes, is now stopped and
+  recorded `runaway` instead of being left to finish; time waiting for a heavy-build slot counts in neither
+  (docs/delivery.md "Gates: long checks run once per tree", T2256).
 - A project's push check no longer waits in line for a heavy-build slot before its cheap steps. A project whose gate
   recipes and pre-push hook run their heavy steps (cargo, a test suite) through `bin/toli build-slot --` sets
   `bin/toli project set <p> --slot-at-heavy-step yes`; its gate runner and `bin/toli push` then run the guards,

@@ -21,10 +21,16 @@ import { now, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from ".
 
 /**
  * `stalled`: stopped by the runner for going silent; `runaway`: stopped by the runner for running over 3 times its
- * estimate or printing failures for 30 minutes (src/forge/gate-supervise.ts); `killed`: stopped by a signal, by toli
- * because every jawan that started or joined it ended (src/forge/gate-owner.ts), or its runner vanished.
+ * estimate while quiet or printing failures for 30 minutes (src/forge/gate-supervise.ts); `stopping`: toli is stopping
+ * its runner because every jawan that started or joined it ended (src/forge/gate-owner.ts), so nothing joins it any
+ * more; `killed`: stopped by a signal, by that stop, or its runner vanished.
  */
-export type GateStatus = "running" | "passed" | "failed" | "stalled" | "runaway" | "killed";
+export type GateStatus = "running" | "stopping" | "passed" | "failed" | "stalled" | "runaway" | "killed";
+
+/** Whether a gate's runner may still be at work: `running`, or `stopping` until its runner is gone. */
+export function inProgress(status: GateStatus): boolean {
+    return status === "running" || status === "stopping";
+}
 
 export type GateRecord = {
     project: string;
@@ -54,8 +60,13 @@ export type GateRecord = {
     stallMinutes: number;
     /** How long the recipe should take (ms): the median of its recent passes' recipeMs; absent without passes. */
     estimateMs?: number;
-    /** How long the recipe itself ran (ms, not counting the wait for a build slot); set when it ends. */
+    /**
+     * How long the recipe itself ran (ms), set when it ends: without the wait for a build slot before it started or,
+     * in a check that takes its slot at its first heavy step, the time that step waited in line (slotWaitMs).
+     */
     recipeMs?: number;
+    /** How long the recipe's heavy step waited in line for a heavy-build slot (ms); set when it ends. */
+    slotWaitMs?: number;
     /** Why a gate that did not pass stopped. */
     reason?: string;
     /** HMAC of the pass (see sealPass); present only on a record the gate runner marked `passed`. */
@@ -142,13 +153,13 @@ export function updateRecord(file: string, change: (record: GateRecord) => void)
     });
 }
 
-/** A `running` record whose runner is gone is recorded `killed`; returns the record as it now stands. */
+/** A `running` or `stopping` record whose runner is gone is recorded `killed`; returns the record as it now stands. */
 export function reconcile(file: string): GateRecord | null {
     const record = readRecord(file);
-    if (record === null || record.status !== "running" || (record.pid !== null && pidAlive(record.pid))) return record;
+    if (record === null || !inProgress(record.status) || (record.pid !== null && pidAlive(record.pid))) return record;
     return withLock(`${file}.lock`, () => {
         const current = readRecord(file);
-        if (current === null || current.status !== "running" || (current.pid !== null && pidAlive(current.pid)))
+        if (current === null || !inProgress(current.status) || (current.pid !== null && pidAlive(current.pid)))
             return current;
         current.status = "killed";
         current.endedAt = now().toISOString();
@@ -180,15 +191,15 @@ export function allRecordFiles(): string[] {
 }
 
 /**
- * Every gate running on this machine now (`gate run`, `push --gate`, the pre-push hook): a `running` record of any
- * project whose runner is alive. Read-only; an unreadable store or record reads as none.
+ * Every gate running on this machine now (`gate run`, `push --gate`, the pre-push hook): a `running` or `stopping`
+ * record of any project whose runner is alive. Read-only; an unreadable store or record reads as none.
  */
 export function runningGates(): GateRecord[] {
     return allRecordFiles()
         .map((file) => readRecord(file))
         .filter(
             (record): record is GateRecord =>
-                record?.status === "running" && record.pid !== null && pidAlive(record.pid),
+                record !== null && inProgress(record.status) && record.pid !== null && pidAlive(record.pid),
         );
 }
 

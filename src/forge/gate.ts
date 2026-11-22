@@ -24,6 +24,7 @@ import type { Argv } from "../jawans/scope.ts";
 import { currentRun, joinGate } from "./gate-owner.ts";
 import {
     type GateRecord,
+    inProgress,
     logDecision,
     outcomeText,
     provenPass,
@@ -75,7 +76,7 @@ async function follow(file: string, stream: boolean): Promise<GateRecord> {
     for (;;) {
         const record = reconcile(file);
         if (record === null) throw new ToliError(`gate record ${file} is gone`);
-        const ended = record.status !== "running";
+        const ended = !inProgress(record.status);
         if (stream) offset = printLog(record.log, offset, ended);
         if (ended) return record;
         await Bun.sleep(FOLLOW_POLL_MS);
@@ -196,7 +197,8 @@ export function changesText(changes: string[]): string {
 
 /**
  * Run a gate at the checkout's HEAD, cached by tree: skip it when it already passed on this tree (at any commit), attach
- * when it is running, else start it under a detached runner and attach. Resolves to the gate's final record.
+ * when it is running, wait while toli is stopping it (src/forge/gate-owner.ts: a stopped gate is never joined), else
+ * start it under a detached runner and attach. Resolves to the gate's final record.
  */
 export async function runGate(input: GateRun): Promise<GateRecord> {
     const say = input.json ? warn : out;
@@ -214,43 +216,65 @@ export async function runGate(input: GateRun): Promise<GateRecord> {
     const tree = treeSha(input.dir);
     const file = recordFile(input.project, tree, input.recipe);
     const run = currentRun();
-    const decided = withLock(`${file}.lock`, (): { record: GateRecord; action: "skip" | "attach" | "start" } => {
-        const existing = readRecord(file);
-        if (provenPass(existing, input.project, tree, input.recipe) && existing !== null)
-            return { record: existing, action: "skip" };
-        if (existing?.status === "passed")
-            logDecision(existing, "forged", `${file} says passed but carries no valid proof; running the gate again`);
-        if (existing?.status === "running" && existing.pid !== null && pidAlive(existing.pid)) {
-            joinGate(existing, run);
-            writeJsonAtomic(file, existing);
-            return { record: existing, action: "attach" };
-        }
-        const record = startRunner(file, {
-            project: input.project,
-            sha,
-            tree,
-            recipe: input.recipe,
-            dir: input.dir,
-            status: "running",
-            pid: null,
-            startedAt: now().toISOString(),
-            ...(run === null ? {} : { owners: [run] }),
-            endedAt: null,
-            lastOutputAt: null,
-            exitCode: null,
-            log: file.replace(/\.json$/, ".log"),
-            stallMinutes: input.stallMinutes ?? gateStallMinutes(machineSettings()),
+    type Decision = { record: GateRecord; action: "skip" | "attach" | "start" | "wait" };
+    const decide = (): Decision =>
+        withLock(`${file}.lock`, (): Decision => {
+            const existing = readRecord(file);
+            if (provenPass(existing, input.project, tree, input.recipe) && existing !== null)
+                return { record: existing, action: "skip" };
+            if (existing?.status === "passed")
+                logDecision(
+                    existing,
+                    "forged",
+                    `${file} says passed but carries no valid proof; running the gate again`,
+                );
+            if (existing !== null && existing.pid !== null && pidAlive(existing.pid)) {
+                if (existing.status === "stopping") return { record: existing, action: "wait" };
+                if (existing.status === "running") {
+                    joinGate(existing, run);
+                    writeJsonAtomic(file, existing);
+                    return { record: existing, action: "attach" };
+                }
+            }
+            const record = startRunner(file, {
+                project: input.project,
+                sha,
+                tree,
+                recipe: input.recipe,
+                dir: input.dir,
+                status: "running",
+                pid: null,
+                startedAt: now().toISOString(),
+                ...(run === null ? {} : { owners: [run] }),
+                endedAt: null,
+                lastOutputAt: null,
+                exitCode: null,
+                log: file.replace(/\.json$/, ".log"),
+                stallMinutes: input.stallMinutes ?? gateStallMinutes(machineSettings()),
+            });
+            const gone =
+                existing !== null && inProgress(existing.status)
+                    ? `the last runner (pid ${existing.pid ?? "unknown"}) is gone; `
+                    : "";
+            if (record.status !== "running") return { record, action: "start" };
+            const message =
+                `${gone}starting ${input.recipe} at ${short(sha)} in ${input.dir} under runner pid ${record.pid}, ` +
+                `stopped only after ${record.stallMinutes} minutes without output, log ${record.log}`;
+            logDecision(record, "start", message);
+            say(`gate: ${message}`);
+            return { record, action: "start" };
         });
-        const gone =
-            existing?.status === "running" ? `the last runner (pid ${existing.pid ?? "unknown"}) is gone; ` : "";
-        if (record.status !== "running") return { record, action: "start" };
+    let decided = decide();
+    while (decided.action === "wait") {
         const message =
-            `${gone}starting ${input.recipe} at ${short(sha)} in ${input.dir} under runner pid ${record.pid}, ` +
-            `stopped only after ${record.stallMinutes} minutes without output, log ${record.log}`;
-        logDecision(record, "start", message);
+            `${decided.record.recipe} at ${short(sha)} is being stopped (runner pid ${decided.record.pid}, its jawans ` +
+            "all ended); waiting for it to end, then running the gate anew rather than joining it";
+        logDecision(decided.record, "wait", message);
         say(`gate: ${message}`);
-        return { record, action: "start" };
-    });
+        // reconcile: a stop whose runner is gone is recorded killed, so the wait always ends.
+        while (reconcile(file)?.status === "stopping") await Bun.sleep(FOLLOW_POLL_MS);
+        decided = decide();
+    }
     const { record, action } = decided;
     if (action === "skip") {
         const message =
@@ -326,11 +350,12 @@ export async function runGateProcess(file: string): Promise<void> {
             appendFileSync(record.log, `${scopeFailedWarning(run.end.code ?? 1)}\n`);
             run = await superviseRecipe(file, supervised, recipe, env);
         }
-        const { end, stopped, survivors, elapsedMs } = run;
+        const { end, stopped, survivors, elapsedMs, slotWaitMs } = run;
         const final = updateRecord(file, (entry) => {
             entry.endedAt = now().toISOString();
             entry.exitCode = end.code;
             entry.recipeMs = elapsedMs;
+            entry.slotWaitMs = slotWaitMs;
             if (stopped !== null) {
                 entry.status = stopped.status;
                 entry.reason =

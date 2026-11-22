@@ -193,7 +193,8 @@ the interactive Sardar's subagents.
   of started twice, and a new one runs in the background so it survives its caller, in one heavy-build slot at one
   slot's share of the cores. It never times out; only a gate with no new output, checkout change or CPU use for
   `--stall` minutes (`capacity.gateStallMinutes`, default 30) is stopped (`stalled`), and a runaway one: over 3 times
-  the median of the recipe's last passes, or printing failures for 30 minutes (`runaway`). A gate only
+  the median of the recipe's last passes and then quiet for 5 minutes, or printing runners' failure lines for 30
+  minutes (`runaway`; slot waits count in neither). A gate only
   `bin/toli spawn` jawans started or joined is stopped when the last of them ends without a continuation. `gate check`
   exits 0 only when this machine's gate runner recorded a sealed pass of the recipe on the tree (HEAD's, which must be
   exactly the checkout, or `--sha`'s commit), for pre-push hooks; a record edited or copied by hand is refused.
