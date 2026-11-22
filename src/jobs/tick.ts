@@ -12,6 +12,7 @@ import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import type { RunRecord } from "../fleet/resources.ts";
 import { keepSccache } from "../fleet/sccache-keep.ts";
+import { alertSessionMemory } from "../fleet/session-memory.ts";
 import { alertSilentSession } from "../fleet/silent-alert.ts";
 import { stopOrphanedGates } from "../forge/gate-owner.ts";
 import { choiceText } from "../harness/models.ts";
@@ -250,6 +251,8 @@ export async function tick(): Promise<void> {
     logStep("holds not raised to the coordinator", raiseHolds);
     // An interactive Sardar that takes no wake leaves the inbox unread: the coordinator hears of it (silent-alert.ts).
     logStep("silent session check failed", alertSilentSession);
+    // A lead session past lead.sessionMemoryGB is told once to stow and restart; toli never stops it (session-memory.ts).
+    logStep("session memory check failed", alertSessionMemory);
     try {
         const fleet = await runDueFleetCheck();
         if (fleet) log(fleet);

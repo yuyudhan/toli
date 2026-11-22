@@ -4,7 +4,9 @@
 // timeout twice. A host the tick's ssh could not reach (ssh's own exit 255, or the call's timeout) is also backed off
 // across ticks in state/reach.json: 30 s after the first failure, doubling with each one after, at most 10 minutes.
 // Any call that reaches it clears that. A paired peer that only pulls, which the tick still tries over HTTPS
-// (src/jobs/pull-peer-retry.ts), is backed off the same way under `peer:<name>`.
+// (src/jobs/pull-peer-retry.ts), is backed off the same way under `peer:<name>`. The fleet probes (`fleet status`,
+// `fleet queues`, `fleet check`, `pick`: src/fleet/fleet-probe.ts) back off a machine none of their routes reached
+// under `fleet:<name>` on the same schedule, and skip it until then.
 import { paths } from "../core/paths.ts";
 import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 
@@ -26,6 +28,12 @@ export function unreached(result: { code: number; timedOut?: boolean }): boolean
 
 export function readReach(): ReachState {
     return readJson<ReachState>(paths.reachState(), {});
+}
+
+/** `host`'s entry while its backoff lasts, else null. */
+export function backedOff(host: string): ReachState[string] | null {
+    const entry = readReach()[host];
+    return entry === undefined || entry.retryAt <= now().getTime() ? null : entry;
 }
 
 function updateReach(change: (state: ReachState) => boolean): void {
@@ -50,10 +58,9 @@ export class Reach {
         const failed = this.failed.get(host);
         if (failed !== undefined) return `failed earlier in this pass: ${failed}`;
         if (!this.options.backoff) return null;
-        const entry = readReach()[host];
-        const at = now().getTime();
-        if (entry === undefined || entry.retryAt <= at) return null;
-        return `unreachable ${entry.failures} time${entry.failures === 1 ? "" : "s"} in a row; next try in ${Math.ceil((entry.retryAt - at) / 1000)} s (${entry.error})`;
+        const entry = backedOff(host);
+        if (entry === null) return null;
+        return `unreachable ${entry.failures} time${entry.failures === 1 ? "" : "s"} in a row; next try in ${Math.ceil((entry.retryAt - now().getTime()) / 1000)} s (${entry.error})`;
     }
 
     /** A call to `host` failed: skip it for the rest of the pass; the tick backs it off when ssh did not reach it. */

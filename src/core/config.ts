@@ -124,6 +124,8 @@ export type Machine = {
      * digest and doctor and no longer holds back due jobs; it keeps the inbox, so no headless lead turn runs beside it.
      * `silentSessionMinutes` (default 20, same file): a live interactive session that has taken no wake for this long
      * (its extension stopped fetching them) is shown by `lead status` and alerted to the coordinator once per episode.
+     * `sessionMemoryGB` (default 8, src/fleet/session-memory.ts): a live interactive session whose resident memory
+     * passes this is told once, by an inbox item to this machine's lead, to stow and restart; toli never stops it.
      * `hideSardarChatter` (default true, src/records/wake.ts, docs/sardars.md "Hide Sardar chatter"): the `[toli wake]`
      * shows one line per new item instead of every body; false shows the bodies.
      */
@@ -133,6 +135,7 @@ export type Machine = {
         dispatch?: string;
         idleSessionMinutes?: number;
         silentSessionMinutes?: number;
+        sessionMemoryGB?: number;
         hideSardarChatter?: boolean;
     };
     /**

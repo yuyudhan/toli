@@ -113,6 +113,8 @@ export const paths = {
     idleMachineState: () => join(repoRoot(), "state", "idle-machine.json"),
     /** The silent-session episode the tick last alerted about (src/fleet/silent-alert.ts). */
     leadSilentAlert: () => join(repoRoot(), "state", "lead", "silent-alert.json"),
+    /** The lead session the tick last told to stow and restart for its memory (src/fleet/session-memory.ts). */
+    leadMemoryAlert: () => join(repoRoot(), "state", "lead", "memory-alert.json"),
     /** When the tick last started `bin/toli fleet check --wake` (src/fleet/oversight.ts). */
     fleetCheckState: () => join(repoRoot(), "state", "fleet-check.json"),
     fleetCheckLog: () => join(repoRoot(), "logs", "fleet-check.log"),
@@ -155,6 +157,8 @@ export const paths = {
     pullers: () => join(repoRoot(), "state", "pullers.json"),
     /** Fleet hosts the tick's ssh could not reach, with their backoff (src/jobs/reach.ts). */
     reachState: () => join(repoRoot(), "state", "reach.json"),
+    /** Each fleet machine's last `resources` snapshot seen here, shown stale while it is unreachable (fleet-probe.ts). */
+    fleetSeen: () => join(repoRoot(), "state", "fleet-seen.json"),
     /** Reused ssh connections to fleet machines: the generated client config and one control socket per host. */
     sshDir: () => join(repoRoot(), "state", "ssh"),
     /** This machine's lead service (src/fleet/lead.ts): its conversation, turn state, pending wake, attach marker. */

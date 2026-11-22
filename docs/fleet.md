@@ -140,6 +140,17 @@ network that is no peer, reads `off the network: NetBird peer <fqdn> is Connecti
 connected peer keeps the probe's own errors, with its state after them. Without NetBird, a timeout, no route or
 banner timeout reads `no route / host down (<ssh's error>)`, leaving out the HTTPS error.
 
+The fleet probes (`fleet status`, `fleet queues`, `fleet check`, `pick`, the lead's balancing pass) ask every machine
+at once, each capped: 10 s for the HTTPS try of a paired peer (the mesh accepts the connection to a host that is off
+the network, so an uncapped request would wait its full two minutes), then ssh with a 5 s `ConnectTimeout` and a 20 s
+cap. A machine that no route reached is backed off in `state/reach.json` under `fleet:<name>` on the tick's schedule
+(30 s, doubling, at most 10 minutes), and so is a machine reached only by ssh while the tick's own ssh to it is backed
+off. A backed-off machine is not probed: its row leads with the failure that backed it off, `(not probed: unreachable
+3 times in a row, next probe in 240 s)`, and shows the last snapshot seen from it (`state/fleet-seen.json`) marked
+stale: `m3: unavailable: unreachable: ... (stale, last seen <at>: queue 2 (...), ...)` in `fleet status`, `; stale,
+last seen <at>: queue 2 (...)` in `fleet queues`, `lastSeen` in `--json`. A stale snapshot is never ranked or picked.
+The first probe that reaches the machine clears its backoff.
+
 Passes never overlap: one that finds the previous still running (overlapping cron ticks) leaves the round to it. A
 tick that waits on its headless job runs runs a pass every minute meanwhile, since launchd and systemd start no tick
 while one is running.

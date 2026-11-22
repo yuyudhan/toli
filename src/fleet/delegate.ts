@@ -21,7 +21,8 @@ import { delegatesSlice, forwardChain, recordDelegation } from "../records/deleg
 import { addInboxItem } from "../records/inbox.ts";
 import { parseShape } from "../records/task-shape.ts";
 import { DEFAULT_PROJECT, type Delegation, delegationKey, parseDelegation } from "./delegation-receive.ts";
-import { pickMachine, probeMachine, refusesShip } from "./pick.ts";
+import { probeMachine } from "./fleet-probe.ts";
+import { pickMachine, refusesShip } from "./pick.ts";
 
 const ACCEPTED = /^delegation-accepted (\S+) (created|existing)$/m;
 /** The receiver's line when it handed a new task back at once (a ship task for a project it marked verify-only). */

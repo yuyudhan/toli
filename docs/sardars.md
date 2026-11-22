@@ -89,6 +89,17 @@ every run. A `lead run` on the working tree (`TOLI_DEV=1`) has no snapshot and n
 
 Because the conversation is resumed, not restarted, it remembers every earlier turn, whoever drove it.
 
+### A Sardar session that grows too big
+
+An interactive session left open for days keeps its whole conversation in memory, and a machine that runs out ends
+it in the out-of-memory killer (the kernel's or earlyoom), which takes other processes with it. The minute tick reads
+the live session's resident memory (`/proc/<pid>/status` on Linux, `ps` on macOS); past `lead.sessionMemoryGB` in
+`config/machine.json` (default 8) it posts one inbox item to this machine's own lead, `lead session pid <pid> on
+<machine> at 9.4 GB: stow and restart it`, recommending a stow (`/stow`) and a fresh session, and logs it in
+`logs/tick.log`. One item per session (its pid and start, kept in `state/lead/memory-alert.json`): a session that keeps
+growing is not told again, a restarted one that grows past the limit is. toli never stops or signals the session; the
+Sardar or the user restarts it.
+
 ### Hide Sardar chatter
 
 New inbox items and job results reach the lead as one `[toli wake]` message (the omp extension's tick, the Claude

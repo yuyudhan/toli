@@ -14,7 +14,7 @@ import { paths } from "../core/paths.ts";
 import { runAsync, shellQuote, ToliError } from "../core/util.ts";
 import { SPECS } from "../harness/harness.ts";
 import { httpPeer } from "../peer/transport.ts";
-import { parseResources } from "./pick.ts";
+import { parseResources } from "./fleet-probe.ts";
 import type { Resources } from "./resources.ts";
 
 const CONNECT_SECONDS = 8;

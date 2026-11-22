@@ -3,10 +3,11 @@
 import { Args } from "../core/args.ts";
 import { out, printJson, ToliError } from "../core/util.ts";
 import { waitingLines } from "../jobs/outbox-admin.ts";
+import { fleetStatus } from "./fleet-probe.ts";
 import { fleetListCommand } from "./fleet-sync.ts";
 import { healthCommand } from "./health.ts";
 import { blindText, checkCommand } from "./oversight.ts";
-import { availabilityLine, fleetStatus } from "./pick.ts";
+import { availabilityLine } from "./pick.ts";
 import { pushCommand } from "./push.ts";
 import { questionsCommand } from "./questions.ts";
 import { queuesCommand } from "./queues.ts";

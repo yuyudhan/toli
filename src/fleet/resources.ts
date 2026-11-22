@@ -121,6 +121,8 @@ export type FleetEntry = {
     available: boolean;
     reasons: string[];
     resources: Resources | null;
+    /** Unreachable: the last snapshot seen from it (its own `at`), shown marked stale, never ranked. */
+    lastSeen?: Resources;
 };
 
 // ---------------------------------------------------------------- measurement

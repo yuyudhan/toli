@@ -1,30 +1,17 @@
 import { Args } from "../core/args.ts";
-import {
-    type FleetMachine,
-    inboundOff,
-    inboundOffText,
-    loadFleet,
-    remoteToliCommand,
-    sshArgs,
-} from "../core/config.ts";
-import { now, out, printJson, runAsync } from "../core/util.ts";
-import { httpPeer } from "../peer/transport.ts";
+import { out, printJson } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import type { Shape } from "../records/backlog.ts";
 import { parseShape } from "../records/task-shape.ts";
-import { type Full, fullText } from "./full.ts";
-import { type Netbird, netbirdOnce, type ProbeFailure, unreachableReason } from "./netbird-reach.ts";
+import { fleetStatus } from "./fleet-probe.ts";
+import { fullText } from "./full.ts";
 import { outsideBuildText } from "./outside-builds.ts";
-import { perSlot, type Queue, queueText, slotText } from "./queue.ts";
-import { type FleetEntry, localResources, type Resources } from "./resources.ts";
+import { perSlot, queueText, slotText } from "./queue.ts";
+import type { FleetEntry, Resources } from "./resources.ts";
 
-/** Line shown by `resources`, `fleet status`, `digest --fleet` and doctor. */
-export function availabilityLine(entry: FleetEntry): string {
-    const name = `${entry.machine}${entry.local ? " (this machine)" : ""}`;
-    const state = entry.available ? "available" : `unavailable: ${entry.reasons.join("; ")}`;
-    const r = entry.resources;
-    if (!r) return `${name}: ${state}`;
-    const detail = [
+/** One snapshot's figures, as `availabilityLine` lists them. */
+function resourcesText(r: Resources): string {
+    return [
         queueText(r.queue),
         ...(r.queue === null ? [] : [slotText(r.queue, r.maxRuns)]),
         `load ${r.load1}/${r.cpus} cpus`,
@@ -36,7 +23,16 @@ export function availabilityLine(entry: FleetEntry): string {
         `projects ${r.projects.length === 0 ? "none" : r.projects.join(",")}`,
         ...(r.verifyOnly === undefined || r.verifyOnly.length === 0 ? [] : [`verify-only ${r.verifyOnly.join(",")}`]),
     ].join(", ");
-    return `${name}: ${state} (${detail})`;
+}
+
+/** Line shown by `resources`, `fleet status`, `digest --fleet` and doctor; an unreachable machine's last snapshot is stale. */
+export function availabilityLine(entry: FleetEntry): string {
+    const name = `${entry.machine}${entry.local ? " (this machine)" : ""}`;
+    const state = entry.available ? "available" : `unavailable: ${entry.reasons.join("; ")}`;
+    if (entry.resources) return `${name}: ${state} (${resourcesText(entry.resources)})`;
+    if (entry.lastSeen)
+        return `${name}: ${state} (stale, last seen ${entry.lastSeen.at}: ${resourcesText(entry.lastSeen)})`;
+    return `${name}: ${state}`;
 }
 
 /**
@@ -72,200 +68,6 @@ export function verifyOnlyText(project: string): string {
 /** Whether `resources` says its machine takes no ship work for `project` (`project set <p> --role verify-only`). */
 export function refusesShip(resources: Resources, project: string): boolean {
     return resources.verifyOnly?.includes(project) === true;
-}
-
-const PROBE_CONNECT_SECONDS = 10;
-const PROBE_CAP_MS = 20_000;
-
-function firstLine(text: string): string {
-    return (
-        text
-            .split("\n")
-            .find((line) => line.trim() !== "")
-            ?.trim() ?? "no output"
-    );
-}
-
-/** Parse another machine's `resources --json`, rejecting anything not shaped like a snapshot. */
-export function parseResources(text: string): Resources {
-    const value: unknown = JSON.parse(text);
-    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("not a JSON object");
-    const fields = new Map(Object.entries(value));
-    const num = (key: string): number => {
-        const field = fields.get(key);
-        if (typeof field !== "number" || !Number.isFinite(field)) throw new Error(`field ${key} is not a number`);
-        return field;
-    };
-    const str = (key: string): string => {
-        const field = fields.get(key);
-        if (typeof field !== "string") throw new Error(`field ${key} is not a string`);
-        return field;
-    };
-    const strings = (key: string): string[] => {
-        const field: unknown = fields.get(key);
-        if (!Array.isArray(field)) throw new Error(`field ${key} is not a string list`);
-        return field.map((item: unknown) => {
-            if (typeof item !== "string") throw new Error(`field ${key} is not a string list`);
-            return item;
-        });
-    };
-    const available = fields.get("available");
-    if (typeof available !== "boolean") throw new Error("field available is not a boolean");
-    const rawQueue: unknown = fields.get("queue");
-    let queue: Queue | null = null;
-    if (rawQueue !== undefined) {
-        if (typeof rawQueue !== "object" || rawQueue === null || Array.isArray(rawQueue))
-            throw new Error("field queue is not an object");
-        const parts = new Map(Object.entries(rawQueue));
-        const count = (key: keyof Queue): number => {
-            const part = parts.get(key);
-            if (typeof part !== "number" || !Number.isInteger(part) || part < 0)
-                throw new Error(`field queue.${key} is not a count`);
-            return part;
-        };
-        const rawFull: unknown = parts.get("full");
-        let full: Full | undefined;
-        if (rawFull !== undefined) {
-            if (typeof rawFull !== "object" || rawFull === null) throw new Error("field queue.full is not an object");
-            const f = new Map(Object.entries(rawFull));
-            const reason = f.get("reason");
-            const since = f.get("since");
-            const until = f.get("until");
-            if (
-                typeof reason !== "string" ||
-                typeof since !== "string" ||
-                (until !== null && typeof until !== "string")
-            )
-                throw new Error("field queue.full needs reason, since and until");
-            full = { reason, since, until };
-        }
-        queue = {
-            queued: count("queued"),
-            active: count("active"),
-            held: count("held"),
-            jawansRunning: count("jawansRunning"),
-            jawansQueued: count("jawansQueued"),
-            depth: count("depth"),
-            ...(full === undefined ? {} : { full }),
-        };
-    }
-    const verifyOnly = fields.get("verifyOnly") === undefined ? undefined : strings("verifyOnly");
-    return {
-        machine: str("machine"),
-        platform: str("platform"),
-        cpus: num("cpus"),
-        load1: num("load1"),
-        load5: num("load5"),
-        memTotalMB: num("memTotalMB"),
-        memAvailableMB: num("memAvailableMB"),
-        diskFreeGB: num("diskFreeGB"),
-        activeRuns: num("activeRuns"),
-        maxRuns: num("maxRuns"),
-        maxLoadPerCpu: num("maxLoadPerCpu"),
-        projects: strings("projects"),
-        available,
-        reasons: strings("reasons"),
-        at: str("at"),
-        queue,
-        ...(verifyOnly === undefined ? {} : { verifyOnly }),
-    };
-}
-
-/**
- * Probe one other fleet machine for its `resources --json` (HTTPS when paired, else ssh); never throws. `budgetMs`
- * bounds the whole probe, HTTPS and the ssh fallback together, for a caller someone waits for (`delegate`'s
- * verify-only check): an HTTPS try that used it all leaves no ssh try. `netbird` is this machine's NetBird view, read
- * only when an unbudgeted probe fails, to say why (src/fleet/netbird-reach.ts); a budgeted one spends no time on it.
- */
-export async function probeMachine(
-    machine: FleetMachine,
-    budgetMs?: number,
-    netbird: () => Promise<Netbird | null> = netbirdOnce(),
-): Promise<FleetEntry> {
-    const deadline = budgetMs === undefined ? undefined : performance.now() + budgetMs;
-    const unreachable = (detail: string): FleetEntry => ({
-        machine: machine.name,
-        local: false,
-        reachable: false,
-        available: false,
-        reasons: [`unreachable: ${detail}`],
-        resources: null,
-    });
-    const reached = (resources: Resources): FleetEntry => ({
-        machine: machine.name,
-        local: false,
-        reachable: true,
-        available: resources.available,
-        reasons: resources.reasons,
-        resources,
-    });
-    // A paired peer answers over HTTPS (its `status` permission for this machine); ssh is the fallback.
-    const peer = httpPeer(machine.name);
-    // A budgeted probe has no time for netbird and `ssh -G`; its timeout still reads as no route / host down.
-    const view = deadline === undefined ? netbird : () => Promise.resolve(null);
-    const failed = async (failure: ProbeFailure): Promise<FleetEntry> =>
-        unreachable(await unreachableReason(failure, { ssh: machine.ssh, peerAddrs: peer?.addrs ?? [] }, view, now()));
-    let httpsError = "";
-    if (peer !== undefined) {
-        try {
-            // Loaded here, not at the top: deliver.ts registers with the listener when it loads, and the listener's
-            // own imports reach this module (envelope -> backlog -> ... -> resources -> pick).
-            const { askStatus } = await import("../peer/deliver.ts");
-            // Loading it counts against the budget: on a loaded machine it takes a noticeable part of a second.
-            const left = deadline === undefined ? undefined : Math.max(1, deadline - performance.now());
-            return reached(parseResources(JSON.stringify((await askStatus(peer, left)).value)));
-        } catch (error) {
-            httpsError = `HTTPS: ${firstLine(error instanceof Error ? error.message : String(error))}; `;
-        }
-    }
-    // Never probed over ssh, and never picked: work for it goes by `delegate`, which it pulls.
-    if (inboundOff(machine)) return { ...unreachable(""), reasons: [`${httpsError}${inboundOffText(machine)}`] };
-    const capMs = deadline === undefined ? PROBE_CAP_MS : Math.ceil(deadline - performance.now());
-    if (capMs <= 0) return unreachable(`${httpsError}no time left to try ssh ${machine.ssh}`);
-    const capSeconds = Math.ceil(capMs / 1000);
-    const connectSeconds = Math.min(PROBE_CONNECT_SECONDS, capSeconds);
-    const result = await runAsync(
-        [...sshArgs(machine.ssh, connectSeconds), remoteToliCommand(machine.root, "resources --json")],
-        { timeoutMs: capMs },
-    );
-    if (result.timedOut)
-        return await failed({
-            https: httpsError,
-            ssh: `no answer from ${machine.ssh} within ${capSeconds}s`,
-            timedOut: true,
-        });
-    if (result.code !== 0)
-        return await failed({
-            https: httpsError,
-            ssh: `ssh ${machine.ssh} exited ${result.code}: ${firstLine(result.stderr || result.stdout)}`,
-            timedOut: false,
-        });
-    try {
-        return reached(parseResources(result.stdout));
-    } catch (error) {
-        return unreachable(
-            `bad resources output from ${machine.ssh}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-    }
-}
-
-/** This machine plus every other `config/fleet.json` machine, probed in parallel. Never throws for a bad machine. */
-export async function fleetStatus(): Promise<FleetEntry[]> {
-    const local = localResources();
-    const others = loadFleet().machines.filter((machine) => machine.name !== local.machine);
-    const netbird = netbirdOnce();
-    const remote = await Promise.all(others.map((machine) => probeMachine(machine, undefined, netbird)));
-    return [
-        {
-            machine: local.machine,
-            local: true,
-            reachable: true,
-            available: local.available,
-            reasons: local.reasons,
-            resources: local,
-        },
-        ...remote,
-    ];
 }
 
 /**

@@ -40,6 +40,18 @@ one. See docs/releasing.md.
   hooks, the branch-moved refusal). `--resolved` on a clean merge that names no fix is still refused; without
   `--resolved` a clean merge still refuses edits to the paths it changes (but lock files), and now says to add it
   (docs/development.md, T2254).
+- Fleet commands no longer wait minutes on machines that are down. `fleet queues` timed out at 100 s and
+  `fleet check` took 120 s with three dead hosts: a mesh VPN accepts the TCP connection to a host that is off the
+  network, so a paired peer's HTTPS status request waited its full two minutes before ssh was tried. The fleet probes
+  now cap that HTTPS try at 10 s and use a 5 s ssh `ConnectTimeout`; a machine no route reached is backed off in
+  `state/reach.json` (`fleet:<name>`, the tick's 30 s doubling to 10 minute schedule), as is an ssh-only machine the
+  tick's own ssh has backed off, and is not probed until then. Its row says why at once and shows the last snapshot
+  seen from it marked stale (`stale, last seen <at>: ...`, `lastSeen` in `--json`), never ranked or picked
+  (docs/fleet.md "Unreachable machines", T2258).
+- A lead session that grows too big is told to stow and restart before the out-of-memory killer ends it (and others
+  with it): past `lead.sessionMemoryGB` of resident memory (default 8), the minute tick posts one inbox item per
+  session to this machine's lead recommending `/stow` and a fresh session. toli never stops or signals the session
+  (docs/sardars.md "A Sardar session that grows too big", T2258).
 - The disk keeper sweeps stale artifacts out of idle cargo targets before it deletes any target whole: entries of
   `<profile>/{deps,build,.fingerprint,incremental}` nothing used for `capacity.diskSweepStaleMinutes`, under cargo's
   locks, re-measuring free disk after each target. A whole target goes only if free disk is still under the floor

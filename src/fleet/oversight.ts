@@ -35,8 +35,8 @@ import { listenerProblem } from "../peer/supervise.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
+import { fleetStatus } from "./fleet-probe.ts";
 import { commonNetworkFault, type NetworkFaultGroup, networkFaultLine } from "./network-fault.ts";
-import { fleetStatus } from "./pick.ts";
 import type { FleetEntry } from "./resources.ts";
 
 export const DEFAULT_FLEET_CHECK_MINUTES = 60;

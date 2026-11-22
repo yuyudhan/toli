@@ -19,7 +19,8 @@ import {
 import { sendToMachine } from "../jobs/outbox.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
-import { fleetStatus, rankMachines, refusesShip, verifyOnlyText } from "./pick.ts";
+import { fleetStatus } from "./fleet-probe.ts";
+import { rankMachines, refusesShip, verifyOnlyText } from "./pick.ts";
 import { perSlot, type Queue, queueText, slotText, waitingTasks } from "./queue.ts";
 import type { FleetEntry } from "./resources.ts";
 
@@ -57,6 +58,8 @@ type QueueRow = {
     reasons: string[];
     /** The projects it takes no ship work for (`project set <p> --role verify-only` there). */
     verifyOnly: string[];
+    /** An unreachable machine's last snapshot seen here: when it was taken and its queue then (stale, never ranked). */
+    lastSeen: { at: string; queue: Queue | null } | null;
 };
 
 /** A machine with a known queue, for comparing depths. */
@@ -80,6 +83,7 @@ function queueRows(entries: FleetEntry[]): QueueRow[] {
                 slots: entry.resources?.maxRuns ?? null,
                 reasons: entry.resources === null ? entry.reasons : [],
                 verifyOnly: entry.resources?.verifyOnly ?? [],
+                lastSeen: entry.lastSeen === undefined ? null : { at: entry.lastSeen.at, queue: entry.lastSeen.queue },
             },
         ];
     });
@@ -128,7 +132,11 @@ function queueSuggestion(rows: QueueRow[], gap: number): string | null {
 
 function rowLine(row: QueueRow): string {
     const name = `${row.machine}${row.local ? " (this machine)" : ""}`;
-    if (!row.reachable) return `${name}: ${row.reasons.join("; ") || "unreachable"}`;
+    if (!row.reachable) {
+        const reasons = row.reasons.join("; ") || "unreachable";
+        if (row.lastSeen === null) return `${name}: ${reasons}`;
+        return `${name}: ${reasons}; stale, last seen ${row.lastSeen.at}: ${queueText(row.lastSeen.queue)}`;
+    }
     if (row.queue === null) return `${name}: queue unknown (its toli reports no queue)`;
     const slots = row.slots === null ? "" : `, ${slotText(row.queue, row.slots)}`;
     const verifyOnly = row.verifyOnly.length === 0 ? "" : `, verify-only ${row.verifyOnly.join(",")}`;
