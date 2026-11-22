@@ -242,13 +242,18 @@ A question that asks for the user's word never waits in the inbox alone: the rec
 Needs-you queue (`bin/toli needs`) on arrival. It asks for his word when it says so (`<name>'s word`, `question for
 <name>`, `needs his word`, `word needed`, `Reply <option>` with a quoted option, a number or yes/no), or, in a peer
 message, when it is in toli's own hold format (a `## Question` section, a `task hold ... --question` line), unless
-every option it gives is the template's placeholder (`--option "<choice> => <what happens then>"`: instructions
-quoted from a brief, not a question); placeholder options beside real ones are ignored and the real ones held. A
-peer message that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) is a
-jawan brief and never asks. In a peer message a phrase asks only in a paragraph that is a question (has a `?`), and
+it only quotes the hold template: no real option of any kind, and its question itself a placeholder
+(`task hold <T-id> --question "<plain words>" --option "<choice> => <what happens then>"`, instructions quoted from
+a brief). Placeholder options are never options, and a quoted template line is cut from a held question's text. A
+peer message that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) is a jawan brief and never asks. In
+a peer message a phrase asks only in a paragraph that is a question (has a `?`), and
 a phrase citing his word as authority never asks: `on <name>'s word`, `act on <name>'s word`, `<name>'s word
 (2026-11-18): '...'` quoting him, `questions for <name> go to <machine>`. A lead relaying his instructions or the
-fleet's rules asks him nothing.
+fleet's rules asks him nothing. Once this machine knows its user's names (a first name or aliases in
+config/persona.json), a peer message addressed `question for <name>` to someone else (a cc of another machine's
+question) is information and never held, and `<name>'s word` (`<name>'s word needed` too) for someone else asks
+nothing; `question for <his name>` still holds. With no first name or alias set, any capitalized name still counts as
+his.
 
 - A delegated task's held question that asks for his word is escalated at once, as `task escalate` would: the `--for`
   task is held with `<owner>/T<n> asks: <question>` and its options. When there is no `--for` task (or it is done,

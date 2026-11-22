@@ -12,12 +12,18 @@ one. See docs/releasing.md.
   briefs sent in parts quoted the template's `task hold ... --option "<choice> => <what happens then>"` line, so the
   receiving toli read toli's own hold format and held each part as `<machine> asks for the user's word: ...` with the
   placeholders as options, and delegation sync carried them to the delegator's Needs-you queue. Now a peer message
-  that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) never asks, a hold whose every option is a
-  placeholder is a quoted template rather than a question, and placeholder options are never parsed (real options
-  beside them still are, and held); `bin/toli task hold` refuses an
-  option whose choice or outcome is an unfilled `<...>` placeholder; `bin/toli talk` warns when its words start with
-  `TOLI_BRIEF` or run over 4 KB and names `bin/toli delegate <machine> "<title>" --brief <file>`; and the headless lead
-  is told to ask the sender to delegate such a message, never to hold it (docs/sardars.md, T2300).
+  that starts with `TOLI_BRIEF` (after a part marker such as `1/3`) never asks; a message that only quotes the hold
+  template (no real option of any kind, its question itself a placeholder) is no question, while a real question
+  beside a quoted template is held, its options in any form, with the template cut from its text; placeholder
+  options are never parsed; `bin/toli task hold` refuses an option whose choice or outcome is an unfilled `<...>`
+  placeholder; `bin/toli talk` warns when its words start with `TOLI_BRIEF` or run over 4 KB and names
+  `bin/toli delegate <machine> "<title>" --brief <file>`; and the headless lead is told to ask the sender to delegate
+  such a message, never to hold it (docs/sardars.md, T2300).
+- A peer question addressed to another person is no longer held for this machine's user. A peer cc'd a machine on a
+  question for another machine's user, and the cc'd machine's lead held it as `<peer> asks for the user's word`. Once
+  a first name or alias is set in config/persona.json, a peer message addressed `question for <name>` where no
+  addressee is one of the user's names is delivered as information, and `<name>'s word` for someone else asks
+  nothing; a question for one of the user's own names still holds (docs/sardars.md "Questions for the user", T2300).
 - One release now gets one merge run per project clone. A release produced two queued runs in the same second: the
   release catch-up's, and one a scheduled job started with a brief naming the tag but no task, which the catch-up's
   holds never saw (they skipped queued runs and read only tasks). Now the catch-up scan and `catch-up merge` hold a

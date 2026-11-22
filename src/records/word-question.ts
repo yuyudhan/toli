@@ -39,26 +39,38 @@ function writtenPairs(text: string, pattern: RegExp): HoldOption[] {
 const placeholderOption = (option: HoldOption): boolean =>
     isPlaceholder(option.choice) || isPlaceholder(option.outcome);
 
+/** A message's `## Question` section, when it has one. */
+const questionSection = (words: string): string | undefined =>
+    /^##\s*Question\s*$([\s\S]*?)(?=^##\s|$(?![\s\S]))/m.exec(words)?.[1];
+
+/** The first paragraph of a `## Question` section: the question it asks. */
+const sectionQuestion = (section: string): string => section.split(/\n\s*\n/).find((part) => part.trim() !== "") ?? "";
+
 /**
- * Whether `text` only quotes the hold template: it writes options, and every one of them is a placeholder
- * (`--option "<choice> => <what happens then>"`). A message with any real option asks with it. Listed options are
- * read with the `--option` flags taken out, so a wrapped `--option` line is never read as a `- a => b` item.
+ * Whether `text` only quotes the hold template (`task hold <T-id> --question "<plain words>" --option "<choice> =>
+ * <what happens then>"`, instructions quoted from a brief): it offers no real option of any kind, and every question
+ * it writes in toli's hold format (`## Question`, `--question "..."`) is itself a placeholder. Anything else asks.
  */
 export function quotesTemplateOnly(text: string): boolean {
-    const written = [...writtenPairs(text, FLAGGED), ...writtenPairs(text.replace(FLAGGED, ""), LISTED)];
-    return written.length > 0 && written.every(placeholderOption);
+    const section = questionSection(text);
+    const questions = [
+        ...(section === undefined ? [] : [collapse(sectionQuestion(section))]),
+        ...[...text.matchAll(/--question\s+["']([^"'\n]*)["']/g)].map((match) => collapse(match[1] ?? "")),
+    ];
+    return questions.length > 0 && questions.every(isPlaceholder) && parseOptions(text).length === 0;
 }
 
 /**
  * The options a message offers: `--option "a => b"`, `N. a => b` lines, `(1) ... (2) ...`, `Reply X to Y`, yes/no.
- * A template placeholder (`<choice> => <what happens then>`) is no option.
+ * A template placeholder (`<choice> => <what happens then>`) is no option, and listed options are read with the
+ * `--option` flags taken out, so a wrapped `--option` line is never read as a `- a => b` item.
  */
 function parseOptions(text: string): HoldOption[] {
-    const pairs = (pattern: RegExp): HoldOption[] =>
-        writtenPairs(text, pattern).filter((option) => !placeholderOption(option));
+    const pairs = (pattern: RegExp, from = text): HoldOption[] =>
+        writtenPairs(from, pattern).filter((option) => !placeholderOption(option));
     const flagged = pairs(FLAGGED);
     if (flagged.length > 0) return clampOptions(flagged);
-    const listed = pairs(LISTED);
+    const listed = pairs(LISTED, text.replace(FLAGGED, ""));
     if (listed.length > 0) return clampOptions(listed);
     const numbered = [...text.matchAll(/\((\d)\)\s*([\s\S]+?)(?=\s*\(\d\)|\n\n|$)/g)].flatMap((match) => {
         const option = freeOption(match[2] ?? "");
@@ -96,9 +108,13 @@ function parseBlocks(text: string): string | undefined {
  * QUESTION_MAX), with the options, recommendation and what it blocks when the message names them.
  */
 export function parseWordQuestion(words: string): WordQuestion {
-    const section = /^##\s*Question\s*$([\s\S]*?)(?=^##\s|$(?![\s\S]))/m.exec(words)?.[1];
+    const section = questionSection(words);
     const text = section ?? words;
-    const prose = section === undefined ? words : (section.split(/\n\s*\n/).find((part) => part.trim() !== "") ?? "");
+    // A quoted template (`task hold <T-id> ...` and its wrapped `--option` lines) is no part of the question.
+    const prose = (section === undefined ? words : sectionQuestion(section)).replace(
+        /(?:bin\/toli\s+)?task\s+hold\s+<[^<>\n]+>[^\n]*(?:\n\s*--[^\n]*)*/g,
+        "",
+    );
     const full = collapse(prose.replace(/^\s*(?:\d+[.)]\s*.+=>.+|Recommended:.+|Blocks:.+)$/gm, ""));
     const question = full.length > QUESTION_MAX ? `${full.slice(0, QUESTION_MAX - 1)}…` : full;
     const options = parseOptions(text);

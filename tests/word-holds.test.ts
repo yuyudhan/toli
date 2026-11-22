@@ -232,6 +232,32 @@ describe("a peer message citing the user's word as authority", () => {
     });
 });
 
+// T2300: a peer cc'd a machine on a "question for <another machine's user>", and the cc'd machine held it for its own
+// user. Once this machine knows its user's names (config/persona.json), a question addressed to someone else is
+// information, not his question.
+describe("a peer question addressed to another person", () => {
+    test("is not held for this machine's user; one addressed to him still is", () => {
+        const { m1 } = pair();
+        withProject(m1, "app");
+        writeFileSync(
+            join(m1.root, "config", "persona.json"),
+            JSON.stringify({ user: "Boss", userFirstName: "Robin", userAliases: ["Rob"] }),
+        );
+        const add = (words: string): string =>
+            m1.ok(["inbox", "add", "--from", "m3", "--title", "message from m3"], { stdin: words });
+        add("m3 question for Sam, app P-234: ship the beta to the testers now? Reply 1 to ship, 2 to wait.");
+        add("Sam's word needed: merge the app branch today?");
+        expect(held(m1)).toEqual([]);
+        for (const ask of [
+            "m3 question for Robin, app P-235: ship the beta now? yes/no",
+            "question for Rob: drop the app cache?",
+            "Robin's word needed: tag the app release today?",
+        ])
+            add(ask);
+        expect(held(m1)).toHaveLength(3);
+    });
+});
+
 // T2300: verify briefs sent with `talk` in parts were held as "m2 asks for the user's word" with the template's
 // `<choice> => <what happens then>` options.
 describe("a jawan brief sent by talk", () => {
@@ -305,6 +331,52 @@ describe("a jawan brief sent by talk", () => {
                     { choice: "no", outcome: "wait" },
                 ],
             ],
+        ]);
+    });
+
+    // T2300 round 3 (verify probes P7-P9): a real `## Question` beside a quoted template is held whatever form its
+    // options take, or with none; only a message whose question and options are all placeholders, or a brief, is not.
+    test("a real question beside a quoted template is held with (1)(2), yes/no or no options", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        const TEMPLATE = [
+            "## Notes",
+            "",
+            "The brief said to ask with:",
+            "",
+            '    bin/toli task hold <T-id> --question "<one crisp question>" \\',
+            '        --option "<choice> => <what happens then>" --option "<choice> => <what happens then>"',
+        ].join("\n");
+        const ask = (question: string): string => `## Question\n\n${question}\n\n${TEMPLATE}`;
+        m2.ok(["talk", "m1", ask("Which store for the app? (1) Postgres, my pick (2) SQLite")]);
+        m2.ok(["talk", "m1", ask("Drop the stale app cache? yes/no")]);
+        m2.ok(["talk", "m1", ask("What should the app's release notes lead with?")]);
+        m2.ok([
+            "talk",
+            "m1",
+            `Ship the app today? Asha's word needed.\n\n${TEMPLATE.replace("## Notes", "Template:")}`,
+        ]);
+        m2.ok(["talk", "m1", TEMPLATE.replace("## Notes", "How to ask:")]);
+        m2.ok(["talk", "m1", `TOLI_BRIEF v1 (1/2)\n\n${ask("Which store for the app? (1) Postgres (2) SQLite")}`]);
+        const tasks = held(m1);
+        expect(tasks.map((task) => [task.question, task.options ?? []])).toEqual([
+            [
+                "Which store for the app? (1) Postgres, my pick (2) SQLite",
+                [
+                    { choice: "Postgres", outcome: "Postgres, my pick" },
+                    { choice: "SQLite", outcome: "SQLite" },
+                ],
+            ],
+            [
+                "Drop the stale app cache? yes/no",
+                [
+                    { choice: "yes", outcome: "go ahead as asked" },
+                    { choice: "no", outcome: "leave it as it is" },
+                ],
+            ],
+            ["What should the app's release notes lead with?", []],
+            // The quoted template's tail is no part of the held question (b4b).
+            ["Ship the app today? Asha's word needed. Template: The brief said to ask with:", []],
         ]);
     });
 

@@ -14,7 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname } from "node:path";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { userNames } from "../core/persona.ts";
+import { persona, userNames } from "../core/persona.ts";
 import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
@@ -43,8 +43,11 @@ const NAMED_MIN = 4;
 
 const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** A mention of the user's word, and when it cites his word as authority instead of asking for it. */
-type WordPhrase = { pattern: RegExp; cites?: (before: string, after: string) => boolean };
+/**
+ * A mention of the user's word, and when it cites his word as authority instead of asking for it; `cites` also gets
+ * the name a generic pattern captured (`Sam` in "Sam's word"), else "".
+ */
+type WordPhrase = { pattern: RegExp; cites?: (before: string, after: string, name: string) => boolean };
 
 /**
  * "Asha's word" cited, not asked for: "on/per/by Asha's word", "act on Asha's word when ...", or introducing a quote of
@@ -57,17 +60,52 @@ const citesWord = (before: string, after: string): boolean =>
 const routesQuestions = (_before: string, after: string): boolean =>
     /^\s+(?:go(?:es)?|should go|(?:are|is) (?:sent|routed))\b/i.test(after);
 
-/** Phrases that mention the user's word, the installation's own user name included. */
-function wordPhrases(): WordPhrase[] {
-    const user = userNames().map(escapeRegex).join("|");
+/**
+ * This machine's user's names in lower case (address name, title, first name, aliases: config/persona.json), or null
+ * when no first name or alias is set, so another person cannot be told apart from him by name.
+ */
+function knownUserNames(): Set<string> | null {
+    const names = persona();
+    if (names.userFirstName === "" && names.userAliases.length === 0) return null;
+    return new Set(userNames(names).map((name) => name.toLowerCase()));
+}
+
+/** `questions? for <Name>`, any capitalized name, with the name captured. */
+const QUESTION_FOR = /\bquestions? for ([A-Z][\w-]*)\b/g;
+
+/**
+ * Whether a peer message asks its question of someone else: it is addressed `question for <Name>` (not where his
+ * questions go), and no such <Name> is this machine's user. Delivered as information, never held for him.
+ */
+function addressedElsewhere(text: string, user: Set<string>): boolean {
+    const addressees = [...text.matchAll(QUESTION_FOR)]
+        .filter((match) => !routesQuestions("", text.slice((match.index ?? 0) + match[0].length)))
+        .map((match) => (match[1] ?? "").toLowerCase());
+    return addressees.length > 0 && addressees.every((name) => !user.has(name));
+}
+
+/**
+ * Phrases that mention the user's word, the installation's own user name included. A capitalized name stands for
+ * him only while his names are unknown (`user` null); once they are, another person's word asks nothing of him.
+ */
+function wordPhrases(user: Set<string> | null): WordPhrase[] {
+    const names = userNames().map(escapeRegex).join("|");
+    const someoneElse = (name: string): boolean => user !== null && !user.has(name.toLowerCase());
     return [
-        { pattern: new RegExp(`\\b(?:${user})'s word\\b`, "gi"), cites: citesWord },
-        { pattern: /\b[A-Z][\w-]*'s word\b/g, cites: citesWord },
+        { pattern: new RegExp(`\\b(?:${names})'s word\\b`, "gi"), cites: citesWord },
+        {
+            pattern: /\b([A-Z][\w-]*)'s word\b/g,
+            cites: (before, after, name) => someoneElse(name) || citesWord(before, after),
+        },
         { pattern: /\bthe user's word\b/gi, cites: citesWord },
-        { pattern: new RegExp(`\\bquestions? for (?:${user}|the user)\\b`, "gi"), cites: routesQuestions },
-        { pattern: /\bquestions? for [A-Z][\w-]*\b/g, cites: routesQuestions },
+        { pattern: new RegExp(`\\bquestions? for (?:${names}|the user)\\b`, "gi"), cites: routesQuestions },
+        {
+            pattern: QUESTION_FOR,
+            cites: (before, after, name) => someoneElse(name) || routesQuestions(before, after),
+        },
         { pattern: /\bneeds? (?:his|her|their|your) word\b/gi },
-        { pattern: /\bword needed\b/gi },
+        // "Sam's word needed": the `'s word` phrases above judge whose word; "word needed" alone asks only unnamed.
+        { pattern: /(?<!'s )\bword needed\b/gi },
     ];
 }
 
@@ -88,15 +126,17 @@ export function isBriefText(text: string): boolean {
 /**
  * Whether `text` asks for the user's word. A `peer` message (not a delegated task's held question, which asks by
  * being held) asks only in a paragraph that is a question (has a `?`), so a Sardar relaying his rules ("merges still
- * need his word") is not a request; toli's hold format and `Reply <option>` ask in themselves, unless every option the
- * hold gives is a template placeholder (a quoted template, quotesTemplateOnly). A jawan brief sent as a peer message
- * asks nothing: it is work to run. A mention that cites his word as authority never asks.
+ * need his word") is not a request; toli's hold format and `Reply <option>` ask in themselves, unless the message only
+ * quotes the hold template (no real option, its question a placeholder: quotesTemplateOnly). A jawan brief sent as a
+ * peer message asks nothing: it is work to run. A mention that cites his word as authority never asks.
  */
 export function asksForWord(text: string, peer: boolean): boolean {
     if (peer && isBriefText(text)) return false;
+    const user = knownUserNames();
+    if (peer && user !== null && addressedElsewhere(text, user)) return false;
     if (REPLY_OPTION.test(text)) return true;
     if (peer && !quotesTemplateOnly(text) && HOLD_FORMAT.some((pattern) => pattern.test(text))) return true;
-    const phrases = wordPhrases();
+    const phrases = wordPhrases(user);
     return text
         .split(/\n\s*\n/)
         .some(
@@ -106,7 +146,11 @@ export function asksForWord(text: string, peer: boolean): boolean {
                     [...paragraph.matchAll(pattern)].some(
                         (match) =>
                             cites === undefined ||
-                            !cites(paragraph.slice(0, match.index), paragraph.slice(match.index + match[0].length)),
+                            !cites(
+                                paragraph.slice(0, match.index),
+                                paragraph.slice(match.index + match[0].length),
+                                match[1] ?? "",
+                            ),
                     ),
                 ),
         );
