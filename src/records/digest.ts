@@ -2,19 +2,11 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { cpus } from "node:os";
 import { join } from "node:path";
 import { Args } from "../core/args.ts";
-import {
-    hasMachine,
-    inboundOff,
-    inboundOffText,
-    loadMachine,
-    otherFleetMachines,
-    remoteToliCommand,
-    sshArgs,
-} from "../core/config.ts";
+import { hasMachine, loadMachine } from "../core/config.ts";
 import { isGitRepo, type RepoStatus, repoStatus } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { personaLine } from "../core/persona.ts";
-import { now, out, printJson, run, ToliError } from "../core/util.ts";
+import { now, out, printJson, ToliError } from "../core/util.ts";
 import { fleetStatus } from "../fleet/fleet-probe.ts";
 import { type IdleSession, idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { availabilityLine } from "../fleet/pick.ts";
@@ -42,6 +34,7 @@ import { type SetupItem, setupChecklist } from "../setup/checklist.ts";
 import { setupSnoozed, takeSetupNotice } from "../setup/setup.ts";
 import { ackCommand } from "./acks.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
+import { fleetDigests } from "./fleet-digest.ts";
 import { type InboxItem, listInbox } from "./inbox.ts";
 import { type Needs, needsQueue, renderNeeds, takeStaleHolds } from "./needs.ts";
 import { type NextAction, nextActions } from "./next.ts";
@@ -213,27 +206,6 @@ export function buildDigest(setupItems: SetupItem[] = setupChecklist()): Digest 
     };
 }
 
-function fleetDigests(): FleetEntry[] {
-    return otherFleetMachines().map((machine): FleetEntry => {
-        if (inboundOff(machine)) return { machine: machine.name, ok: false, error: inboundOffText(machine) };
-        const result = run([...sshArgs(machine.ssh, 15), remoteToliCommand(machine.root, "digest --json")], {
-            timeoutMs: 90_000,
-        });
-        if (result.code !== 0) {
-            return {
-                machine: machine.name,
-                ok: false,
-                error: `ssh ${machine.ssh} exited ${result.code}: ${(result.stderr || result.stdout).trim()}`,
-            };
-        }
-        try {
-            return { machine: machine.name, ok: true, digest: JSON.parse(result.stdout) as Digest };
-        } catch {
-            return { machine: machine.name, ok: false, error: `unparseable digest from ${machine.ssh}` };
-        }
-    });
-}
-
 function projectLine(project: ProjectDigest): string {
     if (!project.cloned)
         return project.error === undefined
@@ -346,7 +318,7 @@ export async function digestCommand(argv: string[]): Promise<void> {
         return;
     }
     const availability: AvailabilityEntry[] = await fleetStatus();
-    const fleet = fleetDigests();
+    const fleet = await fleetDigests(availability);
     if (args.bool("json")) {
         printJson({ ...digest, availability, fleet });
         return;

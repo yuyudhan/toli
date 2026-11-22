@@ -63,8 +63,10 @@ one. See docs/releasing.md.
   now cap that HTTPS try at 10 s and use a 5 s ssh `ConnectTimeout`; a machine no route reached is backed off in
   `state/reach.json` (`fleet:<name>`, the tick's 30 s doubling to 10 minute schedule), as is an ssh-only machine the
   tick's own ssh has backed off, and is not probed until then. Its row says why at once and shows the last snapshot
-  seen from it marked stale (`stale, last seen <at>: ...`, `lastSeen` in `--json`), never ranked or picked
-  (docs/fleet.md "Unreachable machines", T2258).
+  seen from it marked stale (`stale, last seen <at>: ...`, `lastSeen` in `--json`), never ranked or picked.
+  `digest --fleet` no longer asks such a machine for its digest (it asked each one in turn with a 15 s connect
+  timeout); it asks the others up to 8 at once with a 5 s one, in fleet order (docs/fleet.md "Unreachable
+  machines", T2258).
 - A lead session that grows too big is told to stow and restart before the out-of-memory killer ends it (and others
   with it): past `lead.sessionMemoryGB` of resident memory (default 8), the minute tick posts one inbox item per
   session to this machine's lead recommending `/stow` and a fresh session. toli never stops or signals the session

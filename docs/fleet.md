@@ -149,7 +149,9 @@ off. A backed-off machine is not probed: its row leads with the failure that bac
 3 times in a row, next probe in 240 s)`, and shows the last snapshot seen from it (`state/fleet-seen.json`) marked
 stale: `m3: unavailable: unreachable: ... (stale, last seen <at>: queue 2 (...), ...)` in `fleet status`, `; stale,
 last seen <at>: queue 2 (...)` in `fleet queues`, `lastSeen` in `--json`. A stale snapshot is never ranked or picked.
-The first probe that reaches the machine clears its backoff.
+The first probe that reaches the machine clears its backoff. `digest --fleet` asks only the machines its probe
+reached for their digest, up to 8 at once over ssh with the same 5 s `ConnectTimeout`, listed in fleet order; an
+unreachable or backed-off machine is not asked, and its section gives the probe's reason and `stale, last seen <at>`.
 
 Passes never overlap: one that finds the previous still running (overlapping cron ticks) leaves the round to it. A
 tick that waits on its headless job runs runs a pass every minute meanwhile, since launchd and systemd start no tick

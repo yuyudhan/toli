@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENV, fleet, m3Answers, remoteSnapshot, sshLog } from "./fleet-fixture.ts";
-import type { Sandbox } from "./helpers.ts";
+import { type Sandbox, SSH_STUB_ARGS } from "./helpers.ts";
 
 const T0 = "2026-11-22T00:35:00.000Z";
 const at = (seconds: number): string => new Date(Date.parse(T0) + seconds * 1000).toISOString();
@@ -102,5 +102,76 @@ describe("fleet probes on a machine that is down", () => {
         // Once the tick's backoff ends it is probed again.
         status(box, at(241));
         expect(m3Probes(box)).toBe(1);
+    });
+});
+
+describe("digest --fleet on a fleet with a machine that is down", () => {
+    test("skips the unreachable machine (marked stale), asks the others at once with a short timeout, in fleet order", () => {
+        const box = fleet(remoteSnapshot("m2"));
+        writeFileSync(
+            join(box.root, "config", "fleet.json"),
+            JSON.stringify({
+                machines: ["m1", "m2", "m3", "m4"].map((name, index) => ({
+                    name,
+                    ssh: `host${index + 1}`,
+                    root: "/srv/toli",
+                })),
+            }),
+        );
+        const started = join(box.root, ".m4-started");
+        writeFileSync(join(box.root, ".m4.json"), remoteSnapshot("m4"));
+        // m2's digest answers only once m4's has started (else it says it ran alone): asked one at a time, m2 would
+        // wait out its loop first.
+        box.stub(
+            "ssh",
+            [
+                `printf '%s\\n' "$*" >> "${join(box.root, ".ssh.log")}"`,
+                SSH_STUB_ARGS,
+                'case "$host:$cmd" in',
+                `  host2:*"resources --json"*) cat "${join(box.root, ".m2.json")}" ;;`,
+                `  host4:*"resources --json"*) cat "${join(box.root, ".m4.json")}" ;;`,
+                `  host2:*"digest --json"*) for i in $(seq 50); do [ -f "${started}" ] && break; sleep 0.1; done`,
+                `    if [ -f "${started}" ]; then echo '{"machine":"m2"}'; else echo '{"machine":"m2","alone":true}'; fi ;;`,
+                `  host4:*"digest --json"*) touch "${started}"; sleep 1; echo '{"machine":"m4"}' ;;`,
+                `  host3:*"resources --json"*) [ -f "${join(box.root, ".m3.json")}" ] && { cat "${join(box.root, ".m3.json")}"; exit 0; }`,
+                "    echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
+                "  *) echo 'ssh: connect to host host3 port 22: Connection refused' >&2; exit 255 ;;",
+                "esac",
+            ].join("\n"),
+        );
+        // Seen once, then down.
+        m3Answers(box, remoteSnapshot("m3", { at: "2026-11-21T22:00:00.000Z" }));
+        expect(status(box, T0).get("m3")?.reachable).toBe(true);
+        rmSync(join(box.root, ".m3.json"));
+
+        const digest = JSON.parse(box.ok(["digest", "--fleet", "--json"], { env: ENV, now: at(60) })) as {
+            fleet: { machine: string; ok: boolean; digest?: Record<string, unknown>; error?: string }[];
+        };
+        expect(digest.fleet.map((entry) => [entry.machine, entry.ok])).toEqual([
+            ["m2", true],
+            ["m3", false],
+            ["m4", true],
+        ]);
+        expect(digest.fleet[0]?.digest).toEqual({ machine: "m2" });
+        const m3 = digest.fleet[1]?.error ?? "";
+        expect(m3).toStartWith("ssh host3 exited 255");
+        expect(m3).toContain("stale, last seen 2026-11-21T22:00:00.000Z");
+        const digestCalls = sshLog(box)
+            .split("\n")
+            .filter((line) => line.includes("digest --json"));
+        expect(digestCalls.filter((line) => line.includes("host3"))).toEqual([]);
+        expect(digestCalls).toHaveLength(2);
+        for (const line of digestCalls) expect(line).toContain("ConnectTimeout=5 ");
+
+        // Backed off now: the next digest neither probes nor asks m3.
+        const before = sshLog(box)
+            .split("\n")
+            .filter((line) => line.includes("host3")).length;
+        box.ok(["digest", "--fleet", "--json"], { env: ENV, now: at(70) });
+        expect(
+            sshLog(box)
+                .split("\n")
+                .filter((line) => line.includes("host3")).length,
+        ).toBe(before);
     });
 });
