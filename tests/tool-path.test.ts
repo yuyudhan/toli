@@ -1,7 +1,7 @@
 // T2266: a toli started by a service (minimal PATH) still finds the user's toolchains (~/.cargo/bin, ~/.bun/bin, ...),
 // with the cargo shim first on a jawan's PATH, and a Cargo.lock check without cargo says so plainly.
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
 import { TOOL_DIRS_FLAG, withUserToolDirs } from "../src/core/tool-path.ts";
@@ -48,6 +48,41 @@ describe("the user's tool folders on PATH", () => {
         expect(path.slice(0, 3)).toEqual(["/service/bin", join(home, "rust/bin"), join(home, "bun-home/bin")]);
         expect(path).not.toContain(join(home, ".cargo/bin"));
         expect(withUserToolDirs({ ...env, [TOOL_DIRS_FLAG]: "off" })).toBe("/service/bin");
+    });
+
+    test("a world-writable folder or one another user owns is never added; a user-owned group-writable one is", () => {
+        const home = homeWith([".cargo/bin", ".bun/bin", ".local/bin"]);
+        // Real mode bits: ~/.cargo/bin is world-writable (0777), so anyone could plant a cargo there.
+        chmodSync(join(home, ".cargo/bin"), 0o777);
+        const uid = process.getuid?.() ?? 0;
+        const stranger = uid + 4242;
+        // The owner is simulated: ~/.bun/bin belongs to another (non-root) user, ~/.local/bin is ours and 0775.
+        const owners: Record<string, number> = { [join(home, ".bun/bin")]: stranger };
+        const modes: Record<string, number> = { [join(home, ".local/bin")]: 0o40775 };
+        const stat = (dir: string) => {
+            const real = statSync(dir, { throwIfNoEntry: false });
+            if (real === undefined) return undefined;
+            return { isDirectory: () => real.isDirectory(), uid: owners[dir] ?? uid, mode: modes[dir] ?? real.mode };
+        };
+        const env = { HOME: home, PATH: "/service/bin", CARGO_HOME: "", BUN_INSTALL: "" };
+        const path = (withUserToolDirs(env, stat, uid) ?? "").split(delimiter);
+        expect(path).not.toContain(join(home, ".cargo/bin"));
+        expect(path).not.toContain(join(home, ".bun/bin"));
+        expect(path).toContain(join(home, ".local/bin"));
+    });
+
+    test("a folder PATH already holds with a trailing slash is not added again", () => {
+        const home = homeWith([".cargo/bin"]);
+        const env = {
+            HOME: home,
+            PATH: `/service/bin${delimiter}${join(home, ".cargo/bin")}/`,
+            CARGO_HOME: "",
+            BUN_INSTALL: "",
+        };
+        // The host's own /opt/homebrew/bin or /usr/local/bin may still be appended: only cargo's folder matters here.
+        const path = (withUserToolDirs(env) ?? "").split(delimiter);
+        expect(path.slice(0, 2)).toEqual(["/service/bin", `${join(home, ".cargo/bin")}/`]);
+        expect(path).not.toContain(join(home, ".cargo/bin"));
     });
 
     test("a jawan spawned with a service's PATH and no login shell finds ~/.cargo/bin's cargo through the shim", async () => {

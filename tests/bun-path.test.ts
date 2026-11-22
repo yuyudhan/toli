@@ -162,4 +162,21 @@ describe("the bin/toli launcher", () => {
         expect(run.stderr.toString()).toBe("");
         expect(run.stdout.toString().trim()).toBe(`${PATH}:${join(home, ".bun", "bin")}`);
     });
+
+    test("does not append bun's folder again when PATH already holds it", () => {
+        const box = sandbox();
+        const prelude = readFileSync(join(import.meta.dir, "..", "bin", "toli"), "utf8")
+            .split("\n")
+            .slice(0, 2);
+        const script = join(box.root, "launcher");
+        writeFileSync(script, `${[...prelude, "console.log(process.env.PATH);"].join("\n")}\n`);
+        // bun is found on PATH (command -v), so its folder is already there.
+        const bunDir = join(box.root, "bun-bin");
+        mkdirSync(bunDir);
+        symlinkSync(process.execPath, join(bunDir, "bun"));
+        const PATH = [bunDir, "/usr/bin", "/bin"].join(":");
+        const run = Bun.spawnSync(["/bin/sh", script], { env: { HOME: join(box.root, "home"), PATH } });
+        expect(run.stderr.toString()).toBe("");
+        expect(run.stdout.toString().trim()).toBe(PATH);
+    });
 });

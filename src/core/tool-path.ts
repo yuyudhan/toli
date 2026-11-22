@@ -27,17 +27,31 @@ export function userToolDirs(env: Record<string, string | undefined>): string[] 
     ];
 }
 
+/** What `withUserToolDirs` reads of a folder: `statSync`'s answer, or undefined when it does not exist. */
+export type DirStat = (dir: string) => { isDirectory(): boolean; uid: number; mode: number } | undefined;
+
+/** A PATH entry as compared for duplicates: without trailing slashes (`/opt/homebrew/bin/` is `/opt/homebrew/bin`). */
+const bare = (dir: string): string => dir.replace(/\/+$/, "") || "/";
+
 /**
- * `env`'s PATH with each existing `userToolDirs` folder it lacks appended: what PATH already holds keeps its place and
- * precedence, so a jawan's cargo shim, put first later (src/jawans/env.ts), stays first. Unchanged when
- * `TOLI_TOOL_DIRS=off`.
+ * `env`'s PATH with each `userToolDirs` folder it lacks appended: what PATH already holds keeps its place and
+ * precedence, so a jawan's cargo shim, put first later (src/jawans/env.ts), stays first. A folder is added only when
+ * it is a directory owned by this user (`uid`) or root and not world-writable, so no other user can plant a `cargo`
+ * every toli run would find. Unchanged when `TOLI_TOOL_DIRS=off`.
  */
-export function withUserToolDirs(env: Record<string, string | undefined>): string | undefined {
+export function withUserToolDirs(
+    env: Record<string, string | undefined>,
+    stat: DirStat = (dir) => statSync(dir, { throwIfNoEntry: false }),
+    uid: number = process.getuid?.() ?? 0,
+): string | undefined {
     if (env[TOOL_DIRS_FLAG] === "off") return env.PATH;
     const path = env.PATH ? env.PATH.split(delimiter) : [];
-    const added = userToolDirs(env).filter(
-        (dir) => !path.includes(dir) && statSync(dir, { throwIfNoEntry: false })?.isDirectory() === true,
-    );
+    const held = new Set(path.map(bare));
+    const added = userToolDirs(env).filter((dir) => {
+        if (held.has(bare(dir))) return false;
+        const found = stat(dir);
+        return found?.isDirectory() === true && (found.uid === uid || found.uid === 0) && (found.mode & 0o002) === 0;
+    });
     return added.length === 0 ? env.PATH : [...path, ...added].join(delimiter);
 }
 

@@ -322,12 +322,14 @@ takes over 15 s is warned about in the service's log and the harness starts with
 
 PATH is the exception the other way round: every toli command, as it starts, appends the user's tool folders its PATH
 lacks and that exist: cargo's (`$CARGO_HOME/bin`, default `~/.cargo/bin`), Bun's (`$BUN_INSTALL/bin`, default
-`~/.bun/bin`), `~/.local/bin`, `~/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (src/core/tool-path.ts). So a jawan,
-catch-up, job, gate, push or commit check started by the lead service or the tick finds a toolchain installed after the
-service was, without its login profile and however the service was started. They go after what PATH holds, so the
-service's own folders keep their precedence and a jawan's cargo shim stays first (docs/fleet.md). `TOLI_TOOL_DIRS=off`
-leaves PATH alone (tests). A staged `Cargo.lock` that `bin/toli commit` cannot check because no cargo is found (none
-on PATH, or only toli's shim) is refused with `cargo not found on PATH` and the PATH it searched.
+`~/.bun/bin`), `~/.local/bin`, `~/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (src/core/tool-path.ts). A folder
+is added only when you or root own it and it is not world-writable, so no other user can plant a `cargo` there; a PATH
+entry with a trailing slash counts as the same folder. So a jawan, catch-up, job, gate, push or commit check started by
+the lead service or the tick finds a toolchain installed after the service was, without its login profile and however
+the service was started. They go after what PATH holds, so the service's own folders keep their precedence and a
+jawan's cargo shim stays first (docs/fleet.md). `TOLI_TOOL_DIRS=off` leaves PATH alone (tests). A staged `Cargo.lock`
+that `bin/toli commit` cannot check because no cargo is found (none on PATH, or only toli's shim) is refused with
+`cargo not found on PATH` and the PATH it searched.
 
 `bin/toli doctor`'s `service-env` check runs the login shell from a service's environment and warns, by name only,
 about each `*_API_KEY`, `*_AUTH_TOKEN` or `*_OAUTH_TOKEN` variable set in your shell that the login profile does not
