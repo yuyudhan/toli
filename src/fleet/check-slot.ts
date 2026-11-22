@@ -9,6 +9,7 @@ import { POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
 import {
     type HeldSlot,
     liveStackProjectAt,
+    nodeHeapEnv,
     resumeDevStacksWhenIdle,
     runInSlot,
     slotSizing,
@@ -16,7 +17,13 @@ import {
 } from "./build-slots.ts";
 import { flock, LOCK_UN } from "./cargo-lock.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
-import { clearSlotRequest, DEFERRED_SLOT_ENV, deferredSlotRun, slotRequestFile } from "./heavy-step-slot.ts";
+import {
+    clearSlotRequest,
+    DEFERRED_SLOT_ENV,
+    deferredSlotRun,
+    dropExitedStepHolds,
+    slotRequestFile,
+} from "./heavy-step-slot.ts";
 import { pauseLiveStacks, resumeLiveStacks, whileStackInUse } from "./live-stack-pause.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
 
@@ -57,11 +64,13 @@ export async function runCheckInSlot(
 
 /**
  * Run `body`, a check whose heavy steps go through `bin/toli build-slot` (src/fleet/heavy-step-slot.ts), without a
- * slot: it gets this process's pid as TOLI_DEFERRED_SLOT and no scope, so its cheap steps run at once. Once a heavy
- * step asks for the slot, this process waits in line for one (saying so, then again every `noteEveryMs`), pauses the
- * stacks as `withBuildSlot` does and holds the slot until `body` ends. A check that never reaches a heavy step, or
- * fails before one, never queues. Inside a slot already, in a live-stack project's checkout or without flock(2) it
- * runs as `withBuildSlot` does; inside another such check, its heavy steps take that check's slot.
+ * slot: it gets this process's pid as TOLI_DEFERRED_SLOT and the Node heap cap a slot's build gets (`nodeHeapEnv`, so
+ * a test runner and its workers keep it), and no scope, so its cheap steps run at once. Once a heavy step asks for the
+ * slot, this process waits in line for one (saying so, then again every `noteEveryMs`), pauses the stacks as
+ * `withBuildSlot` does and holds the slot until `body` ends, dropping each step cargo's held record once that cargo
+ * exits (`dropExitedStepHolds`). A check that never reaches a heavy step, or fails before one, never queues. Inside a
+ * slot already, in a live-stack project's checkout or without flock(2) it runs as `withBuildSlot` does; inside another
+ * such check, its heavy steps take that check's slot.
  */
 async function withSlotAtHeavyStep<T>(
     cwd: string,
@@ -73,7 +82,7 @@ async function withSlotAtHeavyStep<T>(
     const lock = flock();
     if (lock === null || enclosingSlot() !== null || liveStackProjectAt(cwd) !== null)
         return await withBuildSlot(cwd, stackUser, body);
-    const { capacity } = slotSizing();
+    const { capacity, memoryMaxMB } = slotSizing();
     const run = process.pid;
     clearSlotRequest(run);
     const state: { ended: boolean; held: { index: number; fd: number } | null } = { ended: false, held: null };
@@ -92,9 +101,14 @@ async function withSlotAtHeavyStep<T>(
         if (state.held === null) return;
         pauseDevStacks();
         pauseLiveStacks();
+        while (!state.ended) {
+            dropExitedStepHolds(run);
+            await Bun.sleep(POLL_MS);
+        }
     })();
     try {
-        return await whileStackInUse(stackUser, () => body({ env: { [DEFERRED_SLOT_ENV]: String(run) }, scope: null }));
+        const env = { [DEFERRED_SLOT_ENV]: String(run), ...nodeHeapEnv(process.env, memoryMaxMB) };
+        return await whileStackInUse(stackUser, () => body({ env, scope: null }));
     } finally {
         state.ended = true;
         await serve;

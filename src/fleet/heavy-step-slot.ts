@@ -57,6 +57,19 @@ export async function slotFromRun(runPid: number): Promise<number | null> {
  */
 export function clearSlotRequest(runPid: number): void {
     rmSync(slotRequestFile(runPid), { force: true });
+    dropStepHolds(runPid, () => true);
+}
+
+/**
+ * Remove the `cargo-<pid>.held` files naming run `runPid` whose cargo has exited, so a process later given that pid
+ * never rides the run's slot; the run calls it every poll while it holds the slot.
+ */
+export function dropExitedStepHolds(runPid: number): void {
+    dropStepHolds(runPid, (cargoPid) => !pidAlive(cargoPid));
+}
+
+/** Remove the `cargo-<pid>.held` files naming run `runPid` as their holder whose cargo pid `drop` picks. */
+function dropStepHolds(runPid: number, drop: (cargoPid: number) => boolean): void {
     let names: string[];
     try {
         names = readdirSync(paths.buildSlotsDir());
@@ -64,7 +77,8 @@ export function clearSlotRequest(runPid: number): void {
         return; // No slot taken yet on this machine.
     }
     for (const name of names) {
-        if (!/^cargo-\d+\.held$/.test(name)) continue;
+        const match = /^cargo-(\d+)\.held$/.exec(name);
+        if (match === null) continue;
         const file = join(paths.buildSlotsDir(), name);
         let holder = "";
         try {
@@ -72,6 +86,6 @@ export function clearSlotRequest(runPid: number): void {
         } catch {
             continue; // Removed meanwhile.
         }
-        if (holder === String(runPid)) rmSync(file, { force: true });
+        if (holder === String(runPid) && drop(Number(match[1]))) rmSync(file, { force: true });
     }
 }

@@ -343,10 +343,12 @@ the run waits in line once (`toli: waiting for a heavy-build slot (N busy)`, the
 third of the gate's stall minutes, at most five, so the wait never reads as a stall; every five minutes for a push),
 pauses the stacks as any slot does and holds the slot until the check ends, so every later step runs in it without
 queueing again. Each heavy step runs at one slot's share: a `build-slot --` step in its own memory-capped scope; a
-cargo that bypasses the shim is recorded as held in the run's slot (`cargo-<pid>.held` naming the run), so the rustc
-wrapper compiles its crates through that slot's job pool, as for any cargo a holder holds a slot for. The check's
-cheap steps run outside any scope. Order the check's cheap steps first, so the slot is held only from the first heavy
-step on (src/fleet/heavy-step-slot.ts, T2257).
+cargo that bypasses the shim is recorded as held in the run's slot (`cargo-<pid>.held` naming the run, removed once
+that cargo exits, so no later process given its pid rides the slot), so the rustc wrapper compiles its crates through
+that slot's job pool, as for any cargo a holder holds a slot for. Every step, a test runner and its workers included,
+runs with the Node heap cap a slot's build gets (`NODE_OPTIONS` `--max-old-space-size`, half the build memory cap),
+as the whole check did before. The check's cheap steps run outside any scope. Order the check's cheap steps first, so
+the slot is held only from the first heavy step on (src/fleet/heavy-step-slot.ts, T2257).
 
 On Linux with a systemd user manager, each build also runs in its own user scope,
 `toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with

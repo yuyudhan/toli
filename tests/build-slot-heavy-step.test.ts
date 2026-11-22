@@ -185,4 +185,56 @@ describe("a check that takes its heavy-build slot at its first heavy step", () =
         expect((await gate).code).toBe(0);
         expect(lines(compiled)).toEqual([`job=${join(box.root, "state", "build-slots", "jobs-1", "1")}`]);
     });
+
+    // T2257 follow-up: the held file used to stay until the run ended, so a later process given the exited cargo's pid
+    // would have ridden the run's slot; it now goes once that cargo exits.
+    test("a bypassing cargo's held record goes once that cargo exits, while the check still runs", async () => {
+        const { box } = heavyStepProject();
+        const bin = join(box.root, ".cargo", "bin");
+        mkdirSync(bin, { recursive: true });
+        const seen = join(box.root, ".seen");
+        const pidFile = join(box.root, ".cargo-pid");
+        const slots = join(box.root, "state", "build-slots");
+        const rustc = join(bin, "rustc");
+        writeFileSync(rustc, '#!/bin/sh\necho "rustc 1.90.0 (fake)"\n');
+        chmodSync(rustc, 0o755);
+        const cargo = join(bin, "cargo");
+        writeFileSync(
+            cargo,
+            [
+                "#!/bin/sh",
+                `"$RUSTC_WRAPPER" ${rustc} -vV >/dev/null || exit 1`,
+                `echo $$ > ${pidFile}`,
+                `[ -e ${slots}/cargo-$$.held ] && echo held >> ${seen}`,
+                "",
+            ].join("\n"),
+        );
+        chmodSync(cargo, 0o755);
+        // After the cargo exits the recipe waits up to 10 s for its held record to go; the run lasts until then.
+        const recipe = [
+            `${cargo} build`,
+            `held=${slots}/cargo-$(cat ${pidFile}).held`,
+            'n=0; while [ -e "$held" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done',
+            `[ -e "$held" ] || echo gone >> ${seen}`,
+        ].join("; ");
+        const result = await box.toliAsync(["gate", "run", "app", "--recipe", recipe], {
+            env: { ...UNCAPPED, RUSTC_WRAPPER, TOLI_RUSTC_WRAPPER_NEXT: "" },
+        });
+        expect(result.code).toBe(0);
+        expect(lines(seen)).toEqual(["held", "gone"]);
+    });
+
+    // T2257 follow-up: before T2257 the gate's whole recipe ran with the slot's Node heap cap; a deferred check's
+    // steps (a test runner among them) lost it.
+    test("a check run without a slot still gives its steps the Node heap cap", async () => {
+        const { box } = heavyStepProject();
+        const seen = join(box.root, ".node-options");
+        const result = await box.toliAsync(
+            ["gate", "run", "app", "--recipe", `echo "\${NODE_OPTIONS:-none}" >> ${seen}`],
+            { env: { ...UNCAPPED, NODE_OPTIONS: "--no-warnings" } },
+        );
+        expect(result.code).toBe(0);
+        expect(lines(seen)).toHaveLength(1);
+        expect(lines(seen)[0]).toMatch(/^--no-warnings --max-old-space-size=\d+$/);
+    });
 });
