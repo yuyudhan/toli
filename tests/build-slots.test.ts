@@ -100,6 +100,7 @@ describe("jawan environment", () => {
             CARGO_CACHE_RUSTC_INFO: "0",
             RUSTC_WRAPPER: join(paths.buildShimsDir(), "toli-rustc-wrapper"),
             TOLI_RUSTC_WRAPPER_NEXT: "",
+            NODE_OPTIONS: `--require ${join(paths.buildShimsDir(), "toli-node-preload.cjs")}`,
         });
     });
 
