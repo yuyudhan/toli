@@ -299,9 +299,10 @@ behind main between releases.
   on an active task of the project (`task start --agent`, the same signal `capacity.maxRuns` counts), wherever it
   works; its checkout has uncommitted changes to tracked files, or commits on neither `origin/<branch>` nor main other
   than earlier catch-up merges (`1 commit on <b> not on origin/<b>`; a branch origin lacks is judged by its changes
-  alone); or an open (queued or active) task of the project already plans this merge: its title or brief
-  (`briefs/T<n>.md`) names the tag, or a catch-up note handed it the merge. A catch-up dispatched on a task passes
-  `--task <T-id>` (a spawn run's `TOLI_TASK` counts), so that task's own jawan never holds it.
+  alone); or an open (queued, active or held) task of the project already plans this merge: its title or brief
+  (`briefs/T<n>.md`) names the tag, or a catch-up note handed it the merge (a held task's merge waits on the user's
+  word, not on the catch-up). A catch-up dispatched on a task passes `--task <T-id>` (a spawn run's `TOLI_TASK`
+  counts), so that task's own jawan never holds it.
 - **The merge.** The jawan runs `bin/toli catch-up merge <p> --tag <tag>`: per branch, a `git merge-tree` dry run
   first; a conflict merges nothing, leaves the work as it was, notes the conflicting files on the branch's task (its
   owner merges before the next push), and is in the jawan's report to this machine's Sardar. A clean merge lands

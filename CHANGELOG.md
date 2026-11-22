@@ -36,6 +36,11 @@ one. See docs/releasing.md.
   check passed, so a refused spawn neither switches the shared clone nor leaves the task without its jawan; a run that
   ended before that lock is left as it is rather than failing the spawn with `<id> is not running`. Runs for other
   tags are not affected (docs/projects.md "Release catch-up", T2298).
+- A release catch-up no longer merges a release that a held task plans to merge. Only queued and active tasks counted,
+  so a task held for the user's word on that merge was passed over and the catch-up made the same merge meanwhile. A
+  held task whose title or brief names the tag, or that a catch-up note handed the merge, now holds the branch too.
+  `bin/toli push` already ignores a queued run that has not started (the T2276 catch-up entry below); a new test
+  covers that path (docs/projects.md "Release catch-up", T2313).
 - A run the lead service or the tick starts now finds the toolchains under the home folder. Started with the service's
   minimal PATH, catch-up jawans lacked `~/.cargo/bin`, so `bin/toli commit` refused every staged `Cargo.lock` until
   the jawan put it on PATH by hand. Every toli command now appends the tool folders its PATH lacks and that exist

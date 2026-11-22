@@ -95,9 +95,10 @@ function subagentHolder(project: string, at: Date, ownTask: string | null): stri
 }
 
 /**
- * An open (queued or active) task of `project`, never `ownTask`, that already plans merging release `tag`, or null:
- * its title or its brief (data/projects/<p>/briefs/T<n>.md) names the tag, or a catch-up note handed it the merge
- * (`catch-up <tag>: ...`, src/projects/catch-up-merge.ts tellOwner).
+ * An open (queued, active or held) task of `project`, never `ownTask`, that already plans merging release `tag`, or
+ * null: its title or its brief (data/projects/<p>/briefs/T<n>.md) names the tag, or a catch-up note handed it the merge
+ * (`catch-up <tag>: ...`, src/projects/catch-up-merge.ts tellOwner). A held task's merge waits on the user's word, so
+ * the catch-up must not make it meanwhile.
  */
 function plannedMerge(project: string, tag: string, ownTask: string | null): string | null {
     const briefNames = (id: string): boolean => {
@@ -108,7 +109,7 @@ function plannedMerge(project: string, tag: string, ownTask: string | null): str
         (entry) =>
             entry.project === project &&
             entry.id !== ownTask &&
-            (entry.status === "queued" || entry.status === "active") &&
+            (entry.status === "queued" || LIVE.includes(entry.status)) &&
             (namesTag(entry.title, tag) ||
                 entry.notes.some((note) => note.startsWith(`catch-up ${tag}:`)) ||
                 briefNames(entry.id)),

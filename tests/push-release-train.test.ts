@@ -95,6 +95,22 @@ describe("push guards for release trains", () => {
         expect(box.ok(["push", "alpha"])).toContain("push log:");
     });
 
+    // T2313: a queued catch-up run blocked tested pushes on the fleet until it was cancelled; it works nowhere yet.
+    test("a queued run in the clone holds nothing; once it starts it holds the clone", () => {
+        const { box, clone, origin } = machine("nightly");
+        liveRun(box, TRAIN, { cwd: clone, status: "queued", supervisorPid: null, pid: null, catchUp: "v1.0.0" });
+        expect(box.ok(["push", "alpha"])).toContain("push log:");
+        expect(onOrigin(box, origin, "nightly")).toContain("nightly");
+
+        liveRun(box, TRAIN, { cwd: clone, status: "starting", pid: null, catchUp: "v1.0.0" });
+        writeFileSync(join(clone, "more.txt"), "more\n");
+        box.git(clone, ["add", "more.txt"]);
+        box.git(clone, ["commit", "--quiet", "-m", "more"]);
+        const refused = box.toli(["push", "alpha"]);
+        expect(refused.code).not.toBe(0);
+        expect(refused.stderr).toContain(`projects/alpha is held (jawan run ${TRAIN} works in it)`);
+    });
+
     test("a live native jawan's task pinned to the clone holds it, except for a push naming that task", () => {
         const { box, clone } = machine("nightly");
         box.ok(["task", "add", "alpha", "Release train"]);

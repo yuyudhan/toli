@@ -84,6 +84,23 @@ describe("catch-up stands down for live work", () => {
         expect(box.ok(["catch-up", "scan"])).toContain("for nightly");
     });
 
+    // T2313: a task held for the user's word on its merge still plans it; the catch-up made the same merge meanwhile.
+    test("a held task that plans the merge holds it while it waits on the user", () => {
+        const { box, clone, origin } = machine();
+        release(box, origin, "v1.0.0");
+        box.ok(["task", "add", "alpha", "Merge v1.0.0 into nightly"]);
+        box.ok(["task", "hold", "T1", "--question", "Merge it?", "--option", "yes => merge", "--option", "no => wait"]);
+        expect(box.ok(["catch-up", "scan"])).toContain(
+            "nightly: held (T1 already plans merging v1.0.0), tried again next scan",
+        );
+        expect(runs(box)).toEqual([]);
+        const head = box.git(clone, ["rev-parse", "HEAD"]);
+        expect(box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"])).toContain(
+            "nightly: held (T1 already plans merging v1.0.0)",
+        );
+        expect(box.git(clone, ["rev-parse", "HEAD"])).toBe(head);
+    });
+
     test("a catch-up note on an open task plans the merge of its own tag only", () => {
         const { box, origin } = machine();
         release(box, origin, "v1.0.0");
