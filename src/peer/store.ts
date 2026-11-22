@@ -45,7 +45,7 @@ export type Peer = {
      * false: the peer accepts no inbound connection (a firewall that resets them, `inbound: false` in its
      * config/machine.json), so a send to it only queues: its items wait here for its pull, and the minute tick tries
      * them once over HTTPS, backed off while it does not answer (src/jobs/pull-peer-retry.ts). Learned from its own
-     * pulls (`/v1/outbox/pending` carries its setting).
+     * pulls and announces (both carry its configured setting); one without the flag clears it.
      */
     inbound?: boolean;
     /**

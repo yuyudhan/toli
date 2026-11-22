@@ -7,7 +7,7 @@
 // The listener's routes for these live here too: announce, status, pending, ack and rotate (relay routes: relay.ts).
 import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { loadMachine } from "../core/config.ts";
+import { loadMachine, pullsItsMessages } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, now, runAsync, warn } from "../core/util.ts";
 import type { OutboxItem } from "../jobs/outbox.ts";
@@ -165,16 +165,18 @@ export async function delegationHook(): Promise<OnDelivered> {
 }
 
 // Announce: this machine is (back) on these addresses, and whose it is (its user's first name, docs/peers.md); the
-// peer sends what waits for it here.
+// peer sends what waits for it here. A machine configured to take no inbound connection (`--inbound off`) says so, the
+// same as in its pulls, so its peers keep it pull-only.
 
 async function announceAll(context: ListenerContext, addrs: string[]): Promise<void> {
     const person = personField();
+    const inbound = pullsItsMessages() ? { inbound: false } : {};
     for (const peer of loadPeers().filter(pushable)) {
         try {
             const answer = await postPeer(
                 peer,
                 "/v1/announce",
-                controlEnvelope(peer, "announce", { addrs, version: context.version, ...person }),
+                controlEnvelope(peer, "announce", { addrs, version: context.version, ...inbound, ...person }),
             );
             if (answer.status !== 200)
                 peerLog(`announce to ${peer.name}: ${answer.status} ${String(answer.value.error ?? "")}`);
@@ -197,6 +199,20 @@ function parsed(envelope: Envelope): Record<string, unknown> {
     }
 }
 
+/**
+ * Record what `peer` said of itself in a pull or an announce: `inbound: false` (it takes no inbound connection, so
+ * nothing is pushed to it) or not. Writes config/peers.json only when that changes.
+ */
+function noteInbound(peer: Peer, pullOnly: boolean): void {
+    if ((peer.inbound === false) === pullOnly) return;
+    updatePeers((peers) => {
+        const entry = peers.find((candidate) => candidate.name === peer.name);
+        if (entry === undefined) return;
+        if (pullOnly) entry.inbound = false;
+        else delete entry.inbound;
+    });
+}
+
 routes.set("POST /v1/announce", async (request, context) => {
     const control = await readControl(request, context, "announce");
     if (control instanceof Response) return control;
@@ -208,6 +224,9 @@ routes.set("POST /v1/announce", async (request, context) => {
             if (peer !== undefined) peer.addrs = [...new Set([...(addrs as string[]), ...peer.addrs])].slice(0, 8);
         });
     notePerson(control.peer.name, body.person);
+    // A machine that announces has a listener: it is pull-only only if it says so (a stale flag from a pull made
+    // while its listener was off is cleared here).
+    noteInbound(control.peer, body.inbound === false);
     const peer = activePeer(control.peer.name);
     peerLog(`${control.peer.name} announced ${addrs.join(", ") || "no address"}`);
     // Deliver what waits for it, without holding up its request.
@@ -267,14 +286,7 @@ routes.set("POST /v1/outbox/pending", async (request, context) => {
     notePuller(peer.name);
     const body = parsed(control.envelope);
     notePerson(peer.name, body.person);
-    const pulling = body.inbound === false;
-    if ((peer.inbound === false) !== pulling)
-        updatePeers((peers) => {
-            const entry = peers.find((candidate) => candidate.name === peer.name);
-            if (entry === undefined) return;
-            if (pulling) entry.inbound = false;
-            else delete entry.inbound;
-        });
+    noteInbound(peer, body.inbound === false);
     const envelopes = itemsFor(peer.name)
         .slice(0, MAX_BATCH)
         .map(({ file, item }) => itemEnvelope(peer, file, item));

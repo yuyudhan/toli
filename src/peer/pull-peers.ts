@@ -7,7 +7,7 @@ import { controlEnvelope, postPeer } from "./client.ts";
 import { applyBatch } from "./envelope.ts";
 import { loadIdentity } from "./identity.ts";
 import { applyRelayed, type RelayedPull } from "./relay-client.ts";
-import { loadPeers, peerSettings, personField, pushable } from "./store.ts";
+import { loadPeers, personField, pushable } from "./store.ts";
 
 /** What one pull from a peer did; `relayed` counts the items it held for this machine from other peers. */
 export type PeerPull = { peer: string; applied: number; relayed?: RelayedPull; error?: string };
@@ -19,11 +19,13 @@ export type PeerPull = { peer: string; applied: number; relayed?: RelayedPull; e
 export async function pullPeers(): Promise<PeerPull[]> {
     const self = loadIdentity().fingerprint;
     const reports: PeerPull[] = [];
+    // Its own setting tells the peer whether to push to it at all (`inbound: false`: it only pulls), and whose machine
+    // this is (its user's first name, information only). Only the configured setting (`--inbound off`) counts: a
+    // listener that is off for a moment (a restart) must not make every peer stop pushing to this machine once it is
+    // back.
+    const inbound = pullsItsMessages() ? { inbound: false } : {};
     for (const peer of loadPeers().filter(pushable)) {
         try {
-            // Its own setting tells the peer whether to push to it at all (`inbound: false`: it only pulls), and
-            // whose machine this is (its user's first name, information only).
-            const inbound = peerSettings().listen && !pullsItsMessages() ? {} : { inbound: false };
             const pending = await postPeer(
                 peer,
                 "/v1/outbox/pending",

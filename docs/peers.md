@@ -99,7 +99,8 @@ Some machines drop every inbound connection to their own network addresses, ofte
 software. To check, run `curl -k https://<one of its addresses>:47123/v1/hello` on the machine itself: on such a
 machine it times out, while `127.0.0.1` answers. Run `bin/toli peer listen off` there. That machine then pulls what
 its peers queue for it over HTTPS every minute; with `sshFallback` off, nothing else reaches it (not even the ssh
-pull).
+pull). Its peers still try to push to it first unless it is also marked as taking no inbound connection (`bin/toli
+init ... --inbound off`, below), which makes them only queue for its pull.
 
 | Endpoint              | Who                      | What                                                              |
 | --------------------- | ------------------------ | ----------------------------------------------------------------- |
@@ -175,13 +176,16 @@ waiting for its tick. **Pull.** A machine whose listener is off, or that takes n
 is reached this way only: over HTTPS, or by its pull.
 
 **A peer that takes no inbound connection.** A machine whose firewall resets every inbound connection can still pair
-(it connects out) and pull. Its pull says so (`inbound: false` in the `pending` body, from its `--inbound off` or a
-listener that is off), and each peer it pulls from records `inbound: false` on it in `config/peers.json`: from then
-on a send to it only queues, with no ssh, and what is queued for it waits for its next pull. The sender's minute tick
-still tries it once over HTTPS when it has an address (the same send as `bin/toli peer flush <peer>`), so an item
-for a peer that does answer goes out within a minute; one no address of which answers is backed off like an
-unreachable ssh host (30 s, doubling to 10 minutes, `peer:<name>` in `state/reach.json`). A pull without the flag
-clears it.
+(it connects out) and pull. Its pull says so (`inbound: false` in the `pending` body, from its `--inbound off`; a
+listener that is merely off does not set it), and each peer it pulls from records `inbound: false` on it in
+`config/peers.json`: from then on a send to it only queues, with no ssh, and what is queued for it waits for its next
+pull. The sender's minute tick still tries it once over HTTPS when it has an address (the same send as `bin/toli peer
+flush <peer>`), so an item for a peer that does answer goes out within a minute; one no address of which answers is
+backed off like an unreachable ssh host (30 s, doubling to 10 minutes, `peer:<name>` in `state/reach.json`). Its
+announces carry the same flag. A pull or an announce without the flag clears it, so a machine whose listener comes
+back is pushed to again. `bin/toli doctor` warns (`peer-pull-only`) about a peer marked so that has not pulled here
+for 10 minutes: asleep, or a mark an older toli left (its announce does not clear it), which `bin/toli peer pull` run
+there once clears.
 
 **One wake.** The receiver touches `state/peer/receiving` while it applies a batch; the lead's turn and `wake` wait
 until it has been quiet for 5 seconds, so a backlog arrives as one wake. A batch that wrote more than 5 inbox items

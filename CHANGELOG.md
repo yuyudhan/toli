@@ -4,6 +4,19 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.7.2 - unreleased
+
+### Fixed
+
+- A paired peer whose listener was off for a moment (`peer listen off`, then on) is pushed to again once it is back.
+  A pull made while its listener was off marked it pull-only (`inbound: false` in the sender's `config/peers.json`),
+  and nothing cleared that while its listener ran, so a send to it only queued, waiting for the tick's retry or a pull
+  that never came. Only a machine configured to take no inbound connection (`--inbound off`) now says so, in its pulls
+  and its announces; a pull or an announce without the flag clears it. A machine whose listener is off but is not
+  configured so is now tried first, like any peer, then pulls what waits. `bin/toli doctor` warns (`peer-pull-only`)
+  about a peer marked pull-only that has not pulled for 10 minutes (docs/peers.md "A peer that takes no inbound
+  connection", T2246; found and fixed on a Linux worker's toli, its T657).
+
 ## v0.7.1 - 2026-11-21
 
 v0.7.0 was tagged locally but never published: its push stopped at a failing gate. v0.7.1 is the release of
