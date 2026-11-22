@@ -90,21 +90,6 @@ one. See docs/releasing.md.
   shim, which a lead session and its native subagents inherit as they do the cargo shim. `capacity.maxRuns` still
   counts only subagents recorded on an open task: a lead's scouts and reviewers take no jawan slot. Builders had run
   13 vitest and 16 cargo processes on 12 cores beside one build slot (docs/fleet.md "Heavy-build slots", T2259).
-- A release catch-up no longer merges into a project someone is working in. It saw only `bin/toli spawn` runs, so one
-  merged a release on top of a native subagent's work-in-progress commit, failed its checks and left the merge behind,
-  and a queued one blocked the working jawan's push. A branch is now held, and tried again on a later scan, while a
-  live native subagent is recorded on an active task of the project (the signal `capacity.maxRuns` counts), while its
-  checkout has uncommitted changes or commits not on origin's copy of the branch other than earlier catch-up merges,
-  or while an open task already plans the merge (its title or brief names the tag, or a catch-up note handed it the
-  merge); a catch-up dispatched on a task passes `catch-up merge --task <T-id>`. A queued run no longer holds a
-  checkout. Each merge's plan prints `if the checks fail: bin/toli catch-up undo <p> --branch <b> --merge <sha>`, which
-  takes back only a merge this machine's catch-up recorded making, only while it is the branch's unpushed tip, with
-  `git reset --keep`, and refuses any other commit (docs/projects.md "Release catch-up", T2276).
-- Heavy builds now really wait their turn for a build slot. A `TOLI_BUILD_SLOT` inherited from an earlier slot holder
-  let every build under it run at once whenever another build held that slot number, so later builds kept passing a
-  waiting one; the variable now counts only with `TOLI_BUILD_SLOT_HOLDER` naming the slot's current holder, which
-  every slot holder exports. A lost queue counter no longer gives a newcomer a place ahead of a waiter, and a build
-  that gives way to a release-priority run keeps its arrival place (docs/fleet.md "Heavy-build slots", T2276).
 
 ## v0.7.1 - 2026-11-21
 
