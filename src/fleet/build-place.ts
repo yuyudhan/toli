@@ -1,7 +1,8 @@
 // AGENTS.md rule 5 in code: one code folder, one build folder. A build runs only in a place toli knows: a registered
 // project's clone (data/projects.json), a task worktree toli made for a worktree-per-task project
 // (projects/.worktrees/<project>/<T-id>), a no-mistakes run worktree (<NM_HOME>/worktrees/<repo>/<run>, the gate's
-// own), or toli's own checkout. `bin/toli build-slot -- <command>` checks the working tree of the build (the git
+// own), the release dry run's temporary clone of toli (scripts/publish.ts marks it: RELEASE_CLONE_MARKER, T2334),
+// or toli's own checkout. `bin/toli build-slot -- <command>` checks the working tree of the build (the git
 // toplevel of the cwd, or of a `--manifest-path`, climbing out of submodules) before it queues for a slot, and refuses
 // anything else: a git worktree a jawan made, a `git archive` export, a /tmp copy. The cargo shim (bin/shims/cargo)
 // sends every heavy cargo command there, inside a slot too. TOLI_BUILD_PLACE_OVERRIDE="<reason>" lets one build through
@@ -12,7 +13,7 @@
 // Pictures, Library) or an app's TemporaryItems folder: on macOS reading one raises a privacy prompt that blocks the
 // reader until someone answers (T1907, T2243). Each root is walked in a process of its own (src/fleet/stray-walk.ts),
 // killed past its time limit, so a folder that blocks anyway never holds `disk keep` or `doctor`.
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isGitRepo } from "../core/git.ts";
@@ -27,6 +28,11 @@ import type { WalkEvent, WalkJob } from "./stray-walk.ts";
 
 /** Set to a reason, it lets a build run outside the known places (logged in logs/build-place.log). */
 export const OVERRIDE_ENV = "TOLI_BUILD_PLACE_OVERRIDE";
+/**
+ * The file `just release --dry-run` (scripts/publish.ts) writes in its temporary clone's .git folder, holding the
+ * clone's resolved path: with toli's checkout as its origin, that clone is a known place for its verify run.
+ */
+export const RELEASE_CLONE_MARKER = "toli-release-dry-run";
 /** Colon-separated folders the stray scan reads instead of /tmp, $TMPDIR and the home folder (tests). */
 const SCAN_ROOTS_ENV = "TOLI_BUILD_SCAN_ROOTS";
 /** How many levels below each scan root the stray scan reads (~/code/<org>/<repo> is 3). */
@@ -66,6 +72,8 @@ type Places = {
     taskWorktrees: Map<string, string>;
     /** <NM_HOME>/worktrees: no-mistakes run worktrees are <repo>/<run> below it. */
     runWorktrees: string;
+    /** Toli's own checkout: the origin of the release dry run's clone. */
+    toli: string;
 };
 
 /** A folder outside the known places: a build folder's owner or a worktree toli did not make, and why it is flagged. */
@@ -74,13 +82,14 @@ export type OutsideBuild = { path: string; why: string };
 export type OutsideScan = { found: OutsideBuild[]; complete: boolean; unanswered: string[] };
 
 function knownPlaces(): Places {
-    const checkouts = new Map<string, string>([[real(paths.root()), "toli's checkout"]]);
+    const toli = real(paths.root());
+    const checkouts = new Map<string, string>([[toli, "toli's checkout"]]);
     const taskWorktrees = new Map<string, string>();
     for (const project of loadProjects()) {
         checkouts.set(real(paths.projectDir(project.name)), `projects/${project.name}`);
         taskWorktrees.set(real(paths.worktreesDir(project.name)), project.name);
     }
-    return { checkouts, taskWorktrees, runWorktrees: real(join(noMistakesHome(), "worktrees")) };
+    return { checkouts, taskWorktrees, runWorktrees: real(join(noMistakesHome(), "worktrees")), toli };
 }
 
 /** git in `dir`; main() dropped a hook's GIT_DIR and the like, so nothing steers it elsewhere. */
@@ -101,6 +110,20 @@ function workingTree(dir: string): { path: string; git: boolean } {
     return { path: real(tree), git: true };
 }
 
+/**
+ * Whether the git working tree `tree` is the release dry run's clone of toli's checkout `toli`: its own .git folder
+ * holds RELEASE_CLONE_MARKER naming this very tree, and its origin is `toli`. A copy of such a clone moved elsewhere,
+ * or any other clone, names another tree or another origin.
+ */
+function isReleaseClone(tree: string, toli: string): boolean {
+    const gitDir = gitIn(tree, ["rev-parse", "--absolute-git-dir"]);
+    if (gitDir === null || real(gitDir) !== join(tree, ".git")) return false;
+    const marker = join(tree, ".git", RELEASE_CLONE_MARKER);
+    if (!existsSync(marker) || readFileSync(marker, "utf8").trim() !== tree) return false;
+    const origin = gitIn(tree, ["config", "--get", "remote.origin.url"]);
+    return origin !== null && origin !== "" && real(origin) === toli;
+}
+
 /** Which known place the git working tree `tree` is, or null when it is none of them. */
 function placeOf(tree: string, places: Places): string | null {
     const checkout = places.checkouts.get(tree);
@@ -108,6 +131,7 @@ function placeOf(tree: string, places: Places): string | null {
     const project = places.taskWorktrees.get(dirname(tree));
     if (project !== undefined) return `${project}'s task worktree`;
     if (dirname(dirname(tree)) === places.runWorktrees) return "a no-mistakes run worktree";
+    if (isReleaseClone(tree, places.toli)) return "the release dry run's clone";
     return null;
 }
 

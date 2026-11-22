@@ -16,11 +16,12 @@
 // The first release tags the version CHANGELOG.md was seeded with: `just release v0.1.0` when package.json is
 // already 0.1.0, the section exists, and no tag does (nothing to bump; the tag goes on HEAD).
 // --dry-run does all of it in a temporary clone of develop and never asks or pushes; the clone is removed afterwards.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Args } from "../src/core/args.ts";
 import { now, ToliError } from "../src/core/util.ts";
+import { RELEASE_CLONE_MARKER } from "../src/fleet/build-place.ts";
 import {
     type Commit,
     changelogBetween,
@@ -271,6 +272,8 @@ function dryRun(request: string, remote: string): void {
         capture(ROOT, ["git", "clone", "--quiet", "--no-hardlinks", "--branch", DEVELOP_BRANCH, ROOT, clone]);
         capture(clone, ["git", "branch", "--quiet", RELEASE_BRANCH, `origin/${RELEASE_BRANCH}`]);
         capture(clone, ["git", "config", "core.hooksPath", ".githooks"]);
+        // The build-place guard (AGENTS.md rule 5) lets the verify run's `bun test` build in this clone only.
+        writeFileSync(join(clone, ".git", RELEASE_CLONE_MARKER), `${realpathSync(clone)}\n`);
         stream(clone, ["bun", "install", "--frozen-lockfile"]);
         const tag = cutRelease(clone, request);
         say("");

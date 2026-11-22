@@ -386,7 +386,10 @@ bind of the whole checkout alone does not hold its build folders.
 AGENTS.md rule 5 (one code folder, one build folder) is enforced in code (`src/fleet/build-place.ts`), not only in
 briefs. The known places are a registered project's clone (`data/projects.json`), a task worktree toli made for a
 `worktree-per-task` project (`projects/.worktrees/<project>/<T-id>`), a no-mistakes run worktree
-(`<NM_HOME>/worktrees/<repo>/<run>`, the gate's own) and toli's own checkout.
+(`<NM_HOME>/worktrees/<repo>/<run>`, the gate's own), toli's own checkout, and the temporary clone
+`just release --dry-run` makes for its verify run: `scripts/publish.ts` writes `.git/toli-release-dry-run` in it,
+naming the clone's own path, and the guard takes a clone only when that marker names it and its origin is toli's
+checkout (an unmarked clone, or a copy of a marked one, is still refused).
 
 - `bin/toli build-slot -- <command>`, and so the cargo shim, which sends every heavy cargo command there (inside a
   slot too), refuses a build whose working tree is none of those places, before it queues for a slot. The working

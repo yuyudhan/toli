@@ -58,7 +58,8 @@ the owner's word for that release, and pushing needs a second, explicit yes at t
 
 `--dry-run` clones `develop` into a temporary directory (with `main` from this repository), runs `bun install`, and
 does steps 1-5 there (the verify run included), prints the release commit and tag, and removes the clone. It never
-asks and never pushes.
+asks and never pushes. The clone carries a `.git/toli-release-dry-run` marker so the build-place guard lets its
+verify run's `bun test` through ([disk.md](disk.md#builds-outside-the-clones)).
 
 ### Tagging a version already in package.json
 

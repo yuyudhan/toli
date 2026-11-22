@@ -2,8 +2,9 @@
 // working tree is not a registered clone, a task worktree toli made or toli's own checkout, unless an override with a
 // reason is set (and logged); `disk keep` and `doctor` flag, never delete, build folders and worktrees outside them.
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { RELEASE_CLONE_MARKER } from "../src/fleet/build-place.ts";
 import { CARGO_SHIM, runs, slotBox, start, toliArgs } from "./build-slot-fixture.ts";
 import { type Sandbox, tempDir, withProject } from "./helpers.ts";
 
@@ -102,6 +103,39 @@ describe("build place guard", () => {
         expect(entry.tree).toBe(realpathSync(outside));
         expect(entry.reason).toBe(reason);
         expect(String(entry.command)).toContain("build");
+    }, 60_000);
+
+    // T2334: `just release --dry-run` runs verify (its `bun test` through the bun shim) in a temporary clone of toli.
+    test("the release dry run's marked clone of toli's checkout builds; an unmarked or copied temp clone does not", async () => {
+        const { box, log, outside } = placeBox();
+        /** A temporary git repo at <temp>/toli whose origin is `origin`, marked as the release clone when `mark`. */
+        const tempClone = (origin: string, mark: boolean): string => {
+            const dir = join(tempDir("release"), "toli");
+            mkdirSync(dir);
+            box.git(dir, ["init", "--initial-branch=develop"]);
+            box.git(dir, ["remote", "add", "origin", origin]);
+            const tree = realpathSync(dir);
+            if (mark) writeFileSync(join(tree, ".git", RELEASE_CLONE_MARKER), `${tree}\n`);
+            return tree;
+        };
+        const release = tempClone(box.root, true);
+        const unmarked = tempClone(box.root, false);
+        const otherOrigin = tempClone(outside, true);
+        // A copy of the marked clone: its marker names the clone it was copied from, not itself.
+        const copied = join(tempDir("copy"), "toli");
+        cpSync(release, copied, { recursive: true });
+        const built = await start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "release" }, release).done;
+        expect(built.code).toBe(0);
+        const refused = [
+            await start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "unmarked" }, unmarked).done,
+            await start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "other" }, otherOrigin).done,
+            await start(box, [CARGO_SHIM, "build"], { STUB_LABEL: "copied" }, copied).done,
+        ];
+        for (const result of refused) {
+            expect(result.code).not.toBe(0);
+            expect(result.stderr).toContain("refusing to build in");
+        }
+        expect(runs(log).map((run) => run.label)).toEqual(["release"]);
     }, 60_000);
 
     test("disk keep and doctor flag build folders and worktrees outside the clones, deleting nothing", () => {
