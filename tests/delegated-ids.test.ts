@@ -161,6 +161,30 @@ describe("a delegated brief's task ids", () => {
         expect(saved).toContain(`\n${section}\n`);
         expect(saved).toContain("`bin/toli task done T3 --report data/projects/toli/reports/T3.md`");
     });
+
+    test("inside a path or filename stay as written, while standalone ids and the report path are rewritten", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        withProject(m2, "app");
+        m1.ok(["task", "add", "app", "earlier work"]);
+        m1.ok(["task", "add", "app", "parent work"]);
+        m2.ok(["task", "add", "app", "local one"]);
+        m2.ok(["task", "add", "app", "local two"]);
+        const text = [
+            "TOLI_BRIEF v1",
+            "# verify it",
+            "Verify T590 with data/projects/app/outbox/T590/T590-on-main.patch.",
+            "Parent T2 left outbox/T2/T2-on-main.patch, notes in T2_notes.txt and fix-T2.log.",
+            "Report with `bin/toli task done T2 --report data/projects/toli/reports/T2.md`.",
+            "",
+        ].join("\n");
+        m1.ok(["delegate", "m2", "verify it", "--brief", brief(m1, text), "--for", "T2"]);
+
+        const saved = readFileSync(join(m2.root, "data", "projects", "toli", "briefs", "T3.md"), "utf8");
+        expect(saved).toContain("Verify m1/T590 with data/projects/app/outbox/T590/T590-on-main.patch.");
+        expect(saved).toContain("Parent T3 left outbox/T2/T2-on-main.patch, notes in T2_notes.txt and fix-T2.log.");
+        expect(saved).toContain("`bin/toli task done T3 --report data/projects/toli/reports/T3.md`");
+    });
 });
 
 describe("a spawned jawan", () => {

@@ -143,6 +143,10 @@ function sameOpenWork(task: Task, delegation: Delegation, key: string): boolean 
  * as `reports/T<n>.md`). `T<n>` inside a longer word (`T21x`, a timestamp's `16T10`) is not an id.
  */
 const BRIEF_TASK_ID = /(?:\b([\w.-]+)\/)?\bT(\d+)\b/g;
+/** A path character right before a brief id (or its `<word>/`): `a/b/T<n>`, `fix-T<n>`, `x.T<n>`. */
+const PATH_BEFORE = /[/.-]/;
+/** A path character right after a brief id: `T<n>/`, `T<n>-on-main`, `T<n>.patch`. */
+const PATH_AFTER = /^(?:[/-]|\.\w)/;
 
 /** The first line of a `git format-patch` mail. */
 const PATCH_MAIL = /^From [0-9a-f]{40} /;
@@ -215,8 +219,10 @@ function patchLines(lines: readonly string[]): boolean[] {
 /**
  * The delegator's brief with its task ids made safe here, where the same `T<n>` is another, unrelated task: the
  * `--for` task becomes `localId` (the task this delegation made), every other bare id the delegator's fleet id
- * `<from>/T<n>`, which no command on this machine changes. Ids already qualified by a machine stay, and so does patch
- * text (patchLines), which must apply unchanged. Returns the brief and each rewrite, `T<n> -> <id>`: the `--for`
+ * `<from>/T<n>`, which no command on this machine changes. Ids already qualified by a machine stay, and so do ids that
+ * are part of a longer path or filename (`outbox/T<n>/T<n>-on-main.patch`), which name files as they are, and patch
+ * text (patchLines), which must apply unchanged. The task's report path, `reports/T<n>.md`, is still rewritten: it
+ * names the report this machine's task writes. Returns the brief and each rewrite, `T<n> -> <id>`: the `--for`
  * task's first, then the rest in order of first appearance.
  */
 function rewriteBriefIds(
@@ -225,8 +231,11 @@ function rewriteBriefIds(
     machines: ReadonlySet<string>,
 ): { brief: string; rewrites: string[] } {
     const mapping = new Map<string, string>();
-    const rewrite = (match: string, prefix: string | undefined, n: string): string => {
+    const rewrite = (match: string, prefix: string | undefined, n: string, offset: number, line: string): string => {
         if (prefix !== undefined && machines.has(prefix)) return match;
+        const after = line.slice(offset + match.length);
+        const report = prefix === "reports" && after.startsWith(".md");
+        if (!report && (PATH_BEFORE.test(line.charAt(offset - 1)) || PATH_AFTER.test(after))) return match;
         const id = `T${n}`;
         const to = id === delegation.fromTask ? localId : fleetId(delegation.from, id);
         mapping.set(id, to);
