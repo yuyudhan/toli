@@ -225,7 +225,9 @@ it runs only <recipe>, which passed on <sha> (tree ..., proof ...)` and logs a `
   a dirty checkout, or no sealed pass. A failed gate pushes nothing, so the hook never runs. For a hook that is not
   only the gate, the reason also says what happens to its gate step: when the hook asks `gate check`, it is skipped
   where the hook asks `bin/toli gate check <project> --sha <pushed sha> --recipe "<recipe>"`; when it never asks, the
-  reason says `so a gate step in it reruns` and names that guard.
+  reason says `so a gate step in it reruns` and names that guard. A hook that asks `gate check` then runs for exactly
+  the gated commit's sha without queueing again for a heavy-build slot: it takes one only at a heavy step it still
+  runs ([fleet.md](fleet.md#heavy-build-slots), T28).
 - `push <p> --tag <name>` pushes one local tag and nothing else: the object the tag names now, to origin's
   `refs/tags/<name>`, never `--tags`, never forced (a tag origin already holds is left alone; one it holds at another
   object is refused, since a pushed tag is never moved). It runs no gate (`--gate` beside it is refused): gate the

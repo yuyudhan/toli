@@ -79,5 +79,5 @@ async function runTagPush(
         return runInherit(push([]));
     }
     if (slotFreePushSha(project, dir, hook, tag.commit) !== null) return runInherit(push([]));
-    return runCheckInSlot(dir, project, hook, push([]), {});
+    return runCheckInSlot(dir, project, hook, push([]), {}, false);
 }

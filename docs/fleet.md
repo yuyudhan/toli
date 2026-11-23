@@ -357,6 +357,14 @@ runs with the Node heap cap a slot's build gets (`NODE_OPTIONS` `--max-old-space
 as the whole check did before. The check's cheap steps run outside any scope. Order the check's cheap steps first, so
 the slot is held only from the first heavy step on (src/fleet/heavy-step-slot.ts, T2257).
 
+A `bin/toli push --gate "<recipe>"` holds the slot for its check once: its gate's runner holds it for the recipe, and
+once the gate passed on the pushed tree, a pre-push hook that asks `bin/toli gate check` (and so skips its gate step on
+that pass) runs as a `--slot-at-heavy-step` push does, for exactly the gated commit, instead of queueing for a second
+slot behind builds that took the one the gate freed (T28). The hook runs with toli's build variables (the cargo shim
+first on PATH, the rustc wrapper as `RUSTC_WRAPPER`, the Node preload), so a heavy step it still runs, a cargo through
+`just` included, takes the push's slot at that step. A hook that never asks `gate check` reruns its gate step, so its
+push still takes a slot for the whole hook.
+
 On Linux with a systemd user manager, each build also runs in its own user scope,
 `toli-build-<slot>-<pid>.scope` (slot 0 where flock is unavailable, pid of the `build-slot` process), started with
 `systemd-run --user --scope --collect -p MemoryMax=<cap> -p MemorySwapMax=0`. The build cannot swap: without

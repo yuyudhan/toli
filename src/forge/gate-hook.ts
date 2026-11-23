@@ -167,23 +167,28 @@ export function tagPushHookDecision(project: string, dir: string, hook: string, 
  * (TOLI_GATE_PROJECT, _SHA, _TREE, _RECIPE) tells the push's hooks which gate passed; a hook must still ask
  * `bin/toli gate check`, since anyone can set the variables. `skipHookAt` is the gated commit when the active pre-push
  * hook would only repeat the gate there (pushHookDecision): the push must then push exactly that sha with
- * `--no-verify`. Either way the decision is printed, and a skip is logged as `hook-skip` in logs/gates.log.
+ * `--no-verify`. Either way the decision is printed, and a skip is logged as `hook-skip` in logs/gates.log. `gatedAt`
+ * is the gated commit when the hook still runs but asks `gate check`, so its gate step skips on the pass the gate just
+ * sealed: the push then pushes exactly that sha and never queues again for the slot the gate held (T28); the hook
+ * takes one only at a heavy step it still runs (runCheckInSlot).
  */
 export async function gatePush(
     input: GateRun,
     waitMinutes: number,
-): Promise<{ env: Record<string, string>; skipHookAt: string | null }> {
+): Promise<{ env: Record<string, string>; skipHookAt: string | null; gatedAt: string | null }> {
     const { project, dir, recipe } = input;
     const gate = await gateForPush(input, waitMinutes);
     const sha = headSha(dir);
     const env = { TOLI_GATE_PROJECT: project, TOLI_GATE_SHA: sha, TOLI_GATE_TREE: gate.tree, TOLI_GATE_RECIPE: recipe };
-    if (activeHookPath(dir, "pre-push") === null) return { env, skipHookAt: null };
+    const hook = activeHookPath(dir, "pre-push");
+    if (hook === null) return { env, skipHookAt: null, gatedAt: null };
     const decision = pushHookDecision({ project, dir, recipe, sha });
     if (!decision.skip) {
         out(`push: running the pre-push hook: ${decision.reason}`);
-        return { env, skipHookAt: null };
+        const asks = ASKS_GATE_CHECK.test(readFileSync(hook, "utf8")) && treeSha(dir, sha) === gate.tree;
+        return { env, skipHookAt: null, gatedAt: asks ? sha : null };
     }
     logDecision({ project, sha }, "hook-skip", decision.message);
     out(`push: ${decision.message}`);
-    return { env, skipHookAt: sha };
+    return { env, skipHookAt: sha, gatedAt: null };
 }

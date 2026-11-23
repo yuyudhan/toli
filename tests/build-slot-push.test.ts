@@ -2,8 +2,8 @@
 // for its whole run, at one slot's share of the cores, even when its recipe reaches cargo through `just` with no
 // cargo shim on PATH (T1148).
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
     CARGO_SHIM,
     holdSlot,
@@ -12,11 +12,12 @@ import {
     scopeBox,
     scopeLines,
     slotBox,
+    start,
     TERMINAL_CGROUP,
     toliArgs,
     until,
 } from "./build-slot-fixture.ts";
-import { type Sandbox, withProject } from "./helpers.ts";
+import { type Sandbox, TOLI_BIN, withProject } from "./helpers.ts";
 
 // Each test runs a real detached gate runner or git push behind a real slot holder.
 setDefaultTimeout(60_000);
@@ -26,6 +27,10 @@ setDefaultTimeout(60_000);
  * above the slot's share, no test-thread caps and no slot of its own.
  */
 const UNCAPPED = { CARGO_BUILD_JOBS: "99", RUST_TEST_THREADS: "", NEXTEST_TEST_THREADS: "", TOLI_BUILD_SLOT: "" };
+/** A hook's way to this checkout's CLI. */
+const TOLI = `"${process.execPath}" "${TOLI_BIN}"`;
+
+const lines = (file: string): string[] => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n") : []);
 
 /** One build slot of three cargo jobs, project "app", and a `just` stub that logs the test-thread caps and runs `cargo test`. */
 function slotProject(): { box: Sandbox; dir: string; log: string; threads: string } {
@@ -159,6 +164,101 @@ describe("a push check in one heavy-build slot", () => {
         );
         expect(result.stderr).toContain("waiting for a heavy-build slot (1 busy)");
         expect(readFileSync(ran, "utf8").trim().split("\n")).toHaveLength(2);
+    });
+
+    // T28: a `push --gate` whose gate passed queued for the slot again for its pre-push hook, which only asks `gate
+    // check` and skips its gate step; the push waited hours behind builds that took the slot the gate had just freed.
+    describe("a push --gate whose hook asks `gate check`", () => {
+        /** Project "app" (one slot) whose hook skips `just verify` on its sealed pass, else runs it. */
+        function gateCheckProject(): { box: Sandbox; dir: string; log: string; steps: string } {
+            const { box, dir, log } = slotProject();
+            box.ok(["project", "set", "app", "--standing-push", "yes"]);
+            const steps = join(box.root, ".hook-steps");
+            writeFileSync(
+                join(dir, ".git", "hooks", "pre-push"),
+                [
+                    "#!/bin/sh",
+                    `echo guard >> ${steps}`,
+                    `if ${TOLI} gate check app --sha "$(git rev-parse HEAD)" --recipe 'just verify' >/dev/null 2>&1; then`,
+                    `    echo sealed >> ${steps}`,
+                    "    exit 0",
+                    "fi",
+                    "STUB_LABEL=p STUB_SLEEP=0 exec just verify",
+                    "",
+                ].join("\n"),
+                { mode: 0o755 },
+            );
+            writeFileSync(join(dir, "gated.txt"), "gated\n");
+            box.git(dir, ["add", "gated.txt"]);
+            box.git(dir, ["commit", "-m", "gated"]);
+            return { box, dir, log, steps };
+        }
+
+        test("pushes once its gate passed, never queueing behind a build that took the slot the gate freed", async () => {
+            const { box, dir, log, steps } = gateCheckProject();
+            let ended = false;
+            const push = box
+                .toliAsync(["push", "app", "--gate", "just verify"], {
+                    env: { ...UNCAPPED, STUB_LABEL: "g", STUB_SLEEP: "150" },
+                })
+                .finally(() => {
+                    ended = true;
+                });
+            await until("the gate's recipe running in the only slot", () => runs(log).some((run) => run.label === "g"));
+            const other = start(box, toliArgs("build-slot", "--", "cargo", "build"), {
+                STUB_LABEL: "a",
+                STUB_SLEEP: "150",
+            });
+            await until("another build waiting in line for the gate's slot", () =>
+                other.stderr.join("").includes("waiting for a heavy-build slot (1 busy)"),
+            );
+            writeFileSync(`${log}.done-g`, "");
+            await until("the other build taking the slot the gate freed", () =>
+                runs(log).some((run) => run.label === "a"),
+            );
+            try {
+                await until("the gated push ending while the other build still holds the slot", () => ended);
+            } finally {
+                writeFileSync(`${log}.done-a`, "");
+            }
+            const result = await push;
+            expect(result.code).toBe(0);
+            expect(result.stderr).not.toContain("waiting for a heavy-build slot");
+            expect(lines(steps)).toEqual(["guard", "sealed"]);
+            const gated = box.git(dir, ["rev-parse", "HEAD"]).trim();
+            expect(box.git(dir, ["ls-remote", "origin", "refs/heads/main"]).split(/\s+/)[0]).toBe(gated);
+            expect(runs(log).map((run) => run.label)).toEqual(["g", "a"]);
+            expect((await other.done).code).toBe(0);
+        });
+
+        test("a hook step its gate does not cover still runs its cargo in a slot, through `just` with no shim on PATH", async () => {
+            const { box, log, steps } = gateCheckProject();
+            // toli's shims under the sandbox's root, where an install keeps them (paths.buildShimsDir()).
+            mkdirSync(join(box.root, "bin"), { recursive: true });
+            symlinkSync(dirname(CARGO_SHIM), join(box.root, "bin", "shims"));
+            box.ok(["gate", "run", "app", "--recipe", "just verify --quick"], {
+                env: { ...UNCAPPED, STUB_LABEL: "g" },
+            });
+            const holder = await holdSlot(box, log);
+            const push = box.toliAsync(["push", "app", "--gate", "just verify --quick"], { env: UNCAPPED });
+            const queue = join(box.root, "state", "build-slots", "queue");
+            await until(
+                "the hook's uncovered step waiting in line for the busy slot",
+                () => existsSync(queue) && readdirSync(queue).some((name) => name.endsWith(".wait")),
+            );
+            expect(lines(steps)).toEqual(["guard"]);
+            writeFileSync(`${log}.done-a`, "");
+            expect((await holder.done).code).toBe(0);
+            const result = await push;
+            expect(result.code).toBe(0);
+            expect(result.stderr).toContain("waiting for a heavy-build slot (1 busy)");
+            expect(lines(steps)).toEqual(["guard"]);
+            expect(runs(log).find((run) => run.label === "p")).toMatchObject({
+                slot: "1",
+                jobs: "3",
+                args: "test verify",
+            });
+        });
     });
 
     /** systemd-run's logged line for one scope: unit toli-build-1-<pid> capped at scopeBox's 512 MB. */

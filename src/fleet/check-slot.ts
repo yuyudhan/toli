@@ -4,6 +4,7 @@
 // T2257, T2408).
 import { closeSync, existsSync, readFileSync } from "node:fs";
 import { warn } from "../core/util.ts";
+import { ensureNodePreloadStub, leadBuildEnv } from "../jawans/env.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
@@ -63,7 +64,11 @@ export async function withCheckSlot<T>(
  * `command` under `withCheckSlot` (no stall check), with `env` and the slot's variables, in the slot's scope
  * (`runInSlot`): `bin/toli push` running `git push`, and so its pre-push `hook`. Resolves to its exit code. A hook that
  * declares it takes its slot at its first heavy step (PUSH_SLOT_AT_HEAVY_STEP) runs without one under
- * `withSlotAtHeavyStep`, so a hook that skips its gate on a sealed pass never queues (T2408).
+ * `withSlotAtHeavyStep`, so a hook that skips its gate on a sealed pass never queues (T2408). So does a hook of a `push
+ * --gate` whose gate just passed on the pushed tree (`gatePassed`) and which asks `gate check`: its gate step skips,
+ * and the push never waits again for the slot the gate held (T28). Its other steps run with toli's build variables
+ * (`leadBuildEnv`: the cargo shim first on PATH, the rustc wrapper, the Node preload), so a heavy step it still runs,
+ * even a cargo reached through `just`, takes the push's slot at that step.
  */
 export async function runCheckInSlot(
     cwd: string,
@@ -71,11 +76,23 @@ export async function runCheckInSlot(
     hook: string,
     command: string[],
     env: Record<string, string>,
+    gatePassed: boolean,
 ): Promise<number> {
+    const noteEveryMs = SLOT_NOTE_MAX_MINUTES * runMinuteMs();
+    if (gatePassed) {
+        warn(
+            `toli: the gate passed on the pushed tree, so the pre-push hook ${hook} takes a heavy-build slot only at a ` +
+                "heavy step it still runs",
+        );
+        const build = leadBuildEnv(process.env, slotSizing().capacity.cargoJobs, ensureNodePreloadStub());
+        return await withSlotAtHeavyStep(cwd, project, noteEveryMs, (held) =>
+            runInSlot(command, { ...env, ...build, ...held.env }, held.scope),
+        );
+    }
     const body = (held: HeldSlot) => runInSlot(command, { ...env, ...held.env }, held.scope);
     if (!PUSH_SLOT_AT_HEAVY_STEP.test(readFileSync(hook, "utf8"))) return await withCheckSlot(cwd, project, null, body);
     warn(`toli: the pre-push hook ${hook} takes a heavy-build slot only at its first heavy step, if it reaches one`);
-    return await withSlotAtHeavyStep(cwd, project, SLOT_NOTE_MAX_MINUTES * runMinuteMs(), body);
+    return await withSlotAtHeavyStep(cwd, project, noteEveryMs, body);
 }
 
 /**
