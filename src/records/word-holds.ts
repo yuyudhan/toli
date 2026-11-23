@@ -9,7 +9,9 @@
 // messages that arrived since it first looked, never older ones, and skips a message this machine already answered
 // with a `talk` reply quoting it (state/talk-sent.jsonl). A Sardar citing the user's word as authority ("on Asha's
 // word", "Asha's word (date): '...'", "questions for Asha go to hub") asks nothing of him, and neither does a jawan
-// brief sent as a message (`TOLI_BRIEF` first) or a hold quoted as a template (`--option "<choice> => ..."`).
+// brief sent as a message (`TOLI_BRIEF` first), a hold quoted as a template (`--option "<choice> => ..."`), or a
+// peer's rule or FYI asking only for an acknowledgement ("Reply 'ack camera' after your next run"): its reader
+// records and applies it.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { loadMachine } from "../core/config.ts";
@@ -19,7 +21,7 @@ import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, type Task, updateBacklog } from "./backlog.ts";
 import { listInbox } from "./inbox.ts";
-import { collapse, parseWordQuestion, quotesTemplateOnly, type WordQuestion } from "./word-question.ts";
+import { collapse, parseOptions, parseWordQuestion, quotesTemplateOnly, type WordQuestion } from "./word-question.ts";
 
 /** One held question: the task holding it and where it came from. */
 type HeldWord = { task: string; at: string; source: string };
@@ -109,8 +111,11 @@ function wordPhrases(user: Set<string> | null): WordPhrase[] {
     ];
 }
 
-/** `Reply "<option>"`, `Reply 2`, `Reply yes`: asks for a pick in itself. */
-const REPLY_OPTION = /(?:^|[.!?:;]\s+)Reply\s+(?:[`"'][^`"'\n]+[`"']|\(?\d\)?(?!\w)|yes\b|no\b)/m;
+/** `Reply 2`, `Reply yes`: asks for a pick in itself. */
+const REPLY_PICK = /(?:^|[.!?:;]\s+)Reply\s+(?:\(?\d\)?(?!\w)|yes\b|no\b)/m;
+
+/** `Reply "<option>"`: a pick when the message offers options, else an acknowledgement asked of its reader. */
+const REPLY_QUOTED = /(?:^|[.!?:;]\s+)Reply\s+[`"'][^`"'\n]+[`"']/m;
 
 /** toli's own hold format: a `## Question` section, or a `task hold ... --question` command line. */
 const HOLD_FORMAT = [/^##\s*Question\s*$/m, /--question\s+["']/];
@@ -127,14 +132,17 @@ export function isBriefText(text: string): boolean {
  * Whether `text` asks for the user's word. A `peer` message (not a delegated task's held question, which asks by
  * being held) asks only in a paragraph that is a question (has a `?`), so a Sardar relaying his rules ("merges still
  * need his word") is not a request; toli's hold format and `Reply <option>` ask in themselves, unless the message only
- * quotes the hold template (no real option, its question a placeholder: quotesTemplateOnly). A jawan brief sent as a
- * peer message asks nothing: it is work to run. A mention that cites his word as authority never asks.
+ * quotes the hold template (no real option, its question a placeholder: quotesTemplateOnly). A peer's `Reply "<x>"`
+ * asks only when the message offers 2-4 options: a rule or FYI ending "Reply 'ack camera' after your next run" asks
+ * the receiving Sardar to confirm it, not the user to pick. A jawan brief sent as a peer message asks nothing: it is
+ * work to run. A mention that cites his word as authority never asks.
  */
 export function asksForWord(text: string, peer: boolean): boolean {
     if (peer && isBriefText(text)) return false;
     const user = knownUserNames();
     if (peer && user !== null && addressedElsewhere(text, user)) return false;
-    if (REPLY_OPTION.test(text)) return true;
+    if (REPLY_PICK.test(text)) return true;
+    if (REPLY_QUOTED.test(text) && (!peer || parseOptions(text).length > 0)) return true;
     if (peer && !quotesTemplateOnly(text) && HOLD_FORMAT.some((pattern) => pattern.test(text))) return true;
     const phrases = wordPhrases(user);
     return text

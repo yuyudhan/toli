@@ -3,45 +3,13 @@
 // becomes a new held task in the sender's project, each sender's question once, and the tick skips a message this
 // machine already answered with a `talk` reply quoting it.
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { brief, pair, type Task, tasks } from "./delegate-fixture.ts";
-import { type Sandbox, withProject } from "./helpers.ts";
+import { brief, pair, tasks } from "./delegate-fixture.ts";
+import { withProject } from "./helpers.ts";
+import { held, talkItem, ticking } from "./word-holds-fixture.ts";
 
 const PUSH = "Asha's word needed: push the release to main?";
-
-function held(box: Sandbox): Task[] {
-    return tasks(box).filter((task) => task.status === "held");
-}
-
-/** This machine's tick first looked at the inbox `minutesAgo` ago (state/word-holds.json `since`). */
-function ticking(box: Sandbox, minutesAgo: number): void {
-    const dir = join(box.root, "state");
-    mkdirSync(dir, { recursive: true });
-    const since = new Date(Date.now() - minutesAgo * 60_000).toISOString();
-    writeFileSync(join(dir, "word-holds.json"), JSON.stringify({ since, holds: {}, read: {} }));
-}
-
-/** An inbox item from `from` as a `talk` leaves it, received `minutesAgo` ago, written without `inbox add`. */
-function talkItem(box: Sandbox, from: string, words: string, minutesAgo: number): void {
-    const at = new Date(Date.now() - minutesAgo * 60_000);
-    const stamp = at.toISOString().replace(/:/g, "-").replace(".", "-");
-    const body = [
-        `# message from ${from}`,
-        "",
-        `- from: ${from}`,
-        `- received: ${at.toISOString()}`,
-        "",
-        words,
-        "",
-        `- from: ${from} (its lead, or the user there)`,
-        `- reply: \`bin/toli talk ${from} "<reply>"\``,
-        "",
-    ].join("\n");
-    const dir = join(box.root, "data", "inbox");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${stamp}-${from}.md`), body);
-}
 
 describe("a delegated task's question for the user's word", () => {
     test("holds the --for task at once; once answered, the same question never holds it again", () => {
@@ -391,5 +359,37 @@ describe("a jawan brief sent by talk", () => {
         expect(long.code).toBe(0);
         expect(long.stderr).toContain("over 4 KB");
         expect(m2.toli(["talk", "m1", "all green on app"]).stderr).not.toContain("delegate");
+    });
+});
+
+describe("a peer rule or FYI that asks only for an acknowledgement", () => {
+    // A Sardar's broadcast rule (T814): a standing rule for the receiving Sardar to record and apply. Its `Reply 'ack
+    // ...'` asks that Sardar to confirm, not the user to pick, so it is never held as a question for his word.
+    const RULE =
+        "hub RULE, effective now (every machine): browsers must NEVER use a real camera or microphone. Launch every Playwright/Chromium with fake media only, or deny camera/mic permission in the context. If a real feed ever appears: close the tab, delete any capture, tell hub. Reply 'ack camera' after your next jawan run has it.";
+    const FYI = "FYI: the gate on app is green again. Reply 'seen' when you have read this.";
+
+    test("is not held, by the tick or on arrival; a Reply offering a choice still is", () => {
+        const { m1, m2 } = pair();
+        withProject(m1, "app");
+        ticking(m1, 120);
+        talkItem(m1, "m3", RULE, 10);
+        talkItem(m1, "m3", FYI, 5);
+        m1.ok(["job", "tick"]);
+        expect(held(m1)).toEqual([]);
+        m2.ok(["talk", "m1", RULE]);
+        m2.ok(["talk", "m1", FYI]);
+        expect(held(m1)).toEqual([]);
+
+        const pick = "The app release is ready. Reply 'ship' to release it today; Reply 'wait' to hold it for Monday.";
+        m2.ok(["talk", "m1", pick]);
+        expect(held(m1)).toHaveLength(1);
+        expect(held(m1)[0]).toMatchObject({
+            question: pick,
+            options: [
+                { choice: "ship", outcome: "release it today" },
+                { choice: "wait", outcome: "hold it for Monday" },
+            ],
+        });
     });
 });

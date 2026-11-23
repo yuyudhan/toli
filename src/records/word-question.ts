@@ -65,7 +65,7 @@ export function quotesTemplateOnly(text: string): boolean {
  * A template placeholder (`<choice> => <what happens then>`) is no option, and listed options are read with the
  * `--option` flags taken out, so a wrapped `--option` line is never read as a `- a => b` item.
  */
-function parseOptions(text: string): HoldOption[] {
+export function parseOptions(text: string): HoldOption[] {
     const pairs = (pattern: RegExp, from = text): HoldOption[] =>
         writtenPairs(from, pattern).filter((option) => !placeholderOption(option));
     const flagged = pairs(FLAGGED);
