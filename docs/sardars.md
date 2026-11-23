@@ -303,11 +303,15 @@ machine other than the one that delegated its task (`T<n> was delegated by <mach
 **Handing work back.** A lead that cannot take delegated work (overloaded, project not cloneable, wrong machine)
 gives it back with `bin/toli task handback T<n> --reason "<why>"`, never `task drop`: its task is dropped there, and
 the delegator's `--for` task goes back to queued with `<owner>/T<n> handed the work back: <why>` in its notes and a
-`<owner>/T<n> handed back` wake, so its lead delegates it to another Sardar or dispatches it itself. This holds for
-work forwarded on too: when the live owner hands it back, the originator's task is queued again, not dropped by the
-forwarder's earlier drop. `task drop` means the work itself is given up, and drops the `--for` task once every
-delegation of it is dropped. Delegating or linking for a done or dropped task reopens it (`reopened (was dropped)` in
-its notes); a dropped delegation never keeps the `--for` task from being done by the others.
+`<owner>/T<n> handed back` wake, so its lead delegates it to another Sardar or dispatches it itself. Work forwarded on
+is handed back to the machine that forwarded it, the delegator recorded on the task, and to no machine above it: its
+`--for` task is queued again when it is still open, and its report carries the handback up the chain, so each task
+above records `<owner>/T<n> handed the work back: <why>` and works through the forwarder's task again, never
+receiving (or refusing) a handback for a delegation it did not make. When the forwarder had dropped its own task, the
+originator's task is queued again instead, not dropped by that earlier drop. `task drop` means the work itself is
+given up, and drops the `--for` task once every delegation of it is dropped. Delegating or linking for a done or
+dropped task reopens it (`reopened (was dropped)` in its notes); a dropped delegation never keeps the `--for` task
+from being done by the others.
 
 **Forwarding work on.** A lead that hands delegated work on to a third Sardar, rather than giving it back, delegates
 it with `--for` its own task (or links it with `task link`): `bin/toli delegate <machine> "<title>" --brief <file>

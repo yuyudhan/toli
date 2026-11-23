@@ -34,7 +34,6 @@ import {
     type DelegateState,
     type DelegationUpdate,
     fleetId,
-    landSending,
     REPORTED,
     splitFleetId,
     type Upstream,
@@ -52,6 +51,19 @@ export function parseJson<T>(text: string, what: string): T {
     } catch {
         throw new ToliError(`${what}: the body is not JSON`);
     }
+}
+
+/** Record that `task` sent delegation `id` to `machine` (`delegate --for`), until its receipt or report lands. */
+export function noteSending(task: Task, machine: string, id: string): void {
+    if (task.sending?.some((sent) => sent.machine === machine && sent.id === id)) return;
+    task.sending = [...(task.sending ?? []), { machine, id }];
+}
+
+/** Delegation `id` to `machine` landed (its receipt or its owner's report) or was given up: no longer `sending`. */
+export function landSending(task: Task, machine: string, id: string): void {
+    const left = (task.sending ?? []).filter((sent) => sent.machine !== machine || sent.id !== id);
+    if (left.length > 0) task.sending = left;
+    else delete task.sending;
 }
 
 /** The `--for` task an update belongs to: the one it names, else the one that lists its fleet id. */
@@ -104,6 +116,18 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         if (handedBack !== undefined) state.handedBack = handedBack;
         if (onward.length > 0 || seen?.forwarded === true) state.forwarded = true;
         task.delegates = { ...task.delegates, [id]: state };
+        // Work `id` forwarded on and got back: the handback went only to `id`'s owner, so it is recorded here from
+        // this update (T822). A task working through that delegation works through `id` again.
+        for (const [fid, reason] of Object.entries(slice ? {} : (update.forwardHandbacks ?? {}))) {
+            const below: DelegateState | undefined = task.delegates?.[fid];
+            if (fid === id || !task.delegatedTo?.includes(fid) || below?.handedBack !== undefined) continue;
+            task.delegates = {
+                ...task.delegates,
+                [fid]: { ...(below ?? { updatedAt, notes: 0 }), status: "dropped", handedBack: reason },
+            };
+            task.notes.push(`${fid} handed the work back: ${reason}`);
+            if (task.agent === fid) task.agent = id;
+        }
         if (status === "done" && update.report !== null) {
             const report = saveReport(id, update.report);
             if (slice) task.notes.push(`${id} report: ${report}`);

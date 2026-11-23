@@ -119,6 +119,11 @@ export type DelegationUpdate = {
      */
     forwardedTo?: string[];
     /**
+     * Delegations this task forwarded the work to that were handed back (fleet id -> reason): the handback went
+     * only to this task's owner, so the machines above learn of it from this update (T822).
+     */
+    forwardHandbacks?: Record<string, string>;
+    /**
      * A worker's own held task raised to its coordinator (src/records/raise-holds.ts): no delegation, the question is
      * the user's, held in the coordinator's Needs-you queue in the owner's `project`.
      */
@@ -164,12 +169,13 @@ export function answerers(task: Task): string[] {
 
 /**
  * Every machine and task a delegated task reports to: its delegator, then the chain above it, less those that refused
- * a report as unrecorded there.
+ * a report as unrecorded there. A task handed back reports to its delegator alone: the machines above made no
+ * delegation to it and follow the work through that delegator's task (T822).
  */
-function reportTargets(by: DelegatedBy): Array<{ machine: string; task?: string }> {
+function reportTargets(task: Task, by: DelegatedBy): Array<{ machine: string; task?: string }> {
     const targets = [
         { machine: by.machine, ...(by.task === undefined ? {} : { task: by.task }) },
-        ...(by.upstream ?? []),
+        ...(task.handedBack === undefined ? (by.upstream ?? []) : []),
     ];
     return targets.filter((target) => !(by.refusedBy ?? []).includes(target.machine));
 }
@@ -183,19 +189,6 @@ export function liveDelegations(task: Task): string[] {
         const state = task.delegates?.[id];
         return state === undefined || (state.status !== "dropped" && state.handedBack === undefined);
     });
-}
-
-/** Record that `task` sent delegation `id` to `machine` (`delegate --for`), until its receipt or report lands. */
-export function noteSending(task: Task, machine: string, id: string): void {
-    if (task.sending?.some((sent) => sent.machine === machine && sent.id === id)) return;
-    task.sending = [...(task.sending ?? []), { machine, id }];
-}
-
-/** Delegation `id` to `machine` landed (its receipt or its owner's report) or was given up: no longer `sending`. */
-export function landSending(task: Task, machine: string, id: string): void {
-    const left = (task.sending ?? []).filter((sent) => sent.machine !== machine || sent.id !== id);
-    if (left.length > 0) task.sending = left;
-    else delete task.sending;
 }
 
 /** The `upstream` chain a delegation or link carries (`what` names it in errors); absent is an empty chain. */
@@ -305,6 +298,9 @@ export function delegationUpdate(
 ): DelegationUpdate {
     const { status, title, updatedAt, notes, question, options, recommend, blocks, commit, handedBack } = task;
     const forwards = liveDelegations(task);
+    const handbacks = Object.entries(task.delegates ?? {}).flatMap(([fid, state]) =>
+        state.handedBack === undefined || !task.delegatedTo?.includes(fid) ? [] : [[fid, state.handedBack] as const],
+    );
     const by = task.delegatedBy;
     const direct = by !== undefined && to?.machine === by.machine && to.task === by.task;
     return {
@@ -325,6 +321,7 @@ export function delegationUpdate(
             ...(handedBack === undefined ? {} : { handedBack }),
         },
         ...(forwards.length === 0 ? {} : { forwardedTo: forwards }),
+        ...(handbacks.length === 0 ? {} : { forwardHandbacks: Object.fromEntries(handbacks) }),
         report: reportText(task),
         message: delegationReport(owner, task, to),
     };
@@ -375,7 +372,7 @@ export function reportToDelegator(task: Task): void {
     if (by === undefined) return;
     const owner = loadMachine().name;
     const at = stamp(now());
-    for (const to of reportTargets(by)) {
+    for (const to of reportTargets(task, by)) {
         let target: FleetMachine;
         try {
             target = fleetMachine(to.machine);

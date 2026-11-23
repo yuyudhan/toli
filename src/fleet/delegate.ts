@@ -16,8 +16,14 @@ import { QUICK_MS } from "../peer/client.ts";
 import { bodyLimit, TITLE_MAX } from "../peer/envelope.ts";
 import { loadProjects } from "../projects/projects.ts";
 import { loadBacklog, updateTask } from "../records/backlog.ts";
-import { landSending, noteSending, splitFleetId } from "../records/delegation-report.ts";
-import { delegatesSlice, forwardChain, recordDelegation } from "../records/delegation-sync.ts";
+import { splitFleetId } from "../records/delegation-report.ts";
+import {
+    delegatesSlice,
+    forwardChain,
+    landSending,
+    noteSending,
+    recordDelegation,
+} from "../records/delegation-sync.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { parseShape } from "../records/task-shape.ts";
 import { DEFAULT_PROJECT, type Delegation, delegationKey, parseDelegation } from "./delegation-receive.ts";
