@@ -25,6 +25,7 @@ import { join, resolve } from "node:path";
 import { Args } from "../src/core/args.ts";
 import { now, ToliError } from "../src/core/util.ts";
 import { RELEASE_CLONE_MARKER } from "../src/fleet/build-place.ts";
+import { type CommandResult, pruneGithubReleases } from "../src/release/prune.ts";
 import {
     type Commit,
     changelogBetween,
@@ -34,9 +35,6 @@ import {
     DEVELOP_BRANCH,
     dateChangelogSection,
     githubReleaseArgs,
-    githubReleaseDeleteArgs,
-    githubReleaseListArgs,
-    githubReleasesToPrune,
     githubRepo,
     latestTag,
     nextVersion,
@@ -297,26 +295,27 @@ function publishGithubRelease(root: string, remote: string, tag: string): void {
     }
 }
 
+/** Run a command and return its trimmed stdout or, on one line, why it failed; never aborts the release. */
+function tryCapture(cwd: string, cmd: string[]): CommandResult {
+    try {
+        const result = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
+        if (result.exitCode === 0) return { ok: true, stdout: result.stdout.toString().trim() };
+        const detail = (result.stderr.toString() || result.stdout.toString()).replace(/\s+/g, " ").trim();
+        return { ok: false, detail: detail || `exit ${result.exitCode}` };
+    } catch (error) {
+        // Bun.spawnSync throws when the command cannot start at all (gh not installed).
+        return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+    }
+}
+
 /**
- * Step 8: keep only the newest GitHub Release entries (GITHUB_RELEASES_KEPT), deleting the older ones. Tags are never
- * deleted: githubReleaseDeleteArgs passes no --cleanup-tag.
+ * Step 8: keep only the newest GitHub Release entries (GITHUB_RELEASES_KEPT in src/release/prune.ts), deleting the
+ * older ones. Tags are never deleted: githubReleaseDeleteArgs passes no --cleanup-tag.
  */
-function pruneGithubReleases(root: string, remote: string): void {
+function pruneReleasesPage(root: string, remote: string): void {
     const repo = githubRepo(remoteUrl(root, remote));
     if (repo === null) return;
-    const listed: unknown = JSON.parse(capture(root, githubReleaseListArgs(repo)));
-    if (!Array.isArray(listed)) throw new ReleaseError("gh release list did not return a JSON array");
-    const releases = listed.map((entry) => {
-        const tag: unknown = Reflect.get(Object(entry), "tagName");
-        const createdAt: unknown = Reflect.get(Object(entry), "createdAt");
-        if (typeof tag !== "string" || typeof createdAt !== "string")
-            throw new ReleaseError("gh release list returned an entry without tagName and createdAt");
-        return { tag, createdAt };
-    });
-    for (const tag of githubReleasesToPrune(releases)) {
-        stream(root, githubReleaseDeleteArgs(repo, tag));
-        say(`release: pruned GitHub Release ${tag} (its tag is kept)`);
-    }
+    for (const line of pruneGithubReleases(repo, (cmd) => tryCapture(root, cmd))) say(line);
 }
 
 function dryRun(request: string, remote: string): void {
@@ -362,7 +361,7 @@ try {
         stream(ROOT, [process.execPath, join(ROOT, "bin", "toli"), "self", "sync"]);
         if (pushed) {
             publishGithubRelease(ROOT, remote, tag);
-            pruneGithubReleases(ROOT, remote);
+            pruneReleasesPage(ROOT, remote);
         }
     }
 } catch (error) {

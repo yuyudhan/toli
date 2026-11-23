@@ -317,31 +317,3 @@ export function githubReleaseArgs(repo: string, tag: string, notesFile: string):
         ...(prerelease ? ["--prerelease", "--latest=false"] : ["--latest"]),
     ];
 }
-
-/** How many GitHub Release entries the releases page keeps; older ones are deleted after each publish. */
-export const GITHUB_RELEASES_KEPT = 5;
-
-/**
- * The GitHub Releases to delete so that only the `keep` newest remain, by creation time (`createdAt`, ISO 8601).
- * Only the Release entries: a tag is never named here, so its tag stays on the remote.
- */
-export function githubReleasesToPrune(
-    releases: readonly { tag: string; createdAt: string }[],
-    keep: number = GITHUB_RELEASES_KEPT,
-): string[] {
-    const newestFirst = [...releases].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-    return newestFirst.slice(keep).map((release) => release.tag);
-}
-
-/** The `gh release list` argv that reads every GitHub Release entry of `repo` as JSON. */
-export function githubReleaseListArgs(repo: string): string[] {
-    return ["gh", "release", "list", "--repo", repo, "--limit", "1000", "--json", "tagName,createdAt"];
-}
-
-/**
- * The `gh release delete` argv for one GitHub Release entry. It never passes `--cleanup-tag`: the version tag stays
- * on the remote, so the release's history and installs keep working.
- */
-export function githubReleaseDeleteArgs(repo: string, tag: string): string[] {
-    return ["gh", "release", "delete", tag, "--repo", repo, "--yes"];
-}

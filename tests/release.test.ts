@@ -1,16 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
+    GITHUB_RELEASES_KEPT,
+    githubReleaseDeleteArgs,
+    githubReleaseListArgs,
+    githubReleasesToPrune,
+    pruneGithubReleases,
+} from "../src/release/prune.ts";
+import {
     changelogBetween,
     changelogHas,
     changelogSection,
     classifyCommit,
     compareVersions,
     dateChangelogSection,
-    GITHUB_RELEASES_KEPT,
     githubReleaseArgs,
-    githubReleaseDeleteArgs,
-    githubReleaseListArgs,
-    githubReleasesToPrune,
     githubRepo,
     latestTag,
     nextVersion,
@@ -57,7 +60,7 @@ describe("the GitHub Release step (T902)", () => {
 });
 
 describe("the GitHub Releases prune step", () => {
-    const entry = (tag: string, createdAt: string) => ({ tag, createdAt });
+    const entry = (tag: string, createdAt: string) => ({ tag, createdAt, isDraft: false });
 
     test("keeps the 5 newest entries by creation time, whatever order they arrive in", () => {
         const releases = [
@@ -93,11 +96,67 @@ describe("the GitHub Releases prune step", () => {
             "--limit",
             "1000",
             "--json",
-            "tagName,createdAt",
+            "tagName,createdAt,isDraft",
         ]);
         const args = githubReleaseDeleteArgs("o/n", "v0.2.0");
         expect(args).toEqual(["gh", "release", "delete", "v0.2.0", "--repo", "o/n", "--yes"]);
         expect(args).not.toContain("--cleanup-tag");
+    });
+});
+
+describe("the GitHub Releases prune step against gh (T2285)", () => {
+    type Listed = { tagName: string; createdAt: string; isDraft: boolean };
+    const published = (n: number): Listed[] =>
+        Array.from({ length: n }, (_, i) => ({
+            tagName: `v0.${i}.0`,
+            createdAt: `2026-11-0${i + 1}T00:00:00Z`,
+            isDraft: false,
+        }));
+    /** A fake gh: serves `listed` to `gh release list`, records each delete, and fails the deletes in `failing`. */
+    function fakeGh(listed: Listed[] | null, failing: string[] = []) {
+        const deleted: string[] = [];
+        const run = (argv: string[]) => {
+            if (argv[2] === "list")
+                return listed === null
+                    ? { ok: false as const, detail: "error connecting to api.github.com" }
+                    : { ok: true as const, stdout: JSON.stringify(listed) };
+            const tag = argv[3] ?? "";
+            deleted.push(tag);
+            return failing.includes(tag)
+                ? { ok: false as const, detail: "blocked by guard" }
+                : { ok: true as const, stdout: "" };
+        };
+        return { deleted, run };
+    }
+
+    test("a failed delete is reported in one line and the remaining deletes still run", () => {
+        const gh = fakeGh(published(8), ["v0.2.0"]);
+        const lines = pruneGithubReleases("o/n", gh.run);
+        expect(gh.deleted).toEqual(["v0.2.0", "v0.1.0", "v0.0.0"]);
+        expect(lines.filter((line) => line.includes("failed"))).toEqual([
+            "release: could not prune GitHub Release v0.2.0 (gh release delete failed: blocked by guard); " +
+                "delete it by hand: gh release delete v0.2.0 --repo o/n --yes",
+        ]);
+        expect(lines.filter((line) => line.includes("pruned"))).toHaveLength(2);
+    });
+
+    test("a failed list is reported in one line and deletes nothing", () => {
+        const gh = fakeGh(null);
+        expect(pruneGithubReleases("o/n", gh.run)).toEqual([
+            "release: could not list GitHub Releases to prune (gh release list failed: " +
+                "error connecting to api.github.com); nothing was pruned",
+        ]);
+        expect(gh.deleted).toEqual([]);
+    });
+
+    test("leaves drafts alone and does not count them toward the newest 5", () => {
+        const drafts: Listed[] = [
+            { tagName: "v9.0.0", createdAt: "2026-11-20T00:00:00Z", isDraft: true },
+            { tagName: "v0.0.1", createdAt: "2026-10-01T00:00:00Z", isDraft: true },
+        ];
+        const gh = fakeGh([...published(6), ...drafts]);
+        pruneGithubReleases("o/n", gh.run);
+        expect(gh.deleted).toEqual(["v0.0.0"]);
     });
 });
 
