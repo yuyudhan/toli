@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
 import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
+import { tempDir } from "./helpers.ts";
 
 useGitEnv();
 
@@ -185,6 +186,31 @@ describe("bin/toli commit runs the project's pre-commit hook", () => {
             "nested check rejects",
         );
         expect(head(dir)).toBe(committed.sha);
+    });
+
+    test("a linked worktree with no node_modules of its own gets the main checkout's", () => {
+        const dir = repo({ ".gitignore": "node_modules/\ntarget/\n" });
+        mkdirSync(join(dir, "apps/x"), { recursive: true });
+        writeFileSync(join(dir, "apps/x/index.js"), "x\n");
+        git(dir, ["add", "apps/x/index.js"]);
+        git(dir, ["commit", "--quiet", "-m", "x"]);
+        installHook(dir, ".git/hooks", "pre-commit", "apps/x/node_modules/.bin/check\ntest ! -e target/artifact");
+        installHook(dir, "apps/x/node_modules/.bin", "check", 'echo "pre-commit: check ran" >&2; exit 0');
+        // Build output is not a dependency: only node_modules comes across.
+        mkdirSync(join(dir, "target"));
+        writeFileSync(join(dir, "target/artifact"), "built\n");
+        const tree = tempDir("task");
+        git(dir, ["worktree", "add", "--quiet", "-b", "task", tree]);
+        writeFileSync(join(tree, "apps/x/index.js"), "x changed\n");
+        const committed = safeCommit({ dir: tree, paths: ["apps/x/index.js"], message: "Change x" });
+        expect(git(tree, ["rev-parse", "HEAD"])).toBe(committed.sha);
+        expect(existsSync(join(tree, "apps/x/node_modules"))).toBe(false);
+        // A hook that needs a tool nobody installed still fails.
+        installHook(dir, ".git/hooks", "pre-commit", "apps/x/node_modules/.bin/absent");
+        writeFileSync(join(tree, "apps/x/index.js"), "x changed again\n");
+        expect(() => safeCommit({ dir: tree, paths: ["apps/x/index.js"], message: "Change x again" })).toThrow(
+            "pre-commit hook",
+        );
     });
 
     test("linked ignored entries are never untracked in the hook's tree, whatever the gitignore style", () => {

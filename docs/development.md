@@ -65,7 +65,8 @@ bin/toli commit app -m "Merge feature" --merge feature --resolved -- allow.txt  
    reads is the committed version, even for a hook that `cd`s to the top level and unsets `GIT_DIR`, `GIT_WORK_TREE`
    and `GIT_INDEX_FILE`; other jawans' staged or half-edited files neither fail nor pass it. A tracked hook file runs
    as committed, and the checkout's ignored entries at any depth (`node_modules` of a nested package, a virtualenv,
-   `target`) are linked in at the same paths so its tools resolve. A hook that reformats or re-stages a file is
+   `target`) are linked in at the same paths so its tools resolve; a linked worktree with no `node_modules` of its own
+   (a task worktree toli made) gets the main checkout's, `node_modules` only, never its build output. A hook that reformats or re-stages a file is
    refused, naming the files: run the formatter on them and commit again. `commit-msg` runs on a temporary message
    file, from the checkout root with `GIT_INDEX_FILE` at the private index, and a message it edits is committed as
    edited. Repeated `-m` values become separate paragraphs, as with `git commit`. Each hook may run 300 s by

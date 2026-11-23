@@ -11,9 +11,9 @@ import {
     writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { machineSettings } from "../core/config.ts";
-import { gitOk } from "../core/git.ts";
+import { git, gitOk } from "../core/git.ts";
 import { run, ToliError } from "../core/util.ts";
 import { type Attempt, tail } from "./commit-checks.ts";
 import { type HookTimeout, loadProjects } from "./projects.ts";
@@ -128,6 +128,21 @@ function linkIgnored(root: string, tree: string, entry: string): string | null {
     return name;
 }
 
+/**
+ * The installed dependency folders (`node_modules`, at any depth) of the repository's main checkout, when `root` is a
+ * linked worktree of it: a task worktree toli makes has none until something installs them, and a hook that lints
+ * needs its tools. Returns the main checkout and its folders as git lists them (a path ending in `/`); empty when `root`
+ * is the main checkout, or the main checkout has none.
+ */
+function mainDependencies(attempt: Attempt, root: string): { main: string; entries: string[] } {
+    const common = git(attempt.dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const main = common.code === 0 && basename(common.stdout.trim()) === ".git" ? dirname(common.stdout.trim()) : null;
+    if (main === null || main === root) return { main: root, entries: [] };
+    const ignored = git(main, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
+    const entries = ignored.code === 0 ? ignored.stdout.split("\0") : [];
+    return { main, entries: entries.filter((entry) => basename(entry.replace(/\/$/, "")) === "node_modules") };
+}
+
 /** `name` as a gitignore pattern matching exactly that path from the top: anchored, special characters escaped. */
 function excludePattern(name: string): string {
     return `/${name.replace(/[\\*?[\]!# ]/g, "\\$&")}`;
@@ -187,6 +202,12 @@ export function preCommitHook(attempt: Attempt, limit: HookLimit): void {
     const linked: string[] = [];
     for (const entry of ignored.code === 0 ? ignored.stdout.split("\0") : []) {
         const name = linkIgnored(root, tree, entry);
+        if (name !== null) linked.push(name);
+    }
+    // A linked worktree with no node_modules of its own uses the main checkout's, as its lint tools resolve there.
+    const dependencies = mainDependencies(attempt, root);
+    for (const entry of dependencies.entries) {
+        const name = linkIgnored(dependencies.main, tree, entry);
         if (name !== null) linked.push(name);
     }
     const before = attempt.gitOk(["write-tree"]);
