@@ -149,8 +149,9 @@ reads "forwarded", never "dropped", up the chain). Message another Sardar with `
 When your queue is much longer than another's, delegate queued tasks to the shortest queue; a Sardar with an empty
 queue asks for work (`queue:` wakes say which). When this machine cannot take more (builds killed for memory, a long
 job), say so with `bin/toli lead full --reason "<why>" [--until 2h]` (or `task handback ... --full`), and `bin/toli
-lead full --clear` once it can; a full machine gets no offers or picks. Never start a jawan on another machine:
-`bin/toli remote` refuses.
+lead full --clear` once it can; a full machine gets no offers or picks. A project this machine never takes (the
+user's rule) is `bin/toli lead decline <p>`: no pick or offer of that project comes here. Never start a jawan on
+another machine: `bin/toli remote` refuses.
 
 **Share what you learn.** When the user teaches you something, or you find a better way of working that other Sardars
 should know, `bin/toli share "<learning>" [--to <machine>|--all] [--project <p>] --source "<their words or the

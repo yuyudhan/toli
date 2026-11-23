@@ -157,6 +157,15 @@ export function parseResources(text: string): Resources {
                 throw new Error("field queue.full needs reason, since and until");
             full = { reason, since, until };
         }
+        const rawDeclines: unknown = parts.get("declines");
+        let declines: string[] | undefined;
+        if (rawDeclines !== undefined) {
+            if (!Array.isArray(rawDeclines)) throw new Error("field queue.declines is not a string list");
+            declines = rawDeclines.map((name: unknown) => {
+                if (typeof name !== "string") throw new Error("field queue.declines is not a string list");
+                return name;
+            });
+        }
         queue = {
             queued: count("queued"),
             // A peer on an older toli publishes no slotWaits: its depth stands as it reported it.
@@ -167,6 +176,7 @@ export function parseResources(text: string): Resources {
             jawansQueued: count("jawansQueued"),
             depth: count("depth"),
             ...(full === undefined ? {} : { full }),
+            ...(declines === undefined ? {} : { declines }),
         };
     }
     const verifyOnly = fields.get("verifyOnly") === undefined ? undefined : strings("verifyOnly");

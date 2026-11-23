@@ -8,6 +8,14 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- The queue balancer no longer offers a machine work of a project it never takes. An offer only checked that the
+  target had the project's clone and, for ship work, that it had not marked the project verify-only, so a machine
+  kept for other work (a release rail) was offered another lead's kit tasks every period, five times
+  in one night, and declined each. A lead now says so on its own machine with `bin/toli lead decline <p>` (`--clear`
+  undoes it), kept as `lead.declines` in `config/machine.json` and published as `queue.declines` in `resources --json`:
+  `pick --project <p>` passes that machine over for any shape, the balancing offers list no task of that project
+  for it (the next machine that takes it gets the offer), and `fleet queues` shows it (docs/sardars.md, T2403).
+
 - `bin/toli commit --patch` of a rename (a `git diff -M` patch) now removes the old file from the working tree. The
   patch's paths were read from `git apply --numstat`, which names only a rename's new path, so the old file was
   never brought to the commit: it stayed behind untracked, byte-identical to what the commit removed (a project's two

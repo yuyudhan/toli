@@ -110,7 +110,7 @@ the reason on stderr, 2 an unknown command or, for `pick`, no machine reachable 
     share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
     share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
     share receive (JSON on stdin)
-    lead install|uninstall | status [--json] | run [--once] | attach | full [--reason "..."] [--until 30m|2h|<time>] | full --clear|--status
+    lead install|uninstall | status [--json] | run [--once] | attach | full [--reason "..."] [--until 30m|2h|<time>] | full --clear|--status | decline [<project> [--clear]] [--json]
     needs [--json]
 
 Every request becomes a task (`data/backlog.json`). `start` records which jawan carries it; it refuses a done or

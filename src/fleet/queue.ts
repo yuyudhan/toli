@@ -6,6 +6,7 @@ import { agentState, delegatedAway, nativeAgent } from "../records/agents.ts";
 import { loadBacklog, type Task } from "../records/backlog.ts";
 import { waitsForSlot } from "../records/slot-wait.ts";
 import { staleTaskMinutes } from "../records/stale.ts";
+import { declinedProjects } from "./declines.ts";
 import { currentFull, type Full } from "./full.ts";
 
 /**
@@ -15,7 +16,8 @@ import { currentFull, type Full } from "./full.ts";
  * a slot and the native harness subagents working on its tasks (`subagentJawans`), and `subagents` is that second
  * part. Other active tasks are not counted (a lead's bookkeeping tasks, work delegated elsewhere, a task waiting on
  * anything but a slot here).
- * Machines rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its lead takes no more work.
+ * Machines rank by `depth` per jawan slot (src/fleet/pick.ts). `full`: its lead takes no more work. `declines`: the
+ * projects its lead takes no work of at all (`lead decline`, src/fleet/declines.ts), present only when there are any.
  */
 export type Queue = {
     queued: number;
@@ -29,6 +31,7 @@ export type Queue = {
     jawansQueued: number;
     depth: number;
     full?: Full;
+    declines?: string[];
 };
 
 /** The ids of the tasks a run of this machine works on, running or waiting for a slot. */
@@ -99,6 +102,7 @@ export function localQueue(): Queue {
     const jawansRunning = runs.filter((entry) => RUNNING.includes(entry.status)).length + subagents;
     const jawansQueued = runs.filter((entry) => entry.status === "queued").length;
     const full = currentFull();
+    const declines = declinedProjects();
     return {
         queued,
         slotWaits,
@@ -109,6 +113,7 @@ export function localQueue(): Queue {
         jawansQueued,
         depth: waiting.length + jawansRunning + jawansQueued,
         ...(full === null ? {} : { full }),
+        ...(declines.length === 0 ? {} : { declines }),
     };
 }
 

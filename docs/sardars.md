@@ -348,6 +348,7 @@ Rules that keep the list consistent without locks across machines:
 
     bin/toli fleet queues [--json]       # every machine's queue, lightest per jawan slot first
     bin/toli lead full [--reason "..."] [--until 2h] | --clear | --status
+    bin/toli lead decline [<project> [--clear]] [--json]
     bin/toli pick [--project <p>] [--shape ship|scout] [--json]
 
 Each machine publishes its queue in `bin/toli resources --json` (`queue`: queued, active and held tasks, `slotWaits`,
@@ -365,8 +366,8 @@ it reported it. `pick` and
 `fleet queues` rank machines by depth per jawan slot (`capacity.maxRuns`), lightest first; on equal load a machine
 with the project's clone wins, then this machine, then name order. CPU load, memory and disk are shown for
 information and are never a reason to pass a machine over: a machine busy with builds but with an empty queue gets
-work first. Left out: an unreachable machine, a full one (below), one without the project's clone when its URL is
-unknown here, or, for ship work, one that marked the project verify-only (below).
+work first. Left out: an unreachable machine, a full one (below), one that declines the project (below), one without
+the project's clone when its URL is unknown here, or, for ship work, one that marked the project verify-only (below).
 
 **A full machine.** A lead whose machine cannot take more (builds killed for memory, a long job running) says so:
 `bin/toli lead full --reason "<why>" [--until 30m|2h|<ISO time>]`, ended by `--until` or `bin/toli lead full
@@ -385,12 +386,22 @@ delegated task on. Verify work goes with `--verify` (`bin/toli delegate <machine
 back on arrival with the reason, and the originator's task is queued again. Details:
 [projects.md](projects.md#verify-only-machines).
 
+**A machine that declines a project.** A lead whose machine takes no work of a project at all (the user keeps it for
+other work, such as a release rail, whether or not it has the clone) says so on that machine: `bin/toli lead decline
+<p>` (`bin/toli lead decline <p> --clear` undoes it; `bin/toli lead decline` lists them). Each lead sets only its own
+machine's list, kept as `lead.declines` in its `config/machine.json` and published with its queue (`queue.declines`
+in `resources --json`, beside `full`). `pick --project <p>` then passes it over for every shape (ship, scout and
+verify work alike), the other leads' balancing offers never list a task of that project for it (an offer goes to
+the next machine that takes it, or none is posted), `fleet queues` shows `declines <p>`, and its own ask for work
+names the projects it declines. Unlike verify-only, this needs no registered project there.
+
 Balancing between leads: every `lead.balanceMinutes` the lead service compares queue depths. When this machine's
 depth is at least `lead.balanceGap` (default 3) above the shortest queue, it wakes its own lead with an offer
 (`delegate queued work to <machine>`, listing only queued tasks and slot waits no jawan works on, no other machine
 has, and that
 machine can take: not delegated here by another machine (the balancer never bounces work or delegates it on, so
-verify work that machine delegated never goes back to it), not pinned here, and of a project that machine has a
+verify work that machine delegated never goes back to it), not pinned here, not of a project that machine declines
+(above), and of a project that machine has a
 clone of: the `projects` its `resources --json` publishes, so a machine that registered only some projects is only
 offered those (`pick` and `delegate` still accept a project whose git URL is registered here). Each listed command
 ends in `--for T<n>`, so taking it marks the local task delegated away: it leaves this machine's queue and its

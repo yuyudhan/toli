@@ -77,7 +77,7 @@ const USAGE = `usage: bin/toli <command> [args]
   share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
   share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
   share receive (JSON on stdin)
-  lead install|uninstall | status [--json] | run [--once] | attach | full [--reason "..."] [--until 30m|2h|<time>] | full --clear|--status
+  lead install|uninstall | status [--json] | run [--once] | attach | full [--reason "..."] [--until 30m|2h|<time>] | full --clear|--status | decline [<project> [--clear]] [--json]
   needs [--json]
   commit <project> [--task T<n>] -m "<message>"... [--merge <ref> [--resolved]] [--patch <file>]... [--allow-revert <sha>]... [--patch-out <file>] [-- <path>...]
     (--resolved -- [<conflicted paths>] [<merged paths you fix>]: fixes land in the merge, as Merge-amended: trailers; a clean merge too)

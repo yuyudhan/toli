@@ -12,6 +12,7 @@ import { receivingNow } from "../peer/receiving.ts";
 import { ensureListener } from "../peer/supervise.ts";
 import { takeWake, wakeFormat, wakeMessage } from "../records/wake.ts";
 import { runtimeSuperseded } from "../release/runtime.ts";
+import { declineCommand } from "./declines.ts";
 import { machineDispatch } from "./dispatch.ts";
 import { fullCommand } from "./full.ts";
 import { installLeadService, leadStatus, printStatus, uninstallLeadService } from "./lead-service.ts";
@@ -239,12 +240,17 @@ export async function attachLead(): Promise<number> {
 }
 
 const USAGE =
-    "usage: toli lead install|uninstall|status [--json]|run [--once]|attach|full [--reason ...] [--until 2h] [--clear|--status]";
+    "usage: toli lead install|uninstall|status [--json]|run [--once]|attach|full [--reason ...] [--until 2h] [--clear|--status]" +
+    "|decline [<project> [--clear]] [--json]";
 
 export async function leadCommand(argv: string[]): Promise<number> {
     const [sub, ...rest] = argv;
     if (sub === "full") {
         fullCommand(rest);
+        return 0;
+    }
+    if (sub === "decline") {
+        declineCommand(rest);
         return 0;
     }
     const args = new Args(rest, { booleans: ["json", "once"] });

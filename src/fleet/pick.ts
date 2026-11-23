@@ -70,13 +70,24 @@ export function refusesShip(resources: Resources, project: string): boolean {
     return resources.verifyOnly?.includes(project) === true;
 }
 
+/** Why a machine that declined `project` (`lead decline`) gets no work of it (pick, the balancing offers). */
+export function declinesText(project: string): string {
+    return `declines ${project}: it takes no work of ${project}`;
+}
+
+/** Whether `resources` says its machine takes no work of `project` at all (`bin/toli lead decline <p>` there). */
+export function declines(resources: Resources, project: string): boolean {
+    return resources.queue?.declines?.includes(project) === true;
+}
+
 /**
  * Rank machines for one unit of work by queue depth per jawan slot (queued tasks + running and waiting jawans, over
  * `capacity.maxRuns`), lightest first; on equal load a machine with the project's clone wins, then this machine, then
  * name order. A machine whose toli reports no queue ranks after every known queue. Load, memory, disk and `available`
  * never pass a machine over: a machine busy with builds but with an empty queue gets work first. Rejected: an
- * unreachable machine, one whose lead said it is full (`lead full`), and with a project, one without the clone when
- * the project's URL is not known here, or (for ship work, the default shape) one that marked it verify-only.
+ * unreachable machine, one whose lead said it is full (`lead full`), and with a project, one that declined it (`lead
+ * decline`, whatever the shape), one without the clone when the project's URL is not known here, or (for ship work,
+ * the default shape) one that marked it verify-only.
  */
 export function rankMachines(entries: FleetEntry[], project?: Work): PickResult {
     const candidates: Candidate[] = [];
@@ -92,6 +103,10 @@ export function rankMachines(entries: FleetEntry[], project?: Work): PickResult 
         const full = entry.resources.queue?.full;
         if (full !== undefined) {
             rejected.push({ machine: entry.machine, reasons: [fullText(full)] });
+            continue;
+        }
+        if (project !== undefined && declines(entry.resources, project.name)) {
+            rejected.push({ machine: entry.machine, reasons: [declinesText(project.name)] });
             continue;
         }
         if (

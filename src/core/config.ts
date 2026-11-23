@@ -127,7 +127,8 @@ export type Machine = {
      * `sessionMemoryGB` (default 8, src/fleet/session-memory.ts): a live interactive session whose resident memory
      * passes this is told once, by an inbox item to this machine's lead, to stow and restart; toli never stops it.
      * `hideSardarChatter` (default true, src/records/wake.ts, docs/sardars.md "Hide Sardar chatter"): the `[toli wake]`
-     * shows one line per new item instead of every body; false shows the bodies.
+     * shows one line per new item instead of every body; false shows the bodies. `declines` (src/fleet/declines.ts,
+     * `bin/toli lead decline <p>`): the projects this machine takes no work of; pick and offers pass it over for them.
      */
     lead?: {
         balanceMinutes?: number;
@@ -137,6 +138,7 @@ export type Machine = {
         silentSessionMinutes?: number;
         sessionMemoryGB?: number;
         hideSardarChatter?: boolean;
+        declines?: string[];
     };
     /**
      * Peer messaging over HTTPS (src/peer/, docs/peers.md): the listener's `port` (default 47123), `bind` ("private",

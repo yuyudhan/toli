@@ -169,7 +169,8 @@ while one is running.
 over `capacity.maxRuns` (active tasks with no jawan here, such as a lead's bookkeeping, work delegated elsewhere or a
 wait on anything but a slot here, and held tasks are not queue). Lightest first;
 on equal load a machine with the project's clone wins, then this machine, then name
-order. Left out: an unreachable machine, one whose lead said it is full (`bin/toli lead full`), or one without the
+order. Left out: an unreachable machine, one whose lead said it is full (`bin/toli lead full`), one whose lead
+declines the project (`bin/toli lead decline <p>`), or one without the
 project's clone when its URL is unknown here; when none is left, `pick` exits 2. Every `lead.balanceMinutes` the
 lead service compares the queues and wakes its lead with an offer or an ask for work
 ([sardars.md](sardars.md#queues-decide-where-work-goes)).

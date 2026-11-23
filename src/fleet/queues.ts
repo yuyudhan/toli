@@ -20,7 +20,7 @@ import { sendToMachine } from "../jobs/outbox.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import { briefPath } from "../records/stale.ts";
 import { fleetStatus } from "./fleet-probe.ts";
-import { rankMachines, refusesShip, verifyOnlyText } from "./pick.ts";
+import { declines, declinesText, rankMachines, refusesShip, verifyOnlyText } from "./pick.ts";
 import { perSlot, type Queue, queueText, slotText, waitingTasks } from "./queue.ts";
 import type { FleetEntry } from "./resources.ts";
 
@@ -58,6 +58,8 @@ type QueueRow = {
     reasons: string[];
     /** The projects it takes no ship work for (`project set <p> --role verify-only` there). */
     verifyOnly: string[];
+    /** The projects it takes no work of at all (`lead decline <p>` there). */
+    declines: string[];
     /** An unreachable machine's last snapshot seen here: when it was taken and its queue then (stale, never ranked). */
     lastSeen: { at: string; queue: Queue | null } | null;
 };
@@ -83,6 +85,7 @@ function queueRows(entries: FleetEntry[]): QueueRow[] {
                 slots: entry.resources?.maxRuns ?? null,
                 reasons: entry.resources === null ? entry.reasons : [],
                 verifyOnly: entry.resources?.verifyOnly ?? [],
+                declines: queue?.declines ?? [],
                 lastSeen: entry.lastSeen === undefined ? null : { at: entry.lastSeen.at, queue: entry.lastSeen.queue },
             },
         ];
@@ -140,7 +143,8 @@ function rowLine(row: QueueRow): string {
     if (row.queue === null) return `${name}: queue unknown (its toli reports no queue)`;
     const slots = row.slots === null ? "" : `, ${slotText(row.queue, row.slots)}`;
     const verifyOnly = row.verifyOnly.length === 0 ? "" : `, verify-only ${row.verifyOnly.join(",")}`;
-    return `${name}: ${queueText(row.queue)}, ${row.load} per jawan slot${slots}${verifyOnly}`;
+    const declined = row.declines.length === 0 ? "" : `, declines ${row.declines.join(",")}`;
+    return `${name}: ${queueText(row.queue)}, ${row.load} per jawan slot${slots}${verifyOnly}${declined}`;
 }
 
 /** `toli fleet queues [--json]`: every machine's queue, shortest first, then a suggested delegation if one is due. */
@@ -208,8 +212,9 @@ type OfferLine = { id: string; line: string };
  * when it has one. A task bound to this machine stays out: delegated here by another machine (work is never bounced
  * or delegated on by the balancer; this covers verify work `target` itself delegated), pinned here (`task pin`), of a
  * project `target` has no clone of (its published `projects`: a machine that registered only some projects takes
- * only those, and an unsolicited offer never asks it to clone one), or ship work of a project `target` marked
- * verify-only (verify work goes, with `--verify`). A scout task's command keeps its shape. Each command ends in
+ * only those, and an unsolicited offer never asks it to clone one), of a project `target` declined (`lead decline`:
+ * no work of it at all, whatever the shape), or ship work of a project `target` marked verify-only (verify work goes,
+ * with `--verify`). A scout task's command keeps its shape. Each command ends in
  * `--for T<n>`, so taking the offer records the delegation on the local task: it leaves this machine's queue (and
  * `fleet check`'s waiting work) as delegated away, instead of being counted here and there.
  */
@@ -221,6 +226,7 @@ function delegateLines(target: FleetEntry): OfferLine[] {
                 task.delegatedBy === undefined &&
                 task.pinned === undefined &&
                 (task.project === "" || cloned.has(task.project)) &&
+                !(target.resources !== null && declines(target.resources, task.project)) &&
                 !(
                     task.shape === "ship" &&
                     task.verify !== true &&
@@ -305,6 +311,9 @@ export async function balancePass(): Promise<string | null> {
         `${machine.name}'s queue is empty; ${deepest.machine}'s is ${deepest.queue.depth} deep (lead.balanceGap ${gap}).`,
         `Hand queued work over with: bin/toli delegate ${machine.name} "<title>" --brief <file> [--project <p>]`,
         ...verifyOnly.map((project) => `No ship work of ${project}: ${machine.name} is ${verifyOnlyText(project)}.`),
+        ...(self.queue.declines ?? []).map(
+            (project) => `No work of ${project}: ${machine.name} ${declinesText(project)}.`,
+        ),
         `Reply with: bin/toli talk ${machine.name} "<reply>"`,
     ];
     const sent = sendToMachine(
