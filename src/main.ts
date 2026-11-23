@@ -135,6 +135,8 @@ const USAGE = `usage: bin/toli <command> [args]
         [--attach "<command>"] [--os <uname>] [--json]
   fleet export | sync
   fleet check [--json] [--wake] [--local]
+  fleet reboot [--drain [--wait <minutes>] [--back <minutes>]] [--self] [--json]
+  fleet drain pause [--minutes <n>] [--json] | status [--json] | resume [--json]
   pick [--project <name>] [--shape ship|scout] [--json]
   exec [--task <id>] (prompt on stdin; runs here only)
   session start|end --pid <n>
@@ -380,12 +382,8 @@ export async function main(argv: string[]): Promise<number> {
         return 2;
     }
     if (wantsHelp(rest)) {
-        out(
-            commandUsage(
-                command,
-                rest.find((word) => !word.startsWith("-")),
-            ),
-        );
+        const sub = rest.find((word) => !word.startsWith("-"));
+        out(commandUsage(command, sub));
         return 0;
     }
     try {

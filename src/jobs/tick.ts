@@ -4,10 +4,11 @@ import { loadMachine, type Machine, pullsItsMessages } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { tryPidLock } from "../core/pid-lock.ts";
 import { now, out, pidAlive, readJson, ToliError } from "../core/util.ts";
+import { alertLowBattery } from "../fleet/battery.ts";
 import { resumeDevStacksWhenIdle } from "../fleet/build-slots.ts";
 import { onOutboxDelivered } from "../fleet/delegate.ts";
 import { keepDiskBeforeWork } from "../fleet/disk-before-work.ts";
-import { currentDiskHold, diskHoldText } from "../fleet/disk-hold.ts";
+import { jobsPause } from "../fleet/dispatch-pause.ts";
 import { idleSessionText, sessionPresence } from "../fleet/idle-session.ts";
 import { runDueFleetCheck } from "../fleet/oversight.ts";
 import type { RunRecord } from "../fleet/resources.ts";
@@ -158,16 +159,16 @@ function failStaleRuns(): string[] {
  * Claim and run every job due on this machine, each in its own headless omp, and wait for all of them.
  * Claiming goes through beginJob's lock, so a job another runner already claimed is skipped, never run twice. A job
  * whose model is paused by a rate/usage limit is skipped, its window kept for one run after the reset. While a disk
- * hold pauses new jobs (src/fleet/disk-hold.ts) none starts; each stays due until the hold lifts.
+ * hold or a fleet reboot's dispatch pause holds new jobs (src/fleet/dispatch-pause.ts) none starts; each stays due
+ * until the pause lifts.
  */
 async function runDueJobs(origin: string): Promise<void> {
     const at = now();
     const machine = loadMachine();
     const due = dueJobs(at, machine);
-    const hold = currentDiskHold();
-    if (hold !== null) {
-        if (due.length > 0)
-            log(`due jobs not started: ${due.map((job) => job.name).join(", ")}: ${diskHoldText(hold)}`);
+    const pause = jobsPause();
+    if (pause !== null) {
+        if (due.length > 0) log(`due jobs not started: ${due.map((job) => job.name).join(", ")}: ${pause.text}`);
         return;
     }
     const runs = due.map(async (job) => {
@@ -253,6 +254,8 @@ export async function tick(): Promise<void> {
     logStep("silent session check failed", alertSilentSession);
     // A lead session past lead.sessionMemoryGB is told once to stow and restart; toli never stops it (session-memory.ts).
     logStep("session memory check failed", alertSessionMemory);
+    // A machine the others depend on, low on battery and discharging, alerts every 15 min until plugged in (battery.ts).
+    logStep("battery check failed", alertLowBattery);
     try {
         const fleet = await runDueFleetCheck();
         if (fleet) log(fleet);

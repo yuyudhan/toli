@@ -108,6 +108,8 @@ export function sandbox(): Sandbox {
     stub("netbird", 'echo "netbird stub: no daemon" >&2; exit 1');
     // Never the host's Docker: the disk keeper removes unused build-cache volumes; a test stubs its own.
     stub("docker", 'echo "docker stub: no daemon" >&2; exit 1');
+    // Never the host's battery: a coordinator's tick on a laptop running the tests would post a low-battery alert.
+    stub("pmset", "echo \"Now drawing from 'AC Power'\"");
     stub(
         "crontab",
         'if [ "$1" = "-l" ]; then echo "no crontab for test" >&2; else echo "crontab stub: writes refused" >&2; fi; exit 1',
@@ -140,6 +142,8 @@ export function sandbox(): Sandbox {
         PLAYWRIGHT_BROWSERS_PATH: join(root, ".playwright"),
         // The disk keeper frees build output no-mistakes runs left in their worktrees: never the host's runs.
         NM_HOME: join(root, ".no-mistakes"),
+        // The low-battery alert reads Linux batteries here (src/fleet/battery.ts): never the host's.
+        TOLI_POWER_SUPPLY_DIR: join(root, ".power_supply"),
         // `disk keep` and `doctor` flag build folders outside the clones under /tmp, $TMPDIR and home: never the host's.
         TOLI_BUILD_SCAN_ROOTS: "",
         // The Claude SessionStart hook appends the lead's build variables here: never to the host session's file.

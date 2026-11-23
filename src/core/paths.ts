@@ -215,6 +215,10 @@ export const paths = {
     diskAlertStamp: () => join(repoRoot(), "state", "disk-alert.stamp"),
     /** Set while the disk is under the emergency level with only build folders in use left: new jobs wait (disk-hold.ts). */
     diskHold: () => join(repoRoot(), "state", "disk-hold.json"),
+    /** Set by `fleet drain pause` (a fleet reboot): new jobs wait until the reboot or `fleet drain resume` (dispatch-pause.ts). */
+    dispatchPause: () => join(repoRoot(), "state", "dispatch-pause.json"),
+    /** When the low-battery alert last went out in this spell on battery (src/fleet/battery.ts). */
+    batteryAlert: () => join(repoRoot(), "state", "battery-alert.json"),
     /** One flock'd file per heavy-build slot, `<n>.lock` (src/fleet/build-slots.ts). */
     buildSlotsDir: () => join(repoRoot(), "state", "build-slots"),
     /** The cargo shim jawans get first on PATH; it routes heavy cargo commands through a build slot. */

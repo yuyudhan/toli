@@ -3,6 +3,8 @@
 import { Args } from "../core/args.ts";
 import { out, printJson, ToliError } from "../core/util.ts";
 import { waitingLines } from "../jobs/outbox-admin.ts";
+import { rebootCommand } from "./drain.ts";
+import { drainCommand } from "./drain-local.ts";
 import { fleetStatus } from "./fleet-probe.ts";
 import { fleetListCommand } from "./fleet-sync.ts";
 import { healthCommand } from "./health.ts";
@@ -23,6 +25,8 @@ const FLEET_USAGE = [
     '  | start [--session <s>] [--window <w>] [--harness <h>] [--key <key>] [--message "<text>"] [--attach "<command>"]',
     "    [--os <uname>] [--json]",
     "  | check [--json] [--wake] [--local] | export | sync",
+    "  | reboot [--drain [--wait <minutes>] [--back <minutes>]] [--self] [--json]",
+    "  | drain pause [--minutes <n>] [--json] | status [--json] | resume [--json]",
 ].join("\n");
 
 /** The `fleet` subcommands that print their report and exit 0. */
@@ -57,6 +61,14 @@ export async function fleetCommand(argv: string[]): Promise<number> {
     const [sub = "", ...rest] = argv;
     if (sub === "say") return await sayCommand(rest);
     if (sub === "start") return await startCommand(rest);
+    if (sub === "reboot") {
+        await rebootCommand(rest);
+        return 0;
+    }
+    if (sub === "drain") {
+        drainCommand(rest);
+        return 0;
+    }
     if (sub === "export" || sub === "sync") {
         fleetListCommand(sub, rest);
         return 0;

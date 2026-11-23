@@ -325,6 +325,8 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
           [--attach "<command>"] [--os <uname>] [--json]
     fleet export | sync
     fleet check [--json] [--wake] [--local]
+    fleet reboot [--drain [--wait <minutes>] [--back <minutes>]] [--self] [--json]
+    fleet drain pause [--minutes <n>] [--json] | status [--json] | resume [--json]
     pick [--project <name>] [--shape ship|scout] [--json]
     exec [--task <id>] (prompt on stdin; runs here only)
 
@@ -349,6 +351,16 @@ Budget, ageing, and retention rules: [memory.md](memory.md). `migrate` moves dat
   off the network, connection refused), it prints one `network fault` line for them instead of one line per host. The
   coordinator's tick runs it every `oversight.fleetCheckMinutes` (default 60), away mode included
   ([fleet.md](fleet.md#oversight)).
+  A machine others depend on (the coordinator, or one with `battery.serves`) that is discharging under
+  `battery.alertPercent` (default 30) is named in it and alerts the inbox itself every 15 minutes
+  ([fleet.md](fleet.md#low-battery)).
+- `fleet reboot`: reboot every other fleet machine in one wave (`--self`: this one too, last), on the user's word
+  only, printing what it cut (gates, push checks and jawans still running). `--drain` first pauses new dispatch on
+  them, waits up to `--wait` minutes (default `reboot.drainWaitMinutes`, 30) for running gates and push checks to
+  finish, reboots, then resumes dispatch on each machine as it comes back (within `--back`, default 10 minutes; a
+  pause ends with the boot it was set in either way). `fleet drain pause|status|resume` is each machine's own step:
+  pause new jobs here (`--minutes`, default 60), show the gates, push checks and jawans running here, or resume
+  ([fleet.md](fleet.md#rebooting-the-fleet)).
 - `build-slot -- <command...>`: run a heavy build in one of this machine's heavy-build slots (`capacity.buildSlots`),
   waiting while all are busy; jawans' cargo goes through it on its own ([fleet.md](fleet.md#heavy-build-slots)). It
   refuses a build outside the registered clones, toli's task worktrees and toli's checkout unless

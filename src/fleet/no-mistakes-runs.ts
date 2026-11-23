@@ -138,6 +138,20 @@ export function runWorktreeUse(path: string, home: string = noMistakesHome()): s
 }
 
 /**
+ * The no-mistakes runs at work on this machine now, the push checks `bin/toli fleet reboot --drain` waits for: each
+ * run record not known to be terminal whose worktree is still on disk, as `no-mistakes run <id> (<status>)`. None when
+ * no-mistakes never ran here; the reason when its state cannot be read.
+ */
+export function runsInProgress(home: string = noMistakesHome()): string[] | string {
+    if (!existsSync(join(home, "state.sqlite"))) return [];
+    const runs = readRuns(home);
+    if (typeof runs === "string") return runs;
+    return runs
+        .filter((record) => TERMINAL[record.status] !== true && record.worktree !== null && existsSync(record.worktree))
+        .map((record) => `no-mistakes run ${record.id} (${record.status})`);
+}
+
+/**
  * A run worktree's build output: what `buildDirs` lists in a checkout, plus the build output inside its other ignored
  * folders (a compose stack's `docker-data/backend/target`); every folder below an ignored, wholly untracked one is
  * ignored and untracked too. Inside one only unmistakable build output counts: a `target` cargo marked as its own

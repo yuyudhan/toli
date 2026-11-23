@@ -160,6 +160,18 @@ export type Machine = {
      * the toli root; default none: Chrome's built-in test pattern). `TOLI_FAKE_VIDEO_FILE` in the environment wins.
      */
     browser?: { fakeVideoFile?: string };
+    /**
+     * The low-battery alert (src/fleet/battery.ts, docs/fleet.md "Low battery"): a machine others depend on (the
+     * coordinator, or one with `serves` set, naming what goes through it, such as "every machine's AI goes through
+     * it" for an auth broker) that runs on battery under `alertPercent` (default 30) alerts the inbox every 15 minutes.
+     */
+    battery?: { alertPercent?: number; serves?: string };
+    /**
+     * `bin/toli fleet reboot` (src/fleet/drain.ts, docs/fleet.md "Rebooting the fleet"): the shell command each machine
+     * runs to reboot (default `sudo -n shutdown -r now`) and how long `--drain` waits for running gates and push checks
+     * (default 30 minutes).
+     */
+    reboot?: { command?: string; drainWaitMinutes?: number };
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

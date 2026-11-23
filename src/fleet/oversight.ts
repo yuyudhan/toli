@@ -2,9 +2,11 @@
 // never pauses, away mode included: every reachable machine with no running jawan (no spawn run and no native
 // subagent) while queued work (or an active task no live run works on) exists for a project cloned there is an idle
 // machine, every active task with no live run on this machine or any reachable one is named, and so is every machine
-// whose configured peer listener is down. Most other machines unreachable the same way read as one network fault, not
-// one fault per host. `--wake` posts the findings as one inbox item (a `[toli wake]` for the lead); the coordinator's
-// tick starts `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no job prompt can skip it.
+// whose configured peer listener is down, and every machine others depend on that is low on battery. Most other
+// machines unreachable the same way read as one network fault, not one fault per host. Each machine's own part is
+// src/fleet/oversight-local.ts. `--wake` posts the findings as one inbox item (a `[toli wake]` for the lead); the
+// coordinator's tick starts `fleet check --wake` every `oversight.fleetCheckMinutes` (default 60), so no job prompt
+// can skip it.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { relative, resolve } from "node:path";
@@ -20,24 +22,12 @@ import {
     sshArgs,
 } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import {
-    isJsonObject,
-    now,
-    out,
-    printJson,
-    readJson,
-    runAsync,
-    ToliError,
-    withLock,
-    writeJsonAtomic,
-} from "../core/util.ts";
-import { listenerProblem } from "../peer/supervise.ts";
-import { loadBacklog, type Task } from "../records/backlog.ts";
+import { now, out, printJson, readJson, runAsync, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
+import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
-import { findStaleTasks, redispatchCommand, staleLine } from "../records/stale.ts";
 import { fleetStatus } from "./fleet-probe.ts";
 import { commonNetworkFault, type NetworkFaultGroup, networkFaultLine } from "./network-fault.ts";
-import { waitingTasks } from "./queue.ts";
+import { type LocalOversight, localOversight, parseLocalOversight, type WaitingWork } from "./oversight-local.ts";
 import type { FleetEntry } from "./resources.ts";
 
 export const DEFAULT_FLEET_CHECK_MINUTES = 60;
@@ -56,19 +46,6 @@ export function fleetCheckMinutes(): number {
     return raw;
 }
 
-/** Work that waits for a machine: a queued task, or an active one no live run works on. */
-export type WaitingWork = { id: string; project: string; status: string; title: string };
-
-/** One machine's own backlog, as `fleet check --local --json` reports it. */
-export type LocalOversight = {
-    machine: string;
-    /** One line per stale active task (src/records/stale.ts staleLine), with what to do about it. */
-    stale: { line: string; command: string }[];
-    waiting: WaitingWork[];
-    /** Why its configured peer listener does not serve, or null (absent from an older toli's report). */
-    listener: string | null;
-};
-
 export type IdleMachine = { machine: string; waiting: WaitingWork[] };
 
 export type FleetCheck = {
@@ -82,6 +59,8 @@ export type FleetCheck = {
     idle: IdleMachine[];
     /** Machines whose configured peer listener is down or stuck on a replaced runtime. */
     listeners: { machine: string; problem: string }[];
+    /** Machines others depend on, discharging under their battery threshold: the alert's line for each. */
+    battery: { machine: string; line: string }[];
     unreachable: { machine: string; reason: string }[];
     /** Most other machines unreachable the same way: one fault of the network here, not of each host. */
     networkFault: NetworkFaultGroup | null;
@@ -96,61 +75,6 @@ export type FleetCheck = {
 export function blindText(machines: number, missing: readonly { machine: string }[], what: string): string | null {
     if (missing.length * 2 <= machines) return null;
     return `BLIND: ${missing.length} of ${machines} machines ${what} (${missing.map((entry) => entry.machine).join(", ")})`;
-}
-
-/** This machine's stale active tasks and waiting work, from its own backlog, and its peer listener. */
-export function localOversight(tasks: Task[], at: Date = now()): LocalOversight {
-    // A task waiting on something (`task wait`) needs no dispatch, so it is neither stale nor waiting work here, unless
-    // it is a slot wait the queue counts (src/fleet/queue.ts waitingTasks: not run here, not delegated away): an idle
-    // machine can take that.
-    const stale = findStaleTasks(tasks, at).filter((task) => task.reason !== "waiting");
-    const staleIds = new Set(stale.map((task) => task.id));
-    const slotWaits = new Set(
-        waitingTasks(tasks)
-            .filter((task) => task.status === "active")
-            .map((task) => task.id),
-    );
-    return {
-        machine: hasMachine() ? loadMachine().name : "(unnamed)",
-        stale: stale.map((task) => ({ line: staleLine(task, at), command: redispatchCommand(task) })),
-        waiting: tasks
-            .filter(
-                (task) =>
-                    task.status === "queued" ||
-                    slotWaits.has(task.id) ||
-                    (task.status === "active" && staleIds.has(task.id)),
-            )
-            .map((task) => ({ id: task.id, project: task.project, status: task.status, title: task.title })),
-        listener: listenerProblem(),
-    };
-}
-
-/** Parse another machine's `fleet check --local --json`, rejecting anything not shaped like one. */
-export function parseLocalOversight(text: string): LocalOversight {
-    const value: unknown = JSON.parse(text);
-    if (!isJsonObject(value) || typeof value.machine !== "string") throw new Error("not a fleet check report");
-    const list = (key: string): Record<string, unknown>[] => {
-        const entries = value[key];
-        if (!Array.isArray(entries) || !entries.every(isJsonObject)) throw new Error(`field ${key} is not a list`);
-        return entries;
-    };
-    const str = (entry: Record<string, unknown>, key: string): string => {
-        const field = entry[key];
-        if (typeof field !== "string") throw new Error(`field ${key} is not a string`);
-        return field;
-    };
-    const listener = value.listener;
-    return {
-        machine: value.machine,
-        stale: list("stale").map((entry) => ({ line: str(entry, "line"), command: str(entry, "command") })),
-        waiting: list("waiting").map((entry) => ({
-            id: str(entry, "id"),
-            project: str(entry, "project"),
-            status: str(entry, "status"),
-            title: str(entry, "title"),
-        })),
-        listener: typeof listener === "string" ? listener : null,
-    };
 }
 
 /**
@@ -173,6 +97,7 @@ export function checkFleet(
         stale: [],
         idle: [],
         listeners: [],
+        battery: [],
         unreachable: [],
         networkFault: commonNetworkFault(entries),
         unchecked: [],
@@ -187,6 +112,7 @@ export function checkFleet(
         const mine = typeof report === "object" ? report : undefined;
         for (const stale of mine?.stale ?? []) check.stale.push({ machine: entry.machine, ...stale });
         if (mine?.listener) check.listeners.push({ machine: entry.machine, problem: mine.listener });
+        if (mine?.battery) check.battery.push({ machine: entry.machine, line: mine.battery });
         // Busy when any jawan runs: spawn runs and the native subagents a lead starts in its session (the queue's
         // jawansRunning, as `fleet queues` shows it); `activeRuns` alone misses the subagents.
         if (entry.resources.activeRuns > 0 || (entry.resources.queue?.jawansRunning ?? 0) > 0) continue;
@@ -206,7 +132,18 @@ export function checkFleet(
 
 /** Whether the check found anything the lead must act on: a blind check is one. */
 export function needsAction(check: FleetCheck): boolean {
-    return check.blind || check.stale.length > 0 || check.idle.length > 0 || check.listeners.length > 0;
+    return (
+        check.blind ||
+        check.stale.length > 0 ||
+        check.idle.length > 0 ||
+        check.listeners.length > 0 ||
+        check.battery.length > 0
+    );
+}
+
+/** Whether the check found work to dispatch or a listener down (not counting blindness or a low battery). */
+function foundWork(check: FleetCheck): boolean {
+    return check.stale.length > 0 || check.idle.length > 0 || check.listeners.length > 0;
 }
 
 function listenersDown(check: FleetCheck): string {
@@ -214,9 +151,14 @@ function listenersDown(check: FleetCheck): string {
     return count === 0 ? "" : `, ${count} peer listener${count === 1 ? "" : "s"} down`;
 }
 
+function onBattery(check: FleetCheck): string {
+    const count = check.battery.length;
+    return `${count} machine${count === 1 ? "" : "s"} on battery`;
+}
+
 /**
- * The one batched message: blindness first, then stale tasks, idle machines, down listeners, and what was not
- * checked. A blind check is never "all clear".
+ * The one batched message: blindness first, then machines on battery, stale tasks, idle machines, down listeners,
+ * and what was not checked. A blind check is never "all clear".
  */
 export function fleetCheckText(check: FleetCheck): string {
     const missing = [...check.unreachable, ...check.unchecked];
@@ -231,17 +173,23 @@ export function fleetCheckText(check: FleetCheck): string {
         ];
         return `fleet check at ${check.at}: all clear, no idle machine has waiting work and no active task lacks a live run${notes.length === 0 ? "" : `; not checked: ${notes.join(", ")}`}`;
     }
-    const found = check.stale.length > 0 || check.idle.length > 0 || check.listeners.length > 0;
+    const found = foundWork(check);
     const lines = found
         ? [
-              `fleet check at ${check.at}: ${blind}${check.stale.length} active task${check.stale.length === 1 ? "" : "s"} with no live run, ${check.idle.length} idle machine${check.idle.length === 1 ? "" : "s"} with waiting work${listenersDown(check)}`,
+              `fleet check at ${check.at}: ${blind}${check.stale.length} active task${check.stale.length === 1 ? "" : "s"} with no live run, ${check.idle.length} idle machine${check.idle.length === 1 ? "" : "s"} with waiting work${listenersDown(check)}${check.battery.length > 0 ? `, ${onBattery(check)}` : ""}`,
               "Lead: dispatch now (toli-dispatch skill), spreading the waiting work over the idle machines; away mode changes nothing here.",
           ]
-        : [`fleet check at ${check.at}: ${blind}so no all clear: what they run is unknown`];
+        : check.blind
+          ? [`fleet check at ${check.at}: ${blind}so no all clear: what they run is unknown`]
+          : [`fleet check at ${check.at}: ${onBattery(check)}`];
     if (check.blind)
         lines.push(
             "Lead: find out why they cannot be reached (bin/toli fleet status; ssh, VPN, a machine asleep, swapping or overloaded) before trusting any fleet answer.",
         );
+    if (check.battery.length > 0) {
+        lines.push("", "On battery, discharging (plug in):");
+        for (const entry of check.battery) lines.push(`- ${entry.line}`);
+    }
     if (check.stale.length > 0) {
         lines.push("", "Active tasks with no live run:");
         for (const entry of check.stale) lines.push(`- [${entry.machine}] ${entry.line}`, `  ${entry.command}`);
@@ -312,11 +260,11 @@ export async function runFleetCheck(at: Date = now()): Promise<FleetCheck> {
 /** Post the findings as one inbox item when the lead must act; returns the item's path, else null. */
 export function postFleetCheck(check: FleetCheck): string | null {
     if (!needsAction(check)) return null;
-    const found = check.stale.length > 0 || check.idle.length > 0 || check.listeners.length > 0;
     const findings = `${check.stale.length} stale task${check.stale.length === 1 ? "" : "s"}, ${check.idle.length} idle machine${check.idle.length === 1 ? "" : "s"} with waiting work${listenersDown(check)}`;
     const missing = check.unreachable.length + check.unchecked.length;
     const blind = check.blind ? `BLIND, ${missing} of ${check.machines} machines not checked` : "";
-    const title = [blind, found ? findings : ""].filter((part) => part !== "").join("; ");
+    const battery = check.battery.length > 0 ? onBattery(check) : "";
+    const title = [blind, foundWork(check) ? findings : "", battery].filter((part) => part !== "").join("; ");
     return addInboxItem(hasMachine() ? loadMachine().name : "toli", `fleet check: ${title}`, fleetCheckText(check));
 }
 
@@ -373,7 +321,14 @@ export async function checkCommand(argv: string[]): Promise<void> {
         if (args.bool("wake")) throw new ToliError("--local reports this machine's backlog only; it never posts");
         const report = localOversight(loadBacklog().tasks);
         if (args.bool("json")) printJson(report);
-        else out([...report.stale.map((entry) => entry.line), `${report.waiting.length} waiting`].join("\n"));
+        else
+            out(
+                [
+                    ...report.stale.map((entry) => entry.line),
+                    ...(report.battery === null ? [] : [report.battery]),
+                    `${report.waiting.length} waiting`,
+                ].join("\n"),
+            );
         return;
     }
     const check = await runFleetCheck();

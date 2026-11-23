@@ -687,6 +687,60 @@ Both intervals live in `config/machine.json` (defaults shown):
 { "oversight": { "staleTaskMinutes": 15, "fleetCheckMinutes": 60, "idleMachineMinutes": 30 } }
 ```
 
+### Low battery
+
+A machine the others depend on going to sleep stops them all: the coordinator holds every machine's inbox, holds and
+fleet checks, and a machine may host a service others go through (an auth broker every machine's AI uses). Every tick
+reads such a machine's battery (`pmset -g batt` on macOS, `/sys/class/power_supply` on Linux). While it is
+discharging under `battery.alertPercent` (default 30) it posts one inbox item, forwarded to the coordinator on a
+worker, and repeats it at most every 15 minutes while it stays so:
+
+    m1 on battery at 27%, discharging: plug it in; every machine's AI goes through it
+
+Plugged in (charging, full, or AC attached and not charging) the spell ends, and the next one alerts at once. A
+machine with no battery, and a worker nobody depends on, never alerts. The hourly `fleet check` lists the same line
+under `On battery, discharging (plug in):` (`--json`: `battery`), and posts it even when nothing else needs the lead.
+The coordinator alerts by itself; a worker does when its `battery.serves` says what goes through it, and that text
+ends the line (the coordinator's default: `it is the coordinator, every machine's inbox, holds and fleet checks go
+through it`):
+
+```json
+{ "battery": { "alertPercent": 30, "serves": "every machine's AI goes through it" } }
+```
+
+## Rebooting the fleet
+
+    bin/toli fleet reboot [--drain [--wait <minutes>] [--back <minutes>]] [--self] [--json]
+    bin/toli fleet drain pause [--minutes <n>] [--json] | status [--json] | resume [--json]
+
+A reboot ends whatever runs on a machine: rebooting every machine at once mid-gate loses every jawan run, gate and
+push check in flight. Rebooting stays on the user's word. `fleet reboot` reboots every other machine in
+`config/fleet.json` in one wave (`--self` adds this one, rebooted last), and prints what it cut: the gates, push
+checks and jawans still running then, and any machine it could not read. With `--drain` it first:
+
+1. **Pauses dispatch** on every machine of the wave (`fleet drain pause` there, `state/dispatch-pause.json`): as under
+   a disk hold, queued jawan runs stay queued, a new one queues (`spawn --now` starts it anyway) and the tick starts
+   no scheduled job, while running work goes on. A machine it cannot pause (unreachable, or an older toli without
+   `fleet drain`) is still rebooted, and named as cut (`not drained: <why>`).
+2. **Waits** for the running gates (`gate run`, `push --gate`, the pre-push hook) and push checks (no-mistakes runs
+   whose worktree is still there) to finish, reading every paused machine every 30 seconds, for at most `--wait`
+   minutes (default `reboot.drainWaitMinutes`, 30). It prints what it waited on, and whether all finished or the
+   bound ran out. Jawans are not waited for: they are named as cut, and the oversight re-dispatches a jawan a reboot
+   killed ([Oversight](#oversight)).
+3. **Reboots** the wave at once: each machine runs `reboot.command` (default `sudo -n shutdown -r now`, so it needs
+   passwordless sudo for `shutdown`) detached, 10 seconds after it answers.
+4. **Resumes dispatch** on each machine as it answers on a new boot, within `--back` minutes (default 10), and at once
+   on one whose reboot did not start. One still on its old boot at the bound did not reboot: it resumes and is named
+   `not rebooted`. A pause belongs to the boot it was set in, so a machine that comes back later resumes by itself,
+   and a pause nobody lifts lapses `--wait` plus `--back` plus 30 minutes after it was set.
+
+Leads in tmux do not come back by themselves: `bin/toli fleet start` starts them. `fleet drain status` shows one
+machine's pause and the gates, push checks and jawans running there; `fleet drain resume` lifts its pause by hand.
+
+```json
+{ "reboot": { "command": "sudo -n shutdown -r now", "drainWaitMinutes": 30 } }
+```
+
 ## Keeping machines in sync
 
 Tracked files (contract, skills, CLI, docs) travel through git; private files never leave their machine.

@@ -23,8 +23,8 @@ import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
 import { keepDiskBeforeWork } from "../fleet/disk-before-work.ts";
-import { currentDiskHold } from "../fleet/disk-hold.ts";
 import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
+import { jobsPause } from "../fleet/dispatch-pause.ts";
 import { LEAD_TURN_ENV } from "../fleet/full.ts";
 import { subagentJawans } from "../fleet/queue.ts";
 import { capacityFor, stallMinutes } from "../fleet/resources.ts";
@@ -287,8 +287,7 @@ export function startOrQueue(input: NewRun, options: { now: boolean; guard?: () 
                     delete entry.waitingOn;
                 }
             });
-        const free =
-            hold === null && startDue(input, now()) && busySlots() < jawanSlots() && currentDiskHold() === null;
+        const free = hold === null && startDue(input, now()) && busySlots() < jawanSlots() && jobsPause() === null;
         if (options.now || free) return launch(run.id);
         return updateRun(run.id, (record) => {
             record.queuedAt = record.startedAt;
@@ -344,13 +343,13 @@ function closedTasks(): Map<string, string> {
  * task is done or dropped by now (a drop elsewhere, a handback, or a race with `task drop`) is cancelled instead, never
  * started; the backlog is read under the slots lock, which `task drop` takes to cancel. A run that cannot start is
  * recorded failed. `diskKept`: the caller has seen to the disk already (the minute tick starts the keeper detached). A
- * headless lead turn under `lead.dispatch: "subagents"` is refused and starts none; while a disk hold pauses new jobs
- * or a network hold applies none start.
+ * headless lead turn under `lead.dispatch: "subagents"` is refused and starts none; while a disk hold or a fleet
+ * reboot's dispatch pause holds new jobs (src/fleet/dispatch-pause.ts) or a network hold applies none start.
  */
 export function startQueued(options: { diskKept?: boolean } = {}): DrainResult {
     refuseHeadlessDispatch("start queued runs");
     if (options.diskKept !== true) keepDiskBeforeWork();
-    if (currentDiskHold() !== null) return { started: [], failed: [], cancelled: [], held: null };
+    if (jobsPause() !== null) return { started: [], failed: [], cancelled: [], held: null };
     const hold = networkHold();
     return withLock(paths.lock(SLOTS_LOCK), () => {
         const result: DrainResult = { started: [], failed: [], cancelled: [], held: hold?.line ?? null };

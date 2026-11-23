@@ -11,8 +11,8 @@ import { Args, parseMinutes } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { out, printJson, ToliError, warn } from "../core/util.ts";
-import { currentDiskHold, diskHoldText } from "../fleet/disk-hold.ts";
 import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
+import { jobsPause } from "../fleet/dispatch-pause.ts";
 import { refuseHeadlessSpawnWhenFull } from "../fleet/full.ts";
 import { agentName } from "../harness/agents.ts";
 import { defaultHarness, type Harness, harnessConfig, parseHarness, requireInstalled } from "../harness/harness.ts";
@@ -264,11 +264,11 @@ export function spawnCommand(argv: string[]): void {
     }
     if (run.replaces !== undefined) out(`replaced ${run.replaces.join(", ")} (stopped as \`bin/toli run kill\` does)`);
     if (run.status === "queued") {
-        const hold = currentDiskHold();
+        const pause = jobsPause();
         const host = heldHost();
         const why =
-            hold !== null
-                ? `${diskHoldText(hold)}; it starts once the disk keeper lifts the pause (\`spawn --now\` starts it anyway)`
+            pause !== null
+                ? `${pause.text}; it starts once ${pause.lifts} (\`spawn --now\` starts it anyway)`
                 : host !== null
                   ? `the model API host ${host} does not resolve; it starts once it does (\`spawn --now\` starts it anyway)`
                   : `all ${jawanSlots()} jawan slots (capacity.maxRuns) are busy; it starts when one frees`;
