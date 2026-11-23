@@ -6,7 +6,7 @@
 // carries the whole task, so a new one replaces the one still waiting for that machine (T2226).
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { coordinatorName, loadFleet, loadMachine } from "../core/config.ts";
+import { coordinatorName, type FleetMachine, fleetMachine, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, requireName, stamp, ToliError, warn } from "../core/util.ts";
 import { type OutboxItem, sendNow } from "../jobs/outbox.ts";
@@ -367,8 +367,8 @@ export function dropOlderReports(
 }
 
 /**
- * Send `task` as it is now to its delegator and every machine above it (`upstream`); a failure is a warning (the
- * outbox keeps it for the tick).
+ * Send `task` as it is now to its delegator and every machine above it (`upstream`), each a fleet machine or a paired
+ * peer (over HTTPS, docs/peers.md); a failure is a warning (the outbox keeps it for the tick).
  */
 export function reportToDelegator(task: Task): void {
     const by = task.delegatedBy;
@@ -376,9 +376,12 @@ export function reportToDelegator(task: Task): void {
     const owner = loadMachine().name;
     const at = stamp(now());
     for (const to of reportTargets(by)) {
-        const target = loadFleet().machines.find((entry) => entry.name === to.machine);
-        if (target === undefined) {
-            warn(`${task.id}: delegator ${to.machine} is not in config/fleet.json; its report was not sent`);
+        let target: FleetMachine;
+        try {
+            target = fleetMachine(to.machine);
+        } catch (error) {
+            if (!(error instanceof ToliError)) throw error;
+            warn(`${task.id}: its report to ${to.machine} was not sent: ${error.message}`);
             continue;
         }
         const update = delegationUpdate(owner, task, to);
