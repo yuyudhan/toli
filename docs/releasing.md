@@ -59,6 +59,11 @@ the owner's word for that release, and pushing needs a second, explicit yes at t
    instead), whose notes are the tag's message (`toli vX.Y.Z` and the CHANGELOG section). `--verify-tag` makes gh
    refuse rather than create a tag of its own. Needs `gh` logged in with push access to the repository; when it
    fails, the tag is already pushed and the same `gh release create` command finishes the release.
+9. Then keeps only the newest 5 GitHub Release entries (`GITHUB_RELEASES_KEPT` in `src/release/release.ts`), by
+   creation time: it deletes each older one with `gh release delete <tag> --repo <owner/name> --yes`. It never passes
+   `--cleanup-tag`, so every version tag and every CHANGELOG section stays. Each release therefore removes the oldest
+   entry from the releases page. Needs `gh` logged in; when it fails, the release and tag are already published and
+   the entries can be pruned by hand with the same `gh release delete` command.
 
 `--dry-run` clones `develop` into a temporary directory (with `main` from this repository), runs `bun install`, and
 does steps 1-5 there (the verify run included), prints the release commit and tag, and removes the clone. It never

@@ -6,7 +6,11 @@ import {
     classifyCommit,
     compareVersions,
     dateChangelogSection,
+    GITHUB_RELEASES_KEPT,
     githubReleaseArgs,
+    githubReleaseDeleteArgs,
+    githubReleaseListArgs,
+    githubReleasesToPrune,
     githubRepo,
     latestTag,
     nextVersion,
@@ -49,6 +53,51 @@ describe("the GitHub Release step (T902)", () => {
             "--latest",
         ]);
         expect(githubReleaseArgs("o/n", "v1.0.0-rc.1", "f").slice(-2)).toEqual(["--prerelease", "--latest=false"]);
+    });
+});
+
+describe("the GitHub Releases prune step", () => {
+    const entry = (tag: string, createdAt: string) => ({ tag, createdAt });
+
+    test("keeps the 5 newest entries by creation time, whatever order they arrive in", () => {
+        const releases = [
+            entry("v0.2.0", "2026-10-30T15:06:05Z"),
+            entry("v0.7.2", "2026-11-23T15:52:20Z"),
+            entry("v0.5.40", "2026-11-18T21:41:01Z"),
+            entry("v0.7.1", "2026-11-21T23:37:18Z"),
+            entry("v0.6.0", "2026-11-21T10:26:38Z"),
+            entry("v0.5.41", "2026-11-19T00:14:53Z"),
+            entry("v0.5.39", "2026-11-18T20:05:30Z"),
+        ];
+        expect(githubReleasesToPrune(releases, 5)).toEqual(["v0.5.39", "v0.2.0"]);
+    });
+
+    test("prunes nothing while the page holds no more than the kept count", () => {
+        const releases = [entry("v1.0.0", "2026-11-01T00:00:00Z"), entry("v1.0.1", "2026-11-02T00:00:00Z")];
+        expect(githubReleasesToPrune(releases, 5)).toEqual([]);
+    });
+
+    test("keeps 5 by default, and a new publish leaves only the oldest entry to delete", () => {
+        expect(GITHUB_RELEASES_KEPT).toBe(5);
+        const six = Array.from({ length: 6 }, (_, i) => entry(`v0.${i}.0`, `2026-11-0${i + 1}T00:00:00Z`));
+        expect(githubReleasesToPrune(six)).toEqual(["v0.0.0"]);
+    });
+
+    test("lists the entries as JSON and deletes one without --cleanup-tag, so no tag is removed", () => {
+        expect(githubReleaseListArgs("o/n")).toEqual([
+            "gh",
+            "release",
+            "list",
+            "--repo",
+            "o/n",
+            "--limit",
+            "1000",
+            "--json",
+            "tagName,createdAt",
+        ]);
+        const args = githubReleaseDeleteArgs("o/n", "v0.2.0");
+        expect(args).toEqual(["gh", "release", "delete", "v0.2.0", "--repo", "o/n", "--yes"]);
+        expect(args).not.toContain("--cleanup-tag");
     });
 });
 

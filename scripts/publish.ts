@@ -34,6 +34,9 @@ import {
     DEVELOP_BRANCH,
     dateChangelogSection,
     githubReleaseArgs,
+    githubReleaseDeleteArgs,
+    githubReleaseListArgs,
+    githubReleasesToPrune,
     githubRepo,
     latestTag,
     nextVersion,
@@ -294,6 +297,28 @@ function publishGithubRelease(root: string, remote: string, tag: string): void {
     }
 }
 
+/**
+ * Step 8: keep only the newest GitHub Release entries (GITHUB_RELEASES_KEPT), deleting the older ones. Tags are never
+ * deleted: githubReleaseDeleteArgs passes no --cleanup-tag.
+ */
+function pruneGithubReleases(root: string, remote: string): void {
+    const repo = githubRepo(remoteUrl(root, remote));
+    if (repo === null) return;
+    const listed: unknown = JSON.parse(capture(root, githubReleaseListArgs(repo)));
+    if (!Array.isArray(listed)) throw new ReleaseError("gh release list did not return a JSON array");
+    const releases = listed.map((entry) => {
+        const tag: unknown = Reflect.get(Object(entry), "tagName");
+        const createdAt: unknown = Reflect.get(Object(entry), "createdAt");
+        if (typeof tag !== "string" || typeof createdAt !== "string")
+            throw new ReleaseError("gh release list returned an entry without tagName and createdAt");
+        return { tag, createdAt };
+    });
+    for (const tag of githubReleasesToPrune(releases)) {
+        stream(root, githubReleaseDeleteArgs(repo, tag));
+        say(`release: pruned GitHub Release ${tag} (its tag is kept)`);
+    }
+}
+
 function dryRun(request: string, remote: string): void {
     if (capture(ROOT, ["git", "status", "--porcelain"]) !== "")
         say(`release: dry run uses the committed ${DEVELOP_BRANCH}; uncommitted changes here are not part of it`);
@@ -335,7 +360,10 @@ try {
         const tag = cutRelease(ROOT, request);
         const pushed = pushPrompt(ROOT, remote, tag);
         stream(ROOT, [process.execPath, join(ROOT, "bin", "toli"), "self", "sync"]);
-        if (pushed) publishGithubRelease(ROOT, remote, tag);
+        if (pushed) {
+            publishGithubRelease(ROOT, remote, tag);
+            pruneGithubReleases(ROOT, remote);
+        }
     }
 } catch (error) {
     if (!(error instanceof ReleaseError || error instanceof ToliError)) throw error;
