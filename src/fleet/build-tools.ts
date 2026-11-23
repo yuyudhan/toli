@@ -22,14 +22,17 @@ export function configuredBuildTools(): string[] {
 }
 
 /**
- * Argument words that mark a harness's long-lived idle helper: it keeps the working directory it started in (a
- * project's clone) for its whole life and never builds there, so that directory does not put the clone in use (T2547).
+ * A harness's long-lived idle helper, as its program's file name and its first argument: it keeps the working
+ * directory it started in (a project's clone) for its whole life and never builds there, so that directory does not
+ * put the clone in use (T2547). Only the exact pair counts: a command that merely names the helper (`grep -r
+ * __omp_worker_daemon src`, `cargo test __omp_worker_daemon`) is not one.
  */
-const HARNESS_HELPERS: Record<string, true> = { __omp_worker_daemon: true };
+const HARNESS_HELPERS: { program: string; argument: string }[] = [{ program: "omp", argument: "__omp_worker_daemon" }];
 
-/** Whether a command line is a harness's idle helper (`omp __omp_worker_daemon`): one of its words, exactly. */
+/** Whether a command line is a harness's idle helper (`/path/to/omp __omp_worker_daemon`). */
 export function harnessHelper(args: string): boolean {
-    return args.split(/\s+/).some((word) => HARNESS_HELPERS[word] === true);
+    const [program = "", argument] = args.trim().split(/\s+/);
+    return HARNESS_HELPERS.some((helper) => basename(program) === helper.program && argument === helper.argument);
 }
 
 /**

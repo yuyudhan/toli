@@ -144,7 +144,7 @@ describe("wiping a target between build steps", () => {
         mkdirSync(crate, { recursive: true });
         const machine = quiet();
         // omp's long-lived helper keeps the working directory it started in; it never builds there (T2547).
-        const daemon = { pid: "4110", args: "/usr/local/bin/omp __omp_worker_daemon", files: ["/usr/local/bin/omp"] };
+        const daemon = { pid: "4110", args: "/home/dev/.bun/bin/omp __omp_worker_daemon", files: [] };
         machine.processes.push({ ...daemon, cwd: workspace });
         for (const [pid, args] of [
             ["4111", "cargo build -p store"],
@@ -158,6 +158,23 @@ describe("wiping a target between build steps", () => {
         }
         expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
         expect(existsSync(target)).toBe(false);
+    });
+
+    test("keeps the target while a command that only names omp's worker daemon works in its workspace", () => {
+        const { workspace, target } = workspaceTarget();
+        const machine = quiet();
+        // Only `<path>/omp __omp_worker_daemon` itself is the idle helper (T2547); these merely name it.
+        for (const [pid, args] of [
+            ["4113", "grep -r __omp_worker_daemon src"],
+            ["4114", "bun test -t __omp_worker_daemon"],
+            ["4115", "cargo test __omp_worker_daemon"],
+        ] as const) {
+            machine.processes.push({ pid, args, files: [], cwd: workspace });
+            const busy = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+            expect(busy).toEqual({ wiped: false, reason: `process ${pid} runs in ${workspace}` });
+            expect(existsSync(target)).toBe(true);
+            machine.processes.pop();
+        }
     });
 
     test("keeps the target while a tool in capacity.diskBuildTools runs above its workspace, and only then", () => {

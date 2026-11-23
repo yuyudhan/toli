@@ -117,8 +117,10 @@ its step (`deleted <path>, freed X GB (step 1: idle target)`, `removed docker vo
 it`; a done or dropped task's old jawan tag holds nothing, since that subagent lives on in the lead session and
    moves to other tasks: a follow-up reopens the task first), no running gate checks it (`bin/toli gate run`, `push
 --gate`, the pre-push hook; `skipped <dir>: a gate of <project> (pid N) runs in it`), and no process has its working
-   directory inside it. A harness's idle helper is not such a process: omp's worker daemon (`omp __omp_worker_daemon`,
-   matched by that exact word in its command line) keeps the folder it started in, often a clone, for its whole life
+   directory inside it. A harness's idle helper is not such a process: omp's worker daemon (a command line whose
+   program is named `omp` and whose first argument is exactly `__omp_worker_daemon`, such as
+   `~/.bun/bin/omp __omp_worker_daemon`; a command that only names it, like `grep -r __omp_worker_daemon` or
+   `cargo test __omp_worker_daemon`, still counts) keeps the folder it started in, often a clone, for its whole life
    and never builds there (T2547: it held a 122 GB target on a host 6.5 GB from full), so its working
    directory holds neither a checkout here nor a workspace in the wipe below; what it runs, maps or holds open still
    does. The same check holds `node_modules/` and `dist/` in step 2. The wipe still takes cargo's locks
