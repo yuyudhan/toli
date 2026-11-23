@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # pre-push: the full gate. A gitleaks scan of the commits being pushed, then `bun run check` (= `just check`:
-# fmt-check, lint, typecheck, tests). A pushed commit that already passed (`bin/toli gate check`) is not checked
+# fmt-check, lint, typecheck, tests). A pushed commit that already passed (`bin/toli gate check`: a gate run, a `just
+# check` on that clean commit, or `just release`'s verify of its release commit, T2534) is not checked
 # again. When the checkout is exactly the pushed commit (HEAD, no changed or untracked files), the checks run as a
 # `bin/toli gate`, so the result is recorded for that commit. Otherwise they run on the working tree as they always
 # did, after listing how it differs: that result is not recorded, since it is not the commit's. No copy is made.

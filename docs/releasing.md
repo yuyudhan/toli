@@ -40,13 +40,17 @@ the owner's word for that release, and pushing needs a second, explicit yes at t
    `develop` contains and that no worktree has checked out (each refusal names the command that fixes it).
 2. Computes the version from package.json (or takes the explicit one) and refuses one that is not newer than both
    package.json and the latest `v*` tag, or whose tag already exists.
-3. Runs `bun run verify` (the gate plus the smoke checks).
-4. Bumps `package.json` and writes the CHANGELOG.md section: a section drafted ahead on `develop`
+3. Bumps `package.json` and writes the CHANGELOG.md section: a section drafted ahead on `develop`
    (`## vX.Y.Z - unreleased`) is kept and gets the date; otherwise a `## vX.Y.Z - <date>` section is generated from
    the commits since the last tag (merge and `Release ...` commits skipped), grouped by `feat:` / `fix:` prefixes,
    gitmoji, or the leading verb (Add... -> Added, Fix... -> Fixed, Remove/Drop... -> Removed, the rest Changed).
-5. Commits `Release vX.Y.Z` on `develop`, merges `develop` into `main` (a fast-forward: `main` never gets commits of
-   its own), and creates the annotated tag `vX.Y.Z` on that commit, whose message is the section.
+   Commits it as `Release vX.Y.Z` on `develop`.
+4. Verifies that commit, the exact tree that is tagged and pushed: `bun run check` as a recorded gate
+   (`bin/toli gate run toli --recipe "bun run check"`), then the smoke checks (`scripts/verify.ts`; together they are
+   `bun run verify`). The push's pre-push hook finds the gate's pass for that commit and does not run the suite again.
+   A failure takes the release commit back off `develop`.
+5. Merges `develop` into `main` (a fast-forward: `main` never gets commits of its own) and creates the annotated tag
+   `vX.Y.Z` on the release commit, whose message is the section.
 6. Asks `Push main, develop and vX.Y.Z to origin (<url>)? [y/N]` and pushes all three atomically only on `y`.
    Otherwise it prints the push command to run later, and the `gh release create` command to run after it.
 7. Refreshes this machine's installed runtime (`bin/toli self sync`), so the live session runs the release commit.

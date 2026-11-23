@@ -33,15 +33,22 @@ typecheck:
 test:
     bun run test
 
-# The gate every agent runs before committing: fmt-check, lint, typecheck, test
+# The gate every agent runs before committing: fmt-check, lint, typecheck, test. On a checkout that is exactly its HEAD
+# commit it runs as `bin/toli gate run toli`, so the pass is recorded for that commit's tree and a later push of it
+# (.githooks/pre-push) or `just check` reuses it instead of running the suite again; changed or untracked files: the
+# working tree is checked, unrecorded
 check:
-    bun run check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    changes="$(git status --porcelain)"
+    if [[ -n "$changes" ]]; then exec bun run check; fi
+    TOLI_DEV=1 exec bin/toli gate run toli --recipe "bun run check"
 
 # check plus smoke runs of the CLI (doctor, harness sync --check, setup status) and a file:// install.sh install
 verify:
     bun run verify
 
-# Cut a release on develop: verify, bump, CHANGELOG, commit, merge into main, tag; asks before pushing (--dry-run: temp clone)
+# Cut a release on develop: bump, CHANGELOG, commit, verify that commit (`just check` + smoke), merge into main, tag; asks before pushing (--dry-run: temp clone)
 release *args:
     bun scripts/publish.ts {{ args }}
 

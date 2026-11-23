@@ -4,10 +4,13 @@
 //
 //   1. On develop with a clean tree, with main contained in develop and checked out nowhere, compute the version:
 //      bump package.json's, or the explicit vX.Y.Z.
-//   2. `bun run verify` (the full gate plus CLI smoke checks).
-//   3. Bump package.json, prepend a CHANGELOG.md section grouped from the commits since the last tag.
-//   4. Commit "Release vX.Y.Z" on develop, merge develop into main (a fast-forward: main never has commits of its
-//      own), and create the annotated tag vX.Y.Z on that commit.
+//   2. Bump package.json, prepend a CHANGELOG.md section grouped from the commits since the last tag, and commit
+//      "Release vX.Y.Z" on develop.
+//   3. Verify that commit, the exact tree tagged and pushed: `bun run check` as a recorded `bin/toli gate` (so the
+//      pre-push hook reuses its pass instead of running the suite again, T2534), then the CLI smoke checks
+//      (scripts/verify.ts; `bun run verify` is the two). A failure takes the release commit back off develop.
+//   4. Merge develop into main (a fast-forward: main never has commits of its own), and create the annotated tag
+//      vX.Y.Z on that commit.
 //   5. Ask "Push main, develop and vX.Y.Z to <remote>? [y/N]"; push (atomically) only on y.
 //   6. Refresh this machine's installed runtime (`bin/toli self sync`) so the live session runs the release commit.
 //   7. After a push to a GitHub remote, publish the GitHub Release: `gh release create vX.Y.Z --verify-tag --latest`
@@ -71,6 +74,34 @@ function stream(cwd: string, cmd: string[]): void {
     say(`release: ${cmd.join(" ")}`);
     const result = Bun.spawnSync(cmd, { cwd, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     if (result.exitCode !== 0) throw new ReleaseError(`${cmd.join(" ")} failed (exit ${result.exitCode})`);
+}
+
+/** The pre-push hook's recipe (.githooks/pre-push): a gate pass of exactly it on a commit's tree skips its re-run. */
+const CHECK_RECIPE = "bun run check";
+
+/**
+ * Step 3: verify the release commit (HEAD; `before` when the release made none). Its check runs as a gate, which
+ * refuses a checkout that differs from HEAD, so the pass is the commit's. A failure resets develop to `before`, unless
+ * a commit landed on top of the release commit meanwhile: that one is never thrown away.
+ */
+function verifyRelease(root: string, before: string): void {
+    const release = capture(root, ["git", "rev-parse", "HEAD"]);
+    try {
+        // TOLI_DEV=1: the checkout's own code runs the gate, as in the pre-push hook.
+        const toli = join(root, "bin", "toli");
+        stream(root, ["env", "TOLI_DEV=1", process.execPath, toli, "gate", "run", "toli", "--recipe", CHECK_RECIPE]);
+        stream(root, ["bun", "scripts/verify.ts"]);
+    } catch (error) {
+        if (release === before || !(error instanceof ReleaseError)) throw error;
+        const head = capture(root, ["git", "rev-parse", "HEAD"]);
+        if (head !== release)
+            throw new ReleaseError(
+                `${error.message}; develop moved on to ${head.slice(0, 12)} after the release commit ` +
+                    `${release.slice(0, 12)}, so it stays: revert it by hand`,
+            );
+        stream(root, ["git", "reset", "--quiet", "--keep", before]);
+        throw new ReleaseError(`${error.message}; the release commit ${release.slice(0, 12)} was taken off develop`);
+    }
 }
 
 type Plan = { current: string; version: string; tag: string; lastTag: string | null; seeded: boolean };
@@ -167,7 +198,7 @@ function cutRelease(root: string, request: string): string {
     if (!seeded && lastTag === null && changelogHas(changelog, current))
         say(`release: note: v${current} was never tagged; \`just release v${current}\` tags it as the first release`);
 
-    stream(root, ["bun", "run", "verify"]);
+    const before = capture(root, ["git", "rev-parse", "HEAD"]);
 
     const date = now().toISOString().slice(0, 10);
     let updated = changelog;
@@ -197,6 +228,7 @@ function cutRelease(root: string, request: string): string {
         stream(root, ["git", "commit", "--quiet", "-m", `Release ${tag}`, "--", "CHANGELOG.md"]);
         updated = readFileSync(changelogFile, "utf8");
     }
+    verifyRelease(root, before);
     // Only this release's section: after the previous version (package.json's before the bump; the last tag when
     // tagging the seeded section). verbatim keeps the `### Added` headings git would strip as comments.
     const notes = changelogBetween(updated, seeded ? lastTag : `v${current}`, tag);
