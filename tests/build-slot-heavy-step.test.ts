@@ -155,6 +155,73 @@ describe("a check that takes its heavy-build slot at its first heavy step", () =
         expect(runs(log).find((run) => run.label === "p")).toMatchObject({ slot: "1", jobs: "3", args: "test" });
     });
 
+    // T2408: a push whose hook skips its gate on a sealed pass queued for a slot again after a 64-minute gate, only to
+    // run its cheap steps. A hook that declares it takes its slot at its first heavy step decides that after its seal
+    // check; the project itself keeps one slot for its gates' whole run.
+    describe("a hook declaring `# toli-push-slot-at-heavy-step`, in a project without the setting", () => {
+        /** One busy slot, project "app" and a hook that skips its gate on a sealed pass, else runs it in a slot. */
+        function sealedHookProject(): { box: Sandbox; dir: string; log: string; cheap: string } {
+            const { box, log } = slotBox(1, 3);
+            const dir = withProject(box, "app");
+            box.ok(["project", "set", "app", "--standing-push", "yes"]);
+            const cheap = join(box.root, ".cheap-steps");
+            writeFileSync(
+                join(dir, ".git", "hooks", "pre-push"),
+                [
+                    "#!/bin/sh",
+                    "# toli-push-slot-at-heavy-step",
+                    `echo guard >> ${cheap}`,
+                    `if ${TOLI} gate check app --sha "$(git rev-parse HEAD)" --recipe 'cargo test' >/dev/null 2>&1; then`,
+                    `    echo sealed >> ${cheap}`,
+                    "    exit 0",
+                    "fi",
+                    `STUB_LABEL=p ${TOLI} build-slot -- cargo test`,
+                    "",
+                ].join("\n"),
+                { mode: 0o755 },
+            );
+            return { box, dir, log, cheap };
+        }
+
+        test("a push whose hook takes the sealed pass ends beside the busy slot without queueing", async () => {
+            const { box, log, cheap } = sealedHookProject();
+            box.ok(["gate", "run", "app", "--recipe", "cargo test"], { env: { ...UNCAPPED, STUB_LABEL: "g" } });
+            const holder = await holdSlot(box, log);
+            let ended = false;
+            const push = box.toliAsync(["push", "app"], { env: UNCAPPED }).finally(() => {
+                ended = true;
+            });
+            await until("the sealed push ending while the slot is still busy", () => ended);
+            const result = await push;
+            expect(result.code).toBe(0);
+            expect(result.stderr).toContain("takes a heavy-build slot only at its first heavy step");
+            expect(result.stderr).not.toContain("waiting for a heavy-build slot");
+            expect(lines(cheap)).toEqual(["guard", "sealed"]);
+            expect(runs(log).map((run) => run.label)).toEqual(["g", "a"]);
+            writeFileSync(`${log}.done-a`, "");
+            expect((await holder.done).code).toBe(0);
+        });
+
+        test("a push whose tree has no sealed pass still takes the slot for the gate its hook runs", async () => {
+            const { box, log, cheap } = sealedHookProject();
+            const holder = await holdSlot(box, log);
+            const push = box.toliAsync(["push", "app"], { env: UNCAPPED });
+            const queue = join(box.root, "state", "build-slots", "queue");
+            await until(
+                "the hook's gate step waiting in line for the busy slot",
+                () => existsSync(queue) && readdirSync(queue).some((name) => name.endsWith(".wait")),
+            );
+            expect(lines(cheap)).toEqual(["guard"]);
+            expect(runs(log).map((run) => run.label)).toEqual(["a"]);
+            writeFileSync(`${log}.done-a`, "");
+            expect((await holder.done).code).toBe(0);
+            const result = await push;
+            expect(result.code).toBe(0);
+            expect(waits(result.stderr)).toBe(1);
+            expect(runs(log).find((run) => run.label === "p")).toMatchObject({ slot: "1", jobs: "3", args: "test" });
+        });
+    });
+
     // T2257 round 2: a cargo that bypassed the shim reached the run's slot through the rustc wrapper's probe, but its
     // crate compilations found no slot (no TOLI_BUILD_SLOT, no cargo-<pid>.held) and ran outside the slot's job pool.
     test("a cargo that bypasses the shim in such a gate compiles in the run's slot's job pool", async () => {

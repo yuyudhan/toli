@@ -334,7 +334,8 @@ A project's push check takes one slot for its whole run the same way, because it
 the recipe in a slot, and `bin/toli push` in a project with a pre-push hook runs `git push`, and so the hook, in one,
 unless the hook declares the push light under its environment (`# toli-light-push: NAME=VALUE`) or once its gate
 passed on the pushed commit's tree (`# toli-light-push-after-gate: <recipe>`, decided before the push queues,
-[delivery.md](delivery.md#gates-long-checks-run-once-per-tree)).
+[delivery.md](delivery.md#gates-long-checks-run-once-per-tree)), or declares it takes its slot at its first heavy
+step (`# toli-push-slot-at-heavy-step`: the push then runs as a `--slot-at-heavy-step` project's push does, below).
 Cargo reads the slot's variables from the environment however it is reached, and a cargo, `build-slot` or gate the
 check starts runs inside that slot at once. On Linux the whole check (the gate's recipe, or `git push` and so its
 hook) also runs in the slot's memory-capped scope below, so every cargo it starts shares that one cap; the runner

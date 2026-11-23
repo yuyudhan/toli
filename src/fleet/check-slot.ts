@@ -1,7 +1,8 @@
 // The heavy-build slot of a project's check (a gate's recipe, a push running its pre-push hook): one slot for its whole
-// run (`withBuildSlot`), or, for a project set `--slot-at-heavy-step yes`, one taken at its first heavy step and held
-// to its end (src/fleet/heavy-step-slot.ts, T2257).
-import { closeSync, existsSync } from "node:fs";
+// run (`withBuildSlot`), or, for a project set `--slot-at-heavy-step yes` or a hook declaring
+// `# toli-push-slot-at-heavy-step`, one taken at its first heavy step and held to its end (src/fleet/heavy-step-slot.ts,
+// T2257, T2408).
+import { closeSync, existsSync, readFileSync } from "node:fs";
 import { warn } from "../core/util.ts";
 import { runMinuteMs } from "../jawans/runs.ts";
 import { loadProjects } from "../projects/projects.ts";
@@ -31,6 +32,13 @@ import { pauseDevStacks } from "./stack-pause.ts";
 const SLOT_NOTE_MAX_MINUTES = 5;
 
 /**
+ * A pre-push hook's `# toli-push-slot-at-heavy-step` line: it runs every heavy step through `bin/toli build-slot --`
+ * (or toli's cargo shim and rustc wrapper), so a push runs it without a slot and its first heavy step takes one. A hook
+ * that skips its gate on a sealed pass then never queues; one that runs it still takes a slot for it (T2408).
+ */
+const PUSH_SLOT_AT_HEAVY_STEP = /^#\s*toli-push-slot-at-heavy-step\s*$/m;
+
+/**
  * Run `body`, a project's check (a gate's recipe, a push running its pre-push hook), as `withBuildSlot` does: in one
  * heavy-build slot for its whole run, waiting in line only while `wanted` holds. A `project` that declares its check
  * takes the slot at its first heavy step (`project set --slot-at-heavy-step yes`) runs it under `withSlotAtHeavyStep`
@@ -53,15 +61,21 @@ export async function withCheckSlot<T>(
 
 /**
  * `command` under `withCheckSlot` (no stall check), with `env` and the slot's variables, in the slot's scope
- * (`runInSlot`): `bin/toli push` running `git push`, and so its pre-push hook. Resolves to its exit code.
+ * (`runInSlot`): `bin/toli push` running `git push`, and so its pre-push `hook`. Resolves to its exit code. A hook that
+ * declares it takes its slot at its first heavy step (PUSH_SLOT_AT_HEAVY_STEP) runs without one under
+ * `withSlotAtHeavyStep`, so a hook that skips its gate on a sealed pass never queues (T2408).
  */
 export async function runCheckInSlot(
     cwd: string,
     project: string,
+    hook: string,
     command: string[],
     env: Record<string, string>,
 ): Promise<number> {
-    return await withCheckSlot(cwd, project, null, (held) => runInSlot(command, { ...env, ...held.env }, held.scope));
+    const body = (held: HeldSlot) => runInSlot(command, { ...env, ...held.env }, held.scope);
+    if (!PUSH_SLOT_AT_HEAVY_STEP.test(readFileSync(hook, "utf8"))) return await withCheckSlot(cwd, project, null, body);
+    warn(`toli: the pre-push hook ${hook} takes a heavy-build slot only at its first heavy step, if it reaches one`);
+    return await withSlotAtHeavyStep(cwd, project, SLOT_NOTE_MAX_MINUTES * runMinuteMs(), body);
 }
 
 /**

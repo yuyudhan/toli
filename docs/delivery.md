@@ -195,7 +195,13 @@ on it any more: ... is gone`), and a `callers-gone` line goes to `logs/gates.log
   commit's sha (setting the upstream as `-u` would) and runs the hook, every step of it, without a slot. A missing or
   stale pass prints `toli: the pre-push hook takes a heavy-build slot: no sealed pass of <recipe> on tree ...` and
   the push takes its slot as before. toli's own hook declares `bun run check` (its working-tree fallback takes a slot
-  itself). A project whose gate recipes and hook run their heavy steps through `bin/toli build-slot --` sets
+  itself). A hook whose sealed-pass check is more than one recipe's pass (one of several recipes, chosen by what the
+  push carries) runs every heavy step through `bin/toli build-slot --` and declares `# toli-push-slot-at-heavy-step`
+  instead: `bin/toli push` (branch or tag) runs it without a slot, saying
+  `toli: the pre-push hook <path> takes a heavy-build slot only at its first heavy step, if it reaches one`, so a
+  hook that takes the sealed pass ends without queueing and one that runs its gate takes a slot at that step and
+  holds it to the push's end (T2408). A project
+  whose gate recipes and hook run their heavy steps through `bin/toli build-slot --` sets
   `project set <p> --slot-at-heavy-step yes`: its gates and pushes then run their cheap steps without a slot and take
   one at the first heavy step, holding it to the end ([fleet.md](fleet.md#heavy-build-slots)).
 - A pass is sealed with an HMAC over its project, tree, recipe text and end time, keyed by `state/gate-key` (made once

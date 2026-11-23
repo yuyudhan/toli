@@ -208,7 +208,9 @@ the interactive Sardar's subagents.
   once) until they are committed; a pre-push hook that runs only that recipe is skipped (`--no-verify`) for the exact
   gated commit from a clean checkout, and any other push whose project has a pre-push hook runs in one heavy-build
   slot, unless the hook declares it light under the push's environment (`# toli-light-push: NAME=VALUE`) or once its
-  gate passed on the pushed tree (`# toli-light-push-after-gate: <recipe>`). `push --tag <name>` pushes only that
+  gate passed on the pushed tree (`# toli-light-push-after-gate: <recipe>`); a hook declaring
+  `# toli-push-slot-at-heavy-step` runs without a slot and takes one at its first `bin/toli build-slot --` step, so
+  one that skips its gate on a sealed pass never queues. `push --tag <name>` pushes only that
   local tag (never `--tags`, never moving a tag origin holds); it skips the pre-push hook (`--no-verify`, logged
   `hook-skip`) only when the hook declares its tag-push gates (`# toli-tag-push-after-gate: <recipe>`) and each has a
   sealed pass on the tagged tree, and otherwise runs it as a branch push does

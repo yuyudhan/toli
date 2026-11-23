@@ -8,6 +8,14 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- A push whose pre-push hook skips its gate on a sealed pass no longer has to wait for a heavy-build slot. A
+  `bin/toli push --gate` that passed after 64 minutes queued for a slot again, behind other gates, only to run the
+  hook's cheap steps: toli takes the slot before the hook runs and cannot tell which of a hook's steps are heavy. A
+  hook that runs its heavy steps through `bin/toli build-slot --` now says so with `# toli-push-slot-at-heavy-step`:
+  the push runs it without a slot, a hook that takes the sealed pass ends without queueing, and one that runs its gate
+  takes a slot at that step and holds it to the end. Other hooks keep one slot for the whole push (docs/delivery.md,
+  Gates; T2408).
+
 - The queue balancer no longer offers a machine work of a project it never takes. An offer only checked that the
   target had the project's clone and, for ship work, that it had not marked the project verify-only, so a machine
   kept for other work (a release rail) was offered another lead's kit tasks every period, five times

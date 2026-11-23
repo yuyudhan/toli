@@ -225,7 +225,9 @@ function requireBranch(dir: string, action: string): string {
  * may run the long check itself: its cargo gets one slot's share even through `just` without toli's cargo shim, and a
  * `bin/toli gate run` it starts rides on that slot, unless the hook declares the push light under its environment
  * (`# toli-light-push: NAME=VALUE`, lightPushCondition) or once the gate recipes it declares its only heavy steps
- * passed on HEAD's tree (`# toli-light-push-after-gate: <recipe>`, slotFreePushSha, decided before queueing). A push is
+ * passed on HEAD's tree (`# toli-light-push-after-gate: <recipe>`, slotFreePushSha, decided before queueing). A hook
+ * declaring `# toli-push-slot-at-heavy-step` runs without a slot and takes one only at its first heavy step, so one
+ * that skips its gate on a sealed pass never queues (T2408). A push is
  * refused when the repo declares a pre-push hook (src/projects/hooks.ts) that git would not run, so the project's own
  * check never silently skips; `--no-hooks-ok` pushes anyway. Other declared hooks that are not installed only warn.
  * `--tag <name>` pushes that one local tag instead of the branch (pushTag, src/forge/push-tag.ts), under the same
@@ -272,7 +274,7 @@ export async function pushCommand(argv: string[]): Promise<void> {
     const push = ["git", "-C", dir, "push", ...flags, "origin", `${pinned ?? ref}:${ref}`];
     const code =
         hook !== null && light === null && pinned === null
-            ? await runCheckInSlot(dir, project, push, gateEnv)
+            ? await runCheckInSlot(dir, project, hook, push, gateEnv)
             : await runInherit(push, { env: gateEnv });
     if (code !== 0) throw new ToliError(`git push origin ${branch} failed (exit ${code})`);
     if (pinned !== null) {
