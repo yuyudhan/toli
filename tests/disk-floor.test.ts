@@ -176,6 +176,26 @@ describe("the disk keeper on Linux, without lsof", () => {
         }
     });
 
+    keeperTest("omp's idle worker daemon working in a clone does not keep the clone's target", () => {
+        const box = keeperBox();
+        const [alpha = ""] = clones(box, ["alpha"]);
+        ageOutput(alpha, 600);
+        // omp's long-lived helper keeps the working directory it started in, the clone; it never builds there (T2547).
+        const proc = tempDir("proc");
+        mkdirSync(join(proc, "4301"));
+        symlinkSync(alpha, join(proc, "4301", "cwd"));
+        symlinkSync("/usr/local/bin/omp", join(proc, "4301", "exe"));
+        const daemon = "/usr/local/bin/omp __omp_worker_daemon";
+        const uid = process.getuid?.() ?? 0;
+        box.stub("ps", `case "$*" in *uid=*) echo "4301 ${uid} S ${daemon}" ;; *args=*) echo "4301 ${daemon}" ;; esac`);
+        // 1 GB free while alpha's target exists, 100 GB once it is gone; floor 50.
+        const target = join(alpha, "target");
+        box.stub("df", `if [ -e "${target}" ]; then kb=1048576; else kb=104857600; fi\n${dfLine(200)}`);
+        const report = keep(box, ["--floor", "50"], { TOLI_PLATFORM: "linux", TOLI_PROC_DIR: proc });
+        expect(report.lines.join("\n")).not.toContain("process 4301");
+        expect(existsSync(target)).toBe(false);
+    });
+
     keeperTest(
         "an uninspectable process tied to no folder keeps none, and a dry run keeps what the real run keeps",
         () => {

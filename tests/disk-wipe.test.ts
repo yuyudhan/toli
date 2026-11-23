@@ -138,6 +138,28 @@ describe("wiping a target between build steps", () => {
         expect(existsSync(target)).toBe(false);
     });
 
+    test("wipes a target though omp's idle worker daemon works in its workspace, keeps it while cargo or rustc does", () => {
+        const { workspace, target } = workspaceTarget();
+        const crate = join(workspace, "crates", "store");
+        mkdirSync(crate, { recursive: true });
+        const machine = quiet();
+        // omp's long-lived helper keeps the working directory it started in; it never builds there (T2547).
+        const daemon = { pid: "4110", args: "/usr/local/bin/omp __omp_worker_daemon", files: ["/usr/local/bin/omp"] };
+        machine.processes.push({ ...daemon, cwd: workspace });
+        for (const [pid, args] of [
+            ["4111", "cargo build -p store"],
+            ["4112", "/opt/rust/bin/rustc --crate-name store src/lib.rs"],
+        ] as const) {
+            machine.processes.push({ pid, args, files: [], cwd: crate });
+            const busy = wipeTargetBetweenBuilds(target, 0, undefined, probes(machine));
+            expect(busy).toEqual({ wiped: false, reason: `process ${pid} runs in ${crate}` });
+            expect(existsSync(target)).toBe(true);
+            machine.processes.pop();
+        }
+        expect(wipeTargetBetweenBuilds(target, 0, undefined, probes(machine))).toEqual({ wiped: true });
+        expect(existsSync(target)).toBe(false);
+    });
+
     test("keeps the target while a tool in capacity.diskBuildTools runs above its workspace, and only then", () => {
         const { workspace, target } = workspaceTarget();
         const above = dirname(workspace);

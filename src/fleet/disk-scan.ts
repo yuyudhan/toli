@@ -14,6 +14,7 @@ import { agentState, nativeAgent } from "../records/agents.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { staleTaskMinutes } from "../records/stale.ts";
 import { busySlots } from "./build-queue.ts";
+import { harnessHelper } from "./build-tools.ts";
 import { procCwds, procOpenFiles } from "./disk-proc.ts";
 
 /** One working tree of a registered project: its main clone or one of the clone's git worktrees. */
@@ -178,11 +179,15 @@ function subagentWorkspaces(): Holders["tasks"] {
     );
 }
 
-/** Working directory of every process of this user, keyed by path, valued by one pid (`lsof -d cwd`, Linux /proc). */
+/**
+ * Working directory of every process of this user, keyed by path, valued by one pid (`lsof -d cwd`, Linux /proc);
+ * a harness's idle helper (harnessHelper, as `ps` shows its command line) is left out.
+ */
 function processCwds(): Map<string, string> {
+    const helpers = helperPids();
     const cwds = new Map<string, string>();
     if (platform() === "linux") {
-        for (const { pid, cwd } of procCwds()) cwds.set(cwd, pid);
+        for (const { pid, cwd } of procCwds()) if (!helpers.has(pid)) cwds.set(cwd, pid);
         return cwds;
     }
     const uid = process.getuid?.();
@@ -191,9 +196,20 @@ function processCwds(): Map<string, string> {
     let pid = "";
     for (const line of listed.stdout.split("\n")) {
         if (line.startsWith("p")) pid = line.slice(1);
-        else if (line.startsWith("n") && pid !== String(process.pid)) cwds.set(line.slice(1), pid);
+        else if (line.startsWith("n") && pid !== String(process.pid) && !helpers.has(pid)) cwds.set(line.slice(1), pid);
     }
     return cwds;
+}
+
+/** The pids of every harness's idle helper running now (`ps`); none when the table cannot be read. */
+function helperPids(): Set<string> {
+    const listed = run(["ps", "-axww", "-o", "pid=,args="], { timeoutMs: 30_000 });
+    const pids = new Set<string>();
+    for (const line of listed.stdout.split("\n")) {
+        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+        if (match?.[1] !== undefined && harnessHelper(match[2] ?? "")) pids.add(match[1]);
+    }
+    return pids;
 }
 
 /**

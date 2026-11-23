@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pidAlive, platform, run } from "../core/util.ts";
-import { buildTool, configuredBuildTools } from "./build-tools.ts";
+import { buildTool, configuredBuildTools, harnessHelper } from "./build-tools.ts";
 import { containerMounts, type ProcMount, procCargoCwds, procLink } from "./disk-proc.ts";
 import { allOpenFiles, type HeldFile, real, within } from "./disk-scan.ts";
 import { type LiveBuild, liveBuilds } from "./live-builds.ts";
@@ -157,8 +157,9 @@ function mayRunFrom(entry: ProcessUse, dir: string, places: string[]): boolean {
 /**
  * Why a process uses `target` right now, or null when none does: one runs an executable or maps a file under it (a
  * test binary cargo started after releasing its locks), works inside the workspace that owns it (the folder holding
- * `target/`), or is a build tool running in, above or on that workspace. An unreadable process table is a reason too,
- * and so is a process that could not be inspected whose command line could run from the target (mayRunFrom).
+ * `target/`; never a harness's idle helper, harnessHelper), or is a build tool running in, above or on that workspace.
+ * An unreadable process table is a reason too, and so is a process that could not be inspected whose command line
+ * could run from the target (mayRunFrom).
  */
 export function targetUse(
     target: string,
@@ -175,7 +176,7 @@ export function targetUse(
         const file = entry.files.find((path) => within(path, dir));
         if (file !== undefined) return `process ${entry.pid} runs ${file}`;
         const cwd = entry.cwd;
-        if (cwd !== null && workspaces.some((workspace) => within(cwd, workspace)))
+        if (cwd !== null && !harnessHelper(entry.args) && workspaces.some((workspace) => within(cwd, workspace)))
             return `process ${entry.pid} runs in ${cwd}`;
         const tool = buildTool(entry.args, extra);
         if (tool === null) continue;

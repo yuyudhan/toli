@@ -117,7 +117,11 @@ its step (`deleted <path>, freed X GB (step 1: idle target)`, `removed docker vo
 it`; a done or dropped task's old jawan tag holds nothing, since that subagent lives on in the lead session and
    moves to other tasks: a follow-up reopens the task first), no running gate checks it (`bin/toli gate run`, `push
 --gate`, the pre-push hook; `skipped <dir>: a gate of <project> (pid N) runs in it`), and no process has its working
-   directory inside it. The same check holds `node_modules/` and `dist/` in step 2. The wipe still takes cargo's locks
+   directory inside it. A harness's idle helper is not such a process: omp's worker daemon (`omp __omp_worker_daemon`,
+   matched by that exact word in its command line) keeps the folder it started in, often a clone, for its whole life
+   and never builds there (T2547: it held a 122 GB target on a host 6.5 GB from full), so its working
+   directory holds neither a checkout here nor a workspace in the wipe below; what it runs, maps or holds open still
+   does. The same check holds `node_modules/` and `dist/` in step 2. The wipe still takes cargo's locks
    and checks that no process and no live build uses the target (below and
    "Live builds"), so a build or test started from elsewhere is never cut off: the target is kept
    (`kept <target>: cargo (pid N) builds into it (CARGO_TARGET_DIR <dir>)`) and the keeper moves on to the next
@@ -168,7 +172,8 @@ it`; a done or dropped task's old jawan tag holds nothing, since that subagent l
     the test binaries, so the locks alone are not enough. The target is in use when, from the process table (`ps`,
     then each process's executable, mapped files and working directory: `lsof -d cwd,txt` on macOS, `/proc/<pid>/exe`
     and `/proc/<pid>/cwd` on Linux), any process runs an executable or maps a file under it, works inside its
-    workspace (the folder holding `target/`), or is `cargo`, `rustc`, `rustdoc`, `clippy-driver`, `just` or one of the
+    workspace (the folder holding `target/`; omp's idle worker daemon, above, does not count), or is `cargo`, `rustc`,
+    `rustdoc`, `clippy-driver`, `just` or one of the
     machine's own build tools (`capacity.diskBuildTools`, below) working in, above, or naming that workspace; when a
     cargo process (`cargo`, `cargo-clippy`, `cargo-nextest`, ...) runs in the folder holding the target (`cargo test`
     drops its locks before it runs the test binaries one after
