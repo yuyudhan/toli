@@ -332,6 +332,26 @@ than toli's root; they are never guarded.
   skills. omp appends it to the lead's system prompt each turn; Claude Code adds it on each prompt (with any new
   results); Cursor gets it from its always-apply rule; the others read the same rules in `AGENTS.md`.
 
+## Browsers use fake media
+
+No browser a toli harness session starts may use the machine's real camera or microphone. The lead (the omp
+extension and Claude Code's SessionStart, through `bin/toli hook lead-build-env`), its native subagents and every
+`bin/toli spawn` jawan get `PUPPETEER_EXECUTABLE_PATH` at `bin/chrome-fake-media` (src/jawans/env.ts
+`fakeMediaEnv`), so omp's browser, and any other puppeteer, starts Chrome through it. The wrapper runs the real
+Chrome with `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream` ahead of the caller's own arguments:
+getUserMedia gets Chrome's fake camera and microphone, and the permission prompt is accepted on its own.
+
+- **Which Chrome:** `TOLI_CHROME`, else a `PUPPETEER_EXECUTABLE_PATH` the session already had (kept as
+  `TOLI_CHROME`), else the first of the usual install paths (`/usr/bin/google-chrome-stable`, `/usr/bin/google-chrome`,
+  `/opt/google/chrome/chrome`, Chromium's, and the macOS `.app` bundles). It is never looked up on PATH.
+- **What the fake camera shows:** `config/machine.json` `{ "browser": { "fakeVideoFile": "<file>" } }` (absolute, or
+  relative to toli's root) or `TOLI_FAKE_VIDEO_FILE`, which wins, names a `.y4m` or `.mjpeg` file the camera plays in
+  a loop (`--use-file-for-fake-video-capture`); default none, or a file that does not exist: Chrome's built-in test
+  pattern. Make one from a still with ffmpeg:
+  `ffmpeg -loop 1 -framerate 15 -t 10 -i face.jpg -pix_fmt yuv420p -vf scale=640:480 -r 15 face.y4m`.
+- **Restart:** omp reuses a browser that is already running, so the flags reach it only once that browser has
+  stopped and started again.
+
 ## Install and login
 
 | Harness     | Install                                           | Login                                      | Check                 |

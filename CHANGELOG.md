@@ -19,6 +19,16 @@ one. See docs/releasing.md.
   wins, on one machine or the whole fleet; `check` reads what omp can run and fails when a list has none, so a
   switch to another provider is checked before work runs on it (docs/harnesses.md, T2450).
 
+### Changed
+
+- Every browser a toli harness session starts uses fake media, never the machine's real camera or microphone: the
+  lead, its native subagents and `bin/toli spawn` jawans get `PUPPETEER_EXECUTABLE_PATH` at the new wrapper
+  `bin/chrome-fake-media`, which runs the real Chrome (`TOLI_CHROME`, else the usual install paths) with
+  `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream`. `config/machine.json`
+  `{ "browser": { "fakeVideoFile": "<file>.y4m" } }` (or `TOLI_FAKE_VIDEO_FILE`) makes the fake camera play that file
+  (default none: Chrome's test pattern). A shared browser already running picks this up only when it restarts
+  (docs/harnesses.md "Browsers use fake media", T454; ported onto develop as T2494).
+
 ### Fixed
 
 - A push whose pre-push hook skips its gate on a sealed pass no longer has to wait for a heavy-build slot. A

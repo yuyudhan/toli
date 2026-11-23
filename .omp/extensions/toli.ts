@@ -30,13 +30,14 @@
 // lead guidance or the guard, so everything is gated on the main TUI session.
 // Two things are not. When the extension loads in any omp that is not a `bin/toli spawn`
 // jawan, it puts the lead's build variables (`bin/toli hook lead-build-env`: the cargo shim
-// first on PATH, CARGO_BUILD_JOBS, toli's rustc wrapper) into this process's environment, before any shell starts,
-// so the bash tool and every native subagent (omp `task`) build through the heavy-build slots. And every session
-// watches the subagents it runs: every minute it reads omp's own async-job snapshot and reports each running `task`
-// subagent in state/agents/<id>.json, then its end once it stops running (src/records/agents.ts SubagentWatch). A
-// native jawan counts as running only on that evidence, never because the lead session that started it is still
-// open. Watching marks this omp in state/agent-sessions/<pid>.json; a lead omp without the mark predates the watch,
-// and its subagents count while it runs, until it restarts.
+// first on PATH, CARGO_BUILD_JOBS, toli's rustc wrapper, and PUPPETEER_EXECUTABLE_PATH at toli's fake-media Chrome
+// wrapper) into this process's environment, before any shell or browser starts, so the bash tool and every native
+// subagent (omp `task`) build through the heavy-build slots and no browser opens the real camera or microphone. And
+// every session watches the subagents it runs: every minute it reads omp's own async-job snapshot and reports each
+// running `task` subagent in state/agents/<id>.json, then its end once it stops running (src/records/agents.ts
+// SubagentWatch). A native jawan counts as running only on that evidence, never because the lead session that
+// started it is still open. Watching marks this omp in state/agent-sessions/<pid>.json; a lead omp without the mark
+// predates the watch, and its subagents count while it runs, until it restarts.
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

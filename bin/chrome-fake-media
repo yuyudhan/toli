@@ -1,0 +1,41 @@
+#!/bin/sh
+# toli's Chrome wrapper: the browser executable of every harness session toli starts (`PUPPETEER_EXECUTABLE_PATH`, set
+# by src/jawans/env.ts `fakeMediaEnv` for the lead, its native subagents and `bin/toli spawn` jawans). It runs the real
+# Chrome with fake media ahead of the caller's own arguments, so a page's getUserMedia gets Chrome's fake camera and
+# microphone with the permission prompt auto-accepted, never the machine's real devices (docs/harnesses.md "Browsers
+# use fake media"). With TOLI_FAKE_VIDEO_FILE naming an existing `.y4m` or `.mjpeg` file, the fake camera plays it in
+# a loop; otherwise Chrome's built-in test pattern.
+#
+# The real Chrome is TOLI_CHROME, else the first executable of the usual install paths. It is never looked up on PATH,
+# where a user's own `google-chrome` script may sit, and never a chrome-fake-media wrapper, which would run itself.
+chrome=${TOLI_CHROME:-}
+case $chrome in
+*/chrome-fake-media | chrome-fake-media) chrome="" ;;
+esac
+if [ -z "$chrome" ]; then
+    for candidate in \
+        /usr/bin/google-chrome-stable \
+        /usr/bin/google-chrome \
+        /opt/google/chrome/chrome \
+        /usr/bin/chromium \
+        /usr/bin/chromium-browser \
+        /snap/bin/chromium \
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+        "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+        if [ -x "$candidate" ]; then
+            chrome=$candidate
+            break
+        fi
+    done
+fi
+if [ -z "$chrome" ]; then
+    echo "chrome-fake-media: no Chrome found in the usual install paths; set TOLI_CHROME to its executable" >&2
+    exit 127
+fi
+
+video=${TOLI_FAKE_VIDEO_FILE:-}
+if [ -n "$video" ] && [ -f "$video" ]; then
+    exec "$chrome" --use-fake-ui-for-media-stream --use-fake-device-for-media-stream \
+        "--use-file-for-fake-video-capture=$video" "$@"
+fi
+exec "$chrome" --use-fake-ui-for-media-stream --use-fake-device-for-media-stream "$@"

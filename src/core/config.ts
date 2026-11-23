@@ -154,6 +154,12 @@ export type Machine = {
      * off`; each pull carries it to the machine pulled from (docs/fleet.md "Machines that take no inbound ssh").
      */
     inbound?: boolean;
+    /**
+     * The browsers toli's harness sessions start (src/jawans/env.ts `fakeMediaEnv`, docs/harnesses.md "Browsers use
+     * fake media"): `fakeVideoFile` is a `.y4m` or `.mjpeg` file Chrome's fake camera plays (absolute, or relative to
+     * the toli root; default none: Chrome's built-in test pattern). `TOLI_FAKE_VIDEO_FILE` in the environment wins.
+     */
+    browser?: { fakeVideoFile?: string };
 };
 
 /** Optional settings from config/machine.json, readable before `init` (every field may be absent). */

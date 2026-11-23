@@ -102,6 +102,7 @@ describe("jawan environment", () => {
             RUSTC_WRAPPER: join(paths.buildShimsDir(), "toli-rustc-wrapper"),
             TOLI_RUSTC_WRAPPER_NEXT: "",
             NODE_OPTIONS: `--require ${nodePreloadStub()}`,
+            PUPPETEER_EXECUTABLE_PATH: paths.chromeWrapper(),
         });
     });
 

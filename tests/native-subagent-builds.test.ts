@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { paths } from "../src/core/paths.ts";
-import { jawanEnv, leadBuildEnv, nodePreloadOptions, nodePreloadStub } from "../src/jawans/env.ts";
+import { fakeMediaEnv, jawanEnv, leadBuildEnv, nodePreloadOptions, nodePreloadStub } from "../src/jawans/env.ts";
 import { CARGO_SHIM, holdSlot, runs, slotBox, start, until } from "./build-slot-fixture.ts";
 import { tempDir, withProject } from "./helpers.ts";
 
@@ -101,6 +102,57 @@ describe("a lead session's build variables, inherited by its native subagents", 
         // The shim folder is the toli root's: the sandbox's here.
         expect(vars.PATH?.startsWith(`${join(box.root, "bin", "shims")}:${box.stubs}:`)).toBe(true);
         expect(box.ok(["hook", "lead-build-env"], { env: { ...LEAD, TOLI_ROLE: "jawan" } })).toBe("{}");
+    });
+
+    test("start every browser through toli's fake-media Chrome wrapper, a lead's and a jawan's alike", () => {
+        const wrapper = paths.chromeWrapper();
+        expect(fakeMediaEnv({}, "")).toEqual({ PUPPETEER_EXECUTABLE_PATH: wrapper });
+        // A Chrome chosen before stays the one the wrapper runs; the wrapper itself is never chained to.
+        expect(fakeMediaEnv({ PUPPETEER_EXECUTABLE_PATH: "/opt/chrome" }, "/m/face.y4m")).toEqual({
+            PUPPETEER_EXECUTABLE_PATH: wrapper,
+            TOLI_CHROME: "/opt/chrome",
+            TOLI_FAKE_VIDEO_FILE: "/m/face.y4m",
+        });
+        expect(fakeMediaEnv({ PUPPETEER_EXECUTABLE_PATH: wrapper }, "")).toEqual({
+            PUPPETEER_EXECUTABLE_PATH: wrapper,
+        });
+        const otherRoot = { PUPPETEER_EXECUTABLE_PATH: "/other/toli/bin/chrome-fake-media" };
+        expect(fakeMediaEnv(otherRoot, "")).toEqual({ PUPPETEER_EXECUTABLE_PATH: wrapper });
+        // An inherited fake video file wins over the machine's.
+        expect(fakeMediaEnv({ TOLI_FAKE_VIDEO_FILE: "/env.y4m" }, "/m/face.y4m").TOLI_FAKE_VIDEO_FILE).toBeUndefined();
+        for (const liveStack of [false, true])
+            expect(jawanEnv({ PATH: "/usr/bin" }, "r1", 2, liveStack, true, "/m/face.y4m")).toMatchObject({
+                PUPPETEER_EXECUTABLE_PATH: wrapper,
+                TOLI_FAKE_VIDEO_FILE: "/m/face.y4m",
+            });
+        const { box } = slotBox(1, 3);
+        const vars = JSON.parse(box.ok(["hook", "lead-build-env"], { env: LEAD })) as Record<string, string>;
+        expect(vars.PUPPETEER_EXECUTABLE_PATH).toBe(join(box.root, "bin", "chrome-fake-media"));
+    });
+
+    test("the wrapper runs the real Chrome with fake camera and microphone ahead of the caller's arguments", () => {
+        const dir = tempDir("fake-chrome");
+        const chrome = join(dir, "chrome");
+        writeFileSync(chrome, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
+        chmodSync(chrome, 0o755);
+        const video = join(dir, "face.y4m");
+        const argv = (fakeVideo: string) =>
+            spawnSync(paths.chromeWrapper(), ["--headless=new", "about:blank"], {
+                env: { PATH: "/usr/bin:/bin", TOLI_CHROME: chrome, TOLI_FAKE_VIDEO_FILE: fakeVideo },
+                encoding: "utf8",
+            })
+                .stdout.trimEnd()
+                .split("\n");
+        const fake = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"];
+        // A configured file that does not exist leaves Chrome's own test pattern.
+        expect(argv(video)).toEqual([...fake, "--headless=new", "about:blank"]);
+        writeFileSync(video, "");
+        expect(argv(video)).toEqual([
+            ...fake,
+            `--use-file-for-fake-video-capture=${video}`,
+            "--headless=new",
+            "about:blank",
+        ]);
     });
 
     test("a Claude Code lead's SessionStart exports them, so a subagent's cargo build waits for the slot", async () => {

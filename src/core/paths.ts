@@ -41,6 +41,8 @@ export const paths = {
     toliBin: () => join(repoRoot(), "bin", "toli"),
     /** This code's own CLI (the installed runtime's, or the working tree's): for subprocesses of the running code. */
     codeBin: () => join(codeRoot(), "bin", "toli"),
+    /** toli's Chrome wrapper: every harness browser's executable, with fake camera and microphone (src/jawans/env.ts). */
+    chromeWrapper: () => join(repoRoot(), "bin", "chrome-fake-media"),
     /** The active installed runtime snapshot of a checkout (one line, read by bin/toli; src/release/runtime.ts). */
     runtimePointer: (checkout: string = repoRoot()) => join(checkout, "state", "runtime"),
     machine: () => join(repoRoot(), "config", "machine.json"),

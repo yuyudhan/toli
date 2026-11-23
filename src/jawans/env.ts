@@ -3,7 +3,8 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import type { Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { writeTextAtomic } from "../core/util.ts";
 import { LEAD_TURN_ENV } from "../fleet/full.ts";
@@ -192,6 +193,33 @@ export function leadBuildEnv(
 }
 
 /**
+ * The configured fake camera file of `machine` (config/machine.json `browser.fakeVideoFile`), absolute: a relative
+ * path is under the toli root; "" when none is set.
+ */
+export function machineFakeVideoFile(machine: Partial<Machine>): string {
+    const file = machine.browser?.fakeVideoFile ?? "";
+    return file === "" ? "" : resolve(paths.root(), file);
+}
+
+/**
+ * The browser variables of a toli harness session over its environment `base`: omp's browser (and any other
+ * puppeteer) starts Chrome through toli's wrapper (bin/chrome-fake-media, `PUPPETEER_EXECUTABLE_PATH`), which adds
+ * Chrome's fake camera, microphone and auto-accepted media prompt, so no session ever opens the machine's real camera
+ * or microphone (fleet rule; docs/harnesses.md "Browsers use fake media"). A Chrome `base` already chose through
+ * `PUPPETEER_EXECUTABLE_PATH` stays the one the wrapper runs (`TOLI_CHROME`), unless it is a toli wrapper itself (this
+ * root's or another's), which would run itself. The fake camera plays `TOLI_FAKE_VIDEO_FILE` when `base` sets it,
+ * else `fakeVideoFile` (`machineFakeVideoFile`) when given.
+ */
+export function fakeMediaEnv(base: Record<string, string | undefined>, fakeVideoFile: string): Record<string, string> {
+    const wrapper = paths.chromeWrapper();
+    const vars: Record<string, string> = { PUPPETEER_EXECUTABLE_PATH: wrapper };
+    const chosen = base.PUPPETEER_EXECUTABLE_PATH ?? "";
+    if (chosen !== "" && basename(chosen) !== basename(wrapper)) vars.TOLI_CHROME = chosen;
+    if ((base.TOLI_FAKE_VIDEO_FILE ?? "") === "" && fakeVideoFile !== "") vars.TOLI_FAKE_VIDEO_FILE = fakeVideoFile;
+    return vars;
+}
+
+/**
  * The jawan's environment: the supervisor's, marked as a jawan run. One code folder, one build folder: a jawan
  * builds into its checkout's own build folder, so an inherited `CARGO_TARGET_DIR` is dropped. toli's cargo shim
  * (bin/shims) goes first on PATH and toli's rustc wrapper is cargo's `RUSTC_WRAPPER` (`leadBuildEnv`), so heavy cargo
@@ -204,7 +232,8 @@ export function leadBuildEnv(
  * runs without the shim or the wrapper, at the same share: the machine's one build is the running stack's, its own
  * scoped test builds share the checkout's build folder, where cargo's lock already runs them one at a time, so they
  * never also wait for a heavy-build slot. `preload`: whether the Node preload stub is there to `--require`
- * (`ensureNodePreloadStub`).
+ * (`ensureNodePreloadStub`). Every jawan's browser uses fake media (`fakeMediaEnv`, with the machine's
+ * `fakeVideoFile`).
  */
 export function jawanEnv(
     base: Record<string, string | undefined>,
@@ -212,6 +241,7 @@ export function jawanEnv(
     cargoJobs: number,
     liveStack = false,
     preload = true,
+    fakeVideoFile = "",
 ): Record<string, string | undefined> {
     const env: Record<string, string | undefined> = { ...base, TOLI_ROLE: "jawan", TOLI_RUN_ID: runId };
     // A Claude Code lead exports these; a nested `claude -p` must start as its own top-level session.
@@ -225,7 +255,7 @@ export function jawanEnv(
     delete env.TOLI_TASK;
     // A jawan the headless lead started is not that lead turn: it must never inherit its refusals.
     delete env[LEAD_TURN_ENV];
-    Object.assign(env, slotShareEnv(base, cargoJobs));
+    Object.assign(env, slotShareEnv(base, cargoJobs), fakeMediaEnv(base, fakeVideoFile));
     if (!liveStack) return { ...env, ...leadBuildEnv(base, cargoJobs, preload) };
     env.PATH = withoutShims(base.PATH).join(delimiter);
     // An inherited toli wrapper (a lead's) gives way to the one it chained to.

@@ -9,7 +9,7 @@ import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, readStdin, shellQuote, ToliError, warn } from "../core/util.ts";
 import { capacityFor } from "../fleet/resources.ts";
-import { ensureNodePreloadStub, leadBuildEnv } from "../jawans/env.ts";
+import { ensureNodePreloadStub, fakeMediaEnv, leadBuildEnv, machineFakeVideoFile } from "../jawans/env.ts";
 import { type HookAgentEvent, reportHookEvent } from "../records/agents.ts";
 import { takeWake, wakeFormat, wakeMessage } from "../records/wake.ts";
 import { leadNoticeContext, takeSetupNotice } from "../setup/setup.ts";
@@ -117,14 +117,18 @@ export function claudeAgentReport(input: ClaudeHookInput, at: Date): void {
 
 /**
  * The build variables a lead session sets for itself and the native subagents it starts (src/jawans/env.ts
- * `leadBuildEnv`), or null in a `bin/toli spawn` jawan, whose supervisor set its own (a live-stack project's without
- * the shim). The Node preload stub is written first; one that cannot be written stays out of NODE_OPTIONS.
+ * `leadBuildEnv`), with the fake-media browser variables (`fakeMediaEnv`), or null in a `bin/toli spawn` jawan, whose
+ * supervisor set its own (a live-stack project's without the shim). The Node preload stub is written first; one that
+ * cannot be written stays out of NODE_OPTIONS.
  */
 export function leadBuildVars(env: Record<string, string | undefined>): Record<string, string> | null {
     if (env.TOLI_ROLE === "jawan") return null;
     // Readable before `init`: an uninitialised machine gets the default capacity.
     const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
-    return leadBuildEnv(env, capacityFor(machine, availableParallelism()).cargoJobs, ensureNodePreloadStub());
+    return {
+        ...leadBuildEnv(env, capacityFor(machine, availableParallelism()).cargoJobs, ensureNodePreloadStub()),
+        ...fakeMediaEnv(env, machineFakeVideoFile(machine)),
+    };
 }
 
 /** The lead's build variables as `export` lines for Claude Code's `CLAUDE_ENV_FILE`, sourced before each Bash call. */
