@@ -1,15 +1,17 @@
 // A machine that stopped working while work waits (docs/fleet.md "Oversight"): a provider's rate limit can stop every
 // agent on a machine, its lead included, and nothing starts them again until someone looks. With queued or active
 // work and no agent activity for `oversight.idleMachineMinutes` (default 30), the tick re-dispatches the stopped
-// jawans (src/records/redispatch.ts, which then also takes subagents that stopped reporting) and, when no lead session
-// lives here, alerts the coordinator and the machines that delegated the waiting work, once per idle spell. toli never
-// kills or signals a live omp. Activity is what agents leave in toli's records: a jawan run running, started or
-// ended, a subagent's report, a lead turn.
+// jawans (src/records/redispatch.ts, which then also takes subagents that stopped reporting) and, when no lead lives
+// here (no session, attach or headless turn on record, and no harness running in the toli root however it was
+// started: src/fleet/lead-process.ts), alerts the coordinator and the machines that delegated the waiting work, once
+// per idle spell. toli never kills or signals a live omp. Activity is what agents leave in toli's records: a jawan run
+// running, started or ended, a subagent's report, a lead turn.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fleetMachine, hasMachine, loadMachine, machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, readJson, stamp, ToliError, warn, withLock, writeJsonAtomic } from "../core/util.ts";
+import { rootHarnessPid } from "../fleet/lead-process.ts";
 import { interactiveLeadPid, readLeadState, turnPid } from "../fleet/lead-state.ts";
 import { waitingTasks } from "../fleet/queue.ts";
 import { type JawanRun, listRuns, RUNNING } from "../jawans/runs.ts";
@@ -113,7 +115,9 @@ export function watchIdleMachine(tasks: Task[], at: Date = now()): IdleMachine {
     const last = lastActivityMs(listRuns(), at);
     const minutes = last === null ? null : Math.floor((at.getTime() - last) / 60_000);
     if (minutes === null || minutes < idleMachineMinutes()) return { idleMinutes: null, lines: [] };
-    if (interactiveLeadPid() !== null || turnPid(readLeadState()) !== null) return { idleMinutes: minutes, lines: [] };
+    // A lead no record names (started by hand in tmux after a reboot, T2563) still counts while its harness runs here.
+    if (interactiveLeadPid() !== null || turnPid(readLeadState()) !== null || rootHarnessPid() !== null)
+        return { idleMinutes: minutes, lines: [] };
     const spell = new Date(last ?? 0).toISOString();
     const alerted = withLock(paths.lock("idle-machine"), () => {
         const state = readJson<IdleState>(paths.idleMachineState(), {});

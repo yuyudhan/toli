@@ -2,7 +2,17 @@
 // subagents that stopped reporting and, with no live lead session, alerts the coordinator and the delegating machines
 // once per idle spell, never touching a live omp.
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { editBacklog, fleet, remoteSnapshot, sshLog } from "./fleet-fixture.ts";
 import { type Sandbox, withProject } from "./helpers.ts";
@@ -52,6 +62,33 @@ function alerts(box: Sandbox): string[] {
         .filter((item) => item.startsWith(`# ${ALERT}`));
 }
 
+/**
+ * Run `check` while a harness process runs in the sandbox's toli root with no record naming it: `omp <words>`, a shell
+ * under the name `omp` holding a sleep, so `ps` shows that command line, then stop it.
+ */
+async function withRootOmp(box: Sandbox, words: string[], check: () => void): Promise<void> {
+    const bin = mkdtempSync(join(tmpdir(), "toli-lead-"));
+    const omp = join(bin, "omp");
+    symlinkSync(Bun.which("sh") ?? "/bin/sh", omp);
+    const script = 'sleep 600 & trap "kill $!" TERM; wait';
+    const harness = Bun.spawn([omp, "-c", script, "omp", ...words], {
+        cwd: box.root,
+        stdout: "ignore",
+        stderr: "ignore",
+    });
+    try {
+        const ps = Bun.spawnSync(["ps", "-ww", "-o", "args=", "-p", String(harness.pid)]);
+        const args = ps.stdout.toString();
+        expect(args).toContain(`${omp} -c`);
+        for (const word of words) expect(args).toContain(word);
+        check();
+    } finally {
+        harness.kill();
+        await harness.exited;
+        rmSync(bin, { recursive: true, force: true });
+    }
+}
+
 describe("an idle machine with waiting work", () => {
     test("re-dispatches a subagent that stopped reporting and alerts once, to the coordinator and the delegator", () => {
         const box = stoppedMachine();
@@ -87,4 +124,28 @@ describe("an idle machine with waiting work", () => {
         expect(runIds(box)).toHaveLength(1);
         expect(alerts(box)).toHaveLength(0);
     });
+
+    test("with a lead omp started by hand in the toli root, no session record, it sends no alert", async () => {
+        const box = stoppedMachine();
+        // Started outside the lead service and the session extension (by hand in tmux after a reboot, T2563).
+        await withRootOmp(box, [], () => {
+            box.ok(["job", "tick"], { now: "2026-03-04T08:32:00.000Z" });
+            expect(runIds(box)).toHaveLength(1);
+            expect(alerts(box)).toHaveLength(0);
+        });
+    });
+
+    for (const [what, words] of [
+        ["omp's worker daemon", ["__omp_worker_daemon"]],
+        ["omp's worker shell", ["__omp_worker_shell_process", "--source", "/tmp/otk"]],
+        ["a headless omp run (a jawan, `bin/toli exec`)", ["-p", "--wait-async", "--no-title"]],
+    ] as const) {
+        test(`${what} in the toli root is no lead: it still alerts`, async () => {
+            const box = stoppedMachine();
+            await withRootOmp(box, [...words], () => {
+                box.ok(["job", "tick"], { now: "2026-03-04T08:32:00.000Z" });
+                expect(alerts(box)).toHaveLength(1);
+            });
+        });
+    }
 });

@@ -623,7 +623,10 @@ answer` posts no wake of its own; only an answer forwarded from another machine'
   free slot here: below) and no agent activity
   for `oversight.idleMachineMinutes` (default 30; activity is a jawan run running, started or ended, a subagent's
   report or a lead turn), the tick also takes a subagent that stopped reporting as dead and re-dispatches it as above.
-  When no lead session lives there either (no interactive session, no headless turn), it alerts once per idle spell:
+  When no lead lives there either (no interactive session, attach or headless turn on record, and no harness process
+  whose working directory is the toli root, so a lead started by hand in tmux counts too; a headless run in print mode,
+  such as a jawan or `bin/toli exec`, and a harness's own helper such as `omp __omp_worker_daemon` are no lead), it
+  alerts once per idle spell:
   an inbox item, forwarded to the coordinator on a worker, and the same message to every machine that delegated
   waiting work (`m1: no agent activity for 31 min with 2 tasks waiting, and no live lead session`). toli never kills
   or signals a live omp; starting the lead stays with `bin/toli fleet start` or `bin/toli lead attach`.
