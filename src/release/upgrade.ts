@@ -53,12 +53,13 @@ export function describeInstalled(installed: Installed): string {
     return `${installed.version} (untagged: ${where} @ ${installed.commit})`;
 }
 
-export function versionCommand(argv: string[]): void {
+export function versionCommand(argv: string[]): number {
     const args = new Args(argv, { booleans: ["json"] });
     args.maxPositional(0);
     const installed = installedVersion(paths.root());
     if (args.bool("json")) printJson(installed);
     else out(`toli ${describeInstalled(installed)}`);
+    return 0;
 }
 
 /** The remote to fetch releases from: the clone's `origin`, else the release URL. */

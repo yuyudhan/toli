@@ -18,6 +18,7 @@ import { forgeCommand, prCommand, pushCommand } from "./forge/forge.ts";
 import { gateCommand } from "./forge/gate-cli.ts";
 import { guidanceCommand } from "./harness/guidance.ts";
 import { hookCommand } from "./harness/hooks.ts";
+import { modelsCommand } from "./harness/models-command.ts";
 import { sessionCommand } from "./harness/session.ts";
 import { harnessCommand } from "./harness/sync.ts";
 import { helperCommand } from "./helpers/helpers.ts";
@@ -137,12 +138,14 @@ const USAGE = `usage: bin/toli <command> [args]
   exec [--task <id>] (prompt on stdin; runs here only)
   session start|end --pid <n>
   spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
-        [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
+        [--tier light|standard|deep] [--work scout|qa|desk|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
         [--now] [--first] [--replace] [--dry-run] [--json]
   runs [--json] [--active]
   run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
   resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
   harness sync [--check] [--json] | status [--json]
+  models show [--harness <h>] [--json] | check [--json] [--fleet] | unset <kind|tier> [--harness <h>] [--fleet]
+  models set <kind|tier> <model>[,<fallback>...]|none [--harness <h>] [--fleet]
   hook claude-pre-tool|claude-prompt|claude-session-start|claude-agent (hook JSON on stdin) | lead-build-env
   guidance
   version [--json]
@@ -292,6 +295,7 @@ const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = {
         await runCommand(argv);
         return 0;
     },
+    models: modelsCommand,
     harness: (argv) => {
         harnessCommand(argv);
         return 0;
@@ -309,14 +313,8 @@ const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = {
         updateCommand(argv);
         return 0;
     },
-    version: (argv) => {
-        versionCommand(argv);
-        return 0;
-    },
-    "--version": (argv) => {
-        versionCommand(argv);
-        return 0;
-    },
+    version: versionCommand,
+    "--version": versionCommand,
 };
 
 /** USAGE's entries: each command line with its indented continuation lines. */

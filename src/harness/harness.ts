@@ -3,25 +3,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { machineSettings } from "../core/config.ts";
 import { run, ToliError } from "../core/util.ts";
-import { parseTier, type Tier } from "./models.ts";
+import { type ModelTables, parseModelTables, parseWork, type WorkType } from "./models.ts";
 import { headlessOmpFlags, type OmpSession } from "./omp-args.ts";
 
 /** Agent harnesses toli can start a lead in and run jawans on. */
 export const HARNESSES = ["omp", "claude", "codex", "cursor", "grok", "pi"] as const;
 export type Harness = (typeof HARNESSES)[number];
-
-/**
- * Kinds of jawan work. Each runs on a model tier (src/harness/models.ts) and may route to a different harness
- * (`harness.byWork` in config/machine.json).
- */
-export const WORK_TYPES = ["scout", "mechanical", "ship", "verify", "release"] as const;
-export type WorkType = (typeof WORK_TYPES)[number];
-
-export function parseWork(value: string, label = "--work"): WorkType {
-    if (!(WORK_TYPES as readonly string[]).includes(value))
-        throw new ToliError(`${label} must be one of ${WORK_TYPES.join(", ")} (got "${value}")`);
-    return value as WorkType;
-}
 
 export type HarnessSpec = {
     name: Harness;
@@ -254,17 +241,17 @@ export function headlessCommand(harness: Harness, input: HeadlessInput): Headles
     }
 }
 
-export type HarnessConfig = {
+/**
+ * `harness` in config/machine.json. Its model tables (`tiers`, `workTiers`, `workModels`) override toli's shipped
+ * defaults (src/harness/default-models.json) entry by entry; `bin/toli models` shows and edits them.
+ */
+export type HarnessConfig = ModelTables & {
     /** Default harness for jawans spawned with `bin/toli spawn` (default omp). */
     jawan?: Harness;
     /** Per-work-type override of `jawan`. */
     byWork?: Partial<Record<WorkType, Harness>>;
     /** Model passed to a harness when neither a tier nor a work type picks one. */
     models?: Partial<Record<Harness, string>>;
-    /** Per-harness model of each tier, over toli's defaults (src/harness/models.ts). */
-    tiers?: Partial<Record<Harness, Partial<Record<Tier, string>>>>;
-    /** Per-work-type tier, over toli's defaults. */
-    workTiers?: Partial<Record<WorkType, Tier>>;
     /** A model's same-tier alternative (another account or provider) a run that hits a limit retries on first. */
     fallback?: Record<string, string>;
     /** Longest wait for a limit reset before retrying the same model (default 300). */
@@ -282,18 +269,10 @@ export function harnessConfig(): HarnessConfig {
         parseHarness(String(value), `${where}.byWork.${work}`);
     }
     for (const key of Object.keys(raw.models ?? {})) parseHarness(key, `${where}.models key`);
-    for (const [key, table] of Object.entries(raw.tiers ?? {})) {
-        parseHarness(key, `${where}.tiers key`);
-        for (const tier of Object.keys(table ?? {})) parseTier(tier, `${where}.tiers.${key} key`);
-    }
-    for (const [work, tier] of Object.entries(raw.workTiers ?? {})) {
-        parseWork(work, `${where}.workTiers key`);
-        parseTier(String(tier), `${where}.workTiers.${work}`);
-    }
     const wait = raw.limitWaitMinutes;
     if (wait !== undefined && (typeof wait !== "number" || !Number.isInteger(wait) || wait < 0))
         throw new ToliError(`${where}.limitWaitMinutes must be a whole number of minutes`);
-    return raw;
+    return { ...raw, ...parseModelTables(raw, where) };
 }
 
 /** The harness a jawan of this work type runs on when spawn gets no --harness. */

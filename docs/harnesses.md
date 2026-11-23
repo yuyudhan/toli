@@ -54,7 +54,7 @@ Next block) and with `bin/toli wake`.
 ## Jawans on any harness: `bin/toli spawn`
 
     bin/toli spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>]
-                   [--model <m>] [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release]
+                   [--model <m>] [--tier light|standard|deep] [--work scout|qa|desk|mechanical|ship|verify|release]
                    [--cwd <dir>] [--max-time <minutes>] [--now] [--first] [--replace] [--dry-run] [--json]
     bin/toli runs [--json] [--active]
     bin/toli run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
@@ -220,49 +220,89 @@ must outlive the lead session.
 `models` supplies `--model` when neither a tier nor a work type picks one (next section). `bin/toli doctor` warns when a
 configured harness is missing or logged out, and the digest's Next block says how to install it.
 
-### Model tiers
+### Model tiers and models per kind of work
 
-Every jawan runs on one of three model tiers, so cheap work does not spend the strongest model's usage:
+Every jawan runs on a model chosen for its kind of work, so testing and lookups do not spend the strongest model's
+usage. Kinds of work: `scout` (read-only investigation), `qa` (running test cases against a product), `desk`
+(triaging and filing what testers find), `mechanical` (bookkeeping, renames, data collection), `ship` (code changes),
+`verify` (the independent checker) and `release`. Each kind belongs to one of three tiers and runs on its tier's model
+list unless it has a list of its own:
 
-| Tier       | omp and Claude Code default | Work that runs on it by default               |
-| ---------- | --------------------------- | --------------------------------------------- |
-| `light`    | `claude-haiku-5-5`          | `mechanical` (lookups, bookkeeping, edits)    |
-| `standard` | `claude-sonnet-5-5`         | `scout`, `ship`                               |
-| `deep`     | `claude-opus-5-5`           | `verify` (the independent checker), `release` |
+| Tier       | omp default list (first available wins)                                                   | Kinds on it by default |
+| ---------- | ----------------------------------------------------------------------------------------- | ---------------------- |
+| `light`    | `anthropic/claude-haiku-5-5`, `anthropic/claude-haiku-4-5`                                | `mechanical`           |
+| `standard` | `anthropic/claude-sonnet-5-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-sonnet-4-6` | `scout`, `qa`, `desk`  |
+| `deep`     | `anthropic/claude-opus-5-5`, `anthropic/claude-opus-5`                                    | `verify`, `release`    |
 
-The defaults ship in toli's code (`src/harness/models.ts`), so every machine has them after `bin/toli upgrade` with no
-config. Codex, Cursor, Grok and pi have no default tier models: they keep their own default model unless configured.
+`ship` (code changes) has its own empty list by default: it runs on the harness's own default model, as the lead
+does, and is on the `standard` tier only for its limit fallback. The defaults are data, not code:
+`src/harness/default-models.json` (omp and Claude Code lists, each kind's tier, and `ship`'s empty list), so every
+machine has them after `bin/toli upgrade` with no config, and nothing in toli's code names a model or a provider.
+Codex, Cursor, Grok and pi have no default lists: they keep their own default model unless configured.
+
+A model list is ordered: a run takes the first model this machine can run. omp reports which those are
+(`omp models --json`); `bin/toli models check` (also run by `models set` and `harness sync`) records them in
+`state/model-catalog.json`, and `spawn`, `exec` and scheduled jobs pick from each list with it. Without a catalog, or
+when none of the list is in it, the first model runs.
 
 **Precedence**, most specific first: `--model` > `--tier` > the brief's `Tier:` line (docs/brief-template.md) > the
-task's tier (`bin/toli task add --tier`) > the work type's tier (`--work`, else the task's shape) > `harness.models` >
-the harness's own default. A tier the harness has no model for falls through to `harness.models`, then the harness
-default. `bin/toli spawn --dry-run [--work w] [--tier t] [--brief f]` prints the harness, model, tier and what chose it,
-without writing anything.
+task's tier (`bin/toli task add --tier`) > the kind of work's own list, else its tier's list (the kind is `--work`, else
+the brief's `Work:` line, else the task's shape) > `harness.models` > the harness's own default. A tier or kind the
+harness has no model for falls through to `harness.models`, then the harness default. `bin/toli spawn --dry-run [--work
+w] [--tier t] [--brief f]` prints the harness, model, tier, what chose it and the omp subagent for the kind, without
+writing anything.
 
 **Every path** resolves the same way on the machine that runs the work: `spawn` (and its queued starts and automatic
-continuations), `bin/toli exec` (local only), and scheduled headless jobs (`job add --tier`, else the shape: scout and
-ship are `standard`). A delegated task's `--tier` becomes the task's tier on the receiving machine, whose lead spawns
-it there and picks the model with that machine's own config. A lead's in-session subagents (omp `task`, Claude's
-Agent tool) are started by the lead, not toli: the
-toli-dispatch skill tells it to pass the tier's model to them.
+continuations), `bin/toli exec` (local only; `TOLI_EXEC_WORK` or the prompt's `Work:` line), and scheduled headless
+jobs (`job add --tier`, else the shape's kind: scout runs on `standard`, ship on the harness default). A delegated task's brief keeps its `Work:` and
+`Tier:` lines, and its `--tier` becomes the task's tier on the receiving machine, whose lead dispatches it there and
+picks the model with that machine's own tables.
 
-Configuration, all optional, in `config/machine.json`:
+**Native subagents.** A lead's in-session subagents (omp `task`) are started by the lead, not toli, and omp's `task`
+tool takes no model of its own. So `bin/toli harness sync` writes one omp agent per kind of work,
+`.omp/agents/toli-<kind>.md` (gitignored, generated from this machine's tables), whose frontmatter names the kind's
+model list; omp tries it in order and skips a model it cannot run. The lead picks the model by picking the agent:
+`agent: toli-qa` for a testing slice, `toli-desk` for a QA desk, `toli-scout` for a scout, `toli-mechanical` for
+bookkeeping, `toli-ship` for code changes, `toli-verify` for the verifier, `toli-release` for release steps. Without
+an agent the subagent runs on the lead's own model. omp's own `task.agentModelOverrides` (user config) still wins over
+an agent's list. Claude Code leads pass the kind's model (`bin/toli models show --harness claude`) as the Agent tool's
+`model`.
+
+**Changing models: `bin/toli models`.**
+
+    bin/toli models show [--harness omp] [--json]          # each kind and tier: its list, what runs here, the subagent
+    bin/toli models set qa google/gemini-3-flash,anthropic/claude-sonnet-4-6   # any provider's ids, in order
+    bin/toli models set light local/small                   # a tier's list
+    bin/toli models set ship none                           # the harness's own default model
+    bin/toli models unset qa                                # back to toli's default (the tier's list)
+    bin/toli models check [--fleet]                         # which of the ids this machine (each machine) can run
+
+`set` and `unset` take `--harness <h>` (default omp) and `--fleet`, which runs the same command on every other fleet
+machine over ssh, so one instruction switches the whole fleet; a machine that takes no inbound ssh is named with the
+`bin/toli talk` to send its Sardar instead. `check` exits 1 when a kind or tier has no model this machine can run, so a
+switch to another provider can be checked on every machine (`check --fleet`) before work runs on it.
+
+The tables live in `config/machine.json` (`set` writes them; every entry is optional and overrides the default entry
+by entry):
 
 ```json
 {
     "harness": {
-        "tiers": { "omp": { "light": "claude-haiku-5-5" }, "codex": { "deep": "gpt-5.2" } },
+        "tiers": { "omp": { "light": ["local/small"] }, "codex": { "deep": "gpt-5.2" } },
+        "workModels": { "omp": { "qa": ["google/gemini-3-flash", "anthropic/claude-sonnet-4-6"], "ship": [] } },
         "workTiers": { "scout": "light" },
-        "fallback": { "claude-sonnet-5-5": "openrouter/anthropic/claude-sonnet-5-5" },
+        "fallback": { "anthropic/claude-sonnet-5-5": "openrouter/anthropic/claude-sonnet-5-5" },
         "limitWaitMinutes": 300
     }
 }
 ```
 
-`tiers` overrides a harness's model per tier, `workTiers` a work type's tier. **Limit fallback:** a run that stops on
-a rate or usage limit (`429`, `rate_limit_error`, "usage limit" in the tail of its output) retries once: on
-`fallback[<model>]` (the same tier on another account or provider) when configured, else one tier lower, never below
-standard for `ship`, `verify`, `release` or work of unknown type (scout and mechanical may drop to light); else on the
+`tiers` sets a harness's list per tier, `workModels` a kind's own list (an empty list: the harness's own default), and
+`workTiers` a kind's tier (its limit fallback steps down from it). A single id works wherever a list does.
+**Limit fallback:** a run that stops on a rate or usage limit (`429`, `rate_limit_error`, "usage limit" in the tail
+of its output) retries once: on `fallback[<model>]` (the same tier on another account or provider) when configured,
+else on the first available model one tier lower, never below standard for `ship`, `verify`, `release` or work of
+unknown type (scout, qa, desk and mechanical may drop to light); else on the
 same model after the reset the error names (an ISO time, a `|<epoch>`, "in N minutes", `retry-after-ms`,
 `retry-after` in seconds, "resets 3pm"; 15 minutes when it names none), unless that is more than `limitWaitMinutes`
 (default 300) away. The decision is logged in the run's output and recorded as `fallback` on the run.

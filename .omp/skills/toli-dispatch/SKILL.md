@@ -191,34 +191,43 @@ Two ways to start a background jawan, both non-blocking:
 
 - **Native async subagents** of the harness you (the lead) run in: omp's `task` tool, Claude Code's Agent/Task tool
   (background by default), Grok's `spawn_subagent` with `run_in_background`. Default when you run in one of these.
-  **Pass the tier's model** (toli cannot set it for you): mechanical `claude-haiku-5-5`, scout and ship
-  `claude-sonnet-5-5`, verify, release and `Tier: deep` briefs `claude-opus-5-5` (omp `task` `model`, Claude's Agent
-  `model`); `bin/toli spawn --dry-run --work <w>` prints this machine's choice (docs/harnesses.md "Model tiers").
+  **Pick the model by picking the agent** (omp's `task` takes no model; toli writes one agent per kind of work with
+  this machine's model list, `bin/toli harness sync`): see "Which agent" below. On Claude Code pass the kind's model
+  (`bin/toli models show --harness claude`) as the Agent tool's `model`. `bin/toli models show` lists each kind's
+  models here; `bin/toli spawn --dry-run --work <kind>` prints the model and agent (docs/harnesses.md "Model tiers").
 - **`bin/toli spawn`**: the universal path. Required when your harness's subagents block or do not exist (Codex,
   Cursor CLI, pi), when the work should run on another harness or model, or when it must outlive this session:
 
-        bin/toli spawn --task T<n> --brief data/projects/<project>/briefs/T<n>.md [--harness omp|claude|codex|cursor|grok|pi] [--model <m>] [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release]
+        bin/toli spawn --task T<n> --brief data/projects/<project>/briefs/T<n>.md [--harness omp|claude|codex|cursor|grok|pi] [--model <m>] [--tier light|standard|deep] [--work scout|qa|desk|mechanical|ship|verify|release]
 
     It returns a run id at once; without `--harness` it uses `harness` in `config/machine.json` (default omp, per-work
-    overrides), and the model of the work's tier (`--tier` or a `Tier:` line overrides). Its outcome arrives as a
+    overrides), and the model of the work's kind (`--work`, else the brief's `Work:` line, else the task's shape;
+    `--tier` or a `Tier:` line overrides). Its outcome arrives as a
     `[toli wake]` message like any inbox item. `bin/toli runs` lists runs with their model;
     `bin/toli run status|log|kill <id>`; never poll them while the user may talk. A missing CLI fails at once with its
     install command: tell the user, or pick another harness. Details: `docs/harnesses.md`.
 
-### Which agent (omp `task` tool)
+### Which agent (omp `task` tool): the kind of work picks the model
 
-| Work                                            | agent                        | effort |
-| ----------------------------------------------- | ---------------------------- | ------ |
-| investigations, code maps, audits (scout shape) | `task` (default; omit agent) | lo/med |
-| mechanical edits, renames, data collection      | `sonic`                      | lo     |
-| normal implementation                           | `task` (default; omit agent) | med    |
-| ambiguous design / hard bugs                    | `task`                       | hi     |
-| verify ship work and land it (step 6)           | `task`                       | med    |
+Every brief names its kind of work in its header (`Work: <kind>`, docs/brief-template.md). Pass the matching agent;
+never leave it out, or the subagent runs on your own (most expensive) model:
 
-Scout-shape jawans must write their report and close their task, and verifiers re-run checks, write a report, and
-commit, so all of them need write and bash access: use `task`, not the read-only `scout` agent or omp's `reviewer`
-(no write/edit tools; its prompt forbids builds and edits). A verifier may spawn `qa-tester` or browser helpers itself
-for UI/CLI/API checks. On Claude Code use the general-purpose agent; on `bin/toli spawn` every jawan is a full session.
+| Work                                                                               | agent             | effort |
+| ---------------------------------------------------------------------------------- | ----------------- | ------ |
+| testing: QA slices, test campaigns, reproductions, UI/CLI/API checks (`Work: qa`)  | `toli-qa`         | med    |
+| QA desk: triaging tester findings, dedupe, filing and updating bugs (`Work: desk`) | `toli-desk`       | med    |
+| investigations, code maps, audits (scout shape, `Work: scout`)                     | `toli-scout`      | lo/med |
+| mechanical edits, renames, bookkeeping, data collection (`Work: mechanical`)       | `toli-mechanical` | lo     |
+| code changes, implementation, hard bugs (ship shape, `Work: ship`)                 | `toli-ship`       | med/hi |
+| verify ship work and land it (step 6, `Work: verify`)                              | `toli-verify`     | med    |
+| release steps (`Work: release`)                                                    | `toli-release`    | med    |
+
+Testing is the bulk of the usage: always `toli-qa` (or `--work qa` on spawn), never the default agent. A brief with a
+`Tier:` line runs on that tier's model: use `bin/toli spawn` for it (agents carry the kind's model, not the tier's).
+The `toli-*` agents have write, bash and subagent access, like `task`; never use the read-only `scout` agent or omp's
+`reviewer` for toli work (no write/edit tools). A verifier may spawn `qa-tester` or browser helpers itself for
+UI/CLI/API checks. On `bin/toli spawn` every jawan is a full session. The user changes which model a kind runs on with
+`bin/toli models set <kind> <model>[,<fallback>...] [--fleet]` (docs/harnesses.md); never edit the agent files.
 
 - A toli of jawans for work in different projects goes out in a single `task` call (or one `spawn` per task).
 - Several jawans on the same project in parallel are allowed, even in the same files. Give each its own task id.

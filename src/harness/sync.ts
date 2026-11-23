@@ -8,9 +8,11 @@ import { lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, type Stats, s
 import { dirname, join } from "node:path";
 import { Args } from "../core/args.ts";
 import { paths } from "../core/paths.ts";
-import { out, printJson, ToliError, writeTextAtomic } from "../core/util.ts";
+import { out, printJson, ToliError, warn, writeTextAtomic } from "../core/util.ts";
+import { agentItems } from "./agents.ts";
 import { GENERIC_NAMES, guidanceRules } from "./guidance.ts";
-import { HARNESSES, harnessStatus } from "./harness.ts";
+import { HARNESSES, harnessConfig, harnessStatus } from "./harness.ts";
+import { refreshCatalog } from "./model-catalog.ts";
 
 export type ShimItem =
     | { path: string; kind: "symlink"; target: string; why: string }
@@ -108,9 +110,9 @@ function currentState(root: string, item: ShimItem): { state: SyncState; detail:
         : { state: "differs", detail: "content differs from the generator" };
 }
 
-/** Bring every shim up to date under `root` (or only report with `check`). Never deletes real files or dirs. */
-export function syncShims(root: string, check: boolean): SyncResult[] {
-    return shimItems().map((item): SyncResult => {
+/** Bring each item up to date under `root` (or only report with `check`). Never deletes real files or dirs. */
+function syncItems(root: string, items: readonly ShimItem[], check: boolean): SyncResult[] {
+    return items.map((item): SyncResult => {
         const { state, detail } = currentState(root, item);
         if (check || state === "ok" || state === "blocked") return { path: item.path, state, action: "none", detail };
         const full = join(root, item.path);
@@ -130,11 +132,30 @@ export function syncShims(root: string, check: boolean): SyncResult[] {
     });
 }
 
+/** Bring every committed shim up to date under `root` (or only report with `check`). */
+export function syncShims(root: string, check: boolean): SyncResult[] {
+    return syncItems(root, shimItems(), check);
+}
+
+/** Bring the generated omp subagents (src/harness/agents.ts) up to date under `root` (or only report with `check`). */
+export function syncAgents(root: string, check: boolean): SyncResult[] {
+    return syncItems(root, agentItems(harnessConfig()), check);
+}
+
+/** The shims and the generated omp subagents: everything `harness sync` keeps up to date. */
+export function syncHarness(root: string, check: boolean): SyncResult[] {
+    return [...syncShims(root, check), ...syncAgents(root, check)];
+}
+
 function sync(argv: string[]): void {
     const args = new Args(argv, { booleans: ["check", "json"] });
     args.maxPositional(0);
     const check = args.bool("check");
-    const results = syncShims(paths.root(), check);
+    const results = syncHarness(paths.root(), check);
+    // Writing also re-reads which models this machine's harnesses run, for the lists' fallbacks (`bin/toli models`).
+    if (!check)
+        for (const read of refreshCatalog())
+            if (!read.ok) warn(`toli: ${read.harness} models not checked: ${read.error}`);
     if (args.bool("json")) printJson(results);
     else
         for (const result of results)

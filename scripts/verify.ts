@@ -51,7 +51,13 @@ check("bin/toli doctor", [TOLI, "doctor"], (code, output) => {
     if (code === 1 && !machineConfigured && /^fail machine /m.test(output)) return null;
     return `exit ${code}`;
 });
-check("bin/toli harness sync --check", [TOLI, "harness", "sync", "--check"], exitZero);
+// The omp subagents (.omp/agents/toli-*.md) are generated per machine and gitignored: a fresh clone has none yet.
+check("bin/toli harness sync --check", [TOLI, "harness", "sync", "--check"], (code, output) => {
+    if (code === 0) return null;
+    const drift = output.split("\n").filter((line) => /^(missing|differs|blocked) /.test(line));
+    const onlyAgents = drift.every((line) => line.startsWith("missing .omp/agents/toli-"));
+    return !machineConfigured && drift.length > 0 && onlyAgents ? null : `exit ${code}`;
+});
 const usage = exec([TOLI, "help"]).output;
 if (/^\s*setup status/m.test(usage)) check("bin/toli setup status", [TOLI, "setup", "status"], exitZero);
 check("sh -n install.sh", ["sh", "-n", "install.sh"], exitZero);

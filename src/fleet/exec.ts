@@ -8,18 +8,19 @@ import { loadMachine } from "../core/config.ts";
 import { adoptLoginEnv } from "../core/login-env.ts";
 import { paths } from "../core/paths.ts";
 import { now, readStdin, requireName, runTee, stamp, type TeeResult, ToliError, warn } from "../core/util.ts";
-import { harnessConfig, parseWork, type WorkType } from "../harness/harness.ts";
+import { harnessConfig } from "../harness/harness.ts";
+import { hitLimit, limitReset, parseUsage, type Usage } from "../harness/limit-output.ts";
+import { modelCatalog } from "../harness/model-catalog.ts";
 import {
     briefTier,
+    briefWork,
     choiceText,
-    hitLimit,
     limitPlan,
-    limitReset,
     parseOptionalTier,
-    parseUsage,
+    parseWork,
     resolveModel,
     type Tier,
-    type Usage,
+    type WorkType,
 } from "../harness/models.ts";
 import { headlessOmpArgs } from "../harness/omp-args.ts";
 import { recordRun, sessionFile } from "../jawans/launch.ts";
@@ -97,10 +98,13 @@ export async function execCommand(argv: string[]): Promise<number> {
     // The brief's Stall: line replaces capacity.stallMinutes for this run (src/jawans/progress.ts).
     const stall = briefStallMinutes(prompt) ?? stallMinutes(machine);
     const config = harnessConfig();
+    const catalog = modelCatalog("omp");
+    const work = request.work ?? briefWork(prompt);
     const choice = resolveModel(
         "omp",
-        { tier: request.tier, briefTier: briefTier(prompt), taskTier: request.taskTier, work: request.work },
+        { tier: request.tier, briefTier: briefTier(prompt), taskTier: request.taskTier, work },
         config,
+        catalog,
     );
     const refusal = localStartRefusal();
     if (refusal.length > 0) {
@@ -112,7 +116,7 @@ export async function execCommand(argv: string[]): Promise<number> {
             harness: "omp",
             task,
             project,
-            work: request.work,
+            work,
             model: choice.model,
             tier: choice.tier,
             modelSource: choice.source,
@@ -216,10 +220,11 @@ export async function execCommand(argv: string[]): Promise<number> {
         ) {
             const at = now();
             const plan = limitPlan(
-                { harness: "omp", model: choice.model, tier: choice.tier, work: request.work },
+                { harness: "omp", model: choice.model, tier: choice.tier, work },
                 limitReset(result.output, at),
                 at,
                 config,
+                catalog,
             );
             const retry = plan.kind === "switch" && (left === null || left >= MIN_RETRY_MINUTES);
             const reason = retry

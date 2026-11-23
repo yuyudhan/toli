@@ -219,12 +219,14 @@ the interactive Sardar's subagents.
 ### Jawans and harnesses
 
     spawn --brief <file> [--harness omp|claude|codex|cursor|grok|pi] [--task T<n>] [--project <p>] [--model <m>]
-          [--tier light|standard|deep] [--work scout|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
+          [--tier light|standard|deep] [--work scout|qa|desk|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
           [--now] [--first] [--replace] [--dry-run] [--json]
     runs [--json] [--active]
     run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
     resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
     harness sync [--check] [--json] | status [--json]
+    models show [--harness <h>] [--json] | check [--json] [--fleet] | unset <kind|tier> [--harness <h>] [--fleet]
+    models set <kind|tier> <model>[,<fallback>...]|none [--harness <h>] [--fleet]
     hook claude-pre-tool|claude-prompt|claude-session-start|claude-agent (hook JSON on stdin) | lead-build-env
     guidance
     session start|end --pid <n>
@@ -243,7 +245,13 @@ the interactive Sardar's subagents.
   (default 30, or its brief's `Stall: <minutes>` line), or uses its explicit limit, without a report is resumed in the same omp session
   (`capacity.autoResume`, default 3). `resume` lets the lead continue any finished run's session. Under
   `lead.dispatch: "subagents"`, `spawn`, `resume` and queued-run starts refuse in a headless lead turn.
-- `harness sync` links skills and commands into every harness; `harness status` shows installed CLIs and logins.
+- `harness sync` links skills and commands into every harness and writes the omp subagents `toli-<kind>` with each
+  kind's model list; `harness status` shows installed CLIs and logins.
+- `models` shows and changes the model each kind of work (`scout`, `qa`, `desk`, `mechanical`, `ship`, `verify`,
+  `release`) and each tier runs on: any id the harness accepts, any provider, as an ordered list whose first entry this
+  machine can run wins. `check` reads what omp can run here and exits 1 when a list has none; `--fleet` does the same
+  on every other machine. The model is picked per kind by `spawn` (`--work`, or the brief's `Work:` line) and by
+  native subagents through `agent: toli-<kind>`.
 - `hook`, `guidance`, `session`: called by the harness integrations (Claude Code hooks, the omp extension), not by
   hand. `guidance` prints the lead reminder they inject; `session` registers the live lead session.
 

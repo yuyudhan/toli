@@ -6,6 +6,19 @@ one. See docs/releasing.md.
 
 ## v0.7.2 - unreleased
 
+### Added
+
+- Each kind of work runs on the models chosen for it, from any provider, and native subagents follow too. Testing is
+  its own kind (`qa`, plus `desk` for a QA desk) on the cheaper standard list, and a lead's omp `task` subagents no
+  longer default to the lead's own model: `bin/toli harness sync` writes one omp agent per kind,
+  `.omp/agents/toli-<kind>.md`, with that kind's ordered model list (`agent: toli-qa` for a testing slice). Briefs
+  name their kind with a `Work:` header line, which `spawn` and `exec` read. The defaults moved out of the code into
+  `src/harness/default-models.json` (Sonnet 5.5, 5, 4.6 for scout, qa and desk; Haiku for mechanical; Opus for
+  verify and release; code changes on the harness default), and `bin/toli models show|set|unset|check [--fleet]` shows
+  and changes them with any model id the harness accepts, as an ordered list whose first model this machine can run
+  wins, on one machine or the whole fleet; `check` reads what omp can run and fails when a list has none, so a
+  switch to another provider is checked before work runs on it (docs/harnesses.md, T2450).
+
 ### Fixed
 
 - A push whose pre-push hook skips its gate on a sealed pass no longer has to wait for a heavy-build slot. A

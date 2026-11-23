@@ -89,6 +89,8 @@ export const paths = {
     jobsState: () => join(repoRoot(), "state", "jobs.json"),
     /** Provider limits with a named reset that pause scheduled jobs on their model (src/jobs/limit-pause.ts). */
     jobLimits: () => join(repoRoot(), "state", "job-limits.json"),
+    /** The models each harness reported it can run here (`bin/toli models check`, src/harness/model-catalog.ts). */
+    modelCatalog: () => join(repoRoot(), "state", "model-catalog.json"),
     acks: () => join(repoRoot(), "state", "acks.json"),
     pruneState: () => join(repoRoot(), "state", "prune.json"),
     /** The setup steps the user was last told about (or snoozed), so session start says it once. */

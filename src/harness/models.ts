@@ -1,35 +1,40 @@
-// Model tiers: which model a jawan runs on, chosen per work type, and what a run that hits a rate or usage limit
-// retries on. Pure functions over the `harness` block of config/machine.json (HarnessConfig); docs/harnesses.md
-// "Model tiers" describes the table, the precedence and the fallback rule.
-import { ToliError } from "../core/util.ts";
-import type { Harness, HarnessConfig, WorkType } from "./harness.ts";
+// Model tiers: which model a jawan runs on, chosen per work kind, and what a run that hits a rate or usage limit
+// retries on. Pure functions over the `harness` block of config/machine.json (HarnessConfig) and toli's shipped
+// defaults (default-models.json, no model names in code); docs/harnesses.md "Model tiers" describes the tables, the
+// precedence and the fallback rule.
+import { isJsonObject, ToliError } from "../core/util.ts";
+import SHIPPED_MODELS from "./default-models.json";
+import { type Harness, type HarnessConfig, parseHarness } from "./harness.ts";
 
 /** Cheapest to strongest. */
 export const TIERS = ["light", "standard", "deep"] as const;
 export type Tier = (typeof TIERS)[number];
 
-const ANTHROPIC_TIERS: Record<Tier, string> = {
-    light: "claude-haiku-5-5",
-    standard: "claude-sonnet-5-5",
-    deep: "claude-opus-5-5",
-};
-
 /**
- * Each harness's own model per tier, as its `--model` accepts it. A harness not named here (or a tier it lacks) keeps
- * its own default model unless `harness.tiers` in config/machine.json names one.
+ * Kinds of jawan work. Each runs on its own model list or its tier's, and may route to a different harness
+ * (`harness.byWork` in config/machine.json). `qa` runs test cases against a product, `desk` triages and files what
+ * testers find.
  */
-export const DEFAULT_TIER_MODELS: Partial<Record<Harness, Record<Tier, string>>> = {
-    omp: ANTHROPIC_TIERS,
-    claude: ANTHROPIC_TIERS,
-};
+export const WORK_TYPES = ["scout", "qa", "desk", "mechanical", "ship", "verify", "release"] as const;
+export type WorkType = (typeof WORK_TYPES)[number];
 
-/** The tier each kind of work runs on unless `harness.workTiers` says otherwise. */
-export const DEFAULT_WORK_TIERS: Record<WorkType, Tier> = {
-    scout: "standard",
-    mechanical: "light",
-    ship: "standard",
-    verify: "deep",
-    release: "deep",
+export function parseWork(value: string, label = "--work"): WorkType {
+    const work = WORK_TYPES.find((name) => name === value);
+    if (work === undefined) throw new ToliError(`${label} must be one of ${WORK_TYPES.join(", ")} (got "${value}")`);
+    return work;
+}
+
+/** Model ids as the harness's `--model` takes them (any provider), in order: the first this machine has wins. */
+export type ModelList = readonly string[];
+
+/** The model tables of `harness` in config/machine.json; toli's defaults (default-models.json) have the same shape. */
+export type ModelTables = {
+    /** Per harness, each tier's model list. */
+    tiers?: Partial<Record<Harness, Partial<Record<Tier, ModelList>>>>;
+    /** Per work kind, its tier. */
+    workTiers?: Partial<Record<WorkType, Tier>>;
+    /** Per harness, a work kind's own model list, over its tier's; an empty list is the harness's own default. */
+    workModels?: Partial<Record<Harness, Partial<Record<WorkType, ModelList>>>>;
 };
 
 /**
@@ -38,6 +43,8 @@ export const DEFAULT_WORK_TIERS: Record<WorkType, Tier> = {
  */
 const FLOOR: Record<WorkType, Tier> = {
     scout: "light",
+    qa: "light",
+    desk: "light",
     mechanical: "light",
     ship: "standard",
     verify: "standard",
@@ -63,31 +70,133 @@ export function parseOptionalTier(value: string | undefined, label = "--tier"): 
     return value === undefined ? undefined : parseTier(value, label);
 }
 
-/** The model a harness runs for `tier`: the configured one, else toli's default, else none (the harness default). */
-export function tierModel(harness: Harness, tier: Tier, config: HarnessConfig): string | null {
-    return config.tiers?.[harness]?.[tier] ?? DEFAULT_TIER_MODELS[harness]?.[tier] ?? null;
+/** `raw`'s own entries when it is a JSON object; anything else is refused, naming `where`. */
+function objectEntries(raw: unknown, where: string): [string, unknown][] {
+    if (!isJsonObject(raw)) throw new ToliError(`${where} must be an object`);
+    return Object.entries(raw);
 }
 
-/** The tier whose model `model` is on this harness, or null when the table does not name it. */
-export function tierOf(harness: Harness, model: string, config: HarnessConfig): Tier | null {
-    return TIERS.find((tier) => tierModel(harness, tier, config) === model) ?? null;
+/** One model id or a list of them (an empty list: the harness's own default), as a list. */
+export function parseModelList(value: unknown, label: string): ModelList {
+    const entries: unknown[] = typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
+    const ids = entries.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+    if ((typeof value !== "string" && !Array.isArray(value)) || ids.length !== entries.length)
+        throw new ToliError(`${label} must be a model id or a list of model ids`);
+    return ids.map((id) => id.trim());
+}
+
+function parseTable<K extends string, V>(
+    raw: unknown,
+    where: string,
+    key: (name: string, label: string) => K,
+    value: (entry: unknown, label: string) => V,
+): Partial<Record<K, V>> {
+    if (raw === undefined) return {};
+    const table: Partial<Record<K, V>> = {};
+    for (const [name, entry] of objectEntries(raw, where))
+        table[key(name, `${where} key`)] = value(entry, `${where}.${name}`);
+    return table;
+}
+
+/** The validated model tables in `raw` (config/machine.json's `harness`, or toli's defaults); `where` names it. */
+export function parseModelTables(raw: unknown, where: string): ModelTables {
+    const fields = new Map(objectEntries(raw, where));
+    return {
+        tiers: parseTable(fields.get("tiers"), `${where}.tiers`, parseHarness, (table, label) =>
+            parseTable(table, label, parseTier, parseModelList),
+        ),
+        workTiers: parseTable(fields.get("workTiers"), `${where}.workTiers`, parseWork, (tier, label) =>
+            parseTier(String(tier), label),
+        ),
+        workModels: parseTable(fields.get("workModels"), `${where}.workModels`, parseHarness, (table, label) =>
+            parseTable(table, label, parseWork, parseModelList),
+        ),
+    };
+}
+
+let shipped: ModelTables | undefined;
+
+/** toli's shipped model tables (default-models.json); config/machine.json's `harness` overrides them entry by entry. */
+export function defaultModels(): ModelTables {
+    shipped ??= parseModelTables(SHIPPED_MODELS, "src/harness/default-models.json");
+    return shipped;
+}
+
+/** The ordered models `harness` has for `tier`: configured, else toli's defaults; empty when neither names any. */
+export function tierModels(harness: Harness, tier: Tier, config: HarnessConfig): ModelList {
+    return config.tiers?.[harness]?.[tier] ?? defaultModels().tiers?.[harness]?.[tier] ?? [];
+}
+
+/** A work kind's own model list on `harness` (configured, else toli's), or null: it runs on its tier's list. */
+export function workModels(harness: Harness, work: WorkType, config: HarnessConfig): ModelList | null {
+    return config.workModels?.[harness]?.[work] ?? defaultModels().workModels?.[harness]?.[work] ?? null;
 }
 
 export function workTier(work: WorkType, config: HarnessConfig): Tier {
-    return config.workTiers?.[work] ?? DEFAULT_WORK_TIERS[work];
+    return config.workTiers?.[work] ?? defaultModels().workTiers?.[work] ?? "standard";
+}
+
+/** The model list a work kind runs on: its own, else its tier's. */
+export function workModelList(harness: Harness, work: WorkType, config: HarnessConfig): ModelList {
+    return workModels(harness, work, config) ?? tierModels(harness, workTier(work, config), config);
 }
 
 /**
- * The `Tier: light|standard|deep` line of a brief's header (the lines before its first `## ` section), or null. A
- * misspelt tier is an error rather than silently ignored.
+ * The models a harness can run on this machine, by full `provider/id` selector (`bin/toli models check`, recorded in
+ * state/model-catalog.json); null when unknown.
  */
-export function briefTier(brief: string): Tier | null {
+export type ModelCatalog = ReadonlySet<string> | null;
+
+/** Whether the catalog has `id`: an exact selector, or a bare id under any provider, with or without a `:level`. */
+export function catalogHas(catalog: ReadonlySet<string>, id: string): boolean {
+    const names = [id, id.replace(/:[a-z]+$/, "")];
+    if (names.some((name) => catalog.has(name))) return true;
+    if (id.includes("/")) return false;
+    return [...catalog].some((selector) => names.some((name) => selector.endsWith(`/${name}`)));
+}
+
+/** The model to run from `list`: the first the catalog has, else (no catalog, or none listed) the first; null if empty. */
+export function pickModel(list: ModelList, catalog: ModelCatalog): string | null {
+    const found = catalog === null ? undefined : list.find((id) => catalogHas(catalog, id));
+    return found ?? list[0] ?? null;
+}
+
+/** The model a harness runs for `tier`: the first of its list this machine has, else none (the harness default). */
+export function tierModel(
+    harness: Harness,
+    tier: Tier,
+    config: HarnessConfig,
+    catalog: ModelCatalog = null,
+): string | null {
+    return pickModel(tierModels(harness, tier, config), catalog);
+}
+
+/** The tier whose list names `model` on this harness, or null when no tier does. */
+export function tierOf(harness: Harness, model: string, config: HarnessConfig): Tier | null {
+    return TIERS.find((tier) => tierModels(harness, tier, config).includes(model)) ?? null;
+}
+
+/** The value of a brief header's `<key>: <value>` line (the lines before its first `## ` section), or null. */
+function briefHeader(brief: string, key: string): string | null {
+    const pattern = new RegExp(`^${key}:\\s*(\\S+)\\s*$`, "i");
     for (const line of brief.split("\n")) {
         if (line.startsWith("## ")) return null;
-        const match = /^Tier:\s*(\S+)\s*$/i.exec(line.trim());
-        if (match?.[1] !== undefined) return parseTier(match[1].toLowerCase(), "the brief's Tier: line");
+        const value = pattern.exec(line.trim())?.[1];
+        if (value !== undefined) return value.toLowerCase();
     }
     return null;
+}
+
+/** The brief header's `Tier: light|standard|deep` line, or null; a misspelt tier is refused, never ignored. */
+export function briefTier(brief: string): Tier | null {
+    const tier = briefHeader(brief, "Tier");
+    return tier === null ? null : parseTier(tier, "the brief's Tier: line");
+}
+
+/** The brief header's `Work: <kind>` line (qa, scout, ...), or null; a misspelt kind is refused, never ignored. */
+export function briefWork(brief: string): WorkType | null {
+    const work = briefHeader(brief, "Work");
+    return work === null ? null : parseWork(work, "the brief's Work: line");
 }
 
 /** Where the chosen model came from, most specific first. */
@@ -107,26 +216,30 @@ export type ModelRequest = {
 
 /**
  * The model for one run, most specific first: --model > --tier > the brief's Tier: line > the task's tier > the work
- * type's tier > `harness.models` > the harness's own default. A tier this harness has no model for falls through to
- * `harness.models`, then the harness default, and is still recorded.
+ * kind's own model list, else its tier's > `harness.models` > the harness's own default. From a list it takes the
+ * first model the catalog has (the first when there is no catalog). A tier or kind this harness has no model for
+ * falls through to `harness.models`, then the harness default, and its tier is still recorded.
  */
-export function resolveModel(harness: Harness, request: ModelRequest, config: HarnessConfig): ModelChoice {
+export function resolveModel(
+    harness: Harness,
+    request: ModelRequest,
+    config: HarnessConfig,
+    catalog: ModelCatalog = null,
+): ModelChoice {
     const configured = config.models?.[harness] ?? null;
     if (request.model !== undefined && request.model !== null && request.model !== "")
         return { model: request.model, tier: tierOf(harness, request.model, config), source: "--model" };
-    const picked: [Tier, ModelSource] | null =
-        request.tier !== undefined && request.tier !== null
-            ? [request.tier, "--tier"]
-            : request.briefTier !== undefined && request.briefTier !== null
-              ? [request.briefTier, "brief"]
-              : request.taskTier !== undefined && request.taskTier !== null
-                ? [request.taskTier, "task"]
-                : request.work !== undefined && request.work !== null
-                  ? [workTier(request.work, config), "work"]
-                  : null;
-    if (picked !== null) {
-        const [tier, source] = picked;
-        return { model: tierModel(harness, tier, config) ?? configured, tier, source };
+    const tiered = (tier: Tier, source: ModelSource): ModelChoice => ({
+        model: tierModel(harness, tier, config, catalog) ?? configured,
+        tier,
+        source,
+    });
+    if (request.tier !== undefined && request.tier !== null) return tiered(request.tier, "--tier");
+    if (request.briefTier !== undefined && request.briefTier !== null) return tiered(request.briefTier, "brief");
+    if (request.taskTier !== undefined && request.taskTier !== null) return tiered(request.taskTier, "task");
+    if (request.work !== undefined && request.work !== null) {
+        const model = pickModel(workModelList(harness, request.work, config), catalog);
+        return { model: model ?? configured, tier: workTier(request.work, config), source: "work" };
     }
     if (configured !== null) return { model: configured, tier: tierOf(harness, configured, config), source: "models" };
     return { model: null, tier: null, source: "harness default" };
@@ -136,76 +249,6 @@ export function resolveModel(harness: Harness, request: ModelRequest, config: Ha
 export function choiceText(choice: Pick<ModelChoice, "model" | "tier"> & { source?: ModelSource }): string {
     const details = [choice.tier, choice.source].filter((part) => part !== null && part !== undefined);
     return `${choice.model ?? "harness default"}${details.length === 0 ? "" : ` (${details.join(", ")})`}`;
-}
-
-// A rate or usage limit as harnesses and provider APIs report it: Anthropic's rate_limit_error, Claude Code's
-// "usage limit reached", HTTP 429 named next to a rate/limit/too-many word.
-const LIMIT_PATTERNS: readonly RegExp[] = [
-    /rate_limit_error/i,
-    /usage limit/i,
-    /rate limit(ed)?\b/i,
-    /too many requests/i,
-    /\b429\b.{0,80}\b(rate|limit|too many)/i,
-    /\b(rate|limit|too many)\b.{0,80}\b429\b/i,
-];
-
-/** Lines of the attempt's output tail searched for a limit error; a report earlier in the log never counts. */
-const LIMIT_TAIL_LINES = 15;
-
-function tailLines(output: string, count: number): string[] {
-    return output
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line !== "")
-        .slice(-count);
-}
-
-/**
- * Whether a finished attempt stopped on a rate or usage limit: a failed exit whose output tail names one, or a clean
- * exit whose last line does (print modes that exit 0 after an API error).
- */
-export function hitLimit(output: string, exitCode: number | null): boolean {
-    if (exitCode !== 0)
-        return tailLines(output, LIMIT_TAIL_LINES).some((line) => LIMIT_PATTERNS.some((pattern) => pattern.test(line)));
-    // A clean exit counts only when the output is little more than the API error itself: a finished report that
-    // mentions rate limits must never be run again.
-    const lines = tailLines(output, CLEAN_EXIT_LINES + 1);
-    return lines.length <= CLEAN_EXIT_LINES && CLEAN_EXIT_LIMIT.test(lines.at(-1) ?? "");
-}
-
-/** At most this many output lines on a clean exit, the last an API limit error, count as a limit. */
-const CLEAN_EXIT_LINES = 3;
-const CLEAN_EXIT_LIMIT = /rate_limit_error|usage limit reached|\b429\b/i;
-
-const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000 };
-
-/**
- * The reset time the limit error names, or null: an ISO instant, Claude Code's `|<epoch>`, `in/after N units`,
- * `retry-after-ms: N` (milliseconds), `retry-after: N` (seconds), or `resets 3pm`.
- */
-export function limitReset(output: string, at: Date): Date | null {
-    const text = tailLines(output, LIMIT_TAIL_LINES).join("\n");
-    const iso = /reset\w*\D{0,20}(\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d))/i.exec(text);
-    if (iso?.[1] !== undefined) return new Date(iso[1]);
-    const epoch = /limit reached\|(\d{10})\b/i.exec(text);
-    if (epoch?.[1] !== undefined) return new Date(Number(epoch[1]) * 1000);
-    const relative =
-        /(?:try again|retry|resets?)\s+(?:in|after)\s+(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hours?)\b/i.exec(text);
-    if (relative?.[1] !== undefined && relative[2] !== undefined)
-        return new Date(at.getTime() + Number(relative[1]) * (UNIT_MS[relative[2][0]?.toLowerCase() ?? "s"] ?? 1000));
-    const millis = /retry-after-ms["']?\s*[:=]\s*["']?(\d+)/i.exec(text);
-    if (millis?.[1] !== undefined) return new Date(at.getTime() + Number(millis[1]));
-    const header = /retry-after["']?\s*[:=]\s*["']?(\d+)/i.exec(text);
-    if (header?.[1] !== undefined) return new Date(at.getTime() + Number(header[1]) * 1000);
-    const clock = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d\d))?\s*(am|pm)\b/i.exec(text);
-    if (clock?.[1] !== undefined && clock[3] !== undefined) {
-        const hour = (Number(clock[1]) % 12) + (clock[3].toLowerCase() === "pm" ? 12 : 0);
-        const reset = new Date(at);
-        reset.setHours(hour, Number(clock[2] ?? "0"), 0, 0);
-        if (reset.getTime() <= at.getTime()) reset.setDate(reset.getDate() + 1);
-        return reset;
-    }
-    return null;
 }
 
 export type LimitedRun = { harness: Harness; model: string | null; tier: Tier | null; work: WorkType | null };
@@ -222,7 +265,13 @@ export type LimitPlan =
     | { kind: "wait"; model: string | null; tier: Tier | null; waitMinutes: number; reason: string }
     | { kind: "none"; reason: string };
 
-export function limitPlan(run: LimitedRun, reset: Date | null, at: Date, config: HarnessConfig): LimitPlan {
+export function limitPlan(
+    run: LimitedRun,
+    reset: Date | null,
+    at: Date,
+    config: HarnessConfig,
+    catalog: ModelCatalog = null,
+): LimitPlan {
     const alternative = run.model === null ? undefined : config.fallback?.[run.model];
     if (alternative !== undefined && alternative !== run.model)
         return {
@@ -237,7 +286,7 @@ export function limitPlan(run: LimitedRun, reset: Date | null, at: Date, config:
         for (let index = TIERS.indexOf(current) - 1; index >= floor; index--) {
             const tier = TIERS[index];
             if (tier === undefined) continue;
-            const model = tierModel(run.harness, tier, config);
+            const model = tierModel(run.harness, tier, config, catalog);
             if (model !== null && model !== run.model)
                 return { kind: "switch", model, tier, reason: `${current} -> ${tier}` };
         }
@@ -275,30 +324,3 @@ export type FallbackRecord = {
     waitedMinutes: number;
     reason: string;
 };
-
-/** Tokens and cost a harness printed for a run, when it prints them. */
-export type Usage = { tokens?: number; costUsd?: number };
-
-/**
- * Tokens and cost from the output tail, when the harness prints them: Codex's `tokens used` line, and `cost: $x` /
- * `total_cost_usd` lines. Null when none is there (omp, Claude Code and others in text mode print neither).
- */
-export function parseUsage(output: string): Usage | null {
-    const text = tailLines(output, 20).join("\n");
-    const usage: Usage = {};
-    const tokens = /tokens used[:\s]+([\d,]+)/i.exec(text);
-    if (tokens?.[1] !== undefined) usage.tokens = Number(tokens[1].replaceAll(",", ""));
-    const cost = /(?:total_cost_usd|total cost|^cost)["']?\s*[:=]?\s*\$?(\d+(?:\.\d+)?)/im.exec(text);
-    if (cost?.[1] !== undefined) usage.costUsd = Number(cost[1]);
-    return Object.keys(usage).length === 0 ? null : usage;
-}
-
-/** `12345 tokens, $0.42`. */
-export function usageText(usage: Usage): string {
-    return [
-        usage.tokens === undefined ? null : `${usage.tokens} tokens`,
-        usage.costUsd === undefined ? null : `$${usage.costUsd.toFixed(2)}`,
-    ]
-        .filter((part) => part !== null)
-        .join(", ");
-}

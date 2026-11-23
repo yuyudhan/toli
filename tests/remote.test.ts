@@ -34,11 +34,11 @@ describe("remote refuses and exec model tiers", () => {
         expect(output).not.toContain("--max-time");
         // The prompt's Tier: line beats the work type.
         expect(box.ok(["exec", "--from", "m1"], { env: ENV, stdin: "Tier: light\ncheck\n" })).toContain(
-            "--model claude-haiku-5-5",
+            "--model anthropic/claude-haiku-5-5",
         );
         const runs = JSON.parse(box.ok(["runs", "--json"])) as { model: string; tier: string; work: string | null }[];
         expect(runs.map((run) => [run.model, run.tier, run.work]).sort()).toEqual([
-            ["claude-haiku-5-5", "light", null],
+            ["anthropic/claude-haiku-5-5", "light", null],
             ["m2-opus", "deep", "verify"],
         ]);
     });
@@ -54,8 +54,9 @@ echo "$*"`,
         );
         const result = box.toli(["exec", "--from", "m1"], { env: { ...ENV, TOLI_EXEC_WORK: "verify" }, stdin: "v\n" });
         expect(result.code).toBe(0);
-        expect(result.stdout).toContain("--model claude-sonnet-5-5 v");
-        expect(result.stderr).toContain("claude-opus-5-5 hit a rate/usage limit; retrying once on claude-sonnet-5-5");
+        const [OPUS, SONNET] = ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5"];
+        expect(result.stdout).toContain(`--model ${SONNET} v`);
+        expect(result.stderr).toContain(`${OPUS} hit a rate/usage limit; retrying once on ${SONNET}`);
         const [run] = JSON.parse(box.ok(["runs", "--json"])) as {
             status: string;
             model: string;
@@ -63,8 +64,8 @@ echo "$*"`,
             fallback: { from: string; to: string };
         }[];
         expect(run?.status).toBe("done");
-        expect([run?.model, run?.tier]).toEqual(["claude-sonnet-5-5", "standard"]);
-        expect(run?.fallback).toMatchObject({ from: "claude-opus-5-5", to: "claude-sonnet-5-5" });
+        expect([run?.model, run?.tier]).toEqual([SONNET, "standard"]);
+        expect(run?.fallback).toMatchObject({ from: OPUS, to: SONNET });
     });
 
     test("exec that stops making progress is stopped and resumes its own omp session", () => {

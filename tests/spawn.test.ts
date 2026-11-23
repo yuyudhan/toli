@@ -70,11 +70,11 @@ describe("spawn", () => {
         const machine = JSON.parse(readFileSync(join(box.root, "config", "machine.json"), "utf8"));
         machine.harness = { jawan: "claude", byWork: { scout: "omp" }, models: { omp: "fast-model" } };
         writeFileSync(join(box.root, "config", "machine.json"), JSON.stringify(machine));
-        box.stub("omp", 'echo "omp $*" | grep -o -- "--model [a-z0-9-]*"');
+        box.stub("omp", 'echo "omp $*" | grep -o -- "--model [a-z0-9/-]*"');
         box.stub("claude", 'cat >/dev/null; echo "claude $*"');
         const scout = spawnJson(box, ["--work", "scout", "--brief", brief(box), "--cwd", box.root]);
         expect(scout.harness).toBe("omp");
-        expect(scout.model).toBe("claude-sonnet-5-5");
+        expect(scout.model).toBe("anthropic/claude-sonnet-5-5");
         expect(scout.tier).toBe("standard");
         const plain = spawnJson(box, ["--harness", "omp", "--brief", brief(box), "--cwd", box.root]);
         expect(plain.model).toBe("fast-model");
@@ -83,7 +83,7 @@ describe("spawn", () => {
         expect(ship.harness).toBe("claude");
         expect(ship.model).toBeNull();
         expect(readFileSync((await waitFor(box, scout.id, (run) => run.inbox !== null)).logPath, "utf8")).toBe(
-            "--model claude-sonnet-5-5\n",
+            "--model anthropic/claude-sonnet-5-5\n",
         );
         expect(readFileSync((await waitFor(box, plain.id, (run) => run.inbox !== null)).logPath, "utf8")).toBe(
             "--model fast-model\n",
@@ -97,13 +97,17 @@ describe("spawn", () => {
         const box = coordinator();
         box.stub("omp", "true");
         const dry = (args: string[]): string => box.ok(["spawn", "--dry-run", "--cwd", box.root, ...args]);
-        expect(dry(["--work", "scout"])).toContain("would spawn: omp claude-sonnet-5-5 (standard, work), work scout");
-        expect(dry(["--work", "mechanical"])).toContain("omp claude-haiku-5-5 (light, work)");
-        expect(dry(["--work", "verify"])).toContain("omp claude-opus-5-5 (deep, work)");
-        expect(dry(["--work", "verify", "--tier", "standard"])).toContain("claude-sonnet-5-5 (standard, --tier)");
+        expect(dry(["--work", "scout"])).toContain(
+            "would spawn: omp anthropic/claude-sonnet-5-5 (standard, work), work scout (omp subagent: toli-scout)",
+        );
+        expect(dry(["--work", "mechanical"])).toContain("omp anthropic/claude-haiku-5-5 (light, work)");
+        expect(dry(["--work", "verify"])).toContain("omp anthropic/claude-opus-5-5 (deep, work)");
+        expect(dry(["--work", "verify", "--tier", "standard"])).toContain(
+            "anthropic/claude-sonnet-5-5 (standard, --tier)",
+        );
         expect(dry(["--work", "verify", "--tier", "light", "--model", "m"])).toContain("omp m (--model)");
         expect(dry(["--work", "mechanical", "--brief", brief(box, "Tier: deep\ndo it")])).toContain(
-            "claude-opus-5-5 (deep, brief)",
+            "anthropic/claude-opus-5-5 (deep, brief)",
         );
         expect(box.toli(["spawn", "--dry-run", "--tier", "max"]).stderr).toContain("--tier must be one of");
         expect(runs(box)).toEqual([]);
@@ -113,16 +117,15 @@ describe("spawn", () => {
         const box = coordinator();
         withProject(box, "alpha");
         box.ok(["task", "add", "alpha", "hard scout", "--shape", "scout", "--tier", "deep"]);
-        box.stub("omp", 'echo "$*" | grep -o -- "--model [a-z0-9-]*"');
+        box.stub("omp", 'echo "$*" | grep -o -- "--model [a-z0-9/-]*"');
         const started = spawnJson(box, ["--task", "T1", "--brief", brief(box)]);
-        expect([started.model, started.tier, started.modelSource]).toEqual(["claude-opus-5-5", "deep", "task"]);
+        const opus = "anthropic/claude-opus-5-5";
+        expect([started.model, started.tier, started.modelSource]).toEqual([opus, "deep", "task"]);
         const done = await waitFor(box, started.id, (run) => run.inbox !== null);
-        expect(readFileSync(done.logPath, "utf8")).toBe("--model claude-opus-5-5\n");
-        expect(box.ok(["runs"])).toContain("\tomp claude-opus-5-5 (deep)\tT1 alpha\t");
-        expect(box.ok(["run", "status", started.id])).toContain("model: claude-opus-5-5 (deep, task)");
-        expect(readFileSync(done.inbox ?? "", "utf8")).toContain(
-            "- harness: omp claude-opus-5-5 (deep) (model from task)",
-        );
+        expect(readFileSync(done.logPath, "utf8")).toBe(`--model ${opus}\n`);
+        expect(box.ok(["runs"])).toContain(`\tomp ${opus} (deep)\tT1 alpha\t`);
+        expect(box.ok(["run", "status", started.id])).toContain(`model: ${opus} (deep, task)`);
+        expect(readFileSync(done.inbox ?? "", "utf8")).toContain(`- harness: omp ${opus} (deep) (model from task)`);
     });
 
     test("a verify run stopped by a rate limit retries once on standard, never light, and records the fallback", async () => {
@@ -139,7 +142,7 @@ describe("spawn", () => {
         const calls = join(box.root, ".calls");
         box.stub(
             "omp",
-            `echo "$*" | grep -o -- "--model [a-z0-9-]*" >> "${calls}"
+            `echo "$*" | grep -o -- "--model [a-z0-9/-]*" >> "${calls}"
 if [ "$(wc -l < "${calls}" | tr -d ' ')" -le 3 ]; then echo 'Error: 429 rate_limit_error'; exit 1; fi
 echo "verified"`,
         );
@@ -154,25 +157,26 @@ echo "verified"`,
         const opus = await waitFor(box, first.id, (run) => run.inbox !== null);
         // opus hit the limit, the retry on sonnet hit it too: one retry only, so the run failed on sonnet.
         expect(opus.status).toBe("failed");
-        expect([opus.model, opus.tier]).toEqual(["claude-sonnet-5-5", "standard"]);
-        expect(opus.fallback).toMatchObject({ from: "claude-opus-5-5", to: "claude-sonnet-5-5", waitedMinutes: 0 });
+        const [OPUS, SONNET] = ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5"];
+        expect([opus.model, opus.tier]).toEqual([SONNET, "standard"]);
+        expect(opus.fallback).toMatchObject({ from: OPUS, to: SONNET, waitedMinutes: 0 });
         expect(readFileSync(opus.logPath, "utf8")).toContain(
-            "[toli] claude-opus-5-5 hit a rate/usage limit; retrying once on claude-sonnet-5-5 (deep -> standard)",
+            `[toli] ${OPUS} hit a rate/usage limit; retrying once on ${SONNET} (deep -> standard)`,
         );
         // On standard already, a verify waits for the reset and retries on standard rather than dropping to light.
         const second = verify(["--tier", "standard"]);
         const sonnet = await waitFor(box, second.id, (run) => run.inbox !== null);
         expect(sonnet.status).toBe("done");
         expect(sonnet.fallback).toMatchObject({
-            from: "claude-sonnet-5-5",
-            to: "claude-sonnet-5-5",
+            from: SONNET,
+            to: SONNET,
             waitedMinutes: 15,
         });
         expect(readFileSync(calls, "utf8").trimEnd().split("\n")).toEqual([
-            "--model claude-opus-5-5",
-            "--model claude-sonnet-5-5",
-            "--model claude-sonnet-5-5",
-            "--model claude-sonnet-5-5",
+            `--model ${OPUS}`,
+            `--model ${SONNET}`,
+            `--model ${SONNET}`,
+            `--model ${SONNET}`,
         ]);
     });
 

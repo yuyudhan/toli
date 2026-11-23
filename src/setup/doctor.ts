@@ -8,7 +8,7 @@ import { buildPlaceChecks } from "../fleet/build-place.ts";
 import { bitbucketCredentials } from "../forge/bitbucket.ts";
 import { forgeReadiness, projectForge } from "../forge/forge.ts";
 import { configuredHarnesses, HARNESSES, type Harness, harnessStatus } from "../harness/harness.ts";
-import { syncShims } from "../harness/sync.ts";
+import { syncHarness } from "../harness/sync.ts";
 import { schedulePath } from "../jobs/os-scheduler.ts";
 import { hooksDoctorChecks } from "../projects/hooks-gates.ts";
 import { type Forge, loadProjects } from "../projects/projects.ts";
@@ -136,10 +136,14 @@ function harnessChecks(): Check[] {
             detail: `${status.version ?? "installed"}, ${login}: ${status.detail}${role}`,
         };
     });
-    const drift = syncShims(paths.root(), true).filter((result) => result.state !== "ok");
+    const drift = syncHarness(paths.root(), true).filter((result) => result.state !== "ok");
     checks.push(
         drift.length === 0
-            ? { level: "ok", name: "harness-shims", detail: "CLAUDE.md, .claude, .agents, .cursor, .pi in sync" }
+            ? {
+                  level: "ok",
+                  name: "harness-shims",
+                  detail: "CLAUDE.md, .claude, .agents, .cursor, .pi, .omp/agents in sync",
+              }
             : {
                   level: "warn",
                   name: "harness-shims",

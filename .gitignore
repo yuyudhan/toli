@@ -9,6 +9,8 @@
 /local/
 # Claude Code per-user settings (.claude/settings.json is generated and tracked).
 /.claude/settings.local.json
+# omp subagents generated per machine from its model tables (`bin/toli harness sync`, src/harness/agents.ts).
+/.omp/agents/toli-*.md
 
 # Secrets and credentials
 .env

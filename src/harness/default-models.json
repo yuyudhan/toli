@@ -1,0 +1,27 @@
+{
+    "tiers": {
+        "omp": {
+            "light": ["anthropic/claude-haiku-5-5", "anthropic/claude-haiku-4-5"],
+            "standard": ["anthropic/claude-sonnet-5-5", "anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4-6"],
+            "deep": ["anthropic/claude-opus-5-5", "anthropic/claude-opus-5"]
+        },
+        "claude": {
+            "light": ["claude-haiku-5-5"],
+            "standard": ["claude-sonnet-5-5"],
+            "deep": ["claude-opus-5-5"]
+        }
+    },
+    "workTiers": {
+        "scout": "standard",
+        "qa": "standard",
+        "desk": "standard",
+        "mechanical": "light",
+        "ship": "standard",
+        "verify": "deep",
+        "release": "deep"
+    },
+    "workModels": {
+        "omp": { "ship": [] },
+        "claude": { "ship": [] }
+    }
+}

@@ -351,7 +351,10 @@ file), Codex, Cursor, Grok, and pi. Skills and commands have one source (`.omp/s
 each harness by `bin/toli harness sync`. Dispatch jawans with your harness's async subagents where they run in the
 background (omp `task`, Claude Code's Agent tool, Grok background subagents); otherwise, or to run a jawan on another
 harness or model, use `bin/toli spawn --harness <h> --task T<n> --brief <file>`, which returns at once and posts the
-outcome to this machine's inbox. Either way the jawan runs on this machine and reports to you; a jawan for another
+outcome to this machine's inbox. The kind of work picks the model: every brief has a `Work: <kind>` line, and an omp
+`task` subagent gets `agent: toli-<kind>` (`toli-qa` for testing, `toli-desk`, `toli-scout`, `toli-mechanical`,
+`toli-ship`, `toli-verify`), never the default agent, whose model is your own; `bin/toli models` shows and changes
+which models each kind runs on. Either way the jawan runs on this machine and reports to you; a jawan for another
 machine is that machine's Sardar's to start (`bin/toli delegate`, section 2). A prompt starting with `[toli lead
 <machine>] headless turn` means you are this machine's Sardar served by its lead service while no one is attached:
 follow its rules (dispatch only with `bin/toli spawn`, never ask, holds go to the Needs-you queue). On omp and Claude

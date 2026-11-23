@@ -12,9 +12,12 @@ it in that machine's `data/pushes.jsonl` and its `bin/toli digest`; after a raw 
 `bin/toli push-log add <project> --by <this machine> --for <T-id> --word "<the user's word>"` on that machine. The
 first line `TOLI_BRIEF v1` must stay the first line of every brief: AGENTS.md uses it to tell jawans apart from Sardar.
 Independent verification of ship work uses docs/verify-brief-template.md.
-Model tier: the work type picks the jawan's model (docs/harnesses.md "Model tiers": scout and ship standard,
-mechanical light, verify and release deep). A hard brief adds a line `Tier: deep` (or `light`, `standard`) right under
-the title, before the first `## ` section; `bin/toli spawn --tier` and `--model` still override it.
+Kind of work and model: the line `Work: <kind>` under the title names what the jawan does: `qa` (testing slices,
+campaigns, reproductions), `desk` (QA desk), `scout`, `mechanical`, `ship` (code changes), `verify` or `release`. It
+picks the model (docs/harnesses.md "Model tiers": qa, desk and scout on the cheaper standard list, mechanical light,
+ship the harness default, verify and release deep): `bin/toli spawn` reads it, and a native omp subagent gets it from
+its agent, `toli-<kind>` (`agent: toli-qa` for a `Work: qa` brief). A hard brief adds a line `Tier: deep` (or
+`light`, `standard`) in the same header place; `bin/toli spawn --tier` and `--model` still override both.
 Stall time: a run is stopped after 30 minutes without progress (`capacity.stallMinutes`). A brief whose work waits
 silently longer, such as a release that watches a remote CI pipeline, adds a line `Stall: <minutes>` (for example
 `Stall: 90`) in the same header place; it replaces the machine's value for that run.
@@ -24,6 +27,8 @@ project and for scouts. `bin/toli spawn` warns when a live-stack project's code 
 -->
 
 # Task <T-id>: <short title>
+
+Work: <qa | desk | scout | mechanical | ship | verify | release>
 
 ## The user's intent (verbatim words)
 

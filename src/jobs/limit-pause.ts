@@ -6,7 +6,9 @@ import type { Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 import { type Harness, harnessConfig } from "../harness/harness.ts";
-import { hitLimit, limitPlan, limitReset, type ModelChoice, resolveModel } from "../harness/models.ts";
+import { hitLimit, limitReset } from "../harness/limit-output.ts";
+import { modelCatalog } from "../harness/model-catalog.ts";
+import { limitPlan, type ModelChoice, resolveModel } from "../harness/models.ts";
 import { addInboxItem } from "../records/inbox.ts";
 import type { JobConfig } from "./jobs.ts";
 
@@ -53,7 +55,7 @@ function activePause(harness: Harness, model: string | null, at: Date): LimitPau
 
 /** The model a job runs on: its own tier, else its shape's work type, on this machine's omp tiers. */
 export function jobModel(job: Pick<JobConfig, "tier" | "shape">): ModelChoice {
-    return resolveModel("omp", { tier: job.tier ?? null, work: job.shape }, harnessConfig());
+    return resolveModel("omp", { tier: job.tier ?? null, work: job.shape }, harnessConfig(), modelCatalog("omp"));
 }
 
 /**
@@ -100,7 +102,7 @@ export async function attemptWithinLimits(
     const limit = noteLimit(choice.model, first);
     if (limit === null) return { result: first, model: choice.model, fallback: "" };
     const run = { harness: "omp" as const, model: choice.model, tier: choice.tier, work: job.shape };
-    const plan = limitPlan(run, limit.reset, limit.at, harnessConfig());
+    const plan = limitPlan(run, limit.reset, limit.at, harnessConfig(), modelCatalog("omp"));
     if (plan.kind !== "switch") {
         const paused =
             limit.reset !== null && limit.reset > limit.at
@@ -134,6 +136,7 @@ export function limitPauseFor(job: JobConfig, at: Date): LimitPause | null {
         new Date(pause.until),
         at,
         harnessConfig(),
+        modelCatalog("omp"),
     );
     return plan.kind === "switch" && activePause("omp", plan.model, at) === null ? null : pause;
 }

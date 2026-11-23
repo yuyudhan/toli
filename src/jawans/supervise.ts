@@ -19,7 +19,9 @@ import { now, warn } from "../core/util.ts";
 import { capacityFor, DEFAULT_STALL_MINUTES, registerRun, removeRun } from "../fleet/resources.ts";
 import { stopOrphanedGates } from "../forge/gate-owner.ts";
 import { harnessConfig } from "../harness/harness.ts";
-import { hitLimit, limitPlan, limitReset, parseUsage } from "../harness/models.ts";
+import { hitLimit, limitReset, parseUsage } from "../harness/limit-output.ts";
+import { modelCatalog } from "../harness/model-catalog.ts";
+import { limitPlan } from "../harness/models.ts";
 import { isLiveStack } from "../projects/projects.ts";
 import { loadBacklog } from "../records/backlog.ts";
 import { addInboxItem } from "../records/inbox.ts";
@@ -175,6 +177,7 @@ async function retryAfterLimit(
         limitReset(first.output, at),
         at,
         harnessConfig(),
+        modelCatalog(run.harness),
     );
     const from = run.model ?? "the harness default";
     if (plan.kind === "none") {

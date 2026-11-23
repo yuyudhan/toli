@@ -3,8 +3,9 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { paths } from "../core/paths.ts";
 import { now, pidAlive, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
-import type { Harness, WorkType } from "../harness/harness.ts";
-import { type FallbackRecord, type ModelSource, type Tier, type Usage, usageText } from "../harness/models.ts";
+import type { Harness } from "../harness/harness.ts";
+import { type Usage, usageText } from "../harness/limit-output.ts";
+import type { FallbackRecord, ModelSource, Tier, WorkType } from "../harness/models.ts";
 import { orphanCause } from "./death.ts";
 
 /**

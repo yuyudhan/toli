@@ -16,7 +16,7 @@ import {
     harnessPath,
     SPECS,
 } from "../harness/harness.ts";
-import { syncShims } from "../harness/sync.ts";
+import { syncHarness } from "../harness/sync.ts";
 import { CRON_LEFTOVER_WARNING, missingBunWarning, scheduleStatus } from "../jobs/schedule.ts";
 import { loadProjects } from "../projects/projects.ts";
 
@@ -204,9 +204,9 @@ function firstNameItem(): SetupItem {
 
 function harnessSyncItem(): SetupItem {
     const base = { id: "harness-sync" as const, title: "Harness shims in sync", who: "jawan" as const };
-    const drift = syncShims(paths.root(), true).filter((result) => result.state !== "ok");
+    const drift = syncHarness(paths.root(), true).filter((result) => result.state !== "ok");
     return drift.length === 0
-        ? { ...base, status: "done", detail: "CLAUDE.md, .claude, .agents, .cursor, .pi in sync", fix: "" }
+        ? { ...base, status: "done", detail: "CLAUDE.md, .claude, .agents, .cursor, .pi, .omp/agents in sync", fix: "" }
         : {
               ...base,
               status: "missing",

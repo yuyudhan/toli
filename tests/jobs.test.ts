@@ -157,7 +157,7 @@ describe("job tick", () => {
         box.ok(["job", "run-due"], { now: "2026-03-04T10:05:00" });
         // A scout job runs on the standard tier's model (src/harness/models.ts), with no time limit.
         const args = readFileSync(join(box.root, "omp-args"), "utf8");
-        expect(args).toContain("--model claude-sonnet-5-5 [toli job every");
+        expect(args).toContain("--model anthropic/claude-sonnet-5-5 [toli job every");
         expect(args).not.toContain("--max-time");
         expect(readFileSync(join(box.root, "logs", "tick.log"), "utf8")).toContain("started headless (session)");
         const results = JSON.parse(box.ok(["job", "results", "--json"])) as { status: string }[];
@@ -176,7 +176,7 @@ describe("job tick", () => {
         expect(args).toContain(
             `-p --wait-async --cwd ${box.root} --no-title --approval-mode yolo --session-dir ${join(box.root, "state", "job-sessions")}/`,
         );
-        expect(args).toContain("--model claude-sonnet-5-5 [toli job every");
+        expect(args).toContain("--model anthropic/claude-sonnet-5-5 [toli job every");
         expect(args).not.toContain("--max-time");
         expect(existsSync(join(box.root, "state", "session.json"))).toBe(false);
         const results = readdirSync(join(box.root, "data", "jobs", "every"));

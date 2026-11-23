@@ -14,23 +14,20 @@ import { out, printJson, ToliError, warn } from "../core/util.ts";
 import { currentDiskHold, diskHoldText } from "../fleet/disk-hold.ts";
 import { refuseHeadlessDispatch } from "../fleet/dispatch.ts";
 import { refuseHeadlessSpawnWhenFull } from "../fleet/full.ts";
-import {
-    defaultHarness,
-    type Harness,
-    harnessConfig,
-    parseHarness,
-    parseWork,
-    requireInstalled,
-    type WorkType,
-} from "../harness/harness.ts";
+import { agentName } from "../harness/agents.ts";
+import { defaultHarness, type Harness, harnessConfig, parseHarness, requireInstalled } from "../harness/harness.ts";
+import { usageText } from "../harness/limit-output.ts";
+import { modelCatalog } from "../harness/model-catalog.ts";
 import {
     briefTier,
+    briefWork,
     choiceText,
     type ModelChoice,
     parseOptionalTier,
+    parseWork,
     resolveModel,
     type Tier,
-    usageText,
+    type WorkType,
 } from "../harness/models.ts";
 import { findProject, isLiveStack } from "../projects/projects.ts";
 import { plannedWorkspacePath, prepareWorkspace } from "../projects/workspace.ts";
@@ -103,7 +100,7 @@ export type SpawnPlan = {
 export function planSpawn(options: SpawnOptions): SpawnPlan {
     const brief = options.briefPath === undefined ? "" : readBrief(options.briefPath);
     let project = options.project ?? null;
-    let work = options.work ?? null;
+    let work = options.work ?? briefWork(brief);
     let taskTier: Tier | null = null;
     const taskId = options.task ?? null;
     if (taskId !== null) {
@@ -135,6 +132,7 @@ export function planSpawn(options: SpawnOptions): SpawnPlan {
         harness,
         { model: options.model, tier: options.tier, briefTier: briefTier(brief), taskTier, work },
         harnessConfig(),
+        modelCatalog(harness),
     );
     return { harness, brief, task: taskId, project, work, choice, cwd };
 }
@@ -253,7 +251,7 @@ export function spawnCommand(argv: string[]): void {
         if (args.bool("json")) printJson(shown);
         else
             out(
-                `would spawn: ${plan.harness} ${choiceText(plan.choice)}, work ${plan.work ?? "-"}, in ${plan.cwd}${plan.task === null ? "" : ` for ${plan.task}`}`,
+                `would spawn: ${plan.harness} ${choiceText(plan.choice)}, work ${plan.work === null ? "-" : `${plan.work} (omp subagent: ${agentName(plan.work)})`}, in ${plan.cwd}${plan.task === null ? "" : ` for ${plan.task}`}`,
             );
         return;
     }

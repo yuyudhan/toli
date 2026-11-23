@@ -11,6 +11,8 @@ the Rules section unchanged. `TOLI_BRIEF v1` must stay the first line.
 
 # Verify task <T-id>: <short title>
 
+Work: verify
+
 You are the independent verifier for task <T-id>. Another jawan implemented it. Check its work against the
 acceptance lines of the original brief, then either land it or report the gaps. Do not fix anything yourself.
 
