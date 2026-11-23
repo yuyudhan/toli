@@ -335,7 +335,7 @@ export function resumeCommand(argv: string[]): void {
     );
 }
 
-/** `toli run status|log|kill <id>` and the internal `run supervise <id>`. */
+/** `toli run status|log|kill <id>` and the internal `run supervise <id>` (`run replies`: src/jawans/replies.ts). */
 export async function runCommand(argv: string[]): Promise<void> {
     const [sub, ...rest] = argv;
     switch (sub) {
@@ -393,6 +393,6 @@ export async function runCommand(argv: string[]): Promise<void> {
             return;
         }
         default:
-            throw new ToliError("usage: toli run status|log|kill <id>");
+            throw new ToliError("usage: toli run status|log|kill|replies <id>");
     }
 }

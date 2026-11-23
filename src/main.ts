@@ -22,6 +22,7 @@ import { modelsCommand } from "./harness/models-command.ts";
 import { sessionCommand } from "./harness/session.ts";
 import { harnessCommand } from "./harness/sync.ts";
 import { helperCommand } from "./helpers/helpers.ts";
+import { repliesCommand } from "./jawans/replies.ts";
 import { resumeCommand, runCommand, runsCommand, spawnCommand } from "./jawans/spawn.ts";
 import { outboxCommand } from "./jobs/pull.ts";
 import { scheduleCommand } from "./jobs/schedule.ts";
@@ -74,7 +75,7 @@ const USAGE = `usage: bin/toli <command> [args]
   task link <id> <machine>/T<n> | escalate <machine>/T<n> | handback <id> --reason "..." [--full]
   delegate <machine> "<title>" --brief <file> [--project <p>] [--note "..."] [--for T<n>] [--shape ship|scout] [--verify] [--tier <t>] [--force]
   delegation receive|update|link [--from <machine>] (JSON on stdin)
-  talk <machine> ["<words>"]
+  talk <machine> [--run <id>] ["<words>"]
   share "<learning>" [--to <machine>]... [--all] [--project <p>] [--source "..."] [--from-user] | share --list [--json]
   share answer <id> adopt|adapt|decline [--into learnings|preferences|notes] [--text "..."] [--note "..."]
   share receive (JSON on stdin)
@@ -141,7 +142,7 @@ const USAGE = `usage: bin/toli <command> [args]
         [--tier light|standard|deep] [--work scout|qa|desk|mechanical|ship|verify|release] [--cwd <dir>] [--max-time <minutes>]
         [--now] [--first] [--replace] [--dry-run] [--json]
   runs [--json] [--active]
-  run status <id> [--json] | run log <id> [--lines <n>] | run kill <id>
+  run status <id> [--json] | run log <id> [--lines <n>] | run kill <id> | run replies [<id>] [--all] [--wait <minutes>]
   resume <run> [--note "<text>"] [--max-time <minutes>] [--now] [--json]
   harness sync [--check] [--json] | status [--json]
   models show [--harness <h>] [--json] | check [--json] [--fleet] | unset <kind|tier> [--harness <h>] [--fleet]
@@ -292,7 +293,8 @@ const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = {
         return 0;
     },
     run: async (argv) => {
-        await runCommand(argv);
+        if (argv[0] === "replies") await repliesCommand(argv.slice(1));
+        else await runCommand(argv);
         return 0;
     },
     models: modelsCommand,

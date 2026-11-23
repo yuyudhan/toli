@@ -18,6 +18,11 @@ one. See docs/releasing.md.
   and changes them with any model id the harness accepts, as an ordered list whose first model this machine can run
   wins, on one machine or the whole fleet; `check` reads what omp can run and fails when a list has none, so a
   switch to another provider is checked before work runs on it (docs/harnesses.md, T2450).
+- A reply to a spawned jawan's own `talk` reaches that jawan. Its talk names its run (`- run: <id> (task T<n>)`) and
+  how to answer it, `bin/toli talk <machine> --run <id> "<reply>"`; the receiving machine files that reply with the
+  run while it, or a continuation of it, is alive, where the jawan reads it with
+  `bin/toli run replies [--wait <minutes>]`. Once the run has ended the reply goes to the lead's inbox, with a note
+  naming the run (docs/sardars.md "Replies to a jawan's talk", T815; ported onto develop as T2492).
 
 ### Changed
 

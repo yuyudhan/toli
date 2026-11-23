@@ -4,6 +4,7 @@ import { Args } from "../core/args.ts";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, out, printJson, readStdin, requireName, stamp, ToliError, warn, writeTextAtomic } from "../core/util.ts";
+import { deliverRunReply } from "../jawans/replies.ts";
 import { ackedThrough, acknowledge, markShown } from "./acks.ts";
 import { holdPeerMessage } from "./word-holds.ts";
 
@@ -65,7 +66,13 @@ function add(argv: string[]): void {
         throw new ToliError("inbox add: --via is one short line");
     const body = readStdin();
     if (body.trim() === "") throw new ToliError("inbox add needs the message body on stdin");
-    const path = addInboxItem(from, title, body, via);
+    // A reply to a jawan run's talk goes to that run while it lives (src/jawans/replies.ts), else to the lead here.
+    const toRun = deliverRunReply(from, title, body);
+    if (toRun !== null && "delivered" in toRun) {
+        out(toRun.delivered);
+        return;
+    }
+    const path = addInboxItem(from, title, toRun?.inboxBody ?? body, via);
     out(path);
     // A question for the user's word goes into the Needs-you queue too; a failure there never refuses the message.
     try {

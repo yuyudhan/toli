@@ -146,8 +146,10 @@ export function sandbox(): Sandbox {
         CLAUDE_ENV_FILE: "",
         // The Node preload stub NODE_OPTIONS names (src/jawans/env.ts): never written into the host's ~/.toli.
         TOLI_PRELOAD_HOME: join(root, ".toli-preload"),
-        // A spawned jawan's own task (src/records/backlog.ts ownTask): never the host jawan's, when one runs the tests.
+        // A spawned jawan's own task and run (src/records/backlog.ts ownTask, src/jawans/replies.ts ownRun): never the
+        // host jawan's, when one runs the tests.
         TOLI_TASK: "",
+        TOLI_RUN_ID: "",
         ...(options.now === undefined ? {} : { TOLI_NOW: options.now }),
         ...options.env,
     });

@@ -1,13 +1,16 @@
-// `bin/toli talk <machine|person> ["<words>"]`: talk to a machine's lead (docs/sardars.md). With words, they go to that
-// machine's inbox, which wakes its lead; this is also how leads message each other. Without, this terminal opens that
-// machine's lead conversation (`bin/toli lead attach`, over `ssh -t` for another machine). A person is named by their
-// first name, alone or with this installation's title ("Sam", "Sam <user>"), as their machine shared it (docs/peers.md).
+// `bin/toli talk <machine|person> [--run <id>] ["<words>"]`: talk to a machine's lead (docs/sardars.md). With words,
+// they go to that machine's inbox, which wakes its lead; this is also how leads message each other. Without, this
+// terminal opens that machine's lead conversation (`bin/toli lead attach`, over `ssh -t` for another machine). A person
+// is named by their first name, alone or with this installation's title ("Sam", "Sam <user>"), as their machine shared
+// it (docs/peers.md). A jawan run's talk names its run, and `--run <id>` sends the reply to that run on the target
+// machine instead of its lead (src/jawans/replies.ts, docs/sardars.md "Replies to a jawan's talk").
 // Words that are a jawan brief (`TOLI_BRIEF` first) or over 4 KB still go, with a warning to send work by
 // `bin/toli delegate <machine> "<title>" --brief <file>` instead.
 import { Args } from "../core/args.ts";
 import { fleetMachine, inboundOff, inboundOffText, loadFleet, loadMachine, remoteToliCommand } from "../core/config.ts";
 import { persona } from "../core/persona.ts";
 import { isValidName, out, stamp, ToliError, warn } from "../core/util.ts";
+import { deliverRunReply, forRunLine, ownRun, runIdArg, runTalkLines } from "../jawans/replies.ts";
 import { queuedText, sendToMachine } from "../jobs/outbox.ts";
 import { loadPeers } from "../peer/store.ts";
 import { addInboxItem } from "../records/inbox.ts";
@@ -63,8 +66,8 @@ function talkBriefWarning(machine: string, words: string): string | null {
         : `talk: this message ${why}; send work with \`bin/toli delegate ${machine} "<title>" --brief <file>\` (it arrives as a task its lead runs, and its questions come back held)`;
 }
 
-/** The message a lead gets for `words` from `from`, with how to answer. */
-export function talkMessage(from: string, words: string): { title: string; body: string } {
+/** The message a lead gets for `words` from `from`, with how to answer, and `lines` after (a run's tags). */
+export function talkMessage(from: string, words: string, lines: string[] = []): { title: string; body: string } {
     return {
         title: `message from ${from}`,
         body: [
@@ -72,23 +75,37 @@ export function talkMessage(from: string, words: string): { title: string; body:
             "",
             `- from: ${from} (its lead, or the user there)`,
             `- reply: \`bin/toli talk ${from} "<reply>"\`; work to hand over: \`bin/toli delegate ${from} ...\``,
+            ...lines,
         ].join("\n"),
     };
 }
 
 export async function talkCommand(argv: string[]): Promise<number> {
-    const args = new Args(argv);
+    const args = new Args(argv, { values: ["run"] });
     args.maxPositional(2);
     const self = loadMachine().name;
     const machineName = talkTarget(args.pos(0, "machine"), self);
     const words = args.positional[1];
+    const forRun = args.str("run");
+    if (forRun !== undefined && words === undefined) throw new ToliError("talk --run needs the reply's words");
     if (words !== undefined) {
         if (words.trim() === "") throw new ToliError("talk: the message is empty");
         const warning = talkBriefWarning(machineName, words);
         if (warning !== null) warn(warning);
-        const { title, body } = talkMessage(self, words);
+        const run = ownRun();
+        const { title, body } = talkMessage(self, words, [
+            ...(run === null ? [] : runTalkLines(self, run)),
+            ...(forRun === undefined ? [] : [forRunLine(runIdArg(forRun))]),
+        ]);
+        const replies =
+            run === null
+                ? []
+                : [`a reply sent with --run ${run.id} comes to this run: bin/toli run replies --wait <minutes>`];
         if (machineName === self) {
-            out(`posted to this machine's inbox: ${addInboxItem(self, title, body)}`);
+            const toRun = deliverRunReply(self, title, body);
+            if (toRun !== null && "delivered" in toRun) out(toRun.delivered);
+            else out(`posted to this machine's inbox: ${addInboxItem(self, title, toRun?.inboxBody ?? body)}`);
+            for (const line of replies) out(line);
             return 0;
         }
         const sent = sendToMachine(self, fleetMachine(machineName), title, body, `talk-${self}-${stamp()}`);
@@ -98,6 +115,7 @@ export async function talkCommand(argv: string[]): Promise<number> {
             if (!sent.pulled) warn(sent.error);
             out(queuedText(machineName, sent));
         }
+        for (const line of replies) out(line);
         return 0;
     }
     if (machineName === self) return attachLead();
