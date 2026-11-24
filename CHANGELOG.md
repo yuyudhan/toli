@@ -4,6 +4,26 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.7.3 - 2026-11-24
+
+### Changed
+
+- Briefs cite the project's VISION.md (fdf184a)
+- push --gate: no second slot wait for a hook asking gate check (T28) (3d21ba7)
+- low-battery alert and fleet reboot --drain (T497) (ce62973)
+- Keep only the newest 5 GitHub Release entries on each publish (74348b0)
+- commit hooks: task worktrees borrow main node_modules (T302) (92a33ab)
+
+### Fixed
+
+- give each scoped build its own sccache server (T24) (7772af3)
+- prune survives gh failures and skips drafts (T2285) (432212d)
+- a lead harness in the toli root is a live lead (T2563) (358e321)
+- match omp's worker daemon by program and argument (T2547) (b412017)
+- omp's idle worker daemon no longer holds a target (T2547) (59cf876)
+- forwarded work's handback goes to its delegator (T2517) (c12bdcd)
+- just check and release record a gate pass the push reuses (T2534) (8999b02)
+
 ## v0.7.2 - 2026-11-23
 
 ### Added
