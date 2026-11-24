@@ -322,11 +322,15 @@ its holder's pid and directory:
 beside it`. A command that sleeps, waits on a socket or a lock is idle; one that compiles, links or runs tests is not.
 The slot stays lent while that build runs: once the idle command wakes, its next build (a cargo through the shim or
 the rustc wrapper, a nested `build-slot`, the next step of a gate's recipe) waits for the build beside it to end,
-saying once `heavy-build slot 1 is lent to a build beside it (slot 2, pid 4343 in /path); waiting for it to end`, so
-the machine never runs more builds than it has slots. It stops waiting only when that build has itself run nothing
-for the idle window (it may wait on something the woken command holds), saying so with the same `has run nothing`
-line, so neither ever deadlocks. A cargo the idle
-command had already started and that never left the slot's processes (its test binaries running on) goes on.
+saying `heavy-build slot 1 is lent to a build beside it (slot 2, pid 4343 in /path); waiting for it to end` and again
+each minute it still waits, so the machine never runs more builds than it has slots. While it waits it marks the slot
+woken (it holds a flock on `state/build-slots/woken-<slot>-<pid>.lock`): a woken slot never counts as idle, so no
+waiter is lent it again and the wait ends once the builds lent already do (T2620: before, the slot's whole process
+tree looked idle while its build waited, so each lent build that ended let the next waiter in line be lent the same
+slot and the build waited on that one in turn, for an hour). It stops waiting only when that build has itself run
+nothing for the idle window (it may wait on something the woken command holds), saying so with the same `has run
+nothing` line, so neither ever deadlocks. A cargo the idle command had already started and that never left the slot's
+processes (its test binaries running on) goes on.
 
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
 (a `just` recipe, a hook that resets PATH), where the cargo shim below never sees it: a gate's runner

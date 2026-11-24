@@ -33,6 +33,7 @@ export const CARGO_LOCKS: Readonly<Record<string, true>> = {
 };
 /** Profile dirs sit at most this deep: `target/debug`, `target/<triple>/debug`, `target/clippy/debug`. */
 export const LOCK_DEPTH = 3;
+export const LOCK_SH = 1;
 export const LOCK_EX = 2;
 export const LOCK_NB = 4;
 export const LOCK_UN = 8;
