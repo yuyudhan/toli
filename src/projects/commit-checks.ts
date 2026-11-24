@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { git, gitOk, gitPaths } from "../core/git.ts";
 import { type RunResult, run, ToliError } from "../core/util.ts";
-import { type Hunk, parseHunks } from "./diff-hunks.ts";
+import { type Hunk, parseHunks, parseRenames, type Rename } from "./diff-hunks.ts";
 
 /** Recent commits on the branch whose changes a new commit must not undo. */
 export const REVERT_WINDOW = 20;
@@ -46,12 +46,13 @@ function around(lines: string[], at: number): [string | null, string | null] {
 type Sides = { ours: [string, string]; theirs: [string | null, string] };
 
 /**
- * Whether `ours` undoes `theirs` exactly: it removes what theirs added and adds back what theirs removed. A pure
- * insertion or removal undoes theirs only in the same place: the same lines border the gap the block leaves, on
- * our side without it and theirs. Adding a line a recent commit removed elsewhere in the file is a new change.
+ * Whether `ours` undoes `theirs` exactly: it removes what theirs added and adds back what theirs removed, taking the
+ * file back along any rename theirs made. A pure insertion or removal undoes theirs only in the same place: the same
+ * lines border the gap the block leaves, on our side without it and theirs. Adding a line a recent commit removed
+ * elsewhere in the file is a new change.
  */
 function reverts(ours: Hunk, theirs: Hunk, lines: Lines, sides: Sides): boolean {
-    if (ours.file !== theirs.file) return false;
+    if (ours.oldFile !== theirs.file || ours.file !== theirs.oldFile) return false;
     const undone = [...theirs.added, ...theirs.removed].join("").replace(/\s/g, "");
     if (undone.length < REVERT_MIN_CHARS) return false;
     if (ours.removed.join("\n") !== theirs.added.join("\n") || ours.added.join("\n") !== theirs.removed.join("\n"))
@@ -60,15 +61,31 @@ function reverts(ours: Hunk, theirs: Hunk, lines: Lines, sides: Sides): boolean 
     // Pure insertion of ours: the gap is in our parent and their commit; pure removal: our tree and their base.
     const inserting = ours.removed.length === 0;
     const theirRev = inserting ? sides.theirs[1] : sides.theirs[0];
-    const ourGap = around(
-        lines(inserting ? sides.ours[0] : sides.ours[1], ours.file),
-        inserting ? ours.oldStart : ours.newStart,
-    );
+    const ourGap = inserting
+        ? around(lines(sides.ours[0], ours.oldFile), ours.oldStart)
+        : around(lines(sides.ours[1], ours.file), ours.newStart);
+    const theirFile = inserting ? theirs.file : theirs.oldFile;
     const theirGap = around(
-        theirRev === null ? [] : lines(theirRev, theirs.file),
+        theirRev === null ? [] : lines(theirRev, theirFile),
         inserting ? theirs.newStart : theirs.oldStart,
     );
     return ourGap[0] === theirGap[0] && ourGap[1] === theirGap[1];
+}
+
+/**
+ * The path of our rename that takes a file back along one of theirs with its whole content as it was before theirs
+ * (null: none does). A rename with otherwise unchanged content moves a file rather than reverting the commit that
+ * created or last renamed it (T2633); only the exact way back is a revert.
+ */
+function renamedBack(ours: Rename[], theirs: Rename[], lines: Lines, sides: Sides): string | null {
+    const base = sides.theirs[0];
+    if (base === null) return null;
+    const back = ours.find(
+        (rename) =>
+            theirs.some((other) => other.from === rename.to && other.to === rename.from) &&
+            lines(sides.ours[1], rename.to).join("\n") === lines(base, rename.to).join("\n"),
+    );
+    return back?.to ?? null;
 }
 
 /** One commit attempt's private temporary index (GIT_INDEX_FILE), built and read without the shared one. */
@@ -255,10 +272,12 @@ export function checkLockFiles(
 }
 
 /**
- * Refuse when the change to `files` exactly undoes a hunk of one of the last REVERT_WINDOW commits. `files` are the
- * committer's own changes: the files a clean merge brings (unchanged on top of the merge result) are never passed in.
- * `brought`: the merged ref's own hunks (merge base to ref); a hunk of ours equal to one of them is the ref's change,
- * taken as it is in a resolved conflict, so it is not checked.
+ * Refuse when the change to `files` exactly undoes a hunk of one of the last REVERT_WINDOW commits, or renames a file
+ * back along one of their renames with its content as it was before. Both sides are read with renames found, so a
+ * moved file is its content change, not the deletion of what an earlier commit added (T2633). `files` are the
+ * committer's own changes (both paths of a rename): the files a clean merge brings (unchanged on top of the merge
+ * result) are never passed in. `brought`: the merged ref's own hunks (merge base to ref); a hunk of ours equal to one
+ * of them is the ref's change, taken as it is in a resolved conflict, so it is not checked.
  */
 export function checkReverts(
     dir: string,
@@ -269,18 +288,20 @@ export function checkReverts(
     brought: Hunk[] = [],
 ): void {
     if (files.length === 0) return;
-    const ours = parseHunks(
-        gitOk(dir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", parent, tree, "--", ...files]),
-    ).filter(
+    const diff = ["-U0", "--no-color", "--no-ext-diff", "--find-renames"];
+    const ourDiff = gitOk(dir, ["diff", ...diff, parent, tree, "--", ...files]);
+    const ourRenames = parseRenames(ourDiff);
+    const ours = parseHunks(ourDiff).filter(
         (hunk) =>
             !brought.some(
                 (other) =>
                     other.file === hunk.file &&
+                    other.oldFile === hunk.oldFile &&
                     other.removed.join("\n") === hunk.removed.join("\n") &&
                     other.added.join("\n") === hunk.added.join("\n"),
             ),
     );
-    if (ours.length === 0) return;
+    if (ours.length === 0 && ourRenames.length === 0) return;
     const recent = gitOk(dir, ["log", `-${REVERT_WINDOW}`, "--format=%H", parent, "--", ...files])
         .split("\n")
         .filter(Boolean);
@@ -289,27 +310,21 @@ export function checkReverts(
         if (allowed.some((prefix) => commit.startsWith(prefix))) continue;
         const found = git(dir, ["rev-parse", "--verify", "--quiet", `${commit}^1`]);
         const base = found.code === 0 ? found.stdout.trim() : null;
-        const theirs = parseHunks(
+        const theirDiff = gitOk(
+            dir,
             base === null
-                ? gitOk(dir, ["show", "-U0", "--no-color", "--no-ext-diff", "--format=", commit, "--", ...files])
-                : gitOk(dir, [
-                      "diff",
-                      "-U0",
-                      "--no-color",
-                      "--no-ext-diff",
-                      "--no-renames",
-                      base,
-                      commit,
-                      "--",
-                      ...files,
-                  ]),
+                ? ["show", ...diff, "--format=", commit, "--", ...files]
+                : ["diff", ...diff, base, commit, "--", ...files],
         );
+        const theirs = parseHunks(theirDiff);
         const sides = { ours: [parent, tree], theirs: [base, commit] } satisfies Sides;
-        const hit = ours.find((hunk) => theirs.some((other) => reverts(hunk, other, lines, sides)));
-        if (hit === undefined) continue;
+        const file =
+            ours.find((hunk) => theirs.some((other) => reverts(hunk, other, lines, sides)))?.file ??
+            renamedBack(ourRenames, parseRenames(theirDiff), lines, sides);
+        if (file === null) continue;
         const subject = gitOk(dir, ["log", "-1", "--format=%h %s", commit]);
         throw new ToliError(
-            `refusing: this commit would revert ${hit.file} lines from ${subject} (one of the last ${REVERT_WINDOW} commits). ` +
+            `refusing: this commit would revert ${file} lines from ${subject} (one of the last ${REVERT_WINDOW} commits). ` +
                 "The file is probably stale: re-read it, re-apply your change on top, and commit again. " +
                 `If undoing that change is the point, pass --allow-revert ${commit.slice(0, 12)}.`,
         );

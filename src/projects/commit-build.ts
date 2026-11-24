@@ -128,7 +128,7 @@ export function buildCommit(request: CommitRequest, parent: string, label: strin
                           "-U0",
                           "--no-color",
                           "--no-ext-diff",
-                          "--no-renames",
+                          "--find-renames",
                           gitOk(dir, ["merge-base", parent, merge.commit]),
                           merge.commit,
                           "--",

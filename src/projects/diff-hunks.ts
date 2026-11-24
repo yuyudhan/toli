@@ -3,8 +3,19 @@
 /**
  * One `-U0` hunk: its removed and added lines, and where it starts on each side. A side with no lines (a pure
  * insertion's old side, a pure removal's new side) starts at the line the gap follows (0: the top of the file).
+ * `oldFile` is the file's path before the change: `file` itself unless the diff found a rename.
  */
-export type Hunk = { file: string; removed: string[]; added: string[]; oldStart: number; newStart: number };
+export type Hunk = {
+    file: string;
+    oldFile: string;
+    removed: string[];
+    added: string[];
+    oldStart: number;
+    newStart: number;
+};
+
+/** A file the diff found renamed, by its paths before and after. */
+export type Rename = { from: string; to: string };
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
@@ -28,6 +39,11 @@ function unquoteC(quoted: string): string {
     return Buffer.from(bytes).toString("utf8");
 }
 
+/** A path as git prints it in a diff header: C-quoted when it holds non-ASCII or special bytes (core.quotePath). */
+function storedName(text: string): string {
+    return text.startsWith('"') ? unquoteC(text) : text;
+}
+
 /**
  * A `---`/`+++` header's path as stored (null: /dev/null). git C-quotes a name with non-ASCII or special bytes
  * (`"b/caf\303\251.txt"`, core.quotePath) and ends one holding a space with a tab; `rev:path` lookups need the name.
@@ -35,21 +51,40 @@ function unquoteC(quoted: string): string {
 function headerPath(raw: string): string | null {
     const text = raw.endsWith("\t") ? raw.slice(0, -1) : raw;
     if (text === "/dev/null") return null;
-    const name = text.startsWith('"') ? unquoteC(text) : text;
-    return name.replace(/^[ab]\//, "");
+    return storedName(text).replace(/^[ab]\//, "");
 }
 
-/** `git diff -U0` output as hunks: the removed and added lines of each, per file. */
+/** The renames of a `git diff --find-renames` output, from its `rename from`/`rename to` header lines. */
+export function parseRenames(diff: string): Rename[] {
+    const renames: Rename[] = [];
+    let from: string | null = null;
+    for (const line of diff.split("\n")) {
+        if (line.startsWith("diff --git ")) from = null;
+        else if (line.startsWith("rename from ")) from = storedName(line.slice("rename from ".length));
+        else if (line.startsWith("rename to ") && from !== null)
+            renames.push({ from, to: storedName(line.slice("rename to ".length)) });
+    }
+    return renames;
+}
+
+/** `git diff -U0` output as hunks: the removed and added lines of each, per file (both paths of a rename). */
 export function parseHunks(diff: string): Hunk[] {
     const hunks: Hunk[] = [];
     let file = "";
+    let oldFile: string | null = null;
     let current: Hunk | null = null;
     for (const line of diff.split("\n")) {
         if (line.startsWith("diff --git ")) {
             current = null;
+            oldFile = null;
             continue;
         }
-        if (current === null && (line.startsWith("+++ ") || line.startsWith("--- "))) {
+        if (current === null && line.startsWith("--- ")) {
+            oldFile = headerPath(line.slice(4));
+            if (oldFile !== null) file = oldFile;
+            continue;
+        }
+        if (current === null && line.startsWith("+++ ")) {
             file = headerPath(line.slice(4)) ?? file;
             continue;
         }
@@ -57,6 +92,7 @@ export function parseHunks(diff: string): Hunk[] {
             const header = HUNK_HEADER.exec(line);
             current = {
                 file,
+                oldFile: oldFile ?? file,
                 removed: [],
                 added: [],
                 oldStart: Number(header?.[1] ?? 0),

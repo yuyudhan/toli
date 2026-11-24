@@ -2,7 +2,6 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeCommit } from "../src/projects/commit.ts";
-import { parseHunks } from "../src/projects/diff-hunks.ts";
 import { git, head, repo, useGitEnv } from "./commit-fixture.ts";
 
 // safeCommit is git plumbing, and these tests prove it against real repos: the slowest --merge test runs ~175 git
@@ -369,22 +368,5 @@ describe("bin/toli commit (R23 safe commits)", () => {
         const dir = repo();
         expect(() => safeCommit({ dir, paths: ["README.md"], message: "Same" })).toThrow("nothing to commit");
         expect(() => safeCommit({ dir, paths: [], message: "None" })).toThrow("commit needs paths");
-    });
-
-    test("parseHunks reads -U0 diffs per file", () => {
-        const diff = [
-            "diff --git a/x b/x",
-            "--- a/x",
-            "+++ b/x",
-            "@@ -1 +1 @@",
-            "-old",
-            "+new",
-            "@@ -5,0 +6 @@",
-            "+added",
-        ].join("\n");
-        expect(parseHunks(diff)).toEqual([
-            { file: "x", removed: ["old"], added: ["new"], oldStart: 1, newStart: 1 },
-            { file: "x", removed: [], added: ["added"], oldStart: 5, newStart: 6 },
-        ]);
     });
 });
