@@ -439,14 +439,17 @@ Node preload (`bin/shims/toli-node-preload.cjs`) while that file exists and does
 still carrying the setting after the checkout moved to an older commit never fails to start Node. Every hand-out of
 the variables writes it first (`bin/toli hook lead-build-env`, a jawan's supervisor), as do `bin/toli self sync`,
 `bin/toli upgrade` and `bin/toli commit`; where it cannot be written the setting is left out. When Node starts Vitest's CLI
-(`node_modules/vitest/vitest.mjs` or `.bin/vitest`), Jest's (`jest/bin/jest.js`, `jest-cli/bin/jest.js`) or `playwright
-test`, the preload runs `bin/toli build-slot --runner <its pid>`, which waits in line (printing the same waiting line)
+(`node_modules/vitest/vitest.mjs` or `.bin/vitest`) or Jest's (`jest/bin/jest.js`, `jest-cli/bin/jest.js`), the
+preload runs `bin/toli build-slot --runner <its pid>`, which waits in line (printing the same waiting line)
 until a detached holder (`build-slot --hold <pid> --keep-stacks`, as for a cargo that bypassed the shim, below) holds
 a slot for that process and frees it once the process exits, however it exits; the runner then exports the slot as
 `TOLI_BUILD_SLOT`, so its workers and any cargo it starts run in it. Inside a slot already it goes straight on. The
 holder leaves the dev and live stacks running, since the tests may talk to them. Watch and UI modes never end, so
 they never take a slot: Vitest's `watch`, `dev`, `--watch`, `--ui` (and its default watch in an interactive non-CI
-shell without `run`), Jest's `--watch`/`--watchAll`, Playwright's `--ui`. Every other Node process returns at once.
+shell without `run`), Jest's `--watch`/`--watchAll`. `playwright test` never takes one (T2635: an e2e run against a
+stack already up sat over two hours waiting for a slot behind other projects' cargo builds, then gave up): it drives
+browsers at a running stack and compiles nothing, and a stack build its config starts (a cargo through the shim or
+the rustc wrapper) takes a slot of its own. Every other Node process returns at once.
 A live-stack project's jawans run without the shim and the preload. The lead's native subagents inherit both with
 the rest of the build variables (above).
 

@@ -152,7 +152,7 @@ export function nodeOptionsWithoutPreload(base: Record<string, string | undefine
 
 /**
  * `NODE_OPTIONS` over `base`'s with toli's Node preload stub (`nodePreloadStub`) `--require`d once, so a Node test
- * runner (Vitest, Jest, `playwright test`) started outside a heavy-build slot takes one before it runs
+ * runner (Vitest, Jest) started outside a heavy-build slot takes one before it runs
  * (bin/shims/toli-node-preload.cjs). The caller writes the stub first (`ensureNodePreloadStub`).
  */
 export function nodePreloadOptions(base: Record<string, string | undefined>): string {

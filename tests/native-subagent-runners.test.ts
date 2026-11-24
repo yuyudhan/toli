@@ -1,6 +1,6 @@
 // T2259: native subagents ran test suites in bulk (13 vitest processes on one 12-core builder) beside the heavy-build
-// slots, which only cargo went through. A Node test runner (Vitest, Jest, `playwright test`) now takes a slot through
-// toli's Node preload, and `bun test` through toli's bun shim, both of which a lead session's native subagents inherit.
+// slots, which only cargo went through. A Node test runner (Vitest, Jest) now takes a slot through toli's Node
+// preload, and `bun test` through toli's bun shim, both of which a lead session's native subagents inherit.
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -50,17 +50,38 @@ describe("a Node test runner takes a heavy-build slot through toli's Node preloa
         await until("the runner's slot freed", () => !readdirSync(slots).some((name) => name.endsWith(".held")));
     }, 60_000);
 
-    test("Jest and `playwright test` take a slot; Jest's --watch does not", async () => {
+    test("Jest takes a slot; Jest's --watch does not", async () => {
         const { box } = slotBox(1, 3);
         const ran = join(box.root, ".runner-runs");
         const env = { NODE_OPTIONS: nodePreloadOptions({}) };
         const jest = fakeRunner(box.root, "jest/bin/jest.js", "jest", ran);
-        const playwright = fakeRunner(box.root, "@playwright/test/cli.js", "playwright", ran);
         expect(await start(box, [NODE, jest, "--ci"], env).done).toMatchObject({ code: 0 });
         expect(await start(box, [NODE, jest, "--watch"], env).done).toMatchObject({ code: 0 });
-        expect(await start(box, [NODE, playwright, "test"], env).done).toMatchObject({ code: 0 });
-        expect(await start(box, [NODE, playwright, "show-report"], env).done).toMatchObject({ code: 0 });
-        expect(lines(ran)).toEqual(["jest 1", "jest none", "playwright 1", "playwright none"]);
+        expect(lines(ran)).toEqual(["jest 1", "jest none"]);
+    }, 60_000);
+
+    // T2635: an e2e run against a stack already up sat 2h+ waiting for a heavy-build slot behind other projects'
+    // cargo builds. `playwright test` drives browsers at a running stack and compiles nothing, so it never queues as
+    // heavy; a stack build its config starts (a cargo through the shim) still takes a slot of its own.
+    test("`playwright test` runs at once while every slot is busy", async () => {
+        const { box, log } = slotBox(1, 3);
+        const ran = join(box.root, ".runner-runs");
+        const env = { NODE_OPTIONS: nodePreloadOptions({}) };
+        const playwright = fakeRunner(box.root, "@playwright/test/cli.js", "playwright", ran);
+        const bin = fakeRunner(box.root, ".bin/playwright", "playwright-bin", ran);
+        const holder = await holdSlot(box, log);
+        try {
+            const e2e = start(box, [NODE, playwright, "test"], env);
+            const viaBin = start(box, [NODE, bin, "test", "--project=chromium"], env);
+            await until("the e2e runs finishing while the slot is held", () => lines(ran).length === 2);
+            const [tested, testedViaBin] = await Promise.all([e2e.done, viaBin.done]);
+            expect([tested.code, testedViaBin.code]).toEqual([0, 0]);
+            expect(tested.stderr + testedViaBin.stderr).not.toContain("waiting for a heavy-build slot");
+            expect(lines(ran).sort()).toEqual(["playwright none", "playwright-bin none"]);
+        } finally {
+            writeFileSync(`${log}.done-a`, "");
+        }
+        expect((await holder.done).code).toBe(0);
     }, 60_000);
 });
 
