@@ -86,8 +86,10 @@ delegated hold with `bin/toli task answer <machine>/T<n> "<their words>"`, which
     bin/toli task add <project> "<short title>" --shape ship|scout --note "<the user's words>"
 
 This prints the task id `T<n>`. Fill in `docs/brief-template.md` for the task: the user's intent verbatim, the goal
-(below), project path (`bin/toli project path <project>`), the notes file, the fixed branch (step 2), spec,
-acceptance evidence, out of scope, the rules block unchanged, and the Landing section (keep exactly one option).
+(below), project path (`bin/toli project path <project>`), the notes file, the vision (the repo-root `VISION.md`, any
+case, or until it exists the project's private draft under `data/projects/<project>/`; jawans decide forks within it
+and hold when a choice collides with it), the fixed branch (step 2), spec, acceptance evidence, out of scope, the
+rules block unchanged, and the Landing section (keep exactly one option).
 Every brief keeps `TOLI_BRIEF v1` as its exact first line; AGENTS.md uses that line to tell jawans apart from Sardar,
 so a brief without it makes the jawan act as Sardar. Save the filled brief as
 `data/projects/<project>/briefs/T<n>.md` (verifier and fix briefs as `T<n>-verify.md`, `T<n>-fix<k>.md`) so a

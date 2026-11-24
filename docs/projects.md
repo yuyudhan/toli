@@ -4,6 +4,9 @@ A project is a git repository the lead (Sardar) can dispatch jawans into. Each m
 into `projects/<name>/` and records them in `data/projects.json`; everything toli keeps about a project lives in one
 directory, `data/projects/<name>/`.
 
+Every project keeps its vision in a repo-root `VISION.md` (any case); until it exists, a private draft lives under
+`data/projects/<name>/`. Every brief cites it, and jawans decide within it.
+
 ## Registering a project
 
 In the lead session:

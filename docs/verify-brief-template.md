@@ -24,6 +24,7 @@ acceptance lines of the original brief, then either land it or report the gaps. 
 - Branch: <the fixed/current branch, or the task branch `toli/<T-id>-<slug>`>
 - Push / PR: <per-task only: "standing grant: push+pr" (from `bin/toli project list --json`), or the user's word for
   this change quoted verbatim, or "not granted"; same-branch: "not part of this landing">
+- Vision: <the original brief's Vision line> - a change that collides with it is a GAP unless the user's words allow it
 
 ## Original brief
 

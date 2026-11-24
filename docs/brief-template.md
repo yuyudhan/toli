@@ -69,6 +69,8 @@ report instead.
 - Path: <same-branch: `bin/toli project path <project>`; per-task: the path `bin/toli workspace prepare <T-id>`
   printed (a `bin/toli spawn --task` jawan gets it in a Workspace block appended below)> - work only here
 - Notes: <absolute path to data/projects/<project>/notes.md> - read it first (stack, commands, URLs, proof, gotchas)
+- Vision: <`<project path>/VISION.md` (any case), or until it exists `data/projects/<project>/<draft file>`> - read
+  it; decide forks within it, and hold the task (Landing section) when a choice collides with it
 - Branch: <same-branch: fixed branch from `bin/toli project list --json`, or "current branch"; per-task: the task
   branch `toli/<T-id>-<slug>` the workspace was prepared on> - stay on it; never switch
 - Shape: <ship | scout>
