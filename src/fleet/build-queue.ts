@@ -52,10 +52,17 @@ export function slotHolder(cwd: string, env: Record<string, string | undefined> 
 }
 
 /**
- * A busy slot (its number from 1) and the holder written into its lock file, with `beside`: the idle slots it was taken
- * beside (`tryTake`), whose commands' next builds wait for it (`waitForLentBuilds`).
+ * A lent mark: the busy slot a build was taken beside, by its number and the pid of the holder that held it then, whose
+ * command's next builds wait for the lent build (`waitForLentBuilds`). `pid` is null in a record an older toli wrote,
+ * which names only the number.
  */
-export type BusySlot = SlotHolder & { slot: number; pid: number; beside: number[] };
+export type LentMark = { slot: number; pid: number | null };
+
+/**
+ * A busy slot (its number from 1) and the holder written into its lock file, with `beside`: the idle slots it was taken
+ * beside (`tryTake`).
+ */
+export type BusySlot = SlotHolder & { slot: number; pid: number; beside: LentMark[] };
 
 /**
  * Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait, and once
@@ -198,7 +205,7 @@ function tryTake(
             recordHolder(
                 fd,
                 holder,
-                beside.map((slot) => slot.slot),
+                beside.map((slot) => ({ slot: slot.slot, pid: slot.pid })),
             );
             return { index, fd, beside };
         }
@@ -208,10 +215,10 @@ function tryTake(
 }
 
 /**
- * Write `holder`, this pid and the idle slots it was taken beside over the slot's lock file; best effort, since a full
- * disk never stops a build.
+ * Write `holder`, this pid and the idle slots it was taken beside (each with the holder it was lent by) over the slot's
+ * lock file; best effort, since a full disk never stops a build.
  */
-function recordHolder(fd: number, holder: SlotHolder, beside: number[]): void {
+function recordHolder(fd: number, holder: SlotHolder, beside: LentMark[]): void {
     try {
         ftruncateSync(fd, 0);
         writeSync(
@@ -238,8 +245,17 @@ function parseHolder(text: string): Omit<BusySlot, "slot"> | null {
         pid,
         cwd,
         targetDir: typeof targetDir === "string" ? targetDir : null,
-        beside: Array.isArray(beside) ? beside.filter((slot): slot is number => Number.isInteger(slot)) : [],
+        beside: Array.isArray(beside) ? beside.flatMap(lentMark) : [],
     };
+}
+
+/** One recorded lent mark, `{ slot, pid }` or an older toli's bare slot number; none when malformed. */
+function lentMark(value: unknown): LentMark[] {
+    if (Number.isInteger(value)) return [{ slot: value as number, pid: null }];
+    if (typeof value !== "object" || value === null) return [];
+    const { slot, pid } = value as Record<string, unknown>;
+    if (!Number.isInteger(slot) || !Number.isInteger(pid)) return [];
+    return [{ slot: slot as number, pid: pid as number }];
 }
 
 /**

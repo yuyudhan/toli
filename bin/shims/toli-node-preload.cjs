@@ -3,7 +3,8 @@
 // which inherit it, carry it too. A Node test runner (Vitest, Jest) started outside a heavy-build slot takes one before
 // its tests run, the way toli's cargo shim and rustc wrapper make a cargo build take one:
 // `bin/toli build-slot --runner <this pid>` waits in line until a detached holder holds a slot for this process
-// (src/fleet/cargo-slot.ts slotForRunner) and frees it once this process exits, however it exits; inside a slot
+// (src/fleet/cargo-slot.ts slotForRunner) and frees it once this process exits, however it exits, or once it and its
+// children have run nothing for the idle window (T2668); inside a slot
 // already (TOLI_BUILD_SLOT naming a busy slot and TOLI_BUILD_SLOT_HOLDER its holder, or its holder among this process's
 // ancestors) it returns at once. The holder leaves the project's dev and live stacks running, which its tests may talk
 // to. The runner then exports the slot as TOLI_BUILD_SLOT, so its workers and any build it starts run in that slot

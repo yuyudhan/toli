@@ -13,6 +13,7 @@ import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readdirSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { ancestry } from "../core/ancestry.ts";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { out, pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
@@ -21,9 +22,10 @@ import { FORWARDED_SIGNALS, liveStackProjectAt, resumeDevStacksWhenIdle } from "
 import { type Flock, flock, LOCK_EX, LOCK_NB, LOCK_UN } from "./cargo-lock.ts";
 import { enclosingSlot } from "./enclosing-slot.ts";
 import { deferredSlotRun, slotFromRun } from "./heavy-step-slot.ts";
+import { idleWatch, sampleIdle } from "./idle-slots.ts";
 import { waitForLentBuilds } from "./lent-slots.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
-import { heldCargoSlot, heldFile, holderHolds } from "./outside-builds.ts";
+import { heldCargoSlot, heldFile, holderHolds, processTable, treeRunning } from "./outside-builds.ts";
 import { priorityReleaseAhead, priorityReleaseText } from "./release-priority.ts";
 import { capacityFor } from "./resources.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
@@ -141,7 +143,9 @@ function sweepHolderFiles(lock: Flock): void {
  * CARGO_TARGET_DIR (the cargo's, inherited). It waits in line, holds the slot while the process lives and frees it once
  * it exits, or when it is itself stopped, however (a flock dies with its process). A cargo's slot pauses the dev and
  * live stacks as every compile does; a test runner's (`keepStacks`) leaves them running, since its tests may talk to
- * them (a paused backend accepts a request and never answers it).
+ * them (a paused backend accepts a request and never answers it). A test runner's slot is also freed once the runner
+ * and everything below it have run nothing for the idle window (T2668: a Vitest run sat on its slot 13 minutes running
+ * nothing); the runner then goes on outside any slot, and a build it starts later takes a slot of its own.
  */
 export async function holdForCargo(cargoPid: number, cwd: string, keepStacks = false): Promise<number> {
     const lock = flock();
@@ -183,7 +187,11 @@ export async function holdForCargo(cargoPid: number, cwd: string, keepStacks = f
         pauseLiveStacks();
     }
     writeTextAtomic(heldFile(cargoPid), `${process.pid} ${held.index + 1}\n`);
-    while (pidAlive(cargoPid)) await Bun.sleep(POLL_MS);
+    const watch = idleWatch();
+    while (pidAlive(cargoPid)) {
+        await Bun.sleep(POLL_MS);
+        if (keepStacks && sampleIdle(watch, String(cargoPid), treeRunning(processTable(), cargoPid, true))) break;
+    }
     release();
     return 0;
 }
@@ -220,8 +228,9 @@ export async function slotForRunner(pid: number): Promise<number> {
  * (`deferredSlotRun`, src/fleet/heavy-step-slot.ts; recorded as `pid`'s `cargo-<pid>.held` naming the check's run as
  * its holder, so the rustc wrapper's crate compilations take that slot's job pool), the enclosing one
  * (`enclosingSlot`), or one a detached holder (`holdForCargo`) takes for it, started when none is waiting yet, saying
- * once that it waits and once which release-priority run it gives way to. Its slot's number, or null when it runs
- * without one: in a live-stack project's checkout, without flock(2), or once `pid` is gone.
+ * once that it waits and once which release-priority run it gives way to. A process below one whose holder already
+ * waits in line rides that holder's slot instead of queueing a second time for its tree (T2668). Its slot's number,
+ * or null when it runs without one: in a live-stack project's checkout, without flock(2), or once `pid` is gone.
  */
 async function slotForProcess(pid: number, keepStacks: boolean): Promise<number | null> {
     if (liveStackProjectAt(process.cwd()) !== null) return null;
@@ -240,10 +249,16 @@ async function slotForProcess(pid: number, keepStacks: boolean): Promise<number 
     const slots = capacityFor(machine, availableParallelism()).buildSlots;
     const holderArgs = ["build-slot", "--hold", String(pid), "--cwd", process.cwd()];
     if (keepStacks) holderArgs.push("--keep-stacks");
+    // An ancestor whose holder waits in line: its slot is this process's too.
+    let owner = ancestry().find((anc) => anc !== process.pid && anc !== pid && claimed(anc, lock)) ?? pid;
     let told = false;
     let toldRelease: string | null = null;
-    while (pidAlive(pid) && !holderHolds(pid)) {
-        if (!claimed(pid, lock)) {
+    while (pidAlive(owner) && !holderHolds(owner)) {
+        if (!claimed(owner, lock)) {
+            if (owner !== pid) {
+                owner = pid; // The ancestor's holder gave up: queue for this process after all.
+                continue;
+            }
             const holder = spawnChild(process.execPath, [TOLI_SCRIPT, ...holderArgs], {
                 cwd: paths.root(),
                 detached: true,
@@ -253,7 +268,7 @@ async function slotForProcess(pid: number, keepStacks: boolean): Promise<number 
             holder.unref();
         }
         await Bun.sleep(HOLDER_POLL_MS);
-        if (holderHolds(pid)) continue;
+        if (holderHolds(owner)) continue;
         // The holder waits silently (its output goes nowhere): say here what it waits for.
         const ahead = priorityReleaseAhead(process.cwd());
         if (ahead !== null) {
@@ -264,5 +279,5 @@ async function slotForProcess(pid: number, keepStacks: boolean): Promise<number 
             told = true;
         }
     }
-    return heldCargoSlot(pid);
+    return heldCargoSlot(owner);
 }

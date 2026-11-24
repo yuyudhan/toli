@@ -166,6 +166,11 @@ function lineage(table: ProcessTable, pid: number): number[] {
     return chain;
 }
 
+/** Whether process `pid` is `ancestor` or runs below it, in `table`. */
+export function descendsFrom(table: ProcessTable, pid: number, ancestor: number): boolean {
+    return lineage(table, pid).includes(ancestor);
+}
+
 /** The cargo processes above `chain`'s first process (its lineage), nearest first. */
 function cargosAbove(table: ProcessTable, chain: number[]): number[] {
     return chain.slice(1).filter((pid) => programIs(table.get(pid)?.argv ?? [], (name) => CARGO.test(name)));

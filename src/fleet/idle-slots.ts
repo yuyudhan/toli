@@ -34,36 +34,49 @@ export function idleWatch(): IdleWatch {
     return { windowMs: Number.isInteger(override) && override > 0 ? override : IDLE_MS, seen: new Map() };
 }
 
+/** How many idle windows a woken slot must run nothing for before a build waiting on it sets it aside (`idleSlots`). */
+const WOKEN_STALE_WINDOWS = 5;
+
 /**
  * The slots of `busy` whose command has run nothing for the window: in at most `IDLE_RUNNING_SHARE` of this waiter's
  * samples since it first saw them, one taken now from `table` and kept in `watch`. A slot's command is every process
  * below its holder (the holder itself only waits on it), or a rustc-wrapper holder's cargo and everything below it. A
- * woken slot (`markWoken`) is never idle, and the watch forgets it, so once its command runs its window starts over.
+ * woken slot (`markWoken`) is never idle to a waiter in line (`staleWoken` false), so no build is lent it again (T2620).
+ * To a build waiting for the builds lent beside its own slot (`staleWoken` true) a woken one is idle once it has run
+ * nothing for `WOKEN_STALE_WINDOWS` windows: it waits in turn, and a wait that never ends must not hold this one up
+ * (T2668).
  */
-export function idleSlots(watch: IdleWatch, busy: BusySlot[], table: ProcessTable): BusySlot[] {
-    const now = Date.now();
+export function idleSlots(watch: IdleWatch, busy: BusySlot[], table: ProcessTable, staleWoken = false): BusySlot[] {
     const cargos = heldCargosByHolder();
     const woken = wokenSlots();
     const idle: BusySlot[] = [];
     const seen = new Set<string>();
     for (const slot of busy) {
-        if (woken.has(slot.slot)) continue;
-        const key = `${slot.slot}:${slot.pid}`;
+        const isWoken = woken.has(slot.slot);
+        if (isWoken && !staleWoken) continue;
+        const key = `${isWoken ? "woken " : ""}${slot.slot}:${slot.pid}`;
         seen.add(key);
         const cargo = cargos.get(slot.pid);
         const running = cargo === undefined ? treeRunning(table, slot.pid, false) : treeRunning(table, cargo, true);
-        const seenBefore = watch.seen.get(key);
-        const since = seenBefore?.since ?? now;
-        const samples = [
-            ...(seenBefore?.samples ?? []).filter((sample) => sample.at > now - watch.windowMs),
-            { at: now, running },
-        ];
-        watch.seen.set(key, { since, samples });
-        const runningShare = samples.filter((sample) => sample.running).length / samples.length;
-        if (now - since >= watch.windowMs && runningShare <= IDLE_RUNNING_SHARE) idle.push(slot);
+        const windowMs = isWoken ? WOKEN_STALE_WINDOWS * watch.windowMs : watch.windowMs;
+        if (sampleIdle(watch, key, running, windowMs)) idle.push(slot);
     }
     for (const key of watch.seen.keys()) if (!seen.has(key)) watch.seen.delete(key);
     return idle;
+}
+
+/**
+ * Record one sample (`running`) of what `watch` watches under `key`, and whether it has now run nothing for `windowMs`
+ * (by default the watch's window): watched that long, running in at most `IDLE_RUNNING_SHARE` of the samples since.
+ */
+export function sampleIdle(watch: IdleWatch, key: string, running: boolean, windowMs = watch.windowMs): boolean {
+    const now = Date.now();
+    const before = watch.seen.get(key);
+    const since = before?.since ?? now;
+    const samples = [...(before?.samples ?? []).filter((sample) => sample.at > now - windowMs), { at: now, running }];
+    watch.seen.set(key, { since, samples });
+    const runningShare = samples.filter((sample) => sample.running).length / samples.length;
+    return now - since >= windowMs && runningShare <= IDLE_RUNNING_SHARE;
 }
 
 /** The line a waiter prints for each idle slot it builds beside. */

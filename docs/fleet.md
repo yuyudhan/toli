@@ -323,14 +323,19 @@ beside it`. A command that sleeps, waits on a socket or a lock is idle; one that
 The slot stays lent while that build runs: once the idle command wakes, its next build (a cargo through the shim or
 the rustc wrapper, a nested `build-slot`, the next step of a gate's recipe) waits for the build beside it to end,
 saying `heavy-build slot 1 is lent to a build beside it (slot 2, pid 4343 in /path); waiting for it to end` and again
-each minute it still waits, so the machine never runs more builds than it has slots. While it waits it marks the slot
-woken (it holds a flock on `state/build-slots/woken-<slot>-<pid>.lock`): a woken slot never counts as idle, so no
-waiter is lent it again and the wait ends once the builds lent already do (T2620: before, the slot's whole process
-tree looked idle while its build waited, so each lent build that ended let the next waiter in line be lent the same
-slot and the build waited on that one in turn, for an hour). It stops waiting only when that build has itself run
-nothing for the idle window (it may wait on something the woken command holds), saying so with the same `has run
-nothing` line, so neither ever deadlocks. A cargo the idle command had already started and that never left the slot's
-processes (its test binaries running on) goes on.
+each minute it still waits (with `(N min so far)`), so the machine never runs more builds than it has slots. A lent
+build's lock file records the slot and the holder it was lent beside (`"beside":[{"slot":1,"pid":4242}]`), so only
+that holder's command waits for it, never a later holder of slot 1 (T2668: a build lent beside a slot's previous
+holder held up its next holder, itself lent beside that build, and each waited for the other at 0% CPU forever).
+While it waits it marks the slot woken (it holds a flock on `state/build-slots/woken-<slot>-<pid>.lock`): a woken
+slot never counts as idle to a waiter in line, so no waiter is lent it again and the wait ends once the builds lent
+already do (T2620: before, the slot's whole process tree looked idle while its build waited, so each lent build that
+ended let the next waiter in line be lent the same slot and the build waited on that one in turn, for an hour). It
+stops waiting when that build has itself run nothing for the idle window (it may wait on something the woken command
+holds), or for five windows when that build is itself woken and waiting in turn, saying so with the same `has run
+nothing` line; and it never waits for a lent build that runs inside its own slot's process tree, or whose holder is
+gone, saying which and why, so neither ever deadlocks. A cargo the idle command had already started and that never
+left the slot's processes (its test binaries running on) goes on.
 
 A project's push check takes one slot for its whole run the same way, because its recipe may call cargo directly
 (a `just` recipe, a hook that resets PATH), where the cargo shim below never sees it: a gate's runner
@@ -442,7 +447,9 @@ the variables writes it first (`bin/toli hook lead-build-env`, a jawan's supervi
 (`node_modules/vitest/vitest.mjs` or `.bin/vitest`) or Jest's (`jest/bin/jest.js`, `jest-cli/bin/jest.js`), the
 preload runs `bin/toli build-slot --runner <its pid>`, which waits in line (printing the same waiting line)
 until a detached holder (`build-slot --hold <pid> --keep-stacks`, as for a cargo that bypassed the shim, below) holds
-a slot for that process and frees it once the process exits, however it exits; the runner then exports the slot as
+a slot for that process and frees it once the process exits, however it exits, or once the runner and everything
+below it have run nothing for the idle window (T2668: a Vitest run sat on its slot 13 minutes running nothing; the
+runner then goes on outside any slot); the runner exports the slot as
 `TOLI_BUILD_SLOT`, so its workers and any cargo it starts run in it. Inside a slot already it goes straight on. The
 holder leaves the dev and live stacks running, since the tests may talk to them. Watch and UI modes never end, so
 they never take a slot: Vitest's `watch`, `dev`, `--watch`, `--ui` (and its default watch in an interactive non-CI
