@@ -3,7 +3,7 @@
 // `bin/toli delegation update` writes it back onto the `--for` task (src/records/delegation-sync.ts) and, for a new
 // outcome (done, held, dropped), wakes that machine's lead with `<owner>/T<n> <status>: <title>`. Delivery goes
 // through the outbox, so an unreachable delegator gets it from the minute tick; a repeat is applied once. Each report
-// carries the whole task, so a new one replaces the one still waiting for that machine (T2226).
+// carries the whole task (src/records/update-fit.ts), so a new one replaces the one still waiting there (T2226).
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { coordinatorName, type FleetMachine, fleetMachine, loadMachine } from "../core/config.ts";
@@ -14,6 +14,7 @@ import { queuedItems } from "../jobs/outbox-queue.ts";
 import { fitTitle } from "../peer/envelope.ts";
 import type { Status, Task } from "./backlog.ts";
 import type { HoldOption } from "./hold-options.ts";
+import { fitUpdate } from "./update-fit.ts";
 
 /** A delegating machine's task that a delegated task works for: `<machine>/<task>`. */
 export type Upstream = { machine: string; task: string };
@@ -43,7 +44,7 @@ export type DelegateState = {
     status: Status;
     /** The owner's `updatedAt`: an update no newer than this one is a repeat and is skipped. */
     updatedAt: string;
-    /** How many of the owner's notes are already copied onto the `--for` task. */
+    /** How many of the owner's notes are already copied onto the `--for` task, counted over all of its notes. */
     notes: number;
     question?: string;
     options?: HoldOption[];
@@ -108,6 +109,8 @@ export type DelegationUpdate = {
     forTask?: string;
     task: Pick<Task, "status" | "title" | "updatedAt" | "notes"> &
         Partial<Pick<Task, "question" | "options" | "recommend" | "blocks" | "commit" | "handedBack">>;
+    /** Earliest notes left out to fit the body limit (src/records/update-fit.ts): `task.notes` starts after them. */
+    notesSkipped?: number;
     /**
      * The delegation's id (`delegatedBy.id`), in the update to the delegator: it names the delegation the `--for` task
      * sent before it knew this task's fleet id (`sending`).
@@ -303,7 +306,7 @@ export function delegationUpdate(
     );
     const by = task.delegatedBy;
     const direct = by !== undefined && to?.machine === by.machine && to.task === by.task;
-    return {
+    return fitUpdate({
         owner,
         id: task.id,
         ...(to?.task === undefined ? {} : { forTask: to.task }),
@@ -324,7 +327,7 @@ export function delegationUpdate(
         ...(handbacks.length === 0 ? {} : { forwardHandbacks: Object.fromEntries(handbacks) }),
         report: reportText(task),
         message: delegationReport(owner, task, to),
-    };
+    });
 }
 
 /** The task id, delegator task and task `updatedAt` of a queued update item, or null for any other item. */

@@ -12,6 +12,7 @@ import { now, readJson, stamp, withLock, writeJsonAtomic } from "../core/util.ts
 import { queuedText, sendNow } from "../jobs/outbox.ts";
 import { loadBacklog, type Task } from "./backlog.ts";
 import { type DelegationUpdate, delegationUpdate, fleetId, splitFleetId } from "./delegation-report.ts";
+import { fitUpdate } from "./update-fit.ts";
 
 /** state/raised-holds.json: per task id here, the question raised to the coordinator and when. */
 type Raised = Record<string, { question: string; at: string }>;
@@ -43,11 +44,11 @@ export function raiseHolds(): string[] {
             const open = raisable(task, coordinator);
             const before = raised[task.id];
             if (open ? before?.question === task.question : before === undefined) continue;
-            const update: DelegationUpdate = {
+            const update: DelegationUpdate = fitUpdate({
                 ...delegationUpdate(machine.name, task, { machine: coordinator }),
                 forUser: true,
                 project: task.project,
-            };
+            });
             const sent = sendNow(
                 machine.name,
                 fleetMachine(coordinator),

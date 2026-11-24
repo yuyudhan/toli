@@ -91,7 +91,15 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
         const slice = task.slices?.includes(id) === true;
         if (!slice && !task.delegatedTo?.includes(id)) task.delegatedTo = [...(task.delegatedTo ?? []), id];
         if (update.delegation !== undefined) landSending(task, update.owner, update.delegation);
-        for (const note of notes.slice(seen?.notes ?? 0))
+        // `notes` may start after notes the owner left out to fit the body limit (notesSkipped): copy the ones past
+        // what is copied here already, and mark how many of the earlier ones this machine never got.
+        const skipped = update.notesSkipped ?? 0;
+        const had = seen?.notes ?? 0;
+        if (had < skipped)
+            task.notes.push(
+                `${id}: ${skipped - had} earlier notes were not sent (too large for one update); they are on ${update.owner}`,
+            );
+        for (const note of notes.slice(Math.max(0, had - skipped)))
             if (!note.startsWith("delegated by ")) task.notes.push(`${id}: ${note}`);
         const onward = slice ? [] : (update.forwardedTo ?? []).filter((entry) => entry !== id);
         for (const entry of onward.filter((fid) => !task.delegatedTo?.includes(fid))) {
@@ -107,7 +115,7 @@ function mirror(local: Task, id: string, update: DelegationUpdate): boolean {
                     ? `${id} is forwarded to ${onward.join(", ")}`
                     : `${id} is ${status}`,
             );
-        const state: DelegateState = { status, updatedAt, notes: notes.length };
+        const state: DelegateState = { status, updatedAt, notes: skipped + notes.length };
         if (status === "held") Object.assign(state, { question, options, recommend, blocks });
         // The same open question again (a note added while it waits): this machine's answer to it still stands.
         if (status === "held" && seen?.status === "held" && seen.question === question && seen.answered)
@@ -367,6 +375,9 @@ export function parseUpdate(text: string): DelegationUpdate {
         throw new ToliError("delegation update: delegation must be a delegation id");
     const forUser: unknown = update.forUser;
     if (forUser !== undefined && forUser !== true) throw new ToliError("delegation update: forUser must be true");
+    const skipped: unknown = update.notesSkipped;
+    if (skipped !== undefined && !(Number.isSafeInteger(skipped) && Number(skipped) >= 0))
+        throw new ToliError("delegation update: notesSkipped must be a count of notes");
     const project: unknown = update.project;
     if (project !== undefined && (typeof project !== "string" || !isValidName(project)))
         throw new ToliError("delegation update: project must be a project name");
