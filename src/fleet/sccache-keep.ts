@@ -8,10 +8,15 @@
 // is at 80% of it (a missing entry is only a cache miss), and once the server runs no compiler it is stopped with
 // `sccache --stop-server`: a fresh server sizes its cache from the folder and starts with that headroom. A server that
 // runs a compiler is never stopped (it is asked again next tick). Nothing here sends a signal, and no server is asked
-// anything unless one of this user's is already running, so the check never starts one.
-import { basename } from "node:path";
+// anything unless one of this user's is already running, so the check never starts one. Only the shared server counts:
+// a build's own server, started inside its toli build scope on that scope's socket (src/jawans/scope.ts
+// `inBuildScope`), sizes its cache from the folder when the build starts and is stopped when the build ends, and
+// `--show-stats` without its socket would start a shared one.
+import { readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { run } from "../core/util.ts";
 import { parseSccacheStats, trimOldest } from "./disk-caches.ts";
+import { procFile } from "./resources.ts";
 
 /** A local cache this full of its cap counts as at its cap. */
 const FULL = 0.95;
@@ -47,16 +52,29 @@ function isServer(proc: Proc): boolean {
     return program !== undefined && basename(program) === "sccache" && rest.every((arg) => arg === "--start-server");
 }
 
+/**
+ * Whether process `pid` is a build's own sccache server: its environment names a toli build scope's socket
+ * (`SCCACHE_SERVER_UDS=.../toli-sccache-<slot>-<pid>.sock`). False where /proc is unreadable, e.g. macOS.
+ */
+function buildOwnServer(pid: number): boolean {
+    try {
+        const environ = readFileSync(procFile(join(String(pid), "environ")), "utf8");
+        return /(?:^|\0)SCCACHE_SERVER_UDS=[^\0]*\/toli-sccache-\d+-\d+\.sock(?:\0|$)/.test(environ);
+    } catch {
+        return false;
+    }
+}
+
 const gib = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 
 /**
- * Trim this user's sccache local cache at its cap and restart its server once it compiles nothing (see above). A line
- * for the tick's log when it trimmed or stopped something (`would ...` in a dry run), else null. Never throws.
+ * Trim this user's sccache local cache at its cap and restart its shared server once it compiles nothing (see above).
+ * A line for the tick's log when it trimmed or stopped something (`would ...` in a dry run), else null. Never throws.
  */
 export function keepSccache(dryRun: boolean): string | null {
     const uid = process.getuid?.();
     const table = processes();
-    const server = table.find((proc) => proc.uid === uid && isServer(proc));
+    const server = table.find((proc) => proc.uid === uid && isServer(proc) && !buildOwnServer(proc.pid));
     if (server === undefined) return null;
     const result = run(["sccache", "--show-stats"], { timeoutMs: 20_000 });
     if (result.code !== 0) return null;

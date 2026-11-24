@@ -393,6 +393,15 @@ killed it, is reported as without a scope. A nested build
 `/bin/sh` creates `state/build-slots/scope-<pid>.started` and then execs the build; when systemd-run exits without it
 (it could not make the scope: no user session bus over ssh, no lingering), the build never ran, so it runs once
 without a scope after one warning line. A build that ran and failed reports its own exit code and is not run again.
+A build in its scope compiles through an sccache server of its own: the scope's environment sets `SCCACHE_SERVER_UDS`
+to `toli-sccache-<slot>-<pid>.sock` in the user manager's runtime dir, so the first compile through sccache starts
+that server inside the scope, and toli stops it (`sccache --stop-server`) and removes the socket once the build ends.
+sccache's server, not cargo, starts every rustc, so rustc lives in the server's cgroup: with the one shared server,
+the first build to compile started it inside its own scope, and every later build's rustc ran under that first
+scope's cap (a raised `capacity.buildMemoryMax` never reached it) until someone ran `sccache --stop-server` (T24). The
+build's server shares the machine's cache folder, so its hits carry over; the shared server, which builds without a
+scope still use, is never started from inside a build scope, and only it is trimmed and restarted at its cap
+([disk.md](disk.md#sccache-at-its-cap)).
 A command run in a slot (`bin/toli build-slot --`, the `git push` of a `bin/toli push` with a pre-push hook) that
 gets SIGTERM, SIGINT or SIGHUP through toli stops with everything it started: toli reads its process tree, sends
 SIGTERM to all of it (the received signal to the command itself too) and SIGKILL after 10 seconds to what is left, so

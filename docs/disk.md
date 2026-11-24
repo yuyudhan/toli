@@ -334,10 +334,12 @@ its cap or more, it deletes the oldest entries until the cache is at 80% of its 
 compiler (no child process), stops it with `sccache --stop-server`; a fresh server sizes its cache from the folder and
 starts with that headroom. A server running a compiler is never stopped; the tick asks again a minute later. It sends
 no signal, never touches another user's server, and asks nothing when no server of this user's runs, so it never
-starts one. `logs/tick.log` gets a line when it trims or stops (`sccache: 20.0 GiB at its 20.0 GiB cap: trimmed ...;
-stopped the sccache server (pid N), the next compile starts a fresh one`); a dry run (`TOLI_DRY_RUN=1`) only says
-what it would do. A server run by a service manager (a systemd user unit) exits on `--stop-server` like any other;
-the next compile starts one when the unit does not restart it.
+starts one. A build's own server in its scope (`toli-sccache-<slot>-<pid>.sock`, see
+[fleet.md](fleet.md#heavy-build-slots)) is left alone: it sizes its cache from the folder when its build starts and
+stops when the build ends. `logs/tick.log` gets a line when it trims or stops (`sccache: 20.0 GiB at its 20.0 GiB
+cap: trimmed ...; stopped the sccache server (pid N), the next compile starts a fresh one`); a dry run
+(`TOLI_DRY_RUN=1`) only says what it would do. A server run by a service manager (a systemd user unit) exits on
+`--stop-server` like any other; the next compile starts one when the unit does not restart it.
 
 ## On a full disk
 

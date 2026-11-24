@@ -197,8 +197,11 @@ export function buildScopeArgv(systemdRun: string, unit: string, memoryMaxMB: nu
     return [systemdRun, "--user", "--scope", "--collect", "--quiet", `--unit=${unit}`, ...limit, "--", ...argv];
 }
 
-/** A heavy build's scoped command line, and the file its command creates once systemd-run has made the scope. */
-export type BuildScoped = Scoped & { startedFile: string };
+/**
+ * A heavy build's scoped command line, the file its command creates once systemd-run has made the scope, and the
+ * socket of the build's own sccache server (its `SCCACHE_SERVER_UDS`).
+ */
+export type BuildScoped = Scoped & { startedFile: string; sccacheSocket: string };
 
 /**
  * The argv and extra environment that start heavy build `argv` in its own systemd scope, `toli-build-<slot>-<pid>`,
@@ -207,14 +210,25 @@ export type BuildScoped = Scoped & { startedFile: string };
  * (tests). Inside the scope `/bin/sh` creates `startedFile` and then execs the build, so the pid in the scope is the
  * build's and its exit code or killing signal is the build's; a missing `startedFile` after systemd-run exits means
  * the scope was never made (no user session bus over ssh, no lingering) and the build never ran.
+ *
+ * The build's sccache gets its own server socket, `SCCACHE_SERVER_UDS` at `toli-sccache-<slot>-<pid>.sock` in the
+ * user manager's runtime dir (T24). sccache's server, not cargo, starts every rustc, so the rustc lives in whatever
+ * cgroup the server does, and a client with no server running starts one in its own cgroup. With the one shared
+ * server, the first build to compile through it started it inside that build's scope: every later build's rustc ran
+ * under that first scope's `MemoryMax` (a raised `capacity.buildMemoryMax` never reached it) until the server was
+ * stopped. A server of the build's own starts inside the build's scope, so its rustc keep to the build's cap, and the
+ * shared server is never started from inside a build scope; the server shares the machine's cache folder, so cache
+ * hits carry over. src/fleet/build-slots.ts `stopBuildSccache` stops it once the build ends.
  */
 export function inBuildScope(slot: number, memoryMaxMB: number, argv: Argv, startedFile: string): BuildScoped | null {
     const scope = userScope("TOLI_BUILD_SCOPE");
     if (scope === null || inToliBuildCgroup(ownCgroup())) return null;
     const marked: Argv = ["/bin/sh", "-c", ': > "$0" && exec "$@"', startedFile, ...argv];
+    const sccacheSocket = join(scope.runtimeDir, `toli-sccache-${slot}-${process.pid}.sock`);
     return {
         argv: buildScopeArgv(scope.systemdRun, buildScopeUnit(slot, process.pid), memoryMaxMB, marked),
-        env: { XDG_RUNTIME_DIR: scope.runtimeDir },
+        env: { XDG_RUNTIME_DIR: scope.runtimeDir, SCCACHE_SERVER_UDS: sccacheSocket },
         startedFile,
+        sccacheSocket,
     };
 }

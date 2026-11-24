@@ -8,9 +8,12 @@ import { tempDir } from "./helpers.ts";
 const KIB = 1024;
 const uid = process.getuid?.() ?? 0;
 const savedPath = process.env.PATH;
+const savedProcDir = process.env.TOLI_PROC_DIR;
 
 afterEach(() => {
     process.env.PATH = savedPath;
+    if (savedProcDir === undefined) delete process.env.TOLI_PROC_DIR;
+    else process.env.TOLI_PROC_DIR = savedProcDir;
 });
 
 type Fixture = { cache: string; entries: string[]; calls: () => string[] };
@@ -103,5 +106,20 @@ describe("sccache at its cap", () => {
         expect(f.calls()).toEqual(["--show-stats"]);
         expect(line).toContain("would trim");
         expect(line).toContain("would stop the sccache server (pid 500)");
+    });
+
+    test("a build's own server in its scope is never asked; the shared one still is (T24)", () => {
+        const proc = tempDir("sccache-keep-proc");
+        mkdirSync(join(proc, "500"));
+        const socket = "/run/user/1000/toli-sccache-1-4242.sock";
+        writeFileSync(join(proc, "500", "environ"), `PATH=/usr/bin\0SCCACHE_SERVER_UDS=${socket}\0`);
+        process.env.TOLI_PROC_DIR = proc;
+        const alone = fixture([server(500), rustc(510, 500)], 10, 10);
+        expect(keepSccache(false)).toBeNull();
+        expect(alone.calls()).toEqual([]);
+
+        const beside = fixture([server(500), server(600)], 10, 10);
+        expect(keepSccache(false)).toContain("stopped the sccache server (pid 600)");
+        expect(beside.calls()).toEqual(["--show-stats", "--stop-server"]);
     });
 });

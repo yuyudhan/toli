@@ -25,8 +25,8 @@ import { basename, join } from "node:path";
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { ToliError, warn } from "../core/util.ts";
-import { slotShareEnv } from "../jawans/env.ts";
+import { run, ToliError, warn } from "../core/util.ts";
+import { rustcWrapperEnv, slotShareEnv } from "../jawans/env.ts";
 import { type Argv, inBuildScope } from "../jawans/scope.ts";
 import { stopTree } from "../jawans/stop.ts";
 import { loadProjects } from "../projects/projects.ts";
@@ -151,10 +151,33 @@ async function spawnForwarding(
 }
 
 /**
- * A command to start in a held slot's scope: the argv and extra environment to spawn, and `scopeFailed`, to ask once
- * it exited whether systemd-run never made the scope (so the command never ran).
+ * A command to start in a held slot's scope: the argv and extra environment to spawn, `scopeFailed`, to ask once it
+ * exited whether systemd-run never made the scope (so the command never ran), and `stopSccache`, to call once it
+ * exited, which stops the sccache server the command started on its scope's own socket (`stopBuildSccache`).
  */
-export type ScopeLaunch = { argv: Argv; env: Record<string, string>; scopeFailed: () => boolean };
+export type ScopeLaunch = {
+    argv: Argv;
+    env: Record<string, string>;
+    scopeFailed: () => boolean;
+    stopSccache: () => void;
+};
+
+/** How long `sccache --stop-server` may take: the server finishes the compiles in flight first. */
+const SCCACHE_STOP_TIMEOUT_MS = 60_000;
+
+/**
+ * Stop the sccache server a build started on its scope's own socket (`socket`, src/jawans/scope.ts `inBuildScope`)
+ * and remove the socket file: no socket, no server. The client asked is the build's chained rustc wrapper when that is
+ * sccache (`rustcWrapperEnv`), else sccache on PATH. A server already gone, or one no client reaches, is left alone:
+ * a server that lingers lives in the build's own scope and ends at its idle timeout.
+ */
+function stopBuildSccache(socket: string): void {
+    if (!existsSync(socket)) return;
+    const next = rustcWrapperEnv(process.env).TOLI_RUSTC_WRAPPER_NEXT;
+    const client = basename(next) === "sccache" ? next : "sccache";
+    run([client, "--stop-server"], { env: { SCCACHE_SERVER_UDS: socket }, timeoutMs: SCCACHE_STOP_TIMEOUT_MS });
+    rmSync(socket, { force: true });
+}
 
 /**
  * Start `argv` in its own systemd scope for `scope` where the host has one (src/jawans/scope.ts `inBuildScope`), else
@@ -162,7 +185,7 @@ export type ScopeLaunch = { argv: Argv; env: Record<string, string>; scopeFailed
  * the command; `scopeFailed` reads and removes it.
  */
 export function launchInScope(scope: BuildScope | null, argv: Argv): ScopeLaunch {
-    const unscoped: ScopeLaunch = { argv, env: {}, scopeFailed: () => false };
+    const unscoped: ScopeLaunch = { argv, env: {}, scopeFailed: () => false, stopSccache: () => {} };
     if (scope === null) return unscoped;
     mkdirSync(paths.buildSlotsDir(), { recursive: true });
     const startedFile = join(paths.buildSlotsDir(), `scope-${process.pid}.started`);
@@ -177,6 +200,7 @@ export function launchInScope(scope: BuildScope | null, argv: Argv): ScopeLaunch
             rmSync(startedFile, { force: true });
             return !started;
         },
+        stopSccache: () => stopBuildSccache(scoped.sccacheSocket),
     };
 }
 
@@ -206,6 +230,7 @@ export async function runInSlot(
     const argv: Argv = [resolved, ...args];
     const launch = launchInScope(scope, argv);
     const run = await spawnForwarding(launch.argv, { ...launch.env, ...env });
+    launch.stopSccache();
     if (!launch.scopeFailed() || run.signalled) return run.code;
     warn(scopeFailedWarning(run.code));
     return (await spawnForwarding(argv, env)).code;

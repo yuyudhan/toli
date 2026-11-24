@@ -111,6 +111,7 @@ export async function runGateProcess(file: string): Promise<void> {
                 const launch = launchInScope(scope, recipe);
                 const stop = callersGone.signal;
                 let run = await superviseRecipe(file, supervised, launch.argv, { ...env, ...launch.env }, stop);
+                launch.stopSccache();
                 if (launch.scopeFailed() && run.stopped === null) {
                     appendFileSync(record.log, `${scopeFailedWarning(run.end.code ?? 1)}\n`);
                     run = await superviseRecipe(file, supervised, recipe, env, stop);
