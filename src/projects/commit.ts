@@ -39,6 +39,7 @@ import { adoptsMerge } from "./commit-merge.ts";
 import { syncCommittedWorktree } from "./commit-worktree.ts";
 import { findProject, projectCloneDir, toliSelfCheckout } from "./projects.ts";
 import { perTask } from "./strategy.ts";
+import { requireTaskBranch } from "./task-branch.ts";
 import { samePath, workDir } from "./workspace.ts";
 
 // Word boundaries keep human sign-offs such as "<dev@gmail.com>" (contains "ai") intact.
@@ -276,12 +277,7 @@ function commitDir(name: string, taskId: string | undefined): string {
     }
     const target = workDir(name, taskId);
     if (target.branch !== null) {
-        const actual = currentBranch(target.dir);
-        if (actual !== target.branch)
-            throw new ToliError(
-                `refusing: ${target.dir} is on ${actual === null ? "a detached HEAD" : `"${actual}"`}, but ${target.task?.id}'s branch is ` +
-                    `"${target.branch}". Prepare it again (bin/toli workspace prepare ${target.task?.id}) or ask ${addressName()}.`,
-            );
+        requireTaskBranch(target);
         return target.dir;
     }
     const workspace = findProject(name).workspace;

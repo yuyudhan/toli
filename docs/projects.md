@@ -54,7 +54,12 @@ A task branch is `toli/<machine>/<T-id>-<slug>` by default: task ids are numbere
 working one project each have a `T12`, and the machine part keeps their branches apart on the shared origin.
 `bin/toli project set <name> --task-branch "<pattern>"` names them another way, from `<project>`, `<machine>`, `<id>`
 (required) and `<slug>` around literal text (for example `shop/<machine>/<id>-<slug>`); `--task-branch none` goes
-back to the default. A task keeps the branch it was prepared on.
+back to the default. A task keeps the branch it was prepared on, recorded on the task. A name the pattern cannot make
+(an issue-tracker key instead of the T-id, say) is a rename in the task's workspace: `git branch -m <new name>`.
+toli follows a rename it can see (the recorded branch is gone and the checked-out branch's reflog records renaming
+it, in one step or several) and records the new name, so `bin/toli commit|push|pr --task T<n>` and
+`workspace prepare` all act on that one branch. On any other branch (a new one, not a rename) commit, push and pr
+create all refuse, so a push never sends a branch the task's commits are not on.
 
 Under `--mode pr` or `no-mistakes` a per-task strategy lands each task branch through a PR/MR. Under `--mode commit`
 the task branch is committed and pushed (on the user's word or a standing push grant) for the machine that cuts the

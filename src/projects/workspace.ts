@@ -11,43 +11,21 @@
 // T<n> --same-branch`, e.g. a release train on a fixed release branch); it commits there with `--task`.
 //
 // The prepared workspace is recorded on the task (`workspace` in data/backlog.json), so the verifier, `bin/toli
-// commit|push|pr --task` and `bin/toli workspace list|prune` (src/projects/workspace-command.ts) find it again.
+// commit|push|pr --task` and `bin/toli workspace list|prune` (src/projects/workspace-command.ts) find it again,
+// following a rename of its task branch (src/projects/task-branch.ts).
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
-import { loadMachine } from "../core/config.ts";
 import { currentBranch, git, gitOk, isGitRepo } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { addressName } from "../core/persona.ts";
-import { run, ToliError, withLock } from "../core/util.ts";
+import { ToliError, withLock } from "../core/util.ts";
 import { loadBacklog, type Task, type TaskWorkspace, updateTask } from "../records/backlog.ts";
 import { baseBranch, baseRef, refExists } from "./base-branch.ts";
 import { excludeFromIndexing } from "./indexing.ts";
 import { findProject, type Project, projectCloneDir } from "./projects.ts";
-import { DEFAULT_TASK_BRANCH, perTask } from "./strategy.ts";
+import { perTask } from "./strategy.ts";
+import { followRename, taskBranch } from "./task-branch.ts";
 import { LIVE, refuseWhileToggled } from "./workspace-toggle.ts";
-
-const SLUG_MAX = 40;
-
-/**
- * A task's branch: the project's `taskBranch` pattern (DEFAULT_TASK_BRANCH when unset) with `<project>`,
- * `<machine>` (this machine's name), `<id>` and `<slug>` (of the title) filled in; a valid branch name.
- */
-export function taskBranch(task: Pick<Task, "id" | "title">, project: Pick<Project, "name" | "taskBranch">): string {
-    const slug =
-        task.title
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .slice(0, SLUG_MAX)
-            .replace(/^-+|-+$/g, "") || "task";
-    const parts: Record<string, string> = { project: project.name, machine: loadMachine().name, id: task.id, slug };
-    const branch = (project.taskBranch ?? DEFAULT_TASK_BRANCH).replace(
-        /<(project|machine|id|slug)>/g,
-        (_match, part: string) => parts[part] ?? "",
-    );
-    if (run(["git", "check-ref-format", "--branch", branch]).code !== 0)
-        throw new ToliError(`cannot derive a valid branch name for ${task.id} (got "${branch}")`);
-    return branch;
-}
 
 /** `git status --porcelain` of a checkout: "" when clean. */
 export function dirty(dir: string): string {
@@ -91,7 +69,8 @@ export function holdersText(holders: Task[]): string {
 
 function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspace {
     const base = task.workspace?.base ?? baseBranch(project, clone);
-    const branch = task.workspace?.branch ?? taskBranch(task, project);
+    const recorded = task.workspace?.branch;
+    const branch = recorded ? followRename(clone, recorded) : taskBranch(task, project);
     const workspace: TaskWorkspace = { strategy: "branch-per-task", path: clone, branch, base };
     const head = currentBranch(clone);
     if (head === branch) return workspace;
@@ -118,8 +97,9 @@ function prepareBranch(project: Project, task: Task, clone: string): TaskWorkspa
 
 function prepareWorktree(project: Project, task: Task, clone: string): TaskWorkspace {
     const base = task.workspace?.base ?? baseBranch(project, clone);
-    const branch = task.workspace?.branch ?? taskBranch(task, project);
     const path = paths.taskWorktree(project.name, task.id);
+    const recorded = task.workspace?.branch;
+    const branch = recorded ? (existsSync(path) ? followRename(path, recorded) : recorded) : taskBranch(task, project);
     const workspace: TaskWorkspace = { strategy: "worktree-per-task", path, branch, base };
     if (existsSync(path)) {
         const registered = gitWorktrees(clone).find((entry) => samePath(entry.path, path));
@@ -147,6 +127,20 @@ function prepareWorktree(project: Project, task: Task, clone: string): TaskWorks
 /** Whether `branch` names task `id` as a whole token (`shop/m1/T375-e2e`, `t375`, never `T3750`). */
 function namesTask(branch: string, id: string): boolean {
     return new RegExp(`(^|[^a-z0-9])${id}($|[^0-9])`, "i").test(branch);
+}
+
+/** The per-task branch recorded on `task`, after followRename; a followed rename is recorded on the task. */
+function followRecorded(project: string, task: Task, workspace: TaskWorkspace): string | null {
+    if (workspace.branch === null) return null;
+    const recorded = workspace.branch;
+    const branch = followRename(workspace.path, recorded);
+    if (branch !== recorded)
+        withLock(workspaceLock(project), () =>
+            updateTask(task.id, (entry) => {
+                if (entry.workspace?.branch === recorded) entry.workspace.branch = branch;
+            }),
+        );
+    return branch;
 }
 
 /**
@@ -347,7 +341,8 @@ function taskFromCwd(project: string, cwd: string): string | null {
 
 /**
  * The checkout `bin/toli commit|push|pr` acts on: the workspace of `--task` (or of the task worktree `cwd` is in),
- * else the project clone. `branch`: the branch the checkout must be on, when the task's workspace names one.
+ * else the project clone. `branch`: the branch the checkout must be on (requireTaskBranch), when the task's per-task
+ * workspace names one, following a rename of it.
  */
 export function workDir(
     projectName: string,
@@ -373,7 +368,7 @@ export function workDir(
     return {
         dir: task.workspace.path,
         task,
-        branch: perTask(task.workspace.strategy) ? task.workspace.branch : null,
+        branch: perTask(task.workspace.strategy) ? followRecorded(project.name, task, task.workspace) : null,
     };
 }
 

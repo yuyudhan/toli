@@ -4,6 +4,15 @@ Every toli release is an annotated git tag `vX.Y.Z` (semver) with a section here
 from the commits since the previous tag; `bin/toli upgrade` prints the sections between your version and the new
 one. See docs/releasing.md.
 
+## v0.7.4 - unreleased
+
+### Fixed
+
+- A task branch renamed in its workspace (`git branch -m`, to a project's own naming such as an issue key) no longer
+  splits commit from push: toli follows a rename it can see, records the new name on the task, and
+  `bin/toli commit|push|pr --task` all act on it. On any other branch `bin/toli push` and `pr create` now refuse as
+  commit does, instead of pushing a branch without the task's commits (docs/projects.md, T85).
+
 ## v0.7.3 - 2026-11-24
 
 ### Changed

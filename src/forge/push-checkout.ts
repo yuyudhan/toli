@@ -1,14 +1,29 @@
-// Which checkout `bin/toli push` may push from, and on whose word, decided before any hook or gate runs. `--branch <b>`:
+// Which checkout `bin/toli push` may push from, and on whose word, decided before any hook or gate runs. A task's
+// workspace must be on the task's own branch, the one `bin/toli commit` commits on (requireTaskBranch). `--branch <b>`:
 // the checkout must be on that branch (the release catch-up's push lines name it). A release train's checkout (T2232):
 // a push whose pre-push hook runs the project's full check where a release train works holds the train up for hours,
 // so a checkout on a `release/*` branch, or one a live jawan holds, is refused unless the train itself pushes
 // (`--release-train`).
 import { relative } from "node:path";
+import { currentBranch } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
 import { addressName } from "../core/persona.ts";
 import { now, ToliError } from "../core/util.ts";
 import { checkoutHolder } from "../projects/catch-up-hold.ts";
 import { loadProjects } from "../projects/projects.ts";
+import { requireTaskBranch } from "../projects/task-branch.ts";
+import type { Task } from "../records/backlog.ts";
+
+/**
+ * The branch `work.dir` (workDir, src/projects/workspace.ts) has checked out, refusing a detached HEAD or a task's
+ * workspace on another branch than the task's own (`work.branch`).
+ */
+export function requireBranch(work: { dir: string; task: Task | null; branch: string | null }, action: string): string {
+    requireTaskBranch(work);
+    const branch = currentBranch(work.dir);
+    if (branch === null) throw new ToliError(`refusing to ${action}: ${work.dir} is on a detached HEAD`);
+    return branch;
+}
 
 /**
  * Hard rule 1: refuse a push that carries neither the user's `--word` nor the project's standing push grant on this

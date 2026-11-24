@@ -24,7 +24,7 @@ import {
 } from "./cli.ts";
 import { parseGateWait } from "./gate.ts";
 import { gatePush, slotFreePushSha } from "./gate-hook.ts";
-import { requirePushAuthority, requirePushCheckout } from "./push-checkout.ts";
+import { requireBranch, requirePushAuthority, requirePushCheckout } from "./push-checkout.ts";
 import { pushTag } from "./push-tag.ts";
 
 /** `--task T<n>`: the project command acts on that task's workspace (its worktree or task branch). */
@@ -204,19 +204,13 @@ export function forgeCommand(argv: string[]): void {
     out(`${readiness.ready ? "ready" : "not ready"}: ${readiness.detail}`);
 }
 
-/** The checked-out branch, refusing a detached HEAD. */
-function requireBranch(dir: string, action: string): string {
-    const branch = currentBranch(dir);
-    if (branch === null) throw new ToliError(`refusing to ${action}: ${dir} is on a detached HEAD`);
-    return branch;
-}
-
 /**
  * `git push -u origin <current branch>` as an explicit refs/heads refspec: never forced, never another ref. Refused
  * unless `--word` quotes the user's word for this push or the project has a standing push grant on this machine. Runs
- * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. `--branch <b>`,
- * on another branch, or a release train's checkout without `--release-train` is refused before any hook or gate runs
- * (src/forge/push-checkout.ts). A push that moved origin's branch is recorded in this machine's push log
+ * in the task's workspace with `--task` (or from inside a task worktree), else in the project clone. A task's checkout
+ * on another branch than its own (the one `bin/toli commit` commits on), `--branch <b>` on another branch, or a release
+ * train's checkout without `--release-train` is refused before any hook or gate runs (src/forge/push-checkout.ts). A
+ * push that moved origin's branch is recorded in this machine's push log
  * (src/records/push-log.ts), attributed with `--by`/`--for`/`--word` (or the issuing machine and task `bin/toli exec`
  * put in the environment). With `--gate "<recipe>"` the gate runs first and the push happens only once it passed on
  * HEAD's tree (gatePush, src/forge/gate-hook.ts); a pre-push hook that only repeats it is skipped for exactly the
@@ -241,13 +235,14 @@ export async function pushCommand(argv: string[]): Promise<void> {
     });
     args.maxPositional(1);
     const project = args.pos(0, "project");
-    const { dir, task } = workDir(project, args.str(TASK_FLAG));
+    const work = workDir(project, args.str(TASK_FLAG));
+    const { dir, task } = work;
     const tag = args.str("tag");
     if (tag !== undefined && args.str("gate") !== undefined)
         throw new ToliError(
             "push --tag runs no gate: gate the tagged commit with `bin/toli gate run` first; its sealed pass is what lets the tag push skip the pre-push hook",
         );
-    const branch = tag === undefined ? requireBranch(dir, "push") : (currentBranch(dir) ?? "HEAD");
+    const branch = tag === undefined ? requireBranch(work, "push") : (currentBranch(dir) ?? "HEAD");
     const checkout = { expected: args.str("branch"), train: args.bool("release-train"), ownTask: task?.id ?? null };
     requirePushCheckout(project, dir, branch, checkout);
     const attribution = pushAttribution(args, task?.id);
@@ -337,7 +332,7 @@ async function prCreate(argv: string[]): Promise<void> {
         throw new ToliError("pr create needs exactly one of --body <text> or --body-file <file>");
     if (bodyFile !== undefined && !existsSync(bodyFile)) throw new ToliError(`--body-file ${bodyFile} does not exist`);
     const body = bodyText ?? readFileSync(bodyFile as string, "utf8");
-    const branch = requireBranch(dir, "open a pull request");
+    const branch = requireBranch(work, "open a pull request");
     const target = projectForge(project);
     requirePushed(dir, `bin/toli push ${project.name}${work.task === null ? "" : ` --task ${work.task.id}`}`, branch);
     const base = args.str("base") ?? work.task?.workspace?.base ?? undefined;
@@ -355,11 +350,11 @@ async function prStatus(argv: string[]): Promise<void> {
     const args = new Args(argv, { booleans: ["json"], values: [TASK_FLAG] });
     args.maxPositional(2);
     const project = findProject(args.pos(0, "project"));
-    const { dir } = workDir(project.name, args.str(TASK_FLAG));
+    const work = workDir(project.name, args.str(TASK_FLAG));
     const id = args.positional[1];
     const ref =
-        id !== undefined ? { id } : { branch: requireBranch(dir, "find the pull request of the current branch") };
-    const status = await clientFor(projectForge(project), dir).status(ref);
+        id !== undefined ? { id } : { branch: requireBranch(work, "find the pull request of the current branch") };
+    const status = await clientFor(projectForge(project), work.dir).status(ref);
     if (args.bool("json")) printJson(status);
     else out(statusLines(status).join("\n"));
 }
