@@ -53,6 +53,19 @@ describe("a renamed task branch", () => {
         expect(box.git(worktree, ["ls-remote", "origin", "refs/heads/scratch"])).toBe("");
     });
 
+    test("commit --task takes a worktree renamed once to the brief's piece-branch name (T2717)", () => {
+        const { box } = setup("worktree-per-task", "Fix camera");
+        const worktree = join(box.root, "projects", ".worktrees", "app", "T1");
+        box.ok(["workspace", "prepare", "T1"]);
+        // The reported case: one rename, straight to the <project>/<machine>/<T-id>-<KEY>-<slug> name a brief asks for.
+        box.git(worktree, ["branch", "-m", "app/m2/T1-PROJ-401-x"]);
+
+        writeFileSync(join(worktree, "camera.txt"), "camera\n");
+        const sha = box.ok(["commit", "app", "--task", "T1", "-m", "camera", "--", "camera.txt"]);
+        expect(box.git(worktree, ["rev-parse", "app/m2/T1-PROJ-401-x"])).toBe(sha);
+        expect(recordedBranch(box, "T1")).toBe("app/m2/T1-PROJ-401-x");
+    });
+
     test("workspace prepare keeps the renamed branch of a branch-per-task clone", () => {
         const { box, clone } = setup("branch-per-task", "Fix camera");
         box.ok(["workspace", "prepare", "T1"]);
