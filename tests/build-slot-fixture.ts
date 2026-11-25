@@ -1,7 +1,7 @@
 // Shared fixture of the heavy-build slot tests (tests/build-slots.test.ts, tests/build-slot-queue.test.ts,
-// tests/build-slot-push.test.ts, tests/build-slot-sccache.test.ts): a sandbox with a stub cargo that logs each run,
-// helpers that start real `bin/toli build-slot` processes, and a fake Linux user manager whose systemd-run logs each
-// scope it makes.
+// tests/build-slot-push.test.ts, tests/build-slot-sccache.test.ts, tests/build-slot-stale-record.test.ts): a sandbox
+// with a stub cargo that logs each run, helpers that start real `bin/toli build-slot` processes, and a fake Linux user
+// manager whose systemd-run logs each scope it makes.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { paths } from "../src/core/paths.ts";
