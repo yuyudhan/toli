@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Envelope, type Receipt, sealEnvelope, type Unsigned } from "../src/peer/envelope.ts";
 import { canonicalJson, fingerprintOf, type Identity, signWith } from "../src/peer/identity.ts";
-import type { Peer, Permission } from "../src/peer/store.ts";
+import type { Grant, Peer } from "../src/peer/store.ts";
 import { type Sandbox, sandbox } from "./helpers.ts";
 
 export type PeerBox = { box: Sandbox; name: string; fingerprint: string; key: string; cert: string; certSig: string };
@@ -46,20 +46,21 @@ export function pin(
     peers: Array<{
         name: string;
         identity: { key: string; fingerprint: string };
-        allow?: Permission[];
+        allow?: Grant[];
         status?: Peer["status"];
         addrs?: string[];
         cert?: string;
+        certSig?: string;
         person?: string;
     }>,
 ): void {
     const file: { peers: Peer[] } = {
-        peers: peers.map(({ name, identity, allow, status, addrs, cert, person }) => ({
+        peers: peers.map(({ name, identity, allow, status, addrs, cert, certSig, person }) => ({
             name,
             key: identity.key,
             fingerprint: identity.fingerprint,
             cert: cert ?? "",
-            certSig: "",
+            certSig: certSig ?? "",
             addrs: addrs ?? [],
             allow: allow ?? ["talk", "delegate", "share", "answer", "status"],
             pairedAt: new Date().toISOString(),

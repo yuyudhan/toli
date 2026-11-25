@@ -1,7 +1,8 @@
 # Peers: Sardar-to-Sardar messaging over HTTPS
 
-Two toli installations that trust each other are **peers**. They pair once with a 4-digit code, then send each other
-signed messages over HTTPS on a private network. The design and its reasons are in
+Two toli installations that trust each other are **peers**. On the office network they pair on first contact
+([Talking on the office network](#talking-on-the-office-network)); from elsewhere they pair once with a 4-digit code.
+Then they send each other signed messages over HTTPS on a private network. The design and its reasons are in
 [design/peer-http.md](design/peer-http.md).
 
 ## Identity
@@ -118,8 +119,10 @@ minute from one peer the rest are deferred (`429`) and stay queued with their se
 
 ## Pairing
 
-Every pairing uses a 4-digit code, fleet machines included: nothing is paired silently over ssh. The code is shown
-on the receiving machine (B) and typed on the requesting one (A), so nothing pairs without both sides acting.
+On the office network (`peer.openNetworks`) `peer add <host>` alone pairs both ways, with no code
+([Talking on the office network](#talking-on-the-office-network)). From anywhere else a pairing uses a 4-digit code,
+fleet machines included: nothing is paired silently over ssh. The code is shown on the receiving machine (B) and
+typed on the requesting one (A), so nothing pairs without both sides acting.
 
 1. **A:** `bin/toli peer add <B's address>` reads B's `hello` (its name, key fingerprint and the certificate its key
    vouches for) and sends a request signed by A's key. It prints the request id and B's fingerprint.
@@ -246,6 +249,90 @@ over again. A relayed envelope may be up to 7 days old (it waits at the relay) a
 30 days, makes a replay a `duplicate`. The relay holds at most 500 items or 64 MiB per recipient, only from and for
 its own active peers, and only a sender's own items.
 
+**Introduced pins.** A pin made by an introduction has its introducer as its relay (`via`). Its messages go direct
+while one of its addresses completes a TLS handshake, and through the introducer when every one fails, instead of
+waiting. A relay that takes an item for a recipient it reaches itself sends that recipient a signed `nudge`
+(`POST /v1/nudge`), and the recipient pulls at once rather than at its next minute tick. `doctor` warns
+(`peer-relay-held`) about items a relay has held over 10 minutes for a recipient it reaches.
+
+## Talking on the office network
+
+"The core thing is that just the way all the humans can talk to each other, all the agents should also be able to
+talk to each other." So talking is the default between any two tolis on the office network: no setup, no code, no
+human step. Each Sardar decides for itself what to do with a message, which stays information, never an
+instruction.
+
+**Pairing on first contact.** `peer.openNetworks` lists the office network's IPv4 ranges (default NetBird's
+`100.64.0.0/10`; `bin/toli peer set --open-networks 100.64.0.0/10,10.0.0.0/8`, or `none` to need a code
+everywhere). `bin/toli peer add <host>` to a toli it reaches from one of them pairs at once: the host pins the
+asking machine's key with every permission (`talk`, `delegate`, `share`, `answer`, `status`) and tells its lead in
+one inbox item; the asking machine pins the host's key and the certificate it served the same way. Nothing else is
+needed: no `peer accept`, no code, no expiry. `peer deny <peer> <permission>` and `peer remove <peer>` still work
+on either side.
+
+**Keys stay pinned.** A key is trusted on first use and from then on only that key speaks for that name. That is
+what stops someone passing for a machine already paired, the coordinator included:
+
+- a request whose name is pinned with another key is refused, and the lead gets a `someone may be passing for
+<name>` inbox item; so is a host whose `hello` shows another key than the one pinned for its name, before the
+  request is even sent;
+- a key already pinned under another name is refused;
+- a removed peer stays removed: only a pairing with a code on the machine that removed it brings it back;
+- a machine that really has a new key (reinstalled without its `config/peer/`) is paired again only after its old
+  pin is removed by hand (`peer remove <name>`). A planned new key goes out with `peer rotate`, signed by the old one.
+
+A request from outside the open networks still takes the 4-digit code ([Pairing](#pairing)).
+
+**A new person's Mac, in one step.** `bin/toli peer add <coordinator> --fleet` pairs with the coordinator,
+lets it introduce machines here (`introduce`, below), and asks it for the fleet roster (`POST /v1/roster`). The
+coordinator answers with one introduction certificate per fleet box it has pinned, signed by its key and addressed to
+this machine alone. Each is checked as below and pins the box with the coordinator as its relay; then each box with
+an address on an open network is asked to pair on first contact, so it pins the Mac too. One line per box says
+`paired both ways`, `pinned through <coordinator> (...)` when the box was not reached directly, or `refused: <reason>` (a name
+pinned here with another key keeps that key).
+
+### Introducing a machine
+
+**Introductions.** `introduce` is not one of the five permissions and pairing never grants it: `peer add <it>
+--fleet` grants it to the coordinator (that command is the owner's word), and `bin/toli peer allow <it> introduce`
+grants it by hand. `doctor` warns on a worker where no peer holds it (`peer-introducer`). A peer that was itself
+introduced can never be granted it. `peer set --introducer-cap talk,share,...` sets the most an introduced machine may
+do here (default: all five). On the coordinator, `bin/toli peer introduce <peer> --fleet --why "..."` (or `--to
+<box,...>`, `--grants ...`) introduces a machine to every box that granted it `introduce`, for a machine the boxes
+cannot reach and that cannot reach them; `--status <peer>` shows `pinned`, `queued <age>`, `refused: <reason>` or
+`needs upgrade` per box. A box on a toli older than 0.7.4 (as its pairing or announce said) gets nothing; `bin/toli
+peer introduce --emit-trust-script <peer>` prints the `peer trust` lines that pin both ways by hand meanwhile.
+
+**The certificate.** Canonical JSON signed by the introducer's identity key: `id`, `op` (`introduce`, `refresh` or
+`revoke`), `introducer` and `audience` fingerprints, the subject (name, person, key, fingerprint, certificate and its
+signature, addresses, inbound), `grants`, `notAfter`, `replaces` and the approval (who, why, when). It travels as an
+outbox item of kind `introduction` (`bin/toli peer introduction --from <introducer>` applies it on the receiver), so
+it uses every transport, its order and its receipts. A box applies it only when every rule holds, else refuses it with
+the reason (the introducer cancels it; the box's inbox says why):
+
+- the sender is an active peer holding `introduce` and its key signed the certificate;
+- `audience` is this machine, so a certificate for one box is useless on another; an id seen in 30 days is a
+  duplicate;
+- the subject's key is a valid Ed25519 key that vouches for its certificate, and its name and person are plain;
+- no other pin here has that key, and a pin of that name with another key is replaced only by a `refresh` whose
+  `replaces` is the pinned fingerprint;
+- `notAfter` has not passed (with a day's slack).
+
+The pin gets the grants cut to `peer.introducerCap`, `introducedBy`, `introId`, `notAfter` and the introducer as its
+relay. A pin of the same key already here keeps its permissions: a hand-made `peer trust` pin is taken over (its
+certificate filled in), one this machine paired itself is only filled in and stays its own. An introduced pin past
+its `notAfter` is refused like a revoked one; `peer list` shows its expiry and `doctor` warns 14 days ahead
+(`peer-expiry`).
+
+**Keeping it current.** The introducer's tick runs `bin/toli peer introduce --sync`: a box added to the fleet (or
+upgraded since it was skipped) gets the introduction and the subject its roster entry; a subject's rotated key goes
+to every box as a `refresh` naming the old fingerprint; pins within 30 days of expiry are renewed.
+
+**Revoking.** `bin/toli peer remove <peer> --fleet` on the introducer revokes it there and queues a `revoke` for
+every box it was introduced to; a box revokes only pins that introducer made. `bin/toli peer list --introduced-by
+<introducer>` lists those pins and `bin/toli peer remove --introduced-by <introducer>` drops them all, for an
+introducer that is retired or compromised (after `peer deny <it> introduce`).
+
 ## The queue
 
 `bin/toli outbox list [--to <m>]` shows what waits, to whom and for how long, and what a live process is sending
@@ -285,13 +372,24 @@ refuses the new key until it pairs again; the command names it. The listener res
 - **Who may write.** Every request but `hello` and the two pairing steps needs an envelope signed by a pinned,
   active key, addressed to this machine's fingerprint, inside a 5-minute window, with a nonce not seen in 10 minutes
   and an id not applied in 30 days: anything else gets `401`, `403` or `409` and changes nothing.
-- **What a peer may do.** Each kind needs its permission (`talk`, `delegate`, `share`, `answer`, `status`), and a
+- **What a peer may do.** Each kind needs its permission (`talk`, `delegate`, `share`, `answer`, `status`, and
+  `introduce` for an introduction), and a
   peer speaks only for itself: an answer only for a task it delegated here, an update only for its own task, a share
   only as its sender. The same checks hold over ssh (`--from`) and pulls.
-- **Pairing.** Codes exist only after this machine's owner or Sardar accepts a request that shows the requester's
-  name, address and fingerprint. The code is key-bound (CPace), so a man in the middle gets one online guess per
-  try: 3 tries a request, 3 requests an hour and 10 a day per source, 5 pending at most, 10 minutes
-  (`peer.codeTtlMinutes`), never stored.
+- **Pairing.** On the office network (`peer.openNetworks`) a toli pairs on first contact: anyone who can reach this
+  machine over NetBird gets a pin with every permission, as anyone in the office may talk to anyone. What protects it
+  is the pin: a name keeps its key, a key keeps its name, a removed peer stays removed, and a conflicting key is
+  refused and raised to the lead. Its words stay information, and `peer deny`/`remove` cut it off. From anywhere else,
+  codes exist only after this machine's owner or Sardar accepts a request that shows the requester's name, address
+  and fingerprint. The code is key-bound (CPace), so a man in the middle gets one online guess per try: 3 tries a
+  request, 3 requests an hour and 10 a day per source, 5 pending at most, 10 minutes (`peer.codeTtlMinutes`), never
+  stored.
+- **Introductions.** Only a peer this machine's owner or Sardar allowed `introduce` may pin another machine here, by
+  a certificate signed with its own key for this machine alone, with an id kept 30 days, its grants cut to
+  `peer.introducerCap` and never `introduce` itself, and an expiry (180 days unless renewed). It cannot overwrite a pin
+  of another key or name, and it can revoke only what it introduced. A compromised introducer can pin an attacker on
+  every box with those capped permissions until `peer deny <it> introduce` and `peer remove --introduced-by <it>`;
+  every pin it makes is logged with the certificate id and approval and posted to the inbox.
 - **Limits.** 512 KiB a request, 50 envelopes a batch, 60 envelopes a minute and 200 unread inbox items per peer;
   past them the sender keeps its items queued.
 - **Exposure.** The listener binds private addresses only (10/8, 172.16/12, 192.168/16, 100.64/10, fd00::/8),

@@ -158,7 +158,7 @@ the interactive Sardar's subagents.
     gate run <project> [--task T<n>] --recipe "<shell command>" [--stall <minutes>] [--json]
     gate check <project> [--task T<n>] [--sha <commit>] --recipe "<shell command>" [--json] | status <project> [--json] | stop <sha|id>
     push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for T<n>] [--word "..."]
-    push-log list [--json]
+    push-log list [--json] | remove <n>
     pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
     pr status <project> [<id>] [--task T<n>] [--json] | list <project> [--json]
     pr merge <project> <id> [--method merge|squash|rebase]
@@ -183,7 +183,9 @@ the interactive Sardar's subagents.
   `BITBUCKET_EMAIL` (the Atlassian account email) and `BITBUCKET_API_TOKEN`; an HTTP 401 says what to set.
 - `push` logs each push that moved origin's branch in this machine's `data/pushes.jsonl` (old..new sha, the issuing
   machine and task, the owner's quoted word; inside `exec`, the issuing machine and task by default), and `digest`
-  shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog. `push`
+  shows the last week's. `push-log add` records a raw `git push` made here from `origin/<branch>`'s reflog; it refuses
+  a tracking ref a fetch moved last or a tip that is not origin's branch head (after `git push origin
+<sha>:refs/heads/<x>`, pass `--branch <x>`), and `push-log remove <n>` drops entry n of `push-log list`. `push`
   refuses when the repo declares a pre-push hook git would not run (`--no-hooks-ok` pushes anyway) and warns about
   any other declared hook that is not installed ([projects.md](projects.md#git-hooks)); `--branch <b>` refuses, before
   any hook or gate runs, when the checkout is on another branch (the release catch-up's push lines name it). It also
@@ -384,13 +386,15 @@ Details: [fleet.md](fleet.md).
 
 ### Peers (HTTP messaging)
 
-    peer init | status [--json] | list [--json] | apply (envelopes on stdin)
+    peer init | status [--json] | list [--json] [--introduced-by <peer>] | apply (envelopes on stdin) | introduction --from <introducer> (certificate on stdin)
     peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--interfaces <name,...>|none]
-      [--ssh-fallback on|off]
-    peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
+      [--ssh-fallback on|off] [--introducer-cap <permission,...>] [--open-networks <cidr,...>|none]
+    peer add <host[:port]> [--fleet] [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
     peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
     peer trust <peer> --key <key> --via <relay> [--by owner|sardar] [--why "..."]
-    peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
+    peer allow|deny <peer> <talk|delegate|share|answer|status|introduce> [--why "..."] | remove <peer> [--fleet] [--why "..."]
+    peer introduce <peer> --fleet|--to <box,...> [--grants <permission,...>] [--by owner|sardar] [--why "..."]
+    peer introduce --status <peer> | --sync | --emit-trust-script <peer> | remove --introduced-by <peer> [--why "..."]
     peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
     peer scan [--netbird] [--tailscale] [--subnet <cidr>] [--port <n>] [--json]
 
@@ -403,7 +407,10 @@ Details: [fleet.md](fleet.md).
   is on (the default). `peer listen off` stops it and keeps it off (this machine then pulls from its peers); `peer
 set` changes the port (47123), the bind (`private`, the default, or a list of addresses) and whether a paired peer
   may still get messages over ssh when HTTPS fails ([peers.md](peers.md#the-listener)).
-- `peer add <host>` asks that machine to pair; there `peer accept <request>` prints the code on its own line,
+- `peer add <host>` pairs with a toli on the office network (`peer.openNetworks`, NetBird's 100.64.0.0/10 by
+  default) at once, both ways, with no code; `--fleet` on the coordinator also pins every fleet box from its signed
+  roster and pairs with each one ([peers.md](peers.md#talking-on-the-office-network)). From anywhere else it asks
+  that machine to pair; there `peer accept <request>` prints the code on its own line,
   `Pairing code: NNNN (tell this to <name>'s requester)` (10 minutes by default, `peer.codeTtlMinutes`; one use, 3
   tries), and the fingerprint apart in
   colon-joined groups of eight; its owner or Sardar relays only the `Pairing code:` digits, and

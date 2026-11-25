@@ -14,6 +14,17 @@ import { fingerprintOf } from "./identity.ts";
 export const PERMISSIONS = ["talk", "delegate", "share", "answer", "status"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
+/**
+ * Vouching for other machines here (docs/peers.md "Introducing a machine"): kept out of PERMISSIONS, so neither
+ * pairing nor an introduction ever grants it; only `peer allow <peer> introduce` by this machine's owner or Sardar.
+ */
+export const INTRODUCER_PERMISSION = "introduce";
+export type Grant = Permission | typeof INTRODUCER_PERMISSION;
+export const GRANTS: readonly Grant[] = [...PERMISSIONS, INTRODUCER_PERMISSION];
+
+/** What an introduced peer may do unless its introduction's `--grants` says otherwise: everything but `delegate`. */
+export const INTRODUCED_GRANTS: readonly Permission[] = ["talk", "share", "answer", "status"];
+
 export const DEFAULT_PORT = 47123;
 
 export type Peer = {
@@ -26,9 +37,9 @@ export type Peer = {
     certSig: string;
     /** `host:port` addresses, the last one that answered first. */
     addrs: string[];
-    allow: Permission[];
+    allow: Grant[];
     pairedAt: string;
-    /** Who accepted the pairing on this side: `owner` or `sardar`. */
+    /** Who pinned it on this side: `owner` or `sardar` (a pairing or `peer trust`), or `introduced`. */
     pairedBy: string;
     status: "active" | "revoked";
     revokedAt?: string;
@@ -53,7 +64,18 @@ export type Peer = {
      * `bin/toli talk <first name>` finds its machine. Information only: kept when it is a plain name, else dropped.
      */
     person?: string;
+    /** The fingerprint of the machine whose introduction pinned (or upgraded) this peer (src/peer/introduce.ts). */
+    introducedBy?: string;
+    /** That introduction certificate's id. */
+    introId?: string;
+    /** When an introduced pin expires (ISO time), unless its introducer renews it first. */
+    notAfter?: string;
 };
+
+/** Whether an introduced pin is past its `notAfter`: its messages are refused until its introducer renews it. */
+export function expired(peer: Peer): boolean {
+    return peer.notAfter !== undefined && Date.parse(peer.notAfter) <= now().getTime();
+}
 
 /** Whether this machine connects to `peer` itself: active, with an address, and taking inbound connections. */
 export function pushable(peer: Peer): boolean {
@@ -64,6 +86,10 @@ type PeersFile = { peers: Peer[] };
 
 export function isPermission(value: string): value is Permission {
     return (PERMISSIONS as readonly string[]).includes(value);
+}
+
+export function isGrant(value: string): value is Grant {
+    return (GRANTS as readonly string[]).includes(value);
 }
 
 export function loadPeers(): Peer[] {
@@ -136,7 +162,9 @@ export function peerByFingerprint(fingerprint: string): { peer: Peer; key: strin
 }
 
 /** This machine's `peer` settings with their defaults (the pairing code's lifetime is read in pair.ts). */
-export function peerSettings(): Required<Omit<PeerSettings, "bind" | "codeTtlMinutes">> & {
+export function peerSettings(): Required<
+    Omit<PeerSettings, "bind" | "codeTtlMinutes" | "introducerCap" | "openNetworks">
+> & {
     bind: "private" | string[];
 } {
     const settings = machineSettings().peer ?? {};
@@ -147,6 +175,24 @@ export function peerSettings(): Required<Omit<PeerSettings, "bind" | "codeTtlMin
         listen: settings.listen ?? true,
         sshFallback: settings.sshFallback ?? true,
     };
+}
+
+/**
+ * The most an introduced peer may do here (config/machine.json `peer.introducerCap`, default the five): an
+ * introduction's grants are cut to it, and `introduce` is never in it.
+ */
+export function introducerCap(): Permission[] {
+    const cap = machineSettings().peer?.introducerCap;
+    return Array.isArray(cap) ? cap.filter(isPermission) : [...PERMISSIONS];
+}
+
+/** NetBird's address range: the office network unless config/machine.json `peer.openNetworks` says otherwise. */
+export const DEFAULT_OPEN_NETWORKS = ["100.64.0.0/10"];
+
+/** The networks a toli pairs from on first contact, with no code (config/machine.json `peer.openNetworks`). */
+export function openNetworks(): string[] {
+    const networks = machineSettings().peer?.openNetworks;
+    return Array.isArray(networks) ? networks.filter((entry) => typeof entry === "string") : DEFAULT_OPEN_NETWORKS;
 }
 
 /** Change config/machine.json `peer` (the rest of the file is kept as it is). */

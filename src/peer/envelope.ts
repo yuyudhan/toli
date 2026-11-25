@@ -11,17 +11,32 @@ import { paths } from "../core/paths.ts";
 import { isJsonObject, now, readJson, runAsync, waited, withLock, writeJsonAtomic } from "../core/util.ts";
 import type { OutboxKind } from "../jobs/outbox.ts";
 import { refusalOf } from "../jobs/refusal.ts";
-import { loadBacklog } from "../records/backlog.ts";
-import { answerers, fleetId, splitFleetId } from "../records/delegation-report.ts";
 import { addInboxItem, listInbox } from "../records/inbox.ts";
-import { unrecordedReason } from "../records/report-refusal.ts";
 import { canonicalJson, type Identity, signWith, verifySignature } from "./identity.ts";
+import { applyArgv, senderClaimRefusal } from "./message-command.ts";
 import { markReceiving } from "./receiving.ts";
-import { type Peer, type Permission, peerByFingerprint } from "./store.ts";
+import { expired, type Grant, INTRODUCER_PERMISSION, type Peer, peerByFingerprint } from "./store.ts";
 
 /** Kinds that carry a message (an outbox item); the rest ask the receiving listener for something. */
-export const MESSAGE_KINDS: readonly OutboxKind[] = ["inbox", "delegation", "update", "link", "share", "answer"];
-export type ControlKind = "announce" | "status" | "pending" | "ack" | "rotate" | "relay" | "relay-ack";
+export const MESSAGE_KINDS: readonly OutboxKind[] = [
+    "inbox",
+    "delegation",
+    "update",
+    "link",
+    "share",
+    "answer",
+    "introduction",
+];
+export type ControlKind =
+    | "announce"
+    | "status"
+    | "pending"
+    | "ack"
+    | "rotate"
+    | "relay"
+    | "relay-ack"
+    | "roster"
+    | "nudge";
 export type EnvelopeKind = OutboxKind | ControlKind;
 
 export type Envelope = {
@@ -68,12 +83,13 @@ const APPLY_TIMEOUT_MS = 120_000;
 /** This code's CLI (the runtime snapshot's or the working tree's), as pull.ts. */
 const TOLI_SCRIPT = resolve(import.meta.dir, "..", "..", "bin", "toli");
 
-const PERMISSION_FOR: Partial<Record<EnvelopeKind, Permission>> = {
+const PERMISSION_FOR: Partial<Record<EnvelopeKind, Grant>> = {
     inbox: "talk",
     delegation: "delegate",
     share: "share",
     answer: "answer",
     status: "status",
+    introduction: INTRODUCER_PERMISSION,
 };
 
 export type Unsigned = Omit<Envelope, "v" | "fromKey" | "sentAt" | "nonce" | "sig">;
@@ -150,6 +166,7 @@ export function verifyEnvelope(value: unknown, self: string, relayed = false): V
     if (found === undefined) return { ok: false, code: 401, reason: "unknown peer key" };
     const { peer, key } = found;
     if (peer.status !== "active") return { ok: false, code: 401, reason: `${peer.name} is revoked here` };
+    if (expired(peer)) return { ok: false, code: 401, reason: `${peer.name}'s introduced pin expired here` };
     const { sig, ...unsigned } = envelope;
     if (!verifySignature(key, canonicalJson(unsigned), sig)) return { ok: false, code: 401, reason: "bad signature" };
     if (envelope.to !== self) return { ok: false, code: 401, reason: "not addressed to this machine" };
@@ -175,86 +192,6 @@ export function verifyEnvelope(value: unknown, self: string, relayed = false): V
     if (needs !== undefined && !peer.allow.includes(needs))
         return { ok: false, code: 403, reason: `${peer.name} lacks the ${needs} permission here` };
     return { ok: true, peer, envelope };
-}
-
-function parseBody(body: string): Record<string, unknown> | null {
-    try {
-        const value: unknown = JSON.parse(body);
-        return isJsonObject(value) ? value : null;
-    } catch {
-        return null;
-    }
-}
-
-/**
- * Whether `peer` may say what this message claims (null when it may, else why not): a delegation, link or share
- * speaks only for its sender; an update comes only from the task's owner and, when it names a task here, only for a
- * delegation recorded on that task, or one that task sent to that peer whose receipt has not landed yet (`sending`);
- * an answer goes only to a task that peer delegated here, or that was forwarded here from work it delegated
- * (`upstream`), or, from this worker's coordinator, to this machine's own task (a hold raised there).
- */
-export function senderClaimRefusal(peer: string, kind: EnvelopeKind, body: string): string | null {
-    if (kind === "inbox") return null;
-    const value = parseBody(body);
-    if (value === null) return `${kind} body is not a JSON object`;
-    if (kind === "delegation" || kind === "link")
-        return value.from === peer ? null : `${kind} claims to be from ${String(value.from)}, not ${peer}`;
-    if (kind === "share") {
-        const share = isJsonObject(value.share) ? value.share : null;
-        const claimed = value.type === "learning" ? share?.from : value.machine;
-        return claimed === peer ? null : `share claims to be from ${String(claimed)}, not ${peer}`;
-    }
-    if (kind === "update") {
-        if (value.owner !== peer) return `update for ${String(value.owner)}'s task sent by ${peer}`;
-        if (typeof value.id !== "string") return "update without a task id";
-        if (typeof value.forTask !== "string") return null;
-        const id = fleetId(peer, value.id);
-        const local = loadBacklog().tasks.find((task) => task.id === value.forTask);
-        const recorded =
-            local?.delegatedTo?.includes(id) === true ||
-            local?.slices?.includes(id) === true ||
-            local?.sending?.some((sent) => sent.machine === peer && sent.id === value.delegation) === true;
-        return recorded ? null : unrecordedReason(String(value.forTask), id);
-    }
-    if (kind === "answer") {
-        if (typeof value.id !== "string" || typeof value.answer !== "string") return "answer without id and answer";
-        const id = splitFleetId(value.id).id;
-        const task = loadBacklog().tasks.find((entry) => entry.id === id);
-        if (task === undefined) return `no task ${id} here`;
-        return answerers(task).includes(peer) ? null : `${id} was not delegated here by ${peer}`;
-    }
-    return `${kind} is not a message`;
-}
-
-/** The `bin/toli` command a verified message runs here; stdin is its body. The sender is the verified peer. */
-export function applyArgv(peer: Peer, envelope: Envelope): string[] {
-    const from = peer.name;
-    switch (envelope.kind) {
-        case "delegation":
-            return ["delegation", "receive", "--from", from];
-        case "update":
-            return ["delegation", "update", "--from", from];
-        case "link":
-            return ["delegation", "link", "--from", from];
-        case "share":
-            return ["share", "receive"];
-        case "answer": {
-            const value = parseBody(envelope.body) ?? {};
-            const id = splitFleetId(String(value.id)).id;
-            return ["task", "answer", id, String(value.answer), "--from", from, "--answer-id", envelope.id];
-        }
-        default:
-            return [
-                "inbox",
-                "add",
-                "--from",
-                from,
-                "--title",
-                envelope.title,
-                "--via",
-                `peer ${from} (fingerprint ${peer.fingerprint.slice(0, 16)})`,
-            ];
-    }
 }
 
 type Received = Record<string, { status: "applied"; stdout: string; at: number }>;

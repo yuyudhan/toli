@@ -1,10 +1,12 @@
 // The envelope's refusals (docs/peers.md "The envelope"): every check `applyBatch` makes, through `bin/toli peer
 // apply` (the ssh transport), plus the sender checks the plain ssh commands make themselves.
 import { describe, expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Envelope } from "../src/peer/envelope.ts";
 import type { Identity } from "../src/peer/identity.ts";
+import { introId, pinExpiry, signIntroduction } from "../src/peer/introduce.ts";
+import { GRANTS, type Grant, INTRODUCED_GRANTS, PERMISSIONS } from "../src/peer/store.ts";
 import { applyIn, envelope, peerBox, pin, resign, sender } from "./peer-fixture.ts";
 
 function inboxFiles(root: string): string[] {
@@ -275,5 +277,87 @@ describe("the ssh commands hold the sender to its task", () => {
         expect(forged.code).toBe(1);
         expect(forged.stderr).toContain("an update for alice's task cannot come from mallory");
         expect(inboxFiles(recv.box.root)).toHaveLength(0);
+    });
+});
+
+describe("an introduction envelope", () => {
+    /** A box that pins `coord` with `allow`, and a certificate from coord introducing a new machine to it. */
+    function introduced(allow: Grant[]) {
+        const recv = peerBox("box");
+        const coord = sender();
+        pin(recv.box, [{ name: "coord", identity: coord, allow }]);
+        const mac = sender();
+        const cert = signIntroduction(coord, {
+            id: introId(),
+            op: "introduce",
+            audience: recv.fingerprint,
+            subject: { name: "mac", key: mac.key, fingerprint: mac.fingerprint, cert: "", certSig: "", addrs: [] },
+            grants: [...INTRODUCED_GRANTS],
+            notAfter: pinExpiry(),
+            replaces: null,
+            approval: { by: "owner", why: "Chirag joins", at: new Date().toISOString() },
+        });
+        const signed = envelope(coord, "coord", recv.fingerprint, {
+            kind: "introduction",
+            title: "introducing mac",
+            body: JSON.stringify(cert),
+        });
+        return { recv, coord, signed };
+    }
+
+    function pinnedNames(root: string): string[] {
+        const file: { peers: Array<{ name: string }> } = JSON.parse(
+            readFileSync(join(root, "config", "peers.json"), "utf8"),
+        );
+        return file.peers.map((peer) => peer.name);
+    }
+
+    test("is applied from a peer allowed to introduce: the subject is pinned and the inbox told", () => {
+        const { recv, signed } = introduced([...GRANTS]);
+        const [receipt] = applyIn(recv.box, [signed]);
+        expect(receipt?.status).toBe("applied");
+        expect(receipt?.stdout).toContain("pinned mac");
+        expect(pinnedNames(recv.box.root)).toContain("mac");
+        expect(inboxFiles(recv.box.root)).toHaveLength(1);
+    });
+
+    test("is refused from a peer without introduce, and nothing is pinned", () => {
+        const { recv, signed } = introduced([...PERMISSIONS]);
+        const [receipt] = applyIn(recv.box, [signed]);
+        expect(receipt?.status).toBe("refused");
+        expect(receipt?.reason).toBe("coord lacks the introduce permission here");
+        expect(pinnedNames(recv.box.root)).not.toContain("mac");
+    });
+
+    test("a replay of the same envelope is a duplicate", () => {
+        const { recv, signed } = introduced([...GRANTS]);
+        expect(applyIn(recv.box, [signed])[0]?.status).toBe("applied");
+        expect(applyIn(recv.box, [signed])[0]?.status).toBe("duplicate");
+        expect(inboxFiles(recv.box.root)).toHaveLength(1);
+    });
+
+    test("a refused certificate is refused with its reason and noted in the inbox", () => {
+        const { recv, coord } = introduced([...GRANTS]);
+        const forged = envelope(coord, "coord", recv.fingerprint, {
+            kind: "introduction",
+            body: JSON.stringify({ v: 1 }),
+        });
+        const [receipt] = applyIn(recv.box, [forged]);
+        expect(receipt?.status).toBe("refused");
+        expect(receipt?.reason).toBe("not an introduction certificate");
+        expect(inboxFiles(recv.box.root)).toHaveLength(1);
+    });
+
+    test("an introduced pin past its notAfter is refused like a revoked one", () => {
+        const recv = peerBox("box");
+        const mac = sender();
+        pin(recv.box, [{ name: "mac", identity: mac }]);
+        const file = join(recv.box.root, "config", "peers.json");
+        const peers: { peers: Array<Record<string, unknown>> } = JSON.parse(readFileSync(file, "utf8"));
+        for (const peer of peers.peers) peer.notAfter = new Date(Date.now() - 60_000).toISOString();
+        writeFileSync(file, JSON.stringify(peers));
+        const [receipt] = applyIn(recv.box, [envelope(mac, "mac", recv.fingerprint)]);
+        expect(receipt?.status).toBe("refused");
+        expect(receipt?.reason).toContain("pin expired");
     });
 });

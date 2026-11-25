@@ -120,6 +120,17 @@ recipient and signed by the sender, so the relay can neither read nor forge them
 a message from its sender ([peers.md](peers.md#relay)). The ssh pull still never takes items one machine left for
 another: there a machine speaks only for itself.
 
+#### Adding a person's machine
+
+A new machine on the office network (a person's Mac on NetBird) joins with one command, no code and no step on any
+box ([peers.md](peers.md#talking-on-the-office-network)): `bin/toli peer add <coordinator> --fleet`. It pairs with
+the coordinator, pins every fleet box from the coordinator's signed roster, and pairs on first contact with each box
+it reaches, so every box pins it too. A box it cannot reach directly is pinned through the coordinator as relay.
+
+For a machine the boxes cannot reach and that cannot reach them, the coordinator introduces it instead:
+`bin/toli peer introduce <name> --fleet --why "..."`, once each box has run `bin/toli peer allow <coordinator>
+introduce --by owner --why "fleet introducer"`. That replaces the `peer trust --via` pins made by hand.
+
 ### Unreachable machines
 
 Each tick moves the fleet's messages in one pass: a machine that takes no inbound ssh first pulls (from every other

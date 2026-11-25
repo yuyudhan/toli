@@ -46,6 +46,31 @@ function isVpnAddress(ip: string): boolean {
     return a === 100 && b >= 64 && b <= 127;
 }
 
+/** `cidr` as a network and mask (IPv4 only), or null when it is not an IPv4 CIDR such as 100.64.0.0/10. */
+export function parseCidr(cidr: string): { network: number; mask: number } | null {
+    const match = /^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/.exec(cidr.trim());
+    if (match === null || isIP(match[1] ?? "") !== 4) return null;
+    const bits = Number(match[2]);
+    if (bits > 32) return null;
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+    return { network: (ipv4Number(match[1] ?? "") & mask) >>> 0, mask };
+}
+
+function ipv4Number(ip: string): number {
+    return ipv4Parts(ip).reduce((value, part) => ((value << 8) | part) >>> 0, 0);
+}
+
+/** Whether `ip` (IPv4, or IPv4-mapped IPv6 as a listener sees it) is in one of `cidrs`; malformed ones match nothing. */
+export function inNetworks(ip: string, cidrs: readonly string[]): boolean {
+    const v4 = ip.replace(/^::ffff:/i, "");
+    if (isIP(v4) !== 4) return false;
+    const value = ipv4Number(v4);
+    return cidrs.some((cidr) => {
+        const parsed = parseCidr(cidr);
+        return parsed !== null && (value & parsed.mask) >>> 0 === parsed.network;
+    });
+}
+
 /**
  * The private addresses of `interfaces` (the machine's by default) the default bind uses, sorted, without
  * duplicates; interfaces named in `include` count whatever they are.

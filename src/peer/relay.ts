@@ -7,6 +7,7 @@
 //                                   carries the sealed receipts recipients left for this sender
 //   recipient POST /v1/outbox/pending  the relay adds `relayed`: the sealed items held for it (src/peer/deliver.ts)
 //   recipient POST /v1/relay/ack    which held items it settled, and one sealed receipt bundle per sender
+//   relay     POST /v1/nudge        to a recipient it reaches itself: pull now (src/peer/pull-peers.ts)
 //
 // The recipient opens each item, checks the signature against the sender's pinned key (`peer trust`), and applies it
 // as a message from that sender; the relay's word counts for nothing. The sender drops an item only on a receipt its
@@ -16,11 +17,15 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { join } from "node:path";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, writeJsonAtomic } from "../core/util.ts";
+import { controlEnvelope, postPeer } from "./client.ts";
 import { type ControlKind, type Envelope, verifyEnvelope } from "./envelope.ts";
 import { canonicalJson, sha256Hex } from "./identity.ts";
 import { type Sealed, sealedShape } from "./seal.ts";
 import { json, type ListenerContext, MAX_BATCH, readBody, routes } from "./server.ts";
-import { type Peer, peerByFingerprint, peerLog } from "./store.ts";
+import { type Peer, peerByFingerprint, peerLog, pushable } from "./store.ts";
+
+/** How long a nudge may take: it only asks the recipient to pull, and the recipient's tick pulls anyway. */
+const NUDGE_MS = 5_000;
 
 /** Items a relay holds for one recipient, and their bytes; past either, it refuses more until that one pulls. */
 const HELD_MAX = 500;
@@ -115,6 +120,22 @@ function heldFrom(sender: string, recipient: string): string[] {
     });
 }
 
+/**
+ * Ask `recipient` (a fingerprint), when this machine reaches it itself, to pull what it now holds for it at once,
+ * without holding up the sender's request. One it does not reach pulls on its own tick, as before.
+ */
+function nudge(recipient: string): void {
+    const peer = peerByFingerprint(recipient)?.peer;
+    if (peer === undefined || peer.status !== "active" || !pushable(peer)) return;
+    void postPeer(peer, "/v1/nudge", controlEnvelope(peer, "nudge", {}), NUDGE_MS)
+        .then((answer) => {
+            if (answer.status !== 200) peerLog(`relay: nudging ${peer.name} answered ${answer.status}`);
+        })
+        .catch((error) =>
+            peerLog(`relay: nudging ${peer.name}: ${error instanceof Error ? error.message : String(error)}`),
+        );
+}
+
 routes.set("POST /v1/relay/hold", async (request, context) => {
     const read = await readRelayRequest(request, context, "relay");
     if (read instanceof Response) return read;
@@ -131,10 +152,12 @@ routes.set("POST /v1/relay/hold", async (request, context) => {
         mkdirSync(heldDir(item.to), { recursive: true });
         writeJsonAtomic(join(heldDir(item.to), heldFile(item)), item);
     }
-    if (items.length > refused.length)
+    if (items.length > refused.length) {
         peerLog(
             `relay: holding ${items.length - refused.length} item(s) from ${peer.name} for ${payload.to.slice(0, 16)}`,
         );
+        nudge(payload.to);
+    }
     // The receipts recipients left for this sender go back now; one lost on the way costs only a re-hold, which its
     // recipient answers as a duplicate with the same receipt.
     const dir = receiptsDir(peer.fingerprint);

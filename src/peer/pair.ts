@@ -1,5 +1,7 @@
-// Pairing with a 4-digit code (docs/peers.md "Pairing"). The code is shown on the receiving machine (B) and entered
-// on the requesting one (A); either side's owner or Sardar runs its step, and nothing pairs without both acting.
+// Pairing (docs/peers.md "Pairing"). On an open network (`peer.openNetworks`, NetBird's 100.64.0.0/10 by default) a
+// request pairs on first contact: both sides pin each other's key, no code (`firstContact` below, "Talking on the
+// office network"). From anywhere else it takes a 4-digit code, shown on the receiving machine (B) and entered on the
+// requesting one (A); either side's owner or Sardar runs its step, and nothing pairs without both acting.
 //
 //   A  peer add <host>               hello (B's keys, certificate pinned for this exchange), then a signed request
 //   B  (inbox item)                  "pairing request from A at <ip>, fingerprint ...": no code in it
@@ -14,9 +16,12 @@ import { randomBytes, randomInt } from "node:crypto";
 import type { Server } from "bun";
 import { loadMachine, machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
+import { personName } from "../core/persona.ts";
 import { isJsonObject, isValidName, now, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { addInboxItem } from "../records/inbox.ts";
+import { inNetworks } from "./bind.ts";
 import { confirmTag, cpaceFinish, cpaceShare, type PairInputs, tagsEqual } from "./cpace.ts";
+import { firstContact } from "./first-contact.ts";
 import {
     canonicalJson,
     certFingerprintOf,
@@ -27,7 +32,7 @@ import {
     verifySignature,
 } from "./identity.ts";
 import { controlRequest, controlRoutes, json, readBody, routes } from "./server.ts";
-import { type Actor, PERMISSIONS, type Peer, peerLog, updatePeers } from "./store.ts";
+import { type Actor, openNetworks, PERMISSIONS, type Peer, peerLog, updatePeers } from "./store.ts";
 
 export const REQUEST_KEEP_MS = 24 * 60 * 60_000;
 const MAX_PENDING = 5;
@@ -242,6 +247,15 @@ routes.set("POST /v1/pair/request", async (httpRequest, context, server) => {
     if (!signatureValid(key, body) || !certSigValid(key, cert, certSig)) return json({ error: "bad signature" }, 401);
     if (key === context.identity.key) return json({ error: "that is this machine" }, 400);
     const from = source(httpRequest, server);
+    const fields = {
+        name,
+        key,
+        cert,
+        certSig,
+        addrs: addrs.slice(0, 8) as string[],
+        version: typeof version === "string" ? version : "unknown",
+    };
+    if (inNetworks(from, openNetworks())) return firstContact(fields, personName(body.person), from, context.name);
     const refusal = takeRequestSlot(from);
     if (refusal !== null) return json({ error: refusal }, 429);
     const pending = loadRequests();

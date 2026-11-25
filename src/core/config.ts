@@ -86,6 +86,17 @@ export type RetentionConfig = {
 
 /** config/machine.json `peer` (see Machine.peer). */
 export type PeerSettings = {
+    /**
+     * The most a machine introduced here may do (src/peer/introduce.ts, docs/peers.md "Introducing a machine"; default
+     * all five permissions): an introduction's grants are cut to it. `bin/toli peer set --introducer-cap`.
+     */
+    introducerCap?: string[];
+    /**
+     * IPv4 CIDRs of the office network (default NetBird's 100.64.0.0/10): a toli that reaches this one from one of
+     * them pairs on first contact, with no code (src/peer/pair.ts, docs/peers.md "Talking on the office network").
+     * Empty: every pairing needs a code. `bin/toli peer set --open-networks`.
+     */
+    openNetworks?: string[];
     port?: number;
     bind?: "private" | string[];
     interfaces?: string[];

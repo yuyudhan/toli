@@ -6,6 +6,21 @@ one. See docs/releasing.md.
 
 ## v0.7.4 - unreleased
 
+### Added
+
+- Tolis on the office network talk with no setup: `bin/toli peer add <host>` to a machine reached over NetBird
+  (`peer.openNetworks`, default 100.64.0.0/10) pairs both ways at once, with no code, no `peer accept` and no
+  expiry, and every permission; the host's lead gets one inbox item. Keys stay pinned: a name already pinned with
+  another key, or a key pinned under another name, is refused and raised to the lead as `someone may be passing for
+<name>`, and a removed peer stays removed. Outside the open networks pairing still takes the 4-digit code.
+  `bin/toli peer add <coordinator> --fleet` also pins every fleet box from the coordinator's signed roster and pairs
+  with each one it reaches, so a new person's Mac joins the whole fleet in one step. The coordinator can also
+  introduce a machine to every box that granted it the new `introduce` permission (`peer introduce <peer> --fleet`,
+  `--status`, `--emit-trust-script`; introduced pins expire after 180 days unless its tick renews them; `peer remove
+--fleet` / `--introduced-by` revoke them). An introduced pin goes through its introducer when its addresses fail,
+  and a relay nudges a recipient it reaches to pull at once; `doctor` warns about a worker with no introducer, pins
+  about to expire and held items nobody collects (docs/peers.md "Talking on the office network", T2802, T2843).
+
 ### Changed
 
 - A pairing code now works for 10 minutes instead of 2, so a code read out by phone or chat a few minutes late still

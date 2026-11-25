@@ -3,65 +3,85 @@
 import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { isJsonObject, out, printJson, readStdin, ToliError } from "../core/util.ts";
-import { cancelItems, itemsFor } from "../jobs/outbox-admin.ts";
-import { bindAddresses } from "./bind.ts";
-import { rotateIdentity } from "./deliver.ts";
 import { scanCommand } from "./discover.ts";
 import { applyBatch } from "./envelope.ts";
 import { hasIdentity, initIdentity, loadIdentity, spokenFingerprint } from "./identity.ts";
+import { introduceCommand, receiveIntroduction, removeCommand } from "./introduce-command.ts";
 import { acceptRequest, declineRequest, lifetimeText, loadRequests } from "./pair.ts";
 import { completePairing, requestPairing } from "./pair-client.ts";
-import { controlRequest, runListener } from "./server.ts";
+import { pairFleet } from "./roster.ts";
+import { rotateIdentity } from "./rotate.ts";
+import { runListener } from "./server.ts";
+import { listenCommand, setCommand } from "./settings-command.ts";
 import {
     actorFrom,
-    isPermission,
+    GRANTS,
+    INTRODUCER_PERMISSION,
+    isGrant,
     loadPeers,
-    PERMISSIONS,
     type Peer,
     peerLog,
     peerSettings,
-    updatePeerSettings,
+    requirePeer,
     updatePeers,
 } from "./store.ts";
 import { liveListener } from "./supervise.ts";
 import { askCommand, flushCommand, pullCommand, statsCommand } from "./transport-command.ts";
 import { trustCommand } from "./trust.ts";
 
-const USAGE = `usage: toli peer init | status [--json] | list [--json] | apply (envelopes on stdin)
+const USAGE = `usage: toli peer init | status [--json] | list [--json] [--introduced-by <peer>] | apply (envelopes on stdin) | introduction --from <introducer> (certificate on stdin)
   peer serve | listen on|off | set [--port <n>] [--bind private|<ip,...>] [--interfaces <name,...>|none]
-    [--ssh-fallback on|off]
-  peer add <host[:port]> [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
+    [--ssh-fallback on|off] [--introducer-cap <permission,...>] [--open-networks <cidr,...>|none]
+  peer add <host[:port]> [--fleet] [--code NNNN] [--by owner|sardar] [--why "..."] | requests [--json]
   peer accept <request> [--by owner|sardar] [--why "..."] | decline <request> [--why "..."]
   peer trust <peer> --key <key> --via <relay> [--by owner|sardar] [--why "..."]
-  peer allow|deny <peer> <talk|delegate|share|answer|status> [--why "..."] | remove <peer> [--why "..."]
+  peer allow|deny <peer> <talk|delegate|share|answer|status|introduce> [--why "..."] | remove <peer> [--fleet] [--why "..."]
+  peer introduce <peer> --fleet|--to <box,...> [--grants <permission,...>] [--by owner|sardar] [--why "..."]
+  peer introduce --status <peer> | --sync | --emit-trust-script <peer> | remove --introduced-by <peer> [--why "..."]
   peer flush <peer>|--all [--json] | pull [--json] | stats [--peer <p>] [--json] | ask <peer> status [--json] | rotate
   peer scan [--netbird] [--tailscale] [--subnet <cidr>] [--port <n>] [--json]`;
 
 const ACTOR_VALUES = ["by", "why"];
 
-/** `peer add <host> [--code NNNN]`: ask the host to pair, then (with the code its side shows) finish pairing. */
+/**
+ * `peer add <host> [--fleet] [--code NNNN]`: ask the host to pair. On an open network that pairs both ways at once;
+ * elsewhere the host's owner shows a code and `--code` finishes. `--fleet` (the host is the fleet's coordinator) also
+ * pins every fleet box from its signed roster and pairs with each one it reaches (src/peer/roster.ts).
+ */
 async function add(argv: string[]): Promise<void> {
-    const args = new Args(argv, { values: ["code", ...ACTOR_VALUES] });
+    const args = new Args(argv, { booleans: ["fleet"], values: ["code", ...ACTOR_VALUES] });
     args.maxPositional(1);
     const target = args.pos(0, "host");
     const code = args.str("code");
     const actor = actorFrom(args.str("by"), args.str("why"));
+    let peer: Peer;
     if (code === undefined) {
-        const { hello, reqId } = await requestPairing(target);
+        const { hello, reqId, paired, already } = await requestPairing(target);
+        if (paired === null) {
+            out(
+                [
+                    `asked ${hello.name} to pair (request ${reqId}); its fingerprint: ${spokenFingerprint(hello.fingerprint)}`,
+                    `${hello.name} is not on an open network here (bin/toli peer set --open-networks), so pairing takes a code.`,
+                    `Ask its owner or Sardar to run \`bin/toli peer accept ${reqId}\` there and read you the`,
+                    `4-digit code from its "Pairing code:" line (not a piece of the fingerprint), then:`,
+                    `bin/toli peer add ${target} --code NNNN (the code works as long as its accept says: 10 minutes by default).`,
+                ].join("\n"),
+            );
+            return;
+        }
+        peer = paired;
         out(
-            [
-                `asked ${hello.name} to pair (request ${reqId}); its fingerprint: ${spokenFingerprint(hello.fingerprint)}`,
-                `Ask its owner or Sardar to run \`bin/toli peer accept ${reqId}\` there and read you the`,
-                `4-digit code from its "Pairing code:" line (not a piece of the fingerprint), then:`,
-                `bin/toli peer add ${target} --code NNNN (the code works as long as its accept says: 10 minutes by default).`,
-            ].join("\n"),
+            already
+                ? `already paired with ${peer.name} (fingerprint ${spokenFingerprint(peer.fingerprint)})`
+                : `paired with ${peer.name} on first contact (fingerprint ${spokenFingerprint(peer.fingerprint)}); it may: ${peer.allow.join(", ")}`,
         );
-        return;
+    } else {
+        peer = await completePairing(target, code, actor);
+        out(
+            `paired with ${peer.name} (fingerprint ${spokenFingerprint(peer.fingerprint)}); it may: ${peer.allow.join(", ")}`,
+        );
     }
-    const peer = await completePairing(target, code, actor);
-    out(
-        `paired with ${peer.name} (fingerprint ${spokenFingerprint(peer.fingerprint)}); it may: ${peer.allow.join(", ")}`,
-    );
+    if (args.bool("fleet")) out((await pairFleet(peer, actor)).join("\n"));
 }
 
 /** `peer accept <request>`: mint the 4-digit code; printed here only, never stored or logged. */
@@ -111,98 +131,19 @@ function grant(argv: string[], allow: boolean): void {
     args.maxPositional(2);
     const name = args.pos(0, "peer");
     const permission = args.pos(1, "permission");
-    if (!isPermission(permission))
-        throw new ToliError(`unknown permission "${permission}" (${PERMISSIONS.join(", ")})`);
+    if (!isGrant(permission)) throw new ToliError(`unknown permission "${permission}" (${GRANTS.join(", ")})`);
     const actor = actorFrom(args.str("by"), args.str("why"));
     const now = updatePeers((peers) => {
         const peer = peers.find((entry) => entry.name === name && entry.status === "active");
         if (peer === undefined) throw new ToliError(`no paired peer "${name}" (bin/toli peer list)`);
+        if (allow && permission === INTRODUCER_PERMISSION && peer.introducedBy !== undefined)
+            throw new ToliError(`${name} was introduced here by another machine: an introduced peer cannot introduce`);
         const others = peer.allow.filter((entry) => entry !== permission);
-        peer.allow = allow ? PERMISSIONS.filter((entry) => entry === permission || others.includes(entry)) : others;
+        peer.allow = allow ? GRANTS.filter((entry) => entry === permission || others.includes(entry)) : others;
         return peer.allow;
     });
     peerLog(`${allow ? "allowed" : "denied"} ${name} ${permission} by the ${actor.by}: ${actor.why}`);
     out(`${name} may now: ${now.join(", ") || "nothing"}`);
-}
-
-/** `peer remove <peer>`: revoke it; its key is refused from now on (kept as `revoked`, not forgotten). */
-function remove(argv: string[]): void {
-    const args = new Args(argv, { values: ACTOR_VALUES });
-    args.maxPositional(1);
-    const name = args.pos(0, "peer");
-    const actor = actorFrom(args.str("by"), args.str("why"));
-    updatePeers((peers) => {
-        const peer = peers.find((entry) => entry.name === name && entry.status === "active");
-        if (peer === undefined) throw new ToliError(`no paired peer "${name}" (bin/toli peer list)`);
-        peer.status = "revoked";
-        peer.revokedAt = new Date().toISOString();
-        peer.allow = [];
-    });
-    peerLog(`removed ${name} by the ${actor.by}: ${actor.why}`);
-    const cancelled = cancelItems(
-        itemsFor(name).map(({ file }) => file),
-        `${name} was removed as a peer`,
-    );
-    out(
-        `removed ${name}: its key is refused here from now on${cancelled.length > 0 ? `; ${cancelled.length} queued item(s) for it moved to state/outbox/cancelled/` : ""}`,
-    );
-}
-
-async function listen(argv: string[]): Promise<void> {
-    const args = new Args(argv);
-    args.maxPositional(1);
-    const mode = args.pos(0, "on|off");
-    if (mode !== "on" && mode !== "off") throw new ToliError("usage: toli peer listen on|off");
-    updatePeerSettings((settings) => {
-        settings.listen = mode === "on";
-    });
-    if (mode === "on") {
-        out("peer listener on: the lead service starts it within 15 s (or run bin/toli peer serve)");
-        return;
-    }
-    const answered = await controlRequest("/stop", {});
-    out(answered === null ? "peer listener off (none was running)" : "peer listener off: stopped");
-}
-
-function onOff(value: string, flag: string): boolean {
-    if (value !== "on" && value !== "off") throw new ToliError(`${flag} takes on or off`);
-    return value === "on";
-}
-
-function set(argv: string[]): void {
-    const args = new Args(argv, { values: ["port", "bind", "interfaces", "ssh-fallback"] });
-    args.maxPositional(0);
-    const port = args.str("port");
-    const bind = args.str("bind");
-    const interfaces = args.str("interfaces");
-    const fallback = args.str("ssh-fallback");
-    if (port === undefined && bind === undefined && interfaces === undefined && fallback === undefined)
-        throw new ToliError("peer set needs --port, --bind, --interfaces or --ssh-fallback");
-    const portNumber = port === undefined ? undefined : Number(port);
-    if (portNumber !== undefined && (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535))
-        throw new ToliError("--port must be 1-65535");
-    const bindList = bind === undefined || bind === "private" ? bind : bind.split(",").map((ip) => ip.trim());
-    if (Array.isArray(bindList)) bindAddresses(bindList);
-    // `--interfaces none` clears the list; names are kept as given (the interfaces may not exist yet).
-    const named =
-        interfaces === undefined
-            ? undefined
-            : interfaces === "none"
-              ? []
-              : interfaces
-                    .split(",")
-                    .map((name) => name.trim())
-                    .filter((name) => name !== "");
-    updatePeerSettings((settings) => {
-        if (portNumber !== undefined) settings.port = portNumber;
-        if (bindList !== undefined) settings.bind = bindList as "private" | string[];
-        if (named !== undefined) settings.interfaces = named;
-        if (fallback !== undefined) settings.sshFallback = onOff(fallback, "--ssh-fallback");
-    });
-    const now = peerSettings();
-    out(
-        `peer settings: port ${now.port}, bind ${Array.isArray(now.bind) ? now.bind.join(",") : now.bind}, interfaces ${now.interfaces.join(",") || "none"}, ssh fallback ${now.sshFallback ? "on" : "off"}`,
-    );
 }
 
 /**
@@ -265,16 +206,22 @@ function status(argv: string[]): void {
     out(`peers: ${peers.filter((peer) => peer.status === "active").length} active, ${peers.length} recorded`);
 }
 
-/** One `peer list` row: name, its user's first name (`-` for none yet), status, permissions, addresses, fingerprint. */
+/**
+ * One `peer list` row: name, its user's first name (`-` for none yet), status, permissions, addresses, fingerprint,
+ * and for an introduced pin the date it expires.
+ */
 function peerLine(peer: Peer): string {
     const addrs = peer.addrs.length === 0 ? "no address yet" : peer.addrs.join(", ");
-    return `${peer.name}\t${peer.person ?? "-"}\t${peer.status}\t${peer.allow.join(",") || "nothing"}\t${addrs}\t${peer.fingerprint.slice(0, 16)}`;
+    const until = peer.notAfter === undefined ? "" : `\tintroduced, until ${peer.notAfter.slice(0, 10)}`;
+    return `${peer.name}\t${peer.person ?? "-"}\t${peer.status}\t${peer.allow.join(",") || "nothing"}\t${addrs}\t${peer.fingerprint.slice(0, 16)}${until}`;
 }
 
 function list(argv: string[]): void {
-    const args = new Args(argv, { booleans: ["json"] });
+    const args = new Args(argv, { booleans: ["json"], values: ["introduced-by"] });
     args.maxPositional(0);
-    const peers = loadPeers();
+    const by = args.str("introduced-by");
+    const introducer = by === undefined ? undefined : requirePeer(by).fingerprint;
+    const peers = loadPeers().filter((peer) => introducer === undefined || peer.introducedBy === introducer);
     if (args.bool("json")) {
         printJson(peers.map(({ cert: _cert, ...peer }) => peer));
         return;
@@ -305,10 +252,10 @@ export async function peerCommand(argv: string[]): Promise<number> {
             new Args(rest).maxPositional(0);
             return await runListener();
         case "listen":
-            await listen(rest);
+            await listenCommand(rest);
             return 0;
         case "set":
-            set(rest);
+            setCommand(rest);
             return 0;
         case "add":
             await add(rest);
@@ -350,10 +297,16 @@ export async function peerCommand(argv: string[]): Promise<number> {
             return 0;
         }
         case "remove":
-            remove(rest);
+            removeCommand(rest);
             return 0;
         case "trust":
             trustCommand(rest);
+            return 0;
+        case "introduction":
+            receiveIntroduction(rest);
+            return 0;
+        case "introduce":
+            introduceCommand(rest);
             return 0;
         default:
             throw new ToliError(USAGE);

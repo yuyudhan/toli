@@ -16,10 +16,10 @@ import type { Queued } from "../jobs/outbox-queue.ts";
 import { notePuller } from "../jobs/pull.ts";
 import { controlEnvelope, postPeer, recordStat, Unreachable } from "./client.ts";
 import { type Envelope, type Receipt, sealEnvelope } from "./envelope.ts";
-import { certSigValid, fingerprintOf, initIdentity, loadIdentity } from "./identity.ts";
+import { loadIdentity } from "./identity.ts";
 import { heldFor } from "./relay.ts";
 import { flushRelayed } from "./relay-client.ts";
-import { controlRequest, json, type ListenerContext, MAX_BATCH, onBound, readControl, routes } from "./server.ts";
+import { json, type ListenerContext, MAX_BATCH, onBound, readControl, routes } from "./server.ts";
 import { activePeer, loadPeers, notePerson, type Peer, peerLog, personField, pushable, updatePeers } from "./store.ts";
 
 /** What one flush did for one peer. */
@@ -81,9 +81,9 @@ function release(items: Claimed[]): void {
 
 /**
  * Send what waits for `peer`, batch after batch, until the queue is empty or a batch stops (unreachable, deferred,
- * failed). `onDelivered` sees every applied or duplicate item and what the receiver printed. A peer with no address
- * and a relay (`via`) gets its items through that relay instead (src/peer/relay.ts). `budgetMs` bounds each batch's
- * request (postPeer): a send someone waits for passes QUICK_MS.
+ * failed). `onDelivered` sees every applied or duplicate item and what the receiver printed. A peer with a relay
+ * (`via`) gets its items through that relay when it has no address or none answers (src/peer/relay.ts). `budgetMs`
+ * bounds each batch's request (postPeer): a send someone waits for passes QUICK_MS.
  */
 export async function flushPeer(peer: Peer, onDelivered?: OnDelivered, budgetMs?: number): Promise<Flush> {
     if (!pushable(peer) && peer.via !== undefined) return await flushRelayed(peer, onDelivered);
@@ -98,6 +98,15 @@ export async function flushPeer(peer: Peer, onDelivered?: OnDelivered, budgetMs?
         } catch (error) {
             release(batch);
             if (!(error instanceof Unreachable)) throw error;
+            // A pin with a relay (an introduced one: its introducer) goes through it rather than waiting.
+            if (peer.via !== undefined) {
+                const relayed = await flushRelayed(peer, onDelivered);
+                return {
+                    ...relayed,
+                    sent: flush.sent + relayed.sent,
+                    receipts: [...flush.receipts, ...relayed.receipts],
+                };
+            }
             flush.unreachable = error.message;
             return flush;
         }
@@ -190,7 +199,7 @@ onBound.push((context, addrs) => {
     if (addrs.length > 0) void announceAll(context, addrs);
 });
 
-function parsed(envelope: Envelope): Record<string, unknown> {
+export function parsed(envelope: Envelope): Record<string, unknown> {
     try {
         const value: unknown = JSON.parse(envelope.body);
         return isJsonObject(value) ? value : {};
@@ -218,10 +227,14 @@ routes.set("POST /v1/announce", async (request, context) => {
     if (control instanceof Response) return control;
     const body = parsed(control.envelope);
     const addrs = Array.isArray(body.addrs) ? body.addrs.filter((addr) => typeof addr === "string").slice(0, 8) : [];
-    if (addrs.length > 0)
+    const version = typeof body.version === "string" ? body.version : undefined;
+    if (addrs.length > 0 || (version !== undefined && version !== control.peer.version))
         updatePeers((peers) => {
             const peer = peers.find((entry) => entry.name === control.peer.name);
-            if (peer !== undefined) peer.addrs = [...new Set([...(addrs as string[]), ...peer.addrs])].slice(0, 8);
+            if (peer === undefined) return;
+            peer.addrs = [...new Set([...(addrs as string[]), ...peer.addrs])].slice(0, 8);
+            // Which toli it runs: an introducer sends an introduction only to one that reads it (src/peer/introducer.ts).
+            if (version !== undefined) peer.version = version;
         });
     notePerson(control.peer.name, body.person);
     // A machine that announces has a listener: it is pull-only only if it says so (a stale flag from a pull made
@@ -337,60 +350,3 @@ routes.set("POST /v1/outbox/ack", async (request, context) => {
     if (refused.length > 0) cancelItems(refused, `${control.peer.name} refused them`);
     return json({ acked, cancelled: refused.length });
 });
-
-// Rotate: a new key and certificate, announced to every peer signed by the old key; they accept the old one for a
-// week more (src/peer/store.ts `prevKey`), so messages already on their way still verify.
-
-const ROTATE_GRACE_MS = 7 * 24 * 60 * 60_000;
-
-routes.set("POST /v1/rotate", async (request, context) => {
-    const control = await readControl(request, context, "rotate");
-    if (control instanceof Response) return control;
-    const body = parsed(control.envelope);
-    const { key, cert, certSig } = body;
-    if (typeof key !== "string" || typeof cert !== "string" || typeof certSig !== "string")
-        return json({ error: "expected {key, cert, certSig}" }, 400);
-    if (!certSigValid(key, cert, certSig))
-        return json({ error: "the new key does not vouch for the certificate" }, 400);
-    updatePeers((peers) => {
-        const peer = peers.find((entry) => entry.name === control.peer.name);
-        if (peer === undefined) return;
-        peer.prevKey = peer.key;
-        peer.prevKeyUntil = new Date(now().getTime() + ROTATE_GRACE_MS).toISOString();
-        peer.key = key;
-        peer.fingerprint = fingerprintOf(key);
-        peer.cert = cert;
-        peer.certSig = certSig;
-    });
-    peerLog(`${control.peer.name} rotated its key to ${fingerprintOf(key)}`);
-    return json({ ok: true });
-});
-
-/**
- * `peer rotate`: make a new key and certificate here, then tell every active peer, signed by the old key. Returns the
- * peers told and those that could not be (they must pair again). The listener restarts on the new certificate.
- */
-export async function rotateIdentity(): Promise<{ told: string[]; missed: string[] }> {
-    const old = loadIdentity();
-    initIdentity({ rotate: true });
-    const fresh = loadIdentity();
-    const told: string[] = [];
-    const missed: string[] = [];
-    for (const peer of loadPeers().filter((entry) => entry.status === "active")) {
-        const envelope = controlEnvelope(
-            peer,
-            "rotate",
-            { key: fresh.key, cert: fresh.certPem, certSig: fresh.certSig },
-            old,
-        );
-        try {
-            const answer = await postPeer(peer, "/v1/rotate", envelope);
-            (answer.status === 200 ? told : missed).push(peer.name);
-        } catch {
-            missed.push(peer.name);
-        }
-    }
-    peerLog(`rotated this machine's key to ${fresh.fingerprint}; told ${told.join(", ") || "nobody"}`);
-    await controlRequest("/stop");
-    return { told, missed };
-}

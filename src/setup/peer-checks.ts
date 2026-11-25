@@ -10,6 +10,7 @@ import { hasIdentity, loadIdentity, looseSecrets } from "../peer/identity.ts";
 import { loadPeers } from "../peer/store.ts";
 import { listenerProblem, liveListener } from "../peer/supervise.ts";
 import type { Check } from "./doctor.ts";
+import { introduceChecks } from "./introduce-checks.ts";
 
 /** A peer marked pull-only that has not pulled here for longer than this has likely stopped pulling. */
 const PULL_ONLY_QUIET_MINUTES = 10;
@@ -74,6 +75,7 @@ export function peerChecks(): Check[] {
         );
         const pullOnly = pullOnlyCheck();
         if (pullOnly !== null) checks.push(pullOnly);
+        checks.push(...introduceChecks());
     }
     checks.push(
         nobleLocation() === null

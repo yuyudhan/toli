@@ -134,6 +134,10 @@ export const paths = {
     /** Peer messaging state in state/peer/: requests, nonces, received ledgers, the listener's record and socket. */
     peerRequests: () => join(repoRoot(), "state", "peer", "requests.json"),
     peerOutgoing: () => join(repoRoot(), "state", "peer", "outgoing.json"),
+    /** Introduction certificate ids applied here, kept 30 days so a replay is a duplicate (src/peer/introduce.ts). */
+    peerIntroductions: () => join(repoRoot(), "state", "peer", "introductions.json"),
+    /** On an introducer: what it introduced to whom, for `peer introduce --status` and `--sync`. */
+    peerIntroduced: () => join(repoRoot(), "state", "peer", "introduced.json"),
     peerNonces: () => join(repoRoot(), "state", "peer", "nonces.json"),
     peerLimits: () => join(repoRoot(), "state", "peer", "limits.json"),
     peerReceived: (peer: string) => join(repoRoot(), "state", "peer", "received", `${peer}.json`),

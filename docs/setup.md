@@ -135,5 +135,7 @@ Everything "set up toli" does can be done directly. Requirements: [Bun](https://
 
 Other machines go in `config/fleet.json` ([fleet.md](fleet.md)); projects are added with `/add-project` or
 `bin/toli project add` ([projects.md](projects.md)). To message another machine over HTTPS instead of ssh, pair the
-two once: `bin/toli peer add <host>` here, `bin/toli peer accept <request>` there, then `bin/toli peer add <host>
---code NNNN` here with the code it shows ([peers.md](peers.md#pairing)).
+two once: on the office network (NetBird) `bin/toli peer add <host>` alone pairs both ways, and `bin/toli peer add
+<coordinator> --fleet` pairs with every fleet machine at once ([peers.md](peers.md#talking-on-the-office-network)).
+From elsewhere: `bin/toli peer add <host>` here, `bin/toli peer accept <request>` there, then `bin/toli peer add
+<host> --code NNNN` here with the code it shows ([peers.md](peers.md#pairing)).

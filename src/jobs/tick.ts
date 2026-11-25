@@ -21,6 +21,7 @@ import { runHook } from "../helpers/local.ts";
 import { reportUnpostedRuns } from "../jawans/adopt.ts";
 import { drainQueue } from "../jawans/supervise.ts";
 import { hasIdentity } from "../peer/identity.ts";
+import { syncIntroductions } from "../peer/introducer.ts";
 import { pullPeers } from "../peer/pull-peers.ts";
 import { pullLine } from "../peer/transport-command.ts";
 import { startDueCatchUpScan } from "../projects/catch-up.ts";
@@ -97,6 +98,14 @@ async function exchangeMessages(machine: Machine): Promise<void> {
         } catch (error) {
             log(`pull failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+        // An introducer keeps its introductions current before its outbox goes out: boxes added to the fleet since,
+        // a subject's rotated key, pins about to expire (src/peer/introducer.ts; nothing when it introduced nobody).
+        if (hasIdentity())
+            try {
+                for (const line of syncIntroductions()) log(`introduce: ${line}`);
+            } catch (error) {
+                log(`introduce --sync failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
         const outbox = deliverOutbox(machine, onOutboxDelivered, reach);
         if (outbox.delivered > 0) log(`outbox: delivered ${outbox.delivered}`);
         for (const error of outbox.errors) log(`outbox: pending ${error}`);

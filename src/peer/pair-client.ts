@@ -1,5 +1,6 @@
 // The requesting side (A) of pairing (docs/peers.md "Pairing", src/peer/pair.ts for B's side): read B's hello with
-// the certificate it serves, send a signed request, then run CPace with the code B's owner or Sardar reads out.
+// the certificate it serves and send a signed request. On an open network B pairs on first contact and A pins it the
+// same way; otherwise A runs CPace with the code B's owner or Sardar reads out.
 import { randomBytes } from "node:crypto";
 import { connect } from "node:tls";
 import { loadMachine } from "../core/config.ts";
@@ -7,10 +8,11 @@ import { codeRoot, paths } from "../core/paths.ts";
 import { isJsonObject, now, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { hostPort, splitHostPort } from "./bind.ts";
 import { confirmTag, cpaceFinish, cpaceShare, type PairInputs, tagsEqual } from "./cpace.ts";
+import { raiseKeyMismatch } from "./first-contact.ts";
 import { certFingerprintOf, certPem, certSigValid, fingerprintOf, loadIdentity, TLS_NAME } from "./identity.ts";
 import { newPeer, pin, REQUEST_KEEP_MS, signed } from "./pair.ts";
 import { readListener } from "./server.ts";
-import { type Actor, type Peer, peerLog, peerSettings } from "./store.ts";
+import { type Actor, loadPeers, type Peer, peerLog, peerSettings, personField } from "./store.ts";
 
 const CONNECT_MS = 5_000;
 const POST_MS = 30_000;
@@ -85,7 +87,7 @@ export async function fetchHello(
     return { hello, cert };
 }
 
-async function postJson(
+export async function postJson(
     host: string,
     port: number,
     cert: string,
@@ -103,12 +105,32 @@ async function postJson(
     return { status: response.status, value: isJsonObject(value) ? value : {} };
 }
 
-/** Step 1 on A: ask `target` to pair. Returns B's hello and the request id to give B's owner. */
-export async function requestPairing(target: string): Promise<{ hello: Hello; reqId: string }> {
+/**
+ * What a request did: on an open network the host paired on first contact (`paired`, pinned here too, or already
+ * paired); anywhere else it waits for a code, for the request id to give the host's owner.
+ */
+export type Requested = { hello: Hello; reqId: string; paired: Peer | null; already: boolean };
+
+/**
+ * Step 1 on A: ask `target` to pair. A host whose name is pinned here with another key is refused before anything is
+ * sent (and raised to the lead): that is what stops a machine passing for one already paired.
+ */
+export async function requestPairing(target: string): Promise<Requested> {
     const { host, port } = splitHostPort(target, peerSettings().port);
     const identity = loadIdentity();
     const { hello, cert } = await fetchHello(host, port);
     if (hello.key === identity.key) throw new ToliError("that is this machine");
+    const peers = loadPeers();
+    const named = peers.find((peer) => peer.name === hello.name);
+    if (named !== undefined && named.key !== hello.key) {
+        raiseKeyMismatch(hello.name, hello.fingerprint, named.fingerprint, `at ${hostPort(host, port)}`);
+        throw new ToliError(
+            `${hello.name}'s key is not the one pinned here (${hostPort(host, port)} shows ${hello.fingerprint.slice(0, 16)}, pinned ${named.fingerprint.slice(0, 16)}): not paired`,
+        );
+    }
+    const holder = peers.find((peer) => peer.key === hello.key && peer.name !== hello.name);
+    if (holder !== undefined)
+        throw new ToliError(`${hostPort(host, port)} has the key pinned here as ${holder.name}, not ${hello.name}`);
     const reqId = randomBytes(8).toString("hex");
     const version = readJson<{ version?: string }>(`${codeRoot()}/package.json`, {}).version ?? "unknown";
     const sent = await postJson(
@@ -124,10 +146,31 @@ export async function requestPairing(target: string): Promise<{ hello: Hello; re
             cert: identity.certPem,
             certSig: identity.certSig,
             addrs: readListener()?.addrs ?? [],
+            ...personField(),
         }),
     );
     if (sent.status !== 200)
         throw new ToliError(`${hello.name} refused the request (${sent.status}): ${String(sent.value.error)}`);
+    if (sent.value.status === "paired") {
+        // The host pinned this machine on first contact; pin it here the same way, unless it already is.
+        if (named?.status === "active") return { hello, reqId, paired: named, already: true };
+        const peer = newPeer(
+            {
+                name: hello.name,
+                key: hello.key,
+                cert,
+                certSig: hello.certSig,
+                addrs: [hostPort(host, port)],
+                version: hello.version,
+            },
+            "first-contact",
+        );
+        pin(peer);
+        peerLog(
+            `paired with ${peer.name} at ${hostPort(host, port)} (fingerprint ${peer.fingerprint}) on first contact`,
+        );
+        return { hello, reqId, paired: peer, already: false };
+    }
     withLock(paths.lock("peer-outgoing"), () => {
         const outgoing = readJson<Outgoing[]>(paths.peerOutgoing(), []).filter(
             (entry) => now().getTime() - entry.createdAt < REQUEST_KEEP_MS,
@@ -145,7 +188,7 @@ export async function requestPairing(target: string): Promise<{ hello: Hello; re
         });
         writeJsonAtomic(paths.peerOutgoing(), outgoing);
     });
-    return { hello, reqId };
+    return { hello, reqId, paired: null, already: false };
 }
 
 /** Step 2 on A: run CPace with `code` for the latest request to `target`; pins B when both tags verify. */

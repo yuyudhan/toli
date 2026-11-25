@@ -31,9 +31,10 @@ import { refusalOf } from "./refusal.ts";
 /**
  * `inbox`: `bin/toli inbox add` on the target; `delegation`: `bin/toli delegation receive`; `update`: `bin/toli
  * delegation update`; `link`: `bin/toli delegation link`; `share`: `bin/toli share receive` (the body of all but
- * `inbox` is their JSON); `answer`: `bin/toli task answer <id> <answer> --from <from>` (body: AnswerBody JSON).
+ * `inbox` is their JSON); `answer`: `bin/toli task answer <id> <answer> --from <from>` (body: AnswerBody JSON);
+ * `introduction`: `bin/toli peer introduction --from <from>` (body: a signed certificate, src/peer/introduce.ts).
  */
-export type OutboxKind = "inbox" | "delegation" | "update" | "link" | "share" | "answer";
+export type OutboxKind = "inbox" | "delegation" | "update" | "link" | "share" | "answer" | "introduction";
 
 /** `queuedAt` (ms since the epoch) orders a sender's items; items queued before it existed use the file's mtime. */
 export type OutboxItem = {
@@ -94,6 +95,7 @@ export function deliveryArgv(item: OutboxItem, verified?: string): string[] {
     if (item.kind === "update") return ["delegation", "update", ...from];
     if (item.kind === "link") return ["delegation", "link", ...from];
     if (item.kind === "share") return ["share", "receive"];
+    if (item.kind === "introduction") return ["peer", "introduction", "--from", verified ?? item.from];
     if (item.kind === "answer") {
         const { id, answer, answerId } = parseAnswer(item.body);
         const once = answerId === undefined ? [] : ["--answer-id", answerId];
