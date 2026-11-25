@@ -22,7 +22,6 @@ import { reportUnpostedRuns } from "../jawans/adopt.ts";
 import { drainQueue } from "../jawans/supervise.ts";
 import { hasIdentity } from "../peer/identity.ts";
 import { pullPeers } from "../peer/pull-peers.ts";
-import { peerSettings } from "../peer/store.ts";
 import { pullLine } from "../peer/transport-command.ts";
 import { startDueCatchUpScan } from "../projects/catch-up.ts";
 import { loadBacklog } from "../records/backlog.ts";
@@ -88,9 +87,10 @@ async function exchangeMessages(machine: Machine): Promise<void> {
                 if (pulled === null || pulled.pulled > 0 || pulled.errors.length > 0) log(pullText(pulled));
                 for (const error of pulled?.errors ?? []) log(`pull: ${error}`);
             }
-            // A machine without a peer listener, or one that takes no inbound connection, pulls from its paired peers
-            // over HTTPS, relayed items included.
-            if (hasIdentity() && (!peerSettings().listen || pullsItsMessages()))
+            // Every machine pulls from its paired peers over HTTPS, relayed items included: a peer holds what it has
+            // for a machine it thinks pull-only, and a relay holds what it carries for every recipient, listener or
+            // not, until that recipient pulls (T2775).
+            if (hasIdentity())
                 for (const report of await pullPeers())
                     if (report.applied > 0 || report.relayed !== undefined || report.error !== undefined)
                         log(`peer pull from ${pullLine(report)}`);

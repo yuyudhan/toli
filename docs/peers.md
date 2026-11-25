@@ -170,13 +170,22 @@ queued and are retried. `task link` that the owner refuses fails at once and lea
 
 **Back online.** A listener that starts, or whose addresses change (VPN up, Wi-Fi joined), announces itself to every
 peer (`POST /v1/announce`, signed). The peer records the addresses and sends what waits for it at once, without
-waiting for its tick. **Pull.** A machine whose listener is off, or that takes no inbound connection (`bin/toli init
-... --inbound off`, docs/fleet.md), pulls from each peer every minute (`POST /v1/outbox/pending`, then
-`/v1/outbox/ack` with the receipts; by hand: `bin/toli peer pull`). It pulls every peer at once, and each address
-gets 5 s to complete a TLS handshake with the peer's pinned certificate before the request goes, so a peer that is
-down, or an address a mesh VPN accepts and never hands on, costs that peer's pull 5 s an address and holds back no
-other peer's messages (T2775). A paired peer that is not in `config/fleet.json` is reached this way only: over
-HTTPS, or by its pull.
+waiting for its tick. **Pull.** Every machine's minute tick pulls from each paired peer with an address
+(`POST /v1/outbox/pending`, then `/v1/outbox/ack` with the receipts; by hand: `bin/toli peer pull`): a machine whose
+listener is off, or that takes no inbound connection (`bin/toli init ... --inbound off`, docs/fleet.md), gets
+everything this way, and a machine whose listener runs still collects what a relay holds for it and what a peer that
+thinks it pull-only kept for it (T2775). It pulls every peer at once. Every request to a
+peer first opens a TLS handshake with its pinned certificate on all its addresses at once, 5 s each, and goes to the
+first address in order that completed one, so a peer that is down, or old addresses a mesh VPN accepts and never
+hands on, cost that peer 5 s and hold back no other peer's messages (T2775). A paired peer that is not in
+`config/fleet.json` is reached this way only: over HTTPS, or by its pull.
+
+**Addresses that go stale.** The address that answers moves first in `config/peers.json`. An address that has
+completed no handshake for 24 hours while another address of the same peer answers is dropped, and both
+`logs/peer.log` and the inbox (an item titled `address for <peer> changed`) say `address for <peer> changed: dropped
+<addr> (no TLS handshake since <when>: <why>); it answers at <addr>` (failures are tracked in
+`state/peer/addr-failures.json`). A peer none of whose addresses answers keeps them all; its next announce adds back
+an address it uses again.
 
 **A peer that takes no inbound connection.** A machine whose firewall resets every inbound connection can still pair
 (it connects out) and pull. Its pull says so (`inbound: false` in the `pending` body, from its `--inbound off`; a
@@ -218,7 +227,8 @@ third peer that both are paired with and both reach (any machine with a listener
    on: `bin/toli peer trust <other> --key <its key> --via <relay>`. A peer already paired but unreachable keeps its
    pairing and gains the relay; a key that differs from the pinned one is refused.
 3. From then on the sender's outbox hands each item for the other to the relay (`POST /v1/relay/hold`), and the
-   recipient's minute pull takes it with what the relay holds for it (`relayed` in the `pending` answer). The
+   recipient's minute pull (every machine's tick pulls, listener or not) takes it with what the relay holds for it
+   (`relayed` in the `pending` answer). The
    recipient settles them (`POST /v1/relay/ack`) and leaves the sender one receipt bundle there, which the sender's
    next hand-over collects; only then does the sender drop the item. `talk` says `queued for <peer> through its relay
 <relay>`.

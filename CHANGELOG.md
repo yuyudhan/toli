@@ -26,6 +26,14 @@ one. See docs/releasing.md.
   fleet list (nobody ssh-es into it) no longer tells its peers to push nothing to it, so a listener that takes pushes
   gets them at once; only its own `--inbound off` does that. A pull now also asks peers marked pull-only, so two
   machines that each think the other only pulls still hear each other (docs/peers.md, T2775).
+- A peer's old addresses no longer slow every request to it: its addresses' TLS handshakes are probed all at once,
+  and the request goes to the first that completed one. An address that has failed every handshake for 24 hours
+  while another address of that peer answers is dropped from config/peers.json, and peer.log and the inbox say
+  `address for <peer> changed` with the dropped and the answering address (docs/peers.md, T2775).
+- Messages sent through a relay now reach a recipient whose listener runs: every machine's minute tick pulls from its
+  paired peers, so what a relay holds for it is collected within a minute. Before, only a machine with its listener
+  off or marked pull-only pulled, and items a relay held for any other recipient waited there for good
+  (docs/peers.md, T2775).
 
 ## v0.7.3 - 2026-11-24
 

@@ -135,6 +135,14 @@ describe("a relay between two peers that both refuse inbound connections (T1331)
         expect(bodies(laptop)).toContain("real words");
         expect(inbox(laptop).map((item) => item.from)).toEqual(["alpha"]);
     });
+
+    test("a recipient whose listener runs collects what its relay holds on its own tick (T2775)", async () => {
+        const { alpha, laptop } = await relayed();
+        expect(alpha.box.ok(["talk", "laptop", "via the relay"])).toContain("through its relay hub");
+        // laptop's listener is on (the default) and nothing marks it pull-only: it never had a reason to pull.
+        laptop.box.ok(["job", "tick"]);
+        expect(bodies(laptop)).toContain("via the relay");
+    });
 });
 
 describe("a peer that takes no inbound connection only pulls (T1331)", () => {

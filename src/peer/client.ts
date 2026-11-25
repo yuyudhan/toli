@@ -6,10 +6,11 @@ import { connect } from "node:tls";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, now } from "../core/util.ts";
+import { noteAddrs } from "./addr-health.ts";
 import { splitHostPort } from "./bind.ts";
 import { type ControlKind, type Envelope, sealEnvelope } from "./envelope.ts";
 import { loadIdentity, TLS_NAME } from "./identity.ts";
-import { DEFAULT_PORT, type Peer, updatePeers } from "./store.ts";
+import { DEFAULT_PORT, type Peer, peerLog, updatePeers } from "./store.ts";
 
 const CONNECT_MS = 5_000;
 const REQUEST_MS = 120_000;
@@ -55,24 +56,27 @@ async function handshakes(addr: string, cert: string, connectMs: number): Promis
 /**
  * POST `body` to `path` on `peer`, trying each address until one answers (any HTTP status is an answer). The address
  * that answered moves first in config/peers.json. Throws Unreachable when none does. `budgetMs` bounds the whole call,
- * every address included; without it each address gets CONNECT_MS for its TLS handshake and REQUEST_MS to answer.
+ * every address included; without it the addresses get CONNECT_MS for their TLS handshakes, all probed at once (a
+ * peer with eight addresses, seven dead, once cost 40 s before the live one was tried, T2775), and REQUEST_MS to
+ * answer. The first address in order whose handshake completed gets the request.
  */
 export async function postPeer(peer: Peer, path: string, body: unknown, budgetMs?: number): Promise<Answer> {
     const errors: string[] = [];
     const deadline = budgetMs === undefined ? undefined : performance.now() + budgetMs;
-    for (const addr of peer.addrs) {
+    const started = performance.now();
+    const probes = peer.addrs.map((addr) => handshakes(addr, peer.cert, Math.min(CONNECT_MS, budgetMs ?? CONNECT_MS)));
+    for (const [index, addr] of peer.addrs.entries()) {
+        const closed = await probes[index];
+        if (closed !== null) {
+            errors.push(`${addr}: ${closed}`);
+            continue;
+        }
         const left = deadline === undefined ? REQUEST_MS : Math.round(deadline - performance.now());
         if (left <= 0) {
             errors.push(`${addr}: not tried, ${budgetMs} ms spent`);
             continue;
         }
-        const started = performance.now();
-        const closed = await handshakes(addr, peer.cert, Math.min(CONNECT_MS, left));
-        if (closed !== null) {
-            errors.push(`${addr}: ${closed}`);
-            continue;
-        }
-        const answerMs = deadline === undefined ? REQUEST_MS : Math.max(1, Math.round(deadline - performance.now()));
+        const answerMs = left;
         try {
             const response = await fetch(`https://${addr}${path}`, {
                 method: "POST",
@@ -84,6 +88,16 @@ export async function postPeer(peer: Peer, path: string, body: unknown, budgetMs
             const value: unknown = await response.json().catch(() => ({}));
             const ms = Math.round(performance.now() - started);
             if (peer.addrs[0] !== addr) preferAddr(peer.name, addr);
+            // The other probes end within their handshake budget; then the addresses that keep failing are aged.
+            void Promise.all(probes)
+                .then((outcomes) =>
+                    noteAddrs(peer.name, addr, new Map(peer.addrs.map((entry, at) => [entry, outcomes[at] ?? null]))),
+                )
+                .catch((error) =>
+                    peerLog(
+                        `${peer.name}: addresses not aged: ${error instanceof Error ? error.message : String(error)}`,
+                    ),
+                );
             return { status: response.status, value: isJsonObject(value) ? value : {}, addr, ms };
         } catch (error) {
             errors.push(`${addr}: ${error instanceof Error ? error.message : String(error)}`);

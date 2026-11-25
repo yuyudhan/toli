@@ -5,8 +5,8 @@
 // that accepts the connection and never answers costs a sender a few seconds, not minutes; a claim left by a dead
 // process goes back to the queue at once, and `outbox list` shows a claim still held.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { pidAlive } from "../src/core/util.ts";
 import { postWaitingAlerts } from "../src/jobs/outbox-admin.ts";
 import type { Permission } from "../src/peer/store.ts";
@@ -305,6 +305,58 @@ describe("a peer that does not answer (T2126)", () => {
         expect(pulled.stdout).toContain("delta: 0 applied");
         expect(talks(beta, "alpha")).toEqual(["waiting since last night"]);
     }, 300_000);
+
+    test("a peer's dead addresses are probed side by side, so its live one answers within one handshake (T2775)", async () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        const alphaListening = await start(alpha);
+        const dead = [stallingPort(), stallingPort(), stallingPort()].map((port) => `127.0.0.1:${port}`);
+        pin(beta.box, [
+            {
+                name: alpha.name,
+                identity: alpha,
+                cert: alpha.cert,
+                addrs: [...dead, `127.0.0.1:${alphaListening.port}`],
+            },
+        ]);
+        pin(alpha.box, [{ name: beta.name, identity: beta, cert: beta.cert }]);
+        expect(alpha.box.ok(["talk", "beta", "old Wi-Fi addresses first"])).toContain("queued for beta");
+        const started = Date.now();
+        const pulled = beta.box.toli(["peer", "pull"]);
+        // One handshake budget (CONNECT_MS, 5 s) + bun's start, not 5 s for each dead address in turn (15 s here).
+        expect(Date.now() - started).toBeLessThan(13_000);
+        expect(pulled.stdout).toBe("alpha: 1 applied\n");
+    }, 120_000);
+
+    test("an address failing for a day while another answers is dropped, and the user is told (T2775)", async () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        const listening = await start(beta);
+        const gone = `127.0.0.1:${freePort()}`;
+        const flaky = `127.0.0.1:${freePort()}`;
+        const live = `127.0.0.1:${listening.port}`;
+        pin(alpha.box, [{ name: beta.name, identity: beta, cert: beta.cert, addrs: [gone, flaky, live] }]);
+        pin(beta.box, [{ name: alpha.name, identity: alpha, cert: alpha.cert }]);
+        // `gone` has failed every handshake for 25 hours; `flaky` has not failed before.
+        const failures = join(alpha.box.root, "state", "peer", "addr-failures.json");
+        mkdirSync(dirname(failures), { recursive: true });
+        writeFileSync(failures, JSON.stringify({ beta: { [gone]: Date.now() - 25 * 60 * 60 * 1000 } }));
+        expect(alpha.box.ok(["talk", "beta", "after the move"])).not.toContain("queued");
+        expect(talks(beta, "alpha")).toEqual(["after the move"]);
+        const addrs = () =>
+            (
+                JSON.parse(readFileSync(join(alpha.box.root, "config", "peers.json"), "utf8")) as {
+                    peers: Array<{ name: string; addrs: string[] }>;
+                }
+            ).peers.find((peer) => peer.name === "beta")?.addrs ?? [];
+        await until(() => !addrs().includes(gone));
+        expect(addrs()).toEqual([live, flaky]);
+        expect(readFileSync(join(alpha.box.root, "logs", "peer.log"), "utf8")).toContain(
+            `address for beta changed: dropped ${gone}`,
+        );
+        expect(Object.keys(JSON.parse(readFileSync(failures, "utf8")).beta)).toEqual([flaky]);
+        expect(inboxOf(alpha).map((item) => item.title)).toContain("address for beta changed");
+    });
 
     test("an item claimed by a process that died goes back to the queue at once and is delivered", async () => {
         const alpha = peerBox("alpha");

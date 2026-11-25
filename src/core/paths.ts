@@ -143,6 +143,8 @@ export const paths = {
     peerReceiving: () => join(repoRoot(), "state", "peer", "receiving"),
     /** One JSON line per delivery attempt, with its transport and time (`bin/toli peer stats`). */
     peerStats: () => join(repoRoot(), "state", "peer", "stats.jsonl"),
+    /** Per peer and address, when it first failed its TLS handshake since it last answered (src/peer/addr-health.ts). */
+    peerAddrFailures: () => join(repoRoot(), "state", "peer", "addr-failures.json"),
     /**
      * On a relay: items held for a peer that pulls them here (`held/<its fingerprint>/`) and its sealed receipts held
      * for their sender (`receipts/<its fingerprint>/`); on a sender, `sent.json`: what each relay last said it holds.
