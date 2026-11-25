@@ -1,6 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pushLine } from "../src/records/push-log.ts";
 import { type Sandbox, sandbox, withProject } from "./helpers.ts";
 
 // Each test builds a project with origin plus up to a dozen bin/toli runs; on a loaded machine one test has taken
@@ -136,7 +137,7 @@ describe("push log", () => {
             "--old nope is not a commit",
         );
         expect(box.toli(["push-log", "add", "ghost"]).stderr).toContain('unknown project "ghost"');
-        expect(box.toli(["push-log", "nope"]).stderr).toContain("usage: toli push-log add|list");
+        expect(box.toli(["push-log", "nope"]).stderr).toContain("usage: toli push-log add|list|remove");
     });
 
     test("push-log add toli records a push of toli's own checkout", () => {
@@ -150,6 +151,60 @@ describe("push log", () => {
         const head = box.git(box.root, ["rev-parse", "HEAD"]);
         box.ok(["push-log", "add", "toli", "--by", "mac", "--word", "yes"], { now: AT });
         expect(pushes(box)[0]).toMatchObject({ project: "toli", branch: "main", new: head, by: "mac", word: "yes" });
+    });
+
+    test("push-log add refuses a branch origin's tracking ref did not get from a push, naming --branch", () => {
+        const { box, dir } = mini();
+        const origin = join(box.root, ".origin", "app.git");
+        const other = join(box.root, "other");
+        box.git(box.root, ["clone", origin, other]);
+        commitFile(box, other, "o.txt");
+        box.git(other, ["push", "--no-verify", "origin", "main"]);
+        // origin/main moves by a fetch here; the push from this clone is a raw refspec to another branch.
+        box.git(dir, ["fetch", "origin"]);
+        box.git(dir, ["switch", "main"]);
+        box.git(dir, ["merge", "--ff-only", "origin/main"]);
+        const feature = box.git(dir, ["rev-parse", "feature"]);
+        box.git(dir, ["push", "--no-verify", "origin", `${feature}:refs/heads/idx/feature`]);
+        for (const argv of [
+            ["push-log", "add", "app"],
+            ["push-log", "add", "app", "--branch", "main"],
+        ]) {
+            const refused = box.toli(argv).stderr;
+            expect(refused).toContain("origin/main was last updated by a fetch, not a push from");
+            expect(refused).toContain("pass --branch <the branch you pushed>");
+        }
+        expect(pushes(box)).toEqual([]);
+        box.ok(["push-log", "add", "app", "--branch", "idx/feature", "--for", "T2811"], { now: AT });
+        expect(pushes(box)).toMatchObject([{ branch: "idx/feature", old: null, new: feature, task: "T2811" }]);
+
+        // A logged tip that is no longer origin's branch head is refused, --new or not.
+        box.git(other, ["fetch", "origin"]);
+        box.git(other, ["switch", "-c", "idx/feature", "origin/idx/feature"]);
+        const moved = commitFile(box, other, "p.txt");
+        box.git(other, ["push", "--no-verify", "origin", "idx/feature"]);
+        expect(box.toli(["push-log", "add", "app", "--branch", "idx/feature"]).stderr).toContain(
+            `origin's idx/feature is at ${moved.slice(0, 9)}, not ${feature.slice(0, 9)}`,
+        );
+        expect(box.toli(["push-log", "add", "app", "--branch", "idx/feature", "--new", feature]).stderr).toContain(
+            `origin's idx/feature is at ${moved.slice(0, 9)}`,
+        );
+        expect(pushes(box)).toHaveLength(1);
+    });
+
+    test("push-log remove drops a wrong entry by its number in push-log list", () => {
+        const { box, dir } = mini();
+        box.ok(["push", "app"], { now: AT });
+        commitFile(box, dir, "b.txt");
+        box.ok(["push", "app"], { now: AT });
+        appendFileSync(join(box.root, "data", "pushes.jsonl"), '{"at":"2026-11-02T0\n');
+        const [first, second] = pushes(box) as [Push, Push];
+        expect(box.ok(["push-log", "list"])).toContain(`2. ${pushLine(second)}`);
+        expect(box.ok(["push-log", "remove", "1"])).toBe(`push log: removed 1. ${pushLine(first)}`);
+        expect(pushes(box)).toEqual([second]);
+        expect(box.ok(["push-log", "list"])).toBe(`1. ${pushLine(second)}`);
+        expect(box.toli(["push-log", "remove", "2"]).stderr).toContain("no push #2 in the log (1 entry)");
+        expect(box.toli(["push-log", "remove", "x"]).stderr).toContain("push-log remove <n>");
     });
 
     test("an empty log reads as empty and a torn line is skipped", () => {

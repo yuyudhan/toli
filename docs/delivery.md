@@ -73,8 +73,11 @@ them.
     bin/toli push <project> [--task T<n>] [--tag <name> | --gate "<recipe>" [--gate-wait <minutes>]] [--by <machine>] [--for T<n>] [--word "<owner's word>"]
                                                        # git push -u origin <current branch>; never forced; logged in
                                                        # data/pushes.jsonl, shown in bin/toli digest
-    bin/toli push-log add <project> [--by <machine>] [--for T<n>] [--word "..."]   # log a raw git push made here
-    bin/toli push-log list [--json]
+    bin/toli push-log add <project> [--branch <b>] [--by <machine>] [--for T<n>] [--word "..."]   # log a raw git push made here
+                                                       # refuses a branch this clone did not push (a refspec push
+                                                       # `<sha>:refs/heads/<x>` needs --branch <x>)
+    bin/toli push-log list [--json]                    # numbered entries
+    bin/toli push-log remove <n>                       # drop wrong entry n
     bin/toli pr create <project> --title <t> (--body <b> | --body-file <f>) [--base <b>] [--draft] [--task T<n>]
     bin/toli pr status <project> [<id>] [--task T<n>] [--json]   # state, mergeable, CI/pipeline, URL
     bin/toli pr list <project> [--json]

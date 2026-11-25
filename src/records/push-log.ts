@@ -8,7 +8,7 @@ import { Args } from "../core/args.ts";
 import { hasMachine, loadMachine } from "../core/config.ts";
 import { currentBranch, git, gitOk } from "../core/git.ts";
 import { paths } from "../core/paths.ts";
-import { now, out, printJson, requireName, ToliError } from "../core/util.ts";
+import { now, out, printJson, requireName, ToliError, writeTextAtomic } from "../core/util.ts";
 import { projectCloneDir, toliSelfCheckout } from "../projects/projects.ts";
 
 /**
@@ -80,21 +80,26 @@ function isPushRecord(value: unknown): value is PushRecord {
     );
 }
 
-/** Every logged push, oldest first. A line that is not a push record (a torn write) is skipped, never fatal. */
-export function listPushes(): PushRecord[] {
+/** The log's non-empty lines, each with its push record or null for a line that is not one (a torn write). */
+function logLines(): { line: string; record: PushRecord | null }[] {
     const file = paths.pushLog();
     if (!existsSync(file)) return [];
     return readFileSync(file, "utf8")
         .split("\n")
         .filter((line) => line.trim() !== "")
-        .flatMap((line) => {
+        .map((line) => {
             try {
                 const parsed: unknown = JSON.parse(line);
-                return isPushRecord(parsed) ? [parsed] : [];
+                return { line, record: isPushRecord(parsed) ? parsed : null };
             } catch {
-                return [];
+                return { line, record: null };
             }
         });
+}
+
+/** Every logged push, oldest first. A line that is not a push record (a torn write) is skipped, never fatal. */
+export function listPushes(): PushRecord[] {
+    return logLines().flatMap(({ record }) => (record === null ? [] : [record]));
 }
 
 /** Pushes of the last week, newest first, at most five: the digest's "recent pushes". */
@@ -123,7 +128,9 @@ function commitSha(dir: string, rev: string): string | null {
 /**
  * `push-log add <project> [--branch <b>] [--old <sha>] [--new <sha>] [--by <machine>] [--for <task>] [--word "..."]`:
  * record a push made with raw git. The branch defaults to the clone's current one; `--new` to origin's tracking ref
- * (what the push just set), `--old` to that ref's previous reflog entry (none: a new branch).
+ * (what the push just set), `--old` to that ref's previous reflog entry (none: a new branch). A tracking ref a fetch
+ * moved last is refused (a raw refspec push such as `sha:refs/heads/x` moves origin/x, not the current branch), and so
+ * is a tip that is not origin's branch head now: the log never names a branch this clone did not push.
  */
 function add(argv: string[]): void {
     const args = new Args(argv, { values: ["branch", "old", "new", "by", "for", "word"] });
@@ -143,6 +150,23 @@ function add(argv: string[]): void {
     const after = resolve("new", tracking);
     if (after === null) throw new ToliError(`origin/${branch} is not known in ${dir}: pass --new <sha>`);
     const old = resolve("old", `${tracking}@{1}`);
+    if (args.str("new") === undefined) {
+        const moved = gitOk(dir, ["reflog", "show", "-n1", "--format=%gs", tracking]);
+        if (moved !== "update by push") {
+            throw new ToliError(
+                `origin/${branch} was last updated by a fetch, not a push from ${dir} (reflog: "${moved}"): ` +
+                    "pass --branch <the branch you pushed>",
+            );
+        }
+    }
+    const [remoteTip] = gitOk(dir, ["ls-remote", "origin", `refs/heads/${branch}`]).split("\t");
+    if (remoteTip !== after) {
+        const at = remoteTip ? `is at ${remoteTip.slice(0, SHORT_SHA)}` : "does not exist";
+        throw new ToliError(
+            `origin's ${branch} ${at}, not ${after.slice(0, SHORT_SHA)}: pass --branch <the branch you pushed> ` +
+                "(and --new <the sha it got>)",
+        );
+    }
     const record = appendPush({ project, branch, old, new: after, ...pushAttribution(args) });
     out(`push log: ${pushLine(record)}`);
 }
@@ -159,7 +183,30 @@ function list(argv: string[]): void {
         out("push log: empty");
         return;
     }
-    for (const entry of pushes) out(pushLine(entry));
+    pushes.forEach((entry, index) => {
+        out(`${index + 1}. ${pushLine(entry)}`);
+    });
+}
+
+/** `push-log remove <n>`: drop the nth entry of `push-log list` (a push logged wrongly); other lines stay verbatim. */
+function remove(argv: string[]): void {
+    const args = new Args(argv);
+    args.maxPositional(1);
+    const given = args.pos(0, "n");
+    if (!/^[1-9]\d*$/.test(given)) {
+        throw new ToliError("usage: toli push-log remove <n> (the entry's number in push-log list)");
+    }
+    const number = Number(given);
+    const lines = logLines();
+    const records = lines.filter(({ record }) => record !== null);
+    const target = records[number - 1];
+    if (target === undefined || target.record === null) {
+        const count = records.length;
+        throw new ToliError(`no push #${number} in the log (${count} ${count === 1 ? "entry" : "entries"})`);
+    }
+    const kept = lines.filter((entry) => entry !== target).map(({ line }) => `${line}\n`);
+    writeTextAtomic(paths.pushLog(), kept.join(""));
+    out(`push log: removed ${number}. ${pushLine(target.record)}`);
 }
 
 export function pushLogCommand(argv: string[]): void {
@@ -171,7 +218,10 @@ export function pushLogCommand(argv: string[]): void {
         case "list":
             list(rest);
             break;
+        case "remove":
+            remove(rest);
+            break;
         default:
-            throw new ToliError("usage: toli push-log add|list");
+            throw new ToliError("usage: toli push-log add|list|remove");
     }
 }
