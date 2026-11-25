@@ -172,20 +172,26 @@ queued and are retried. `task link` that the owner refuses fails at once and lea
 peer (`POST /v1/announce`, signed). The peer records the addresses and sends what waits for it at once, without
 waiting for its tick. **Pull.** A machine whose listener is off, or that takes no inbound connection (`bin/toli init
 ... --inbound off`, docs/fleet.md), pulls from each peer every minute (`POST /v1/outbox/pending`, then
-`/v1/outbox/ack` with the receipts; by hand: `bin/toli peer pull`). A paired peer that is not in `config/fleet.json`
-is reached this way only: over HTTPS, or by its pull.
+`/v1/outbox/ack` with the receipts; by hand: `bin/toli peer pull`). It pulls every peer at once, and each address
+gets 5 s to complete a TLS handshake with the peer's pinned certificate before the request goes, so a peer that is
+down, or an address a mesh VPN accepts and never hands on, costs that peer's pull 5 s an address and holds back no
+other peer's messages (T2775). A paired peer that is not in `config/fleet.json` is reached this way only: over
+HTTPS, or by its pull.
 
 **A peer that takes no inbound connection.** A machine whose firewall resets every inbound connection can still pair
 (it connects out) and pull. Its pull says so (`inbound: false` in the `pending` body, from its `--inbound off`; a
-listener that is merely off does not set it), and each peer it pulls from records `inbound: false` on it in
-`config/peers.json`: from then on a send to it only queues, with no ssh, and what is queued for it waits for its next
-pull. The sender's minute tick still tries it once over HTTPS when it has an address (the same send as `bin/toli peer
-flush <peer>`), so an item for a peer that does answer goes out within a minute; one no address of which answers is
-backed off like an unreachable ssh host (30 s, doubling to 10 minutes, `peer:<name>` in `state/reach.json`). Its
-announces carry the same flag. A pull or an announce without the flag clears it, so a machine whose listener comes
-back is pushed to again. `bin/toli doctor` warns (`peer-pull-only`) about a peer marked so that has not pulled here
-for 10 minutes: asleep, or a mark an older toli left (its announce does not clear it), which `bin/toli peer pull` run
-there once clears.
+listener that is merely off does not set it, nor does `"inbound": false` on its entry in the fleet list, which only
+means nobody ssh-es into it: its listener still takes pushes, T2775), and each peer it pulls from records
+`inbound: false` on it in `config/peers.json`: from then on a send to it only queues, with no ssh, and what is queued
+for it waits for its next pull. The sender's minute tick still tries it once over HTTPS when it has an address (the
+same send as `bin/toli peer flush <peer>`), so an item for a peer that does answer goes out within a minute; one no
+address of which answers is backed off like an unreachable ssh host (30 s, doubling to 10 minutes, `peer:<name>` in
+`state/reach.json`). Its announces carry the same flag. A pull or an announce without the flag clears it, so a
+machine whose listener comes back is pushed to again. `bin/toli doctor` warns (`peer-pull-only`) about a peer marked
+so that has not pulled here for 10 minutes: asleep, or a mark an older toli left (its announce does not clear it),
+which `bin/toli peer pull` run there once clears. A pull asks a peer marked pull-only too, when it has an address:
+that peer holds what it has for this machine until this machine pulls, and two machines that each think the other
+only pulls would otherwise never hear each other.
 
 **One wake.** The receiver touches `state/peer/receiving` while it applies a batch; the lead's turn and `wake` wait
 until it has been quiet for 5 seconds, so a backlog arrives as one wake. A batch that wrote more than 5 inbox items

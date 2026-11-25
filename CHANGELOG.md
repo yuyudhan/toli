@@ -19,6 +19,13 @@ one. See docs/releasing.md.
 - Raising `capacity.buildSlots` in config/machine.json while heavy builds wait now takes effect at once: each waiter
   reads the cap again on every poll, instead of keeping the one it read on joining the line until restarted
   (docs/fleet.md, T2740).
+- A machine that pulls its messages gets them within a minute again, not hours later: every HTTPS request to a peer
+  first completes a TLS handshake with its pinned certificate within 5 s, where a bare TCP connect let an address a
+  VPN accepts and never hands on stall each request about 75 s, and the pull asks every peer at once instead of one
+  after another, so one dead peer holds back no other's messages. A machine marked `"inbound": false` only on the
+  fleet list (nobody ssh-es into it) no longer tells its peers to push nothing to it, so a listener that takes pushes
+  gets them at once; only its own `--inbound off` does that. A pull now also asks peers marked pull-only, so two
+  machines that each think the other only pulls still hear each other (docs/peers.md, T2775).
 
 ## v0.7.3 - 2026-11-24
 

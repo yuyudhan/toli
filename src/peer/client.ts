@@ -1,8 +1,8 @@
 // Reaching a paired peer over HTTPS (docs/peers.md "Delivery"): its certificate pinned as the only trusted one, its
 // addresses tried in order (the last that answered first), each request timed for `bin/toli peer stats`.
 import { appendFileSync, mkdirSync } from "node:fs";
-import { connect } from "node:net";
 import { dirname } from "node:path";
+import { connect } from "node:tls";
 import { loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, now } from "../core/util.ts";
@@ -25,19 +25,21 @@ export type Answer = { status: number; value: Record<string, unknown>; addr: str
 export class Unreachable extends Error {}
 
 /**
- * Whether a TCP connection to `addr` opens within CONNECT_MS (fetch itself has no connect timeout). The probe socket
- * is destroyed, never just ended: `end()` only half-closes it, and against a peer that never closes its side (a
- * firewall that drops the reset) the socket sat in FIN-WAIT-2 and kept the process alive for good (T1339).
+ * Whether a TLS handshake with `addr` completes against the peer's pinned certificate within `connectMs` (fetch has
+ * no connect or handshake timeout of its own). A bare TCP connect proved nothing: on a mesh VPN every address opened
+ * at once, and a dead peer's stalled handshake then held each fetch about 75 s, so a pull pass took 15 min (T2775).
+ * The probe socket is destroyed, never just ended: `end()` only half-closes it, and against a peer that never closes
+ * its side (a firewall that drops the reset) the socket sat in FIN-WAIT-2 and kept the process alive for good (T1339).
  */
-async function opens(addr: string, connectMs: number): Promise<string | null> {
+async function handshakes(addr: string, cert: string, connectMs: number): Promise<string | null> {
     const { host, port } = splitHostPort(addr, DEFAULT_PORT);
     const { promise, resolve } = Promise.withResolvers<string | null>();
-    const socket = connect({ host, port });
+    const socket = connect({ host, port, ca: cert, servername: TLS_NAME });
     const timer = setTimeout(() => {
         socket.destroy();
-        resolve(`no answer within ${connectMs / 1000} s`);
+        resolve(`no TLS handshake within ${connectMs / 1000} s`);
     }, connectMs);
-    socket.once("connect", () => {
+    socket.once("secureConnect", () => {
         clearTimeout(timer);
         socket.destroy();
         resolve(null);
@@ -53,7 +55,7 @@ async function opens(addr: string, connectMs: number): Promise<string | null> {
 /**
  * POST `body` to `path` on `peer`, trying each address until one answers (any HTTP status is an answer). The address
  * that answered moves first in config/peers.json. Throws Unreachable when none does. `budgetMs` bounds the whole call,
- * every address included; without it each address gets CONNECT_MS to connect and REQUEST_MS to answer.
+ * every address included; without it each address gets CONNECT_MS for its TLS handshake and REQUEST_MS to answer.
  */
 export async function postPeer(peer: Peer, path: string, body: unknown, budgetMs?: number): Promise<Answer> {
     const errors: string[] = [];
@@ -65,7 +67,7 @@ export async function postPeer(peer: Peer, path: string, body: unknown, budgetMs
             continue;
         }
         const started = performance.now();
-        const closed = await opens(addr, Math.min(CONNECT_MS, left));
+        const closed = await handshakes(addr, peer.cert, Math.min(CONNECT_MS, left));
         if (closed !== null) {
             errors.push(`${addr}: ${closed}`);
             continue;

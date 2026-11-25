@@ -7,7 +7,7 @@
 // The listener's routes for these live here too: announce, status, pending, ack and rotate (relay routes: relay.ts).
 import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { loadMachine, pullsItsMessages } from "../core/config.ts";
+import { configuredPullOnly, loadMachine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, now, runAsync, warn } from "../core/util.ts";
 import type { OutboxItem } from "../jobs/outbox.ts";
@@ -170,7 +170,7 @@ export async function delegationHook(): Promise<OnDelivered> {
 
 async function announceAll(context: ListenerContext, addrs: string[]): Promise<void> {
     const person = personField();
-    const inbound = pullsItsMessages() ? { inbound: false } : {};
+    const inbound = configuredPullOnly() ? { inbound: false } : {};
     for (const peer of loadPeers().filter(pushable)) {
         try {
             const answer = await postPeer(

@@ -281,6 +281,31 @@ describe("a peer that does not answer (T2126)", () => {
         ]);
     });
 
+    test("a pull goes past peers that accept the connection and never complete the handshake (T2775)", async () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        const gamma = peerBox("gamma");
+        const delta = peerBox("delta");
+        const alphaListening = await start(alpha);
+        // beta pulls from three peers; gamma and delta (stalled addresses, tried first) hold nothing it can reach.
+        pin(beta.box, [
+            { name: gamma.name, identity: gamma, cert: gamma.cert, addrs: [`127.0.0.1:${stallingPort()}`] },
+            { name: delta.name, identity: delta, cert: delta.cert, addrs: [`127.0.0.1:${stallingPort()}`] },
+            { name: alpha.name, identity: alpha, cert: alpha.cert, addrs: [`127.0.0.1:${alphaListening.port}`] },
+        ]);
+        pin(alpha.box, [{ name: beta.name, identity: beta, cert: beta.cert }]);
+        expect(alpha.box.ok(["talk", "beta", "waiting since last night"])).toContain("queued for beta");
+        const started = Date.now();
+        const pulled = beta.box.toli(["peer", "pull"]);
+        // One handshake budget (CONNECT_MS, 5 s), the stalled peers side by side, + bun's start. Before T2775 each
+        // stalled peer held the pass for its whole request budget (120 s), one after the other.
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(pulled.stdout).toContain("alpha: 1 applied");
+        expect(pulled.stdout).toContain("gamma: 0 applied");
+        expect(pulled.stdout).toContain("delta: 0 applied");
+        expect(talks(beta, "alpha")).toEqual(["waiting since last night"]);
+    }, 300_000);
+
     test("an item claimed by a process that died goes back to the queue at once and is delivered", async () => {
         const alpha = peerBox("alpha");
         const beta = peerBox("beta");

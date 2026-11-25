@@ -144,4 +144,31 @@ describe("a peer's pull-only flag (T2246)", () => {
         writeFileSync(pullers, JSON.stringify({ beta: Date.now() }));
         expect(alpha.box.toli(["doctor"]).stdout).not.toContain("peer-pull-only");
     });
+
+    test("a machine that takes no inbound ssh, marked only on the fleet list, still takes pushes (T2775)", async () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        const alphaListening = await start(alpha);
+        link(alpha, beta, { bAddr: "127.0.0.1:47999", aAddr: `127.0.0.1:${alphaListening.port}` });
+        markPulling(alpha, "beta");
+        // The coordinator's list says nothing ssh-es into beta; its listener still takes HTTPS.
+        writeFileSync(
+            join(beta.box.root, "config", "fleet.json"),
+            JSON.stringify({ machines: [{ name: "beta", ssh: "beta-host", root: beta.box.root, inbound: false }] }),
+        );
+        expect(beta.box.ok(["peer", "pull"])).toBe("alpha: 0 applied");
+        expect(inboundOf(alpha, "beta")).toBeUndefined();
+    });
+
+    test("a pull reaches a peer marked pull-only, so two machines that both pull still hear each other (T2775)", async () => {
+        const alpha = peerBox("alpha");
+        const beta = peerBox("beta");
+        const alphaListening = await start(alpha);
+        link(alpha, beta, { aAddr: `127.0.0.1:${alphaListening.port}` });
+        expect(alpha.box.ok(["talk", "beta", "since the 23rd"])).toContain("queued for beta, which pulls");
+        // beta's record says alpha only pulls (a mark from alpha's own pulls), yet alpha's listener answers.
+        markPulling(beta, "alpha");
+        expect(beta.box.ok(["peer", "pull"])).toBe("alpha: 1 applied");
+        expect(talks(beta, "alpha")).toEqual(["since the 23rd"]);
+    });
 });

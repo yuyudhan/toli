@@ -263,6 +263,15 @@ export function pullsItsMessages(): boolean {
     return entry !== undefined && inboundOff(entry);
 }
 
+/**
+ * Whether this machine tells its paired peers to push nothing to it (`inbound: false` in their config/peers.json):
+ * only its own `--inbound off`. The fleet list's flag says nobody ssh-es in; its HTTPS listener may still take every
+ * push, and marking it pull-only there left its messages waiting on its pull for hours (T2775).
+ */
+export function configuredPullOnly(): boolean {
+    return loadMachine().inbound === false;
+}
+
 /** Why a call does not ssh into `machine`: the line callers show in place of an ssh error. */
 export function inboundOffText(machine: FleetMachine): string {
     return `${machine.name} takes no inbound ssh (inbound: false in config/fleet.json); it pulls what is queued for it`;
