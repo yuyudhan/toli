@@ -66,7 +66,9 @@ export type BusySlot = SlotHolder & { slot: number; pid: number; beside: LentMar
 
 /**
  * Wait in line for a free slot, first come first served; prints the waiting line once if it has to wait, and once
- * which builds outside the slots it waits for. `waiter` is the process the slot is for (its own ancestors are never
+ * which builds outside the slots it waits for. `capacity` is read again on every poll, so a raised
+ * `capacity.buildSlots` is used at once by the head of the line and a lowered one stops new takes, never disturbing a
+ * build that holds its slot (T2740). `waiter` is the process the slot is for (its own ancestors are never
  * waited for). Gives up (null) once `wanted` says the slot is no longer needed. The slot taken gets one slot's share
  * of compile jobs (`capacity.cargoJobs`) in its job pool (`jobPoolDir`). A slot whose command has run nothing for the
  * idle window (`idleSlots`) does not count, so a build it waits on never waits for it; the waiter says so, naming it.
@@ -75,7 +77,7 @@ export type BusySlot = SlotHolder & { slot: number; pid: number; beside: LentMar
  * behind its ticket; it keeps the number it arrived with, so it rejoins the line ahead of every build that came later.
  */
 export async function takeInTurn(
-    capacity: Pick<Capacity, "buildSlots" | "cargoJobs">,
+    capacity: () => Pick<Capacity, "buildSlots" | "cargoJobs">,
     lock: Flock,
     holder: SlotHolder,
     waiter: number,
@@ -101,7 +103,7 @@ export async function takeInTurn(
  * release-priority run is ahead of the build once its ticket is first in line.
  */
 async function waitForTurn(
-    capacity: Pick<Capacity, "buildSlots" | "cargoJobs">,
+    capacity: () => Pick<Capacity, "buildSlots" | "cargoJobs">,
     lock: Flock,
     holder: SlotHolder,
     waiter: number,
@@ -113,17 +115,18 @@ async function waitForTurn(
     let toldOutside = false;
     for (;;) {
         if (!wanted()) return null;
+        const { buildSlots, cargoJobs } = capacity();
         const first = firstInLine(ticket, lock);
         if (first && priorityReleaseAhead(holder.cwd) !== null) return "give way";
         const taken = first
-            ? tryTake(capacity.buildSlots, lock, holder, waiter, (table) => idleSlots(watch, busySlots(), table))
+            ? tryTake(buildSlots, lock, holder, waiter, (table) => idleSlots(watch, busySlots(), table))
             : null;
         if (taken !== null && "fd" in taken) {
             for (const idle of taken.beside) warn(besideIdleText(idle, watch));
-            shareJobs(taken.index + 1, capacity.cargoJobs);
+            shareJobs(taken.index + 1, cargoJobs);
             return { index: taken.index, fd: taken.fd };
         }
-        if (!told) warn(`toli: waiting for a heavy-build slot (${capacity.buildSlots} busy)`);
+        if (!told) warn(`toli: waiting for a heavy-build slot (${buildSlots} busy)`);
         told = true;
         if (!toldOutside && taken !== null && taken.outside.length > 0) {
             const builds = taken.outside.map(outsideBuildText).join("; ");

@@ -27,6 +27,7 @@ import {
     slotRequestFile,
 } from "./heavy-step-slot.ts";
 import { pauseLiveStacks, resumeLiveStacks, whileStackInUse } from "./live-stack-pause.ts";
+import { capacityWhileWaiting } from "./slot-capacity.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
 
 /** The most minutes a check waiting at its first heavy step goes without saying it still waits. */
@@ -115,15 +116,16 @@ async function withSlotAtHeavyStep<T>(
     const lock = flock();
     if (lock === null || enclosingSlot() !== null || liveStackProjectAt(cwd) !== null)
         return await withBuildSlot(cwd, stackUser, body);
-    const { capacity, memoryMaxMB } = slotSizing();
+    const { memoryMaxMB } = slotSizing();
     const run = process.pid;
     clearSlotRequest(run);
     const state: { ended: boolean; held: { index: number; fd: number } | null } = { ended: false, held: null };
     const serve = (async (): Promise<void> => {
         while (!state.ended && !existsSync(slotRequestFile(run))) await Bun.sleep(POLL_MS);
         if (state.ended) return;
+        const capacity = capacityWhileWaiting(slotSizing().capacity);
         const note = setInterval(
-            () => warn(`toli: still waiting for a heavy-build slot (${capacity.buildSlots} busy)`),
+            () => warn(`toli: still waiting for a heavy-build slot (${capacity().buildSlots} busy)`),
             noteEveryMs,
         );
         try {

@@ -11,10 +11,8 @@
 // killed, and a killed holder frees it with its flock.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readdirSync, rmSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { ancestry } from "../core/ancestry.ts";
-import { hasMachine, loadMachine, type Machine } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { out, pidAlive, run, warn, writeTextAtomic } from "../core/util.ts";
 import { buildsOutsideSlots, busyBuildSlots, POLL_MS, slotHolder, takeInTurn } from "./build-queue.ts";
@@ -27,7 +25,7 @@ import { waitForLentBuilds } from "./lent-slots.ts";
 import { pauseLiveStacks, resumeLiveStacks } from "./live-stack-pause.ts";
 import { heldCargoSlot, heldFile, holderHolds, processTable, treeRunning } from "./outside-builds.ts";
 import { priorityReleaseAhead, priorityReleaseText } from "./release-priority.ts";
-import { capacityFor } from "./resources.ts";
+import { capacityWhileWaiting, machineCapacity } from "./slot-capacity.ts";
 import { pauseDevStacks } from "./stack-pause.ts";
 
 /** This checkout's CLI (not paths.toliBin(): TOLI_ROOT may point the data elsewhere, as in tests). */
@@ -157,8 +155,7 @@ export async function holdForCargo(cargoPid: number, cwd: string, keepStacks = f
         return 0;
     }
     sweepHolderFiles(lock);
-    const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
-    const capacity = capacityFor(machine, availableParallelism());
+    const capacity = capacityWhileWaiting(machineCapacity());
     const held = await takeInTurn(capacity, lock, slotHolder(cwd), cargoPid, () => pidAlive(cargoPid));
     const release = (): void => {
         rmSync(heldFile(cargoPid), { force: true });
@@ -245,8 +242,7 @@ async function slotForProcess(pid: number, keepStacks: boolean): Promise<number 
     const lock = flock();
     if (lock === null) return null; // The shim's `build-slot` says so; every rustc call need not.
     mkdirSync(paths.buildSlotsDir(), { recursive: true });
-    const machine: Machine = hasMachine() ? loadMachine() : { name: "", role: "coordinator" };
-    const slots = capacityFor(machine, availableParallelism()).buildSlots;
+    const slots = machineCapacity().buildSlots;
     const holderArgs = ["build-slot", "--hold", String(pid), "--cwd", process.cwd()];
     if (keepStacks) holderArgs.push("--keep-stacks");
     // An ancestor whose holder waits in line: its slot is this process's too.

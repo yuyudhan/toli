@@ -41,6 +41,7 @@ import { waitForLentBuilds } from "./lent-slots.ts";
 import { resumeAbandonedLiveStacks, whileLiveStacksPaused, whileStackInUse } from "./live-stack-pause.ts";
 import { projectAt, realOrNull, within } from "./release-priority.ts";
 import { type Capacity, capacityFor } from "./resources.ts";
+import { capacityWhileWaiting } from "./slot-capacity.ts";
 import { pauseDevStacks, resumeDevStacks } from "./stack-pause.ts";
 
 export const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
@@ -308,7 +309,7 @@ export async function withBuildSlot<T>(
         warn("toli: flock(2) unavailable, running without a heavy-build slot");
         return await unslotted({ env: capped, scope: { slot: 0, memoryMaxMB } });
     }
-    const held = await takeInTurn(capacity, lock, slotHolder(cwd), process.pid, wanted);
+    const held = await takeInTurn(capacityWhileWaiting(capacity), lock, slotHolder(cwd), process.pid, wanted);
     if (held === null) throw new ToliError("toli: stopped waiting for a heavy-build slot");
     try {
         const slot = held.index + 1;

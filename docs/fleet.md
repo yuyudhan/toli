@@ -129,6 +129,8 @@ is tried until its first failure only: its other items wait, in their order, for
 one line for them (`outbox: pending 3 items for linux-4 left queued: ...`). A host the tick's ssh did not reach
 (ssh's own exit 255, or a timeout) is also backed off across ticks in `state/reach.json`: the tick leaves it alone for
 30 s after the first failure, doubling with each one after, at most 10 minutes; any call that reaches it clears that.
+A failure that says this machine itself has no network (`Network is unreachable`: its own link or NetBird is down) is
+a local outage, not the host's: the host is skipped for the rest of the pass but never backed off (T2742).
 The pull line counts such machines (`pull: 2 waiting, 2 applied, 2 acknowledged; 4 machine(s) held back`). A hand-run
 `bin/toli outbox pull`, and a send's own delivery, try backed-off machines anyway and do not back them off.
 
@@ -149,8 +151,12 @@ off. A backed-off machine is not probed: its row leads with the failure that bac
 3 times in a row, next probe in 240 s)`, and shows the last snapshot seen from it (`state/fleet-seen.json`) marked
 stale: `m3: unavailable: unreachable: ... (stale, last seen <at>: queue 2 (...), ...)` in `fleet status`, `; stale,
 last seen <at>: queue 2 (...)` in `fleet queues`, `lastSeen` in `--json`. A stale snapshot is never ranked or picked.
-The first probe that reaches the machine clears its backoff. `digest --fleet` asks only the machines its probe
-reached for their digest, up to 8 at once over ssh with the same 5 s `ConnectTimeout`, listed in fleet order; an
+The first probe that reaches the machine clears its backoff, and so does `task list --fleet` reaching it over ssh
+(which clears the tick's backoff of its ssh host too). A local outage backs no machine off: a probe that failed with
+`Network is unreachable`, or a pass in which every probed machine (two or more) went unreached at once, says nothing
+about those machines, so the first pass after the network returns probes them all again instead of reporting them
+unreachable from a backoff taken while this machine was offline (T2742). `digest --fleet` asks only the machines its
+probe reached for their digest, up to 8 at once over ssh with the same 5 s `ConnectTimeout`, listed in fleet order; an
 unreachable or backed-off machine is not asked, and its section gives the probe's reason and `stale, last seen <at>`.
 
 Passes never overlap: one that finds the previous still running (overlapping cron ticks) leaves the round to it. A
@@ -298,7 +304,9 @@ slot is a lock on `state/build-slots/<n>.lock` held by the
 its slot or its place in line at once. The lock files stay once made, one per slot number ever used (a `2.lock` on a
 machine now at one slot is from when it had two); only the lock on a file says its slot is busy. A held slot counts
 whatever its number: a build that took slot 2 before `capacity.buildSlots` dropped to 1 keeps the next build waiting
-until it ends, and counts in `builds <busy>/<total>`. Inside a slot already, it runs the command at once in that slot:
+until it ends, and counts in `builds <busy>/<total>`. A waiter reads `capacity.buildSlots` again on every poll, so a
+cap raised while builds wait is taken by the head of the line at once, and a lowered one stops new takes without
+disturbing the builds that hold their slots (T2740). Inside a slot already, it runs the command at once in that slot:
 a nested build never waits on its own slot, so `bin/toli build-slot -- sh -c 'bin/toli build-slot -- cargo check'`
 takes one slot, not two. A process is inside a slot when its `TOLI_BUILD_SLOT` names a busy slot and its
 `TOLI_BUILD_SLOT_HOLDER` that slot's holder (so a builder a test kit detached from the slot's process tree still

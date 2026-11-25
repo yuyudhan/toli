@@ -12,6 +12,13 @@ one. See docs/releasing.md.
   splits commit from push: toli follows a rename it can see, records the new name on the task, and
   `bin/toli commit|push|pr --task` all act on it. On any other branch `bin/toli push` and `pr create` now refuse as
   commit does, instead of pushing a branch without the task's commits (docs/projects.md, T85).
+- Fleet probes no longer stay in backoff after this machine's own network comes back: a `Network is unreachable`
+  failure, or a pass in which every probed machine fails at once, is a local outage and backs no machine off, and
+  `task list --fleet` reaching a machine clears its backoff, so `fleet check` and `fleet queues` probe it again at once
+  instead of reporting it unreachable from stale backoff (docs/fleet.md, T2742).
+- Raising `capacity.buildSlots` in config/machine.json while heavy builds wait now takes effect at once: each waiter
+  reads the cap again on every poll, instead of keeping the one it read on joining the line until restarted
+  (docs/fleet.md, T2740).
 
 ## v0.7.3 - 2026-11-24
 
