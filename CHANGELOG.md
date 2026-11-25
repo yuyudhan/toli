@@ -8,6 +8,12 @@ one. See docs/releasing.md.
 
 v0.7.4 was tagged but never published; its changes, in the section below, ship in this release.
 
+### Fixed
+
+- `peer add <coordinator> --fleet` no longer gets a machine introduced to the fleet with more than it may do on the
+  coordinator: the introduction grants only its permissions there, and one the coordinator does not let `talk` gets
+  the roster alone (docs/peers.md "Talking on the office network", T2802).
+
 ## v0.7.4 - 2026-11-25
 
 ### Added

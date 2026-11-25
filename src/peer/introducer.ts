@@ -166,14 +166,22 @@ export function introduce(subjectName: string, boxes: string[], grants: Permissi
 }
 
 /**
- * `POST /v1/roster` from `subject` (its `peer add <this> --fleet`): introduce it to every fleet box with all five
- * permissions, as `peer introduce --fleet` would (so it is on the books: `--status`, renewed by `--sync`), and return
- * the certificates for the subject at once. They stay queued too; delivered again later, they are duplicates.
+ * `POST /v1/roster` from `subject` (its `peer add <this> --fleet`). A subject this machine lets `talk` is introduced
+ * to every fleet box, as `peer introduce --fleet` would (on the books: `--status`, renewed by `--sync`), with no more
+ * than it may do here: its permissions here among the five, never `introduce`. One without `talk` is introduced
+ * nowhere and gets only the roster: a certificate per box, for the subject alone. Either way the certificates for the
+ * subject are returned at once (an introduction also queues them; a later delivery of one is a duplicate).
  */
 export function rosterFor(subject: Peer): Introduction[] {
     const approval = { by: loadMachine().name, why: `fleet roster for ${subject.name}`, at: now().toISOString() };
+    const grants = PERMISSIONS.filter((permission) => subject.allow.includes(permission));
+    if (grants.includes("talk"))
+        return sendTo(subject, fleetBoxes(), { grants, approval, notAfter: pinExpiry() }, "introduce", null).rosters;
     const terms = { grants: [...PERMISSIONS], approval, notAfter: pinExpiry() };
-    return sendTo(subject, fleetBoxes(), terms, "introduce", null).rosters;
+    return fleetBoxes()
+        .map((name) => activePeer(name))
+        .filter((box): box is Peer => box !== undefined && box.name !== subject.name && !expired(box))
+        .map((box) => certify("introduce", subject, box, terms));
 }
 
 /** Where one introduction is: delivered and applied, waiting, refused (with the reason), or never sent. */

@@ -285,8 +285,10 @@ A request from outside the open networks still takes the 4-digit code ([Pairing]
 
 **A new person's Mac, in one step.** `bin/toli peer add <coordinator> --fleet` pairs with the coordinator,
 lets it introduce machines here (`introduce`, below), and asks it for the fleet roster (`POST /v1/roster`). The
-coordinator introduces the Mac to every fleet box it has paired (exactly as `peer introduce <mac> --fleet`, so it is
-on its books, `--status` shows it, and its tick renews it) and answers with each box's certificate, signed by its key
+coordinator introduces the Mac to every fleet box it has paired (as `peer introduce <mac> --fleet`, so it is on its
+books, `--status` shows it, and its tick renews it), granting no more than the Mac may do on the coordinator (its
+permissions there among the five; a Mac it does not let `talk` is introduced nowhere and gets only the roster), and
+answers with each box's certificate, signed by its key
 and addressed to the Mac alone. Each is checked as below and pins the box on the Mac with the coordinator as its
 relay. Then each box with an address on an open network is asked to pair on first contact; where that works, both
 sides hold their own pin of the other, with no expiry. One line per box says `paired both ways`, `pinned through

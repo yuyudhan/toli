@@ -238,3 +238,53 @@ describe("peer add <coordinator> --fleet", () => {
         expect(onMac.get("b2")?.key).toBe(b2.key);
     });
 });
+
+describe("POST /v1/roster introduces no more than the asker may do on the coordinator", () => {
+    /** `asker` pinned on coord with `allow` (or revoked) asks for the roster; coord's ledger entry for it, if any. */
+    async function askRoster(allow: Peer["allow"], status: Peer["status"] = "active") {
+        const coord = peerBox("coord");
+        const asker = peerBox("asker");
+        const b1 = peerBox("b1");
+        openLoopback(coord, asker, b1);
+        const coordAddr = await listen(coord);
+        pin(coord.box, [
+            { name: "asker", identity: asker, cert: asker.cert, certSig: asker.certSig, allow, status },
+            { name: "b1", identity: b1, cert: b1.cert, certSig: b1.certSig, addrs: ["127.0.0.1:1"] },
+        ]);
+        pin(asker.box, [
+            { name: "coord", identity: coord, cert: coord.cert, certSig: coord.certSig, addrs: [coordAddr] },
+        ]);
+        const machines = ["coord", "b1"].map((name) => ({ name, ssh: name, root: "/t" }));
+        writeFileSync(join(coord.box.root, "config", "fleet.json"), JSON.stringify({ machines }));
+        const out = asker.box.toli(["peer", "add", coordAddr, "--fleet"]);
+        const ledgerFile = join(coord.box.root, "state", "peer", "introduced.json");
+        const ledger = existsSync(ledgerFile)
+            ? (JSON.parse(readFileSync(ledgerFile, "utf8")) as Record<string, { grants: string[] }>)
+            : {};
+        return { out, entry: ledger.asker, onAsker: peersOf(asker) };
+    }
+
+    test("a talk-only asker is introduced with talk only", async () => {
+        const { entry, onAsker } = await askRoster(["talk"]);
+        expect(entry?.grants).toEqual(["talk"]);
+        expect(onAsker.find((peer) => peer.name === "b1")?.key).toBeDefined();
+    });
+
+    test("an office peer with every permission is introduced with all five", async () => {
+        const { entry } = await askRoster([...PERMISSIONS]);
+        expect(entry?.grants).toEqual([...PERMISSIONS]);
+    });
+
+    test("an asker without talk gets the roster only, and is introduced nowhere", async () => {
+        const { out, entry, onAsker } = await askRoster(["status"]);
+        expect(out.code).toBe(0);
+        expect(entry).toBeUndefined();
+        expect(onAsker.find((peer) => peer.name === "b1")?.key).toBeDefined();
+    });
+
+    test("a revoked asker gets nothing", async () => {
+        const { entry, onAsker } = await askRoster([], "revoked");
+        expect(entry).toBeUndefined();
+        expect(onAsker.find((peer) => peer.name === "b1")).toBeUndefined();
+    });
+});
