@@ -8,6 +8,12 @@ one. See docs/releasing.md.
 
 ### Fixed
 
+- The release catch-up no longer merges a release into a per-task fix or PR branch. It merged main's tag into any
+  live task's branch and into whatever branch the clone was on, so a fix branch based on develop got a release from
+  main in its pull request. It now merges only into the project's working branch (`project set --branch`) and logs
+  one `skipped: not <p>'s working branch` line for each other checked-out branch; a per-task project's working
+  branch (the base its pull requests target, say develop) takes only a release already on its origin copy.
+  `catch-up undo` still takes back a recorded merge in any branch (docs/projects.md "Release catch-up", T2800).
 - A task branch renamed in its workspace (`git branch -m`, to a project's own naming such as an issue key) no longer
   splits commit from push: toli follows a rename it can see, records the new name on the task, and
   `bin/toli commit|push|pr --task` all act on it. On any other branch `bin/toli push` and `pr create` now refuse as

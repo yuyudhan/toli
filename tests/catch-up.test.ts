@@ -69,7 +69,7 @@ describe("catch-up scan", () => {
         box.ok(["project", "set", "alpha", "--catch-up", "default", "--branch", "none"]);
         box.git(join(box.root, "projects", "alpha"), ["switch", "--quiet", "main"]);
         expect(box.ok(["catch-up", "scan"])).toContain("alpha: v1.0.0");
-        expect(box.ok(["catch-up", "scan"])).toContain("every long-lived branch has it");
+        expect(box.ok(["catch-up", "scan"])).toContain("no working branch set, nothing to catch up");
         expect(runs(box)).toEqual([]);
     });
 });
@@ -122,26 +122,23 @@ describe("catch-up merge", () => {
 
     test("a conflict is reported, the tree left clean, and the task owner told", () => {
         const { box, clone, origin } = machine();
-        box.ok(["project", "set", "alpha", "--branch", "none", "--workspace", "worktree-per-task"]);
-        box.git(clone, ["switch", "--quiet", "main"]);
         box.ok(["task", "add", "alpha", "Build API"]);
         box.ok(["task", "start", "T1"]);
         box.ok(["workspace", "prepare", "T1"]);
-        const worktree = join(box.root, "projects", ".worktrees", "alpha", "T1");
-        const head = commitFile(box, worktree, "CHANGES", "mine\n");
+        const head = commitFile(box, clone, "CHANGES", "mine\n");
         release(box, origin, "v1.0.0", "CHANGES", "theirs\n");
-        expect(box.ok(["catch-up", "scan"])).toContain("for toli/m1/T1-build-api");
+        expect(box.ok(["catch-up", "scan"])).toContain("for nightly");
 
         const self = { env: { TOLI_RUN_ID: runs(box)[0]?.id ?? "" } };
         const text = box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"], self);
-        expect(text).toContain("toli/m1/T1-build-api (T1");
+        expect(text).toContain("nightly (T1");
         expect(text).toContain("conflict in CHANGES: nothing merged, the work left as it was");
-        expect(box.git(worktree, ["rev-parse", "HEAD"])).toBe(head);
-        expect(box.git(worktree, ["status", "--porcelain"])).toBe("");
-        expect(existsSync(join(clone, ".git", "worktrees", "T1", "MERGE_HEAD"))).toBe(false);
+        expect(box.git(clone, ["rev-parse", "HEAD"])).toBe(head);
+        expect(box.git(clone, ["status", "--porcelain"])).toBe("");
+        expect(existsSync(join(clone, ".git", "MERGE_HEAD"))).toBe(false);
         const tasks = JSON.parse(box.ok(["task", "list", "--json"])) as TaskRecord[];
         expect(tasks.find((task) => task.id === "T1")?.notes.join("\n")).toContain(
-            "catch-up v1.0.0: merging it into toli/m1/T1-build-api conflicts in CHANGES",
+            "catch-up v1.0.0: merging it into nightly conflicts in CHANGES",
         );
     });
 
@@ -285,7 +282,7 @@ describe("catch-up guards", () => {
         expect(box.git(origin, ["rev-parse", "nightly"])).toBe(pushed);
     });
 
-    test("a live run in the project clone holds a worktree branch's catch-up too", () => {
+    test("a task worktree's branch is never merged into: only the working branch is (T2800)", () => {
         const { box, clone, origin } = machine();
         box.ok(["project", "set", "alpha", "--branch", "none", "--workspace", "worktree-per-task"]);
         box.git(clone, ["switch", "--quiet", "main"]);
@@ -294,19 +291,12 @@ describe("catch-up guards", () => {
         box.ok(["workspace", "prepare", "T1"]);
         const worktree = join(box.root, "projects", ".worktrees", "alpha", "T1");
         const head = commitFile(box, worktree, "api.txt", "api\n");
-        runRecord(box, "j-20261120-080100-bbbb", { cwd: clone, project: "alpha" });
         release(box, origin, "v1.0.0");
         expect(box.ok(["catch-up", "scan"])).toContain(
-            "toli/m1/T1-build-api: held (projects/alpha: jawan run j-20261120-080100-bbbb works in it), tried again next scan",
+            "toli/m1/T1-build-api: skipped: not alpha's working branch (none set: bin/toli project set alpha --branch <b>)",
         );
         expect(runs(box).filter((run) => run.briefPath.includes("catch-up"))).toEqual([]);
-
-        expect(box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"])).toContain(
-            "toli/m1/T1-build-api: held (projects/alpha: jawan run j-20261120-080100-bbbb works in it)",
-        );
+        expect(box.ok(["catch-up", "merge", "alpha", "--tag", "v1.0.0"])).toBe("no long-lived branch here");
         expect(box.git(worktree, ["rev-parse", "HEAD"])).toBe(head);
-
-        runRecord(box, "j-20261120-080100-bbbb", { cwd: clone, project: "alpha", status: "done" });
-        expect(box.ok(["catch-up", "scan"])).toContain("for toli/m1/T1-build-api");
     });
 });

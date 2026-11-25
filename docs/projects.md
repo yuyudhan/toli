@@ -267,18 +267,26 @@ bin/toli delegate --verify`: its task is dropped there with the reason, and the 
 ## Release catch-up
 
 Every machine works on its projects' latest release. When a project's main carries a new `vX.Y.Z` tag, each machine
-with the clone merges that release into its long-lived branches, so work in flight never drifts hundreds of commits
-behind main between releases.
+with the clone merges that release into the project's working branch, so long-lived work never drifts hundreds of
+commits behind main between releases.
 
 - **Trigger.** The tick starts `bin/toli catch-up scan` in the background every 10 minutes (log:
   `logs/catch-up.log`). It fetches each project's main and tags from origin and takes the newest `vX.Y.Z` tag on
   `origin/<main>` (main: the project's `--base-branch`, else origin's default branch). A Sardar that hears of a
   release (another machine's notice) can run `bin/toli catch-up scan <project>` at once.
-- **Branches.** The project's fixed `--branch` (a same-branch project without one: the branch its clone is on), and
-  the branch of each active or held task of the project (branch-per-task, worktree-per-task, a task pinned to the
-  clone). Never main itself. A branch that already contains the tag needs nothing. A branch whose tip is already on
-  `origin/<main>` (its task's work landed) is `skipped: already on origin/<main> (<tip>)` by the scan and by the
-  merge: no jawan starts and nothing is merged; once it gets new work it is caught up again.
+- **Only the working branch.** The release goes only into the project's configured working branch,
+  `bin/toli project set <p> --branch <b>` (say `<p>/<machine>/nightly`), never main itself. Every other branch
+  checked out for the project here (the branch the clone is on, a live task's fix or PR branch) is never merged
+  into; the scan logs one line for each that lacks the tag, `<b>: skipped: not <p>'s working branch (<working>)`
+  (`none set: ...` when the project has no `--branch`, which gets no catch-up at all). A branch that already
+  contains the tag needs nothing. A working branch whose tip is already on `origin/<main>` is
+  `skipped: already on origin/<main> (<tip>)` by the scan and by the merge: no jawan starts and nothing is merged;
+  once it gets new work it is caught up again.
+- **A per-task project's base.** With `--workspace branch-per-task` or `worktree-per-task`, `--branch` is the base
+  the tasks' pull requests target (say develop) while releases are tagged on main. Such a branch takes only a
+  release already on its origin copy (`origin/develop` carries the tag: the release was merged back there), never
+  one straight from main, which would bring main's own commits into every pull request on it:
+  `develop: skipped: v1.2.3 is not on origin/develop, ...`, tried again on the next scan (T2800).
 - **One jawan.** For the branches behind the tag, the scan writes `data/projects/<p>/briefs/catch-up-<tag>.md` and
   starts one catch-up jawan through the normal `bin/toli spawn` path (queued while every jawan slot is busy; on a
   machine whose `lead.dispatch` is `subagents`, the brief goes to the lead's inbox instead). While that run is live
@@ -333,8 +341,9 @@ behind main between releases.
   never merge or push.
 - **A merge whose checks fail is undone.** The plan prints, per merged branch,
   `if the checks fail: bin/toli catch-up undo <p> --branch <b> --merge <sha>`, and the jawan runs it on a failure.
-  It takes back only a merge this machine's catch-up recorded making (state/catch-up.json), only while it is still
-  the branch's tip, not on origin's copy of the branch, and the checkout has no uncommitted changes to tracked files
+  It takes back only a merge this machine's catch-up recorded making (state/catch-up.json), into whichever branch
+  (one that is no longer the working branch too), only while it is still the branch's tip, not on origin's copy of
+  the branch, and the checkout has no uncommitted changes to tracked files
   (someone's edit is never carried across): the branch moves back to the merge's first parent with
   `git reset --keep`, and the branch's task gets a note. A merge with work on top of it, or any commit it did not
   make, is refused and left as it is.

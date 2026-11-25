@@ -2,8 +2,8 @@
 // origin's main of a project carries a new vX.Y.Z tag, this machine's scan (`bin/toli catch-up scan`, which the tick
 // starts detached every SCAN_MINUTES so it never waits on the network) starts one catch-up jawan for the project
 // through the normal `bin/toli spawn` path. That jawan runs `bin/toli catch-up merge` (src/projects/catch-up-merge.ts),
-// which merges the tag into each long-lived branch's checkout, then runs the quick checks and pushes only what the
-// merge's plan allows. The scan itself never merges, commits or pushes.
+// which merges the tag into the project's configured working branch (never a per-task, fix or PR branch), then runs
+// the quick checks and pushes only what the merge's plan allows. The scan itself never merges, commits or pushes.
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -91,22 +91,54 @@ export type Target = { branch: string; dir: string | null; task: string | null }
 /** A target whose branch is checked out on this machine: the only kind a catch-up jawan is handed. */
 export type CheckedOut = Target & { dir: string };
 
+/** Local branch `branch` of the clone as a target: its checkout here (if any) and the live task working on it. */
+export function branchTarget(project: Project, clone: string, branch: string): Target {
+    const dir = gitWorktrees(clone).find((entry) => entry.branch === branch)?.path ?? null;
+    const task = loadBacklog().tasks.find(
+        (entry) => entry.project === project.name && LIVE.includes(entry.status) && entry.workspace?.branch === branch,
+    );
+    return { branch, dir, task: task?.id ?? null };
+}
+
 /**
- * The branches a release catches up here, never `main` itself: the project's fixed `branch` (a same-branch project
- * without one: the branch its clone is on), then the branch of each live (active or held) task of the project.
+ * The branches a release catches up here: only the project's configured working branch (`project set --branch`),
+ * never `main` itself. Every other branch (a per-task fix or PR branch, whatever the clone is on) is passed over
+ * (`passedOver`); a project without a working branch gets no catch-up.
  */
 export function catchUpTargets(project: Project, clone: string, main: string): Target[] {
-    const worktrees = gitWorktrees(clone);
-    const targets = new Map<string, Target>();
-    const add = (branch: string | null | undefined, task: string | null): void => {
-        if (!branch || branch === main || targets.has(branch) || !refExists(clone, `refs/heads/${branch}`)) return;
-        const dir = worktrees.find((entry) => entry.branch === branch)?.path ?? null;
-        targets.set(branch, { branch, dir, task });
-    };
-    add(project.branch ?? (perTask(project.workspace) ? null : currentBranch(clone)), null);
-    for (const task of loadBacklog().tasks)
-        if (task.project === project.name && LIVE.includes(task.status)) add(task.workspace?.branch, task.id);
-    return [...targets.values()];
+    const branch = project.branch;
+    if (branch === undefined || branch === main || !refExists(clone, `refs/heads/${branch}`)) return [];
+    return [branchTarget(project, clone, branch)];
+}
+
+/**
+ * The branches checked out for the project on this machine that are not its working branch nor `main`: the branch
+ * the clone is on and each live task's branch. The catch-up never merges into them; the scan names each one it skips.
+ */
+function passedOver(project: Project, clone: string, main: string): string[] {
+    const checkedOut = new Set(gitWorktrees(clone).flatMap((entry) => (entry.branch ? [entry.branch] : [])));
+    const taskBranches = loadBacklog().tasks.flatMap((task) =>
+        task.project === project.name && LIVE.includes(task.status) && task.workspace?.branch
+            ? [task.workspace.branch]
+            : [],
+    );
+    return [...new Set([currentBranch(clone), ...taskBranches])].filter(
+        (branch): branch is string =>
+            branch !== null && branch !== main && branch !== project.branch && checkedOut.has(branch),
+    );
+}
+
+/**
+ * Why the working branch `target` must not take release `tag` (commit `sha`) yet, or null. A per-task project's
+ * working branch is the base its tasks' pull requests target (say develop) while releases are tagged on main:
+ * merging a release that base does not carry would bring main's own commits into every pull request on it. So such a
+ * branch takes only a release already on its origin copy (back-merged there), never one straight from main.
+ */
+export function baseSkip(project: Project, clone: string, tag: string, sha: string, target: Target): string | null {
+    if (!perTask(project.workspace)) return null;
+    const remote = `refs/remotes/origin/${target.branch}`;
+    if (refExists(clone, remote) && git(clone, ["merge-base", "--is-ancestor", sha, remote]).code === 0) return null;
+    return `skipped: ${tag} is not on origin/${target.branch}, the base ${project.name}'s tasks target; merge it there first`;
 }
 
 /** The catch-up jawan's brief for `targets`, written to the project's briefs; returns its path. */
@@ -238,13 +270,20 @@ function scanProject(project: Project, fetch: boolean, at: Date): string[] {
         const entry: CatchUpEntry =
             previous?.tag === release.tag ? previous : { tag: release.tag, sha: release.sha, attempted: [] };
         state.projects[name] = entry;
-        const lagging = catchUpTargets(project, clone, main).filter(
-            (target) =>
-                git(clone, ["merge-base", "--is-ancestor", release.sha, `refs/heads/${target.branch}`]).code !== 0,
-        );
+        const has = (branch: string): boolean =>
+            git(clone, ["merge-base", "--is-ancestor", release.sha, `refs/heads/${branch}`]).code === 0;
+        for (const branch of passedOver(project, clone, main))
+            if (!has(branch))
+                lines.push(
+                    `${label}: ${branch}: skipped: not ${name}'s working branch (${project.branch ?? `none set: bin/toli project set ${name} --branch <b>`})`,
+                );
+        if (project.branch === undefined) return [...lines, `${label}: no working branch set, nothing to catch up`];
+        const lagging = catchUpTargets(project, clone, main).filter((target) => !has(target.branch));
         if (lagging.length === 0) return [...lines, `${label}: every long-lived branch has it`];
         const open = lagging.filter((target) => {
-            const skip = landedSkip(clone, main, release.sha, target);
+            const skip =
+                landedSkip(clone, main, release.sha, target) ??
+                baseSkip(project, clone, release.tag, release.sha, target);
             if (skip !== null) lines.push(`${label}: ${target.branch}: ${skip}`);
             return skip === null;
         });

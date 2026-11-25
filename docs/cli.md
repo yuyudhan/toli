@@ -171,10 +171,11 @@ the interactive Sardar's subagents.
   ([development.md](development.md#working-on-toli-itself-in-place-landed-with-bintoli-commit)).
 - `branch` creates a new branch in the clone and switches to it.
 - `catch-up scan` fetches each project's main and tags and, for a new `vX.Y.Z` release, starts one catch-up jawan for
-  the branches behind it (the tick runs it every 10 minutes; run it by hand on a release notice). `catch-up merge` is
-  that jawan's step: it merges the tag into each long-lived branch's checkout no one else is working in and prints the
-  checks to run and, per branch, the one push it may make or why the merge stays local, and the `catch-up undo` that
-  takes that merge back if the checks fail; it never pushes itself ([projects.md](projects.md#release-catch-up)).
+  the project's working branch (`--branch`) when it is behind (the tick runs it every 10 minutes; run it by hand on a
+  release notice); any other checked-out branch, a task's fix or PR branch included, is skipped with one log line.
+  `catch-up merge` is that jawan's step: it merges the tag into the working branch's checkout when no one else works in
+  it and prints the checks to run and the one push it may make or why the merge stays local, and the `catch-up undo`
+  that takes that merge back if the checks fail; it never pushes itself ([projects.md](projects.md#release-catch-up)).
 - `workspace` prepares, lists, and prunes per-task branches and worktrees
   ([projects.md](projects.md#workspace-strategy)).
 - `forge`, `push`, `pr`: GitHub, GitLab, and Bitbucket Cloud; never forced, and only on your word or a standing

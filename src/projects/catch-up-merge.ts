@@ -1,5 +1,5 @@
 // `bin/toli catch-up merge <project> --tag <vX.Y.Z>`, run by the release catch-up jawan (src/projects/catch-up.ts):
-// merge the tagged release into each long-lived branch's checkout on this machine through `bin/toli commit`'s
+// merge the tagged release into the project's working branch's checkout on this machine through `bin/toli commit`'s
 // `--merge` (safeCommit), and print the plan the jawan follows next: the quick checks to run and, per branch, either
 // the one push command it may run after them (naming the branch, so it refuses a checkout on any other) or why the
 // merge stays local, and the `catch-up undo` line that takes the merge back should the checks fail. It never pushes.
@@ -16,6 +16,8 @@ import { now, out, printJson, ToliError } from "../core/util.ts";
 import { updateTask } from "../records/backlog.ts";
 import { refExists } from "./base-branch.ts";
 import {
+    baseSkip,
+    branchTarget,
     catchUpTargets,
     landedSkip,
     mainRef,
@@ -36,7 +38,7 @@ import { findProject, type Project, projectCloneDir } from "./projects.ts";
  * for a branch merged now.
  */
 export type CatchUpOutcome = Target & {
-    result: "up to date" | "landed" | "not checked out" | "held" | "conflict" | "refused" | "merged";
+    result: "up to date" | "landed" | "off base" | "not checked out" | "held" | "conflict" | "refused" | "merged";
     detail: string;
     merged?: string;
     checks?: string;
@@ -121,6 +123,8 @@ function mergeTarget(
         return outcome("up to date", `up to date (has ${tag})`);
     const landed = landedSkip(clone, base, sha, target);
     if (landed !== null) return outcome("landed", `${landed}; nothing merged`);
+    const offBase = baseSkip(project, clone, tag, sha, target);
+    if (offBase !== null) return outcome("off base", `${offBase}; nothing merged, tried again next scan`);
     if (target.dir === null || currentBranch(target.dir) !== target.branch)
         return outcome("not checked out", "not checked out on this machine; nothing merged");
     const holder = standDown(project, clone, mainRef(clone, base), tag, { ...target, dir: target.dir }, now(), ownTask);
@@ -161,8 +165,9 @@ function mergeTarget(
 }
 
 /**
- * Merge release `tag` into every long-lived branch of `name` on this machine; a branch found held or not checked out
- * goes back to the scan. `ownTask`: the task this catch-up was dispatched on, whose own jawan never holds it. Each
+ * Merge release `tag` into the project's working branch on this machine (`catchUpTargets`: never a per-task, fix or
+ * PR branch); a branch found held, not checked out or lacking the release on its base goes back to the scan.
+ * `ownTask`: the task this catch-up was dispatched on, whose own jawan never holds it. Each
  * merge made is recorded in state/catch-up.json, the only commits `undoMerge` takes back.
  */
 export function mergeRelease(name: string, tag: string, ownTask: string | null = null): CatchUpOutcome[] {
@@ -179,7 +184,7 @@ export function mergeRelease(name: string, tag: string, ownTask: string | null =
         mergeTarget(project, clone, { tag, sha, base: main }, target, remote, ownTask),
     );
     const handBack = outcomes
-        .filter((entry) => entry.result === "held" || entry.result === "not checked out")
+        .filter((entry) => entry.result === "held" || entry.result === "not checked out" || entry.result === "off base")
         .map((entry) => entry.branch);
     const merges = outcomes.flatMap((entry) => (entry.merged === undefined ? [] : [entry.merged]));
     updateCatchUpState((state) => {
@@ -195,7 +200,8 @@ export function mergeRelease(name: string, tag: string, ownTask: string | null =
 /**
  * `catch-up undo <project> --branch <b> --merge <sha>`: take back a catch-up merge whose checks failed, leaving the
  * checkout as the merge found it. Only a merge this machine's catch-up recorded making for the project's current
- * release, that is still the branch's tip (nothing on top), not on origin's copy of the branch, in a checkout on that
+ * release (into whichever branch: one no longer the working branch is still undone), that is still the branch's tip
+ * (nothing on top), not on origin's copy of the branch, in a checkout on that
  * branch with no uncommitted changes to tracked files (someone's edit there is never carried across the undo): the
  * branch moves back to the merge's first parent with `git reset --keep`. The branch's task gets a note. Any other
  * commit is never touched.
@@ -212,9 +218,8 @@ export function undoMerge(name: string, branch: string, merge: string): string {
         throw new ToliError(
             `refusing: ${short} is not a merge this machine's catch-up made into ${branch}; nothing undone`,
         );
-    const main = releaseBranch(project, clone);
-    const target = main === null ? undefined : catchUpTargets(project, clone, main).find((t) => t.branch === branch);
-    if (target === undefined || target.dir === null || currentBranch(target.dir) !== branch)
+    const target = branchTarget(project, clone, branch);
+    if (target.dir === null || currentBranch(target.dir) !== branch)
         throw new ToliError(`refusing: ${branch} is not checked out on this machine; nothing undone`);
     const where = relative(realpathSync(paths.root()), target.dir);
     const changed = git(target.dir, ["diff", "--quiet", "HEAD", "--"]);
