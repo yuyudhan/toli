@@ -12,7 +12,7 @@ import { raiseKeyMismatch } from "./first-contact.ts";
 import { certFingerprintOf, certPem, certSigValid, fingerprintOf, loadIdentity, TLS_NAME } from "./identity.ts";
 import { newPeer, pin, REQUEST_KEEP_MS, signed } from "./pair.ts";
 import { readListener } from "./server.ts";
-import { type Actor, loadPeers, type Peer, peerLog, peerSettings, personField } from "./store.ts";
+import { type Actor, loadPeers, type Peer, peerLog, peerSettings, personField, updatePeers } from "./store.ts";
 
 const CONNECT_MS = 5_000;
 const POST_MS = 30_000;
@@ -153,7 +153,27 @@ export async function requestPairing(target: string): Promise<Requested> {
         throw new ToliError(`${hello.name} refused the request (${sent.status}): ${String(sent.value.error)}`);
     if (sent.value.status === "paired") {
         // The host pinned this machine on first contact; pin it here the same way, unless it already is.
-        if (named?.status === "active") return { hello, reqId, paired: named, already: true };
+        if (named?.status === "active") {
+            if (named.introducedBy === undefined) return { hello, reqId, paired: named, already: true };
+            // Pinned through an introducer until now: paired directly, it is this machine's own pin, with no expiry
+            // and nothing the introducer can revoke (docs/peers.md "Talking on the office network").
+            const own = updatePeers((peers) => {
+                const peer = peers.find((entry) => entry.name === named.name && entry.status === "active");
+                if (peer === undefined) return named;
+                delete peer.introducedBy;
+                delete peer.introId;
+                delete peer.notAfter;
+                peer.pairedBy = "first-contact";
+                if (!peer.addrs.includes(hostPort(host, port))) peer.addrs = [hostPort(host, port), ...peer.addrs];
+                if (peer.cert === "") {
+                    peer.cert = cert;
+                    peer.certSig = hello.certSig;
+                }
+                return peer;
+            });
+            peerLog(`paired with ${named.name} directly on first contact: its pin is now this machine's own`);
+            return { hello, reqId, paired: own, already: false };
+        }
         const peer = newPeer(
             {
                 name: hello.name,

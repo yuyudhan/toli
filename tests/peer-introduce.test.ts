@@ -193,6 +193,16 @@ describe("applyIntroduction accepts", () => {
         );
     });
 
+    test("a subject with no TLS certificate is pinned relay-only: no addresses, so never reached directly", () => {
+        const { recv, coord } = fleetBox();
+        const subject = { ...subjectOf(sender(), "mac"), addrs: ["127.0.0.1:47123"] };
+        expect(apply(recv.box, certificate(coord, recv.fingerprint, subject)).status).toBe("pinned");
+        const pinned = peerNamed(recv.box, "mac");
+        expect(pinned?.cert).toBe("");
+        expect(pinned?.addrs).toEqual([]);
+        expect(pinned?.via).toBe("coord");
+    });
+
     test("by default an introduced peer gets everything but delegate", () => {
         const { recv, coord } = fleetBox();
         apply(recv.box, certificate(coord, recv.fingerprint, subjectOf(sender(), "mac")));

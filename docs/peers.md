@@ -285,11 +285,17 @@ A request from outside the open networks still takes the 4-digit code ([Pairing]
 
 **A new person's Mac, in one step.** `bin/toli peer add <coordinator> --fleet` pairs with the coordinator,
 lets it introduce machines here (`introduce`, below), and asks it for the fleet roster (`POST /v1/roster`). The
-coordinator answers with one introduction certificate per fleet box it has pinned, signed by its key and addressed to
-this machine alone. Each is checked as below and pins the box with the coordinator as its relay; then each box with
-an address on an open network is asked to pair on first contact, so it pins the Mac too. One line per box says
-`paired both ways`, `pinned through <coordinator> (...)` when the box was not reached directly, or `refused: <reason>` (a name
-pinned here with another key keeps that key).
+coordinator introduces the Mac to every fleet box it has paired (exactly as `peer introduce <mac> --fleet`, so it is
+on its books, `--status` shows it, and its tick renews it) and answers with each box's certificate, signed by its key
+and addressed to the Mac alone. Each is checked as below and pins the box on the Mac with the coordinator as its
+relay. Then each box with an address on an open network is asked to pair on first contact; where that works, both
+sides hold their own pin of the other, with no expiry. One line per box says `paired both ways`, `pinned through
+<coordinator> (...)` when the box was not reached directly, or `refused: <reason>` (a name pinned here with another
+key keeps that key), and one inbox item lists them. A box pinned through the coordinator pins the Mac only when it
+applies the coordinator's introduction, which needs that box to have granted the coordinator `introduce`; until
+then it is one way (the Mac pins the box, the box does not know the Mac), and `peer introduce --status <mac>` on the
+coordinator shows it as `queued` or `refused`. Such pins expire after 180 days unless renewed, and the coordinator's
+tick renews them.
 
 ### Introducing a machine
 
@@ -313,9 +319,11 @@ the reason (the introducer cancels it; the box's inbox says why):
 - the sender is an active peer holding `introduce` and its key signed the certificate;
 - `audience` is this machine, so a certificate for one box is useless on another; an id seen in 30 days is a
   duplicate;
-- the subject's key is a valid Ed25519 key that vouches for its certificate, and its name and person are plain;
+- the subject's key is a valid Ed25519 key, and its name and person are plain; when the certificate names a TLS
+  certificate, the subject's key vouches for it. It may name none (a machine pinned with `peer trust`); the pin then
+  gets no certificate and no addresses, so it is never reached directly and its messages go through the introducer;
 - no other pin here has that key, and a pin of that name with another key is replaced only by a `refresh` whose
-  `replaces` is the pinned fingerprint;
+  `replaces` is the pinned fingerprint, and only when this introducer made that pin;
 - `notAfter` has not passed (with a day's slack).
 
 The pin gets the grants cut to `peer.introducerCap`, `introducedBy`, `introId`, `notAfter` and the introducer as its
@@ -389,7 +397,8 @@ refuses the new key until it pairs again; the command names it. The listener res
   `peer.introducerCap` and never `introduce` itself, and an expiry (180 days unless renewed). It cannot overwrite a pin
   of another key or name, and it can revoke only what it introduced. A compromised introducer can pin an attacker on
   every box with those capped permissions until `peer deny <it> introduce` and `peer remove --introduced-by <it>`;
-  every pin it makes is logged with the certificate id and approval and posted to the inbox.
+  every pin it makes is logged with the certificate id and approval and posted to the inbox (one item per delivered
+  certificate, one item per roster).
 - **Limits.** 512 KiB a request, 50 envelopes a batch, 60 envelopes a minute and 200 unread inbox items per peer;
   past them the sender keeps its items queued.
 - **Exposure.** The listener binds private addresses only (10/8, 172.16/12, 192.168/16, 100.64/10, fd00::/8),

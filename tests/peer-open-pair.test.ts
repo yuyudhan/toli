@@ -183,6 +183,39 @@ describe("peer add <coordinator> --fleet", () => {
         expect(peersOf(b1).find((peer) => peer.name === "mac")?.key).toBe(mac.key);
     });
 
+    test("a box paired directly is the Mac's own pin; one pinned through the coordinator is renewed by it", async () => {
+        const coord = peerBox("coord");
+        const mac = peerBox("mac");
+        const b1 = peerBox("b1");
+        const b2 = peerBox("b2");
+        openLoopback(coord, mac, b1);
+        const coordAddr = await listen(coord);
+        const b1Addr = await listen(b1);
+        pin(coord.box, [
+            { name: "b1", identity: b1, cert: b1.cert, certSig: b1.certSig, addrs: [b1Addr] },
+            { name: "b2", identity: b2, cert: b2.cert, certSig: b2.certSig, addrs: ["127.0.0.1:1"] },
+        ]);
+        pin(b1.box, [{ name: "coord", identity: coord, cert: coord.cert, certSig: coord.certSig, addrs: [coordAddr] }]);
+        const machines = ["coord", "b1", "b2"].map((name) => ({ name, ssh: name, root: "/t" }));
+        writeFileSync(join(coord.box.root, "config", "fleet.json"), JSON.stringify({ machines }));
+        mac.box.ok(["peer", "add", coordAddr, "--fleet"]);
+        const onMac = new Map(peersOf(mac).map((peer) => [peer.name, peer]));
+        // Paired both ways on first contact: no expiry, and no introducer can revoke it.
+        expect(onMac.get("b1")?.notAfter).toBeUndefined();
+        expect(onMac.get("b1")?.introducedBy).toBeUndefined();
+        // Pinned only through the coordinator: it expires, so the coordinator keeps it on its books and renews it.
+        expect(onMac.get("b2")?.introducedBy).toBe(coord.fingerprint);
+        expect(coord.box.ok(["peer", "introduce", "--status", "mac"])).toMatch(/^b2\t/m);
+        const ledgerFile = join(coord.box.root, "state", "peer", "introduced.json");
+        const ledger = JSON.parse(readFileSync(ledgerFile, "utf8")) as Record<string, { notAfter: string }>;
+        const entry = ledger.mac;
+        if (entry === undefined) throw new Error("mac is not in the coordinator's ledger");
+        entry.notAfter = new Date(Date.now() + 10 * 24 * 60 * 60_000).toISOString();
+        writeFileSync(ledgerFile, JSON.stringify(ledger));
+        expect(coord.box.ok(["peer", "introduce", "--sync"])).toMatch(/^mac: renewed on b2/m);
+        expect(inboxText(mac)).toContain("pinned through coord");
+    });
+
     test("a roster entry that conflicts with a pin already here is refused, the rest applied", async () => {
         const coord = peerBox("coord");
         const mac = peerBox("mac");

@@ -91,6 +91,10 @@ describe("an introduced pin's relay", () => {
         await until("laptop to pull after hub's nudge", 30_000, () =>
             bodies(laptop).includes("no tick needed") ? true : null,
         );
+        // Laptop applies the item, then acks it to the hub, which only then drops what it held: wait for that ack.
+        await until("hub to drop the item on laptop's ack", 30_000, () =>
+            held(hub, laptop).length === 0 ? true : null,
+        );
         expect(held(hub, laptop)).toEqual([]);
     });
 });

@@ -17,6 +17,7 @@ import { type Introduction, type IntroOp, introId, pinExpiry, signIntroduction, 
 import {
     type Actor,
     activePeer,
+    expired,
     INTRODUCED_GRANTS,
     isPermission,
     loadPeers,
@@ -75,6 +76,7 @@ export function fleetBoxes(): string[] {
 /** Why `box` gets no introduction now (not paired here, or a toli that cannot read one), or null. */
 function skipReason(box: Peer | undefined): string | null {
     if (box === undefined) return "not paired here";
+    if (expired(box)) return "its pin here expired (its introducer renews it)";
     const version = box.version === undefined ? null : parseVersion(box.version);
     const since = parseVersion(INTRODUCTION_SINCE);
     if (version !== null && since !== null && compareVersions(version, since) < 0)
@@ -112,10 +114,18 @@ function certify(op: IntroOp, audience: Peer, subject: Peer, terms: Approval, re
 
 /**
  * Introduce `subject` to each of `boxes` and each box to `subject`, as `op`. A box not paired here, or on a toli that
- * cannot read an introduction, is recorded as skipped. Returns one `<box>: <what happened>` line each.
+ * cannot read an introduction, is recorded as skipped. Returns one `<box>: <what happened>` line each, and the
+ * certificates queued for the subject (its roster entries).
  */
-function sendTo(subject: Peer, boxes: string[], terms: Approval, op: IntroOp, replaces: string | null): string[] {
+function sendTo(
+    subject: Peer,
+    boxes: string[],
+    terms: Approval,
+    op: IntroOp,
+    replaces: string | null,
+): { lines: string[]; rosters: Introduction[] } {
     const lines: string[] = [];
+    const rosters: Introduction[] = [];
     const sent: Record<string, Sent> = {};
     for (const name of boxes) {
         if (name === subject.name) continue;
@@ -130,6 +140,7 @@ function sendTo(subject: Peer, boxes: string[], terms: Approval, op: IntroOp, re
         const roster = certify(op, subject, box, terms);
         queue(box.name, cert);
         queue(subject.name, roster);
+        rosters.push(roster);
         sent[name] = { id: cert.id, rosterId: roster.id, at: now().getTime() };
         lines.push(`${name}: queued`);
     }
@@ -143,7 +154,7 @@ function sendTo(subject: Peer, boxes: string[], terms: Approval, op: IntroOp, re
             boxes: { ...(entry?.fingerprint === subject.fingerprint ? entry.boxes : {}), ...sent },
         };
     });
-    return lines;
+    return { lines, rosters };
 }
 
 /** `peer introduce <subject> --fleet|--to ...`: the one approval, fanned out. */
@@ -151,7 +162,18 @@ export function introduce(subjectName: string, boxes: string[], grants: Permissi
     const subject = activePeer(subjectName);
     if (subject === undefined) throw new ToliError(`no paired peer "${subjectName}"`);
     const approval = { by: actor.by, why: actor.why, at: now().toISOString() };
-    return sendTo(subject, boxes, { grants, approval, notAfter: pinExpiry() }, "introduce", null);
+    return sendTo(subject, boxes, { grants, approval, notAfter: pinExpiry() }, "introduce", null).lines;
+}
+
+/**
+ * `POST /v1/roster` from `subject` (its `peer add <this> --fleet`): introduce it to every fleet box with all five
+ * permissions, as `peer introduce --fleet` would (so it is on the books: `--status`, renewed by `--sync`), and return
+ * the certificates for the subject at once. They stay queued too; delivered again later, they are duplicates.
+ */
+export function rosterFor(subject: Peer): Introduction[] {
+    const approval = { by: loadMachine().name, why: `fleet roster for ${subject.name}`, at: now().toISOString() };
+    const terms = { grants: [...PERMISSIONS], approval, notAfter: pinExpiry() };
+    return sendTo(subject, fleetBoxes(), terms, "introduce", null).rosters;
 }
 
 /** Where one introduction is: delivered and applied, waiting, refused (with the reason), or never sent. */
@@ -190,18 +212,18 @@ export function syncIntroductions(): string[] {
         const terms = { grants: entry.grants, approval: entry.approval, notAfter: entry.notAfter };
         if (subject.fingerprint !== entry.fingerprint) {
             const renewed = { ...terms, notAfter: pinExpiry() };
-            const rotated = sendTo(subject, reached, renewed, "refresh", entry.fingerprint);
+            const rotated = sendTo(subject, reached, renewed, "refresh", entry.fingerprint).lines;
             lines.push(...rotated.map((line) => `${name}: new key to ${line}`));
             continue;
         }
         if (Date.parse(entry.notAfter) - now().getTime() < RENEW_BEFORE_MS) {
-            const renewed = sendTo(subject, reached, { ...terms, notAfter: pinExpiry() }, "refresh", null);
+            const renewed = sendTo(subject, reached, { ...terms, notAfter: pinExpiry() }, "refresh", null).lines;
             lines.push(...renewed.map((line) => `${name}: renewed on ${line}`));
         }
         const missing = fleet.filter(
             (box) => box !== name && !reached.includes(box) && skipReason(activePeer(box)) === null,
         );
-        for (const line of sendTo(subject, missing, terms, "introduce", null))
+        for (const line of sendTo(subject, missing, terms, "introduce", null).lines)
             lines.push(`${name}: introduced to ${line.replace(/: queued$/, "")}`);
     }
     return lines;

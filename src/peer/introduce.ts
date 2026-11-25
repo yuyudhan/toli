@@ -240,6 +240,14 @@ function revoke(cert: Introduction, sender: Peer, peers: Peer[]): Applied {
     return { status: "revoked", peer: peer.name, note: `${sender.name} revoked ${peer.name}` };
 }
 
+/**
+ * The subject's addresses, or none when it names no TLS certificate: a pin with addresses is reached over HTTPS with
+ * its certificate as the only trusted one, so one without a certificate is reached through its introducer only.
+ */
+function reachable(subject: Subject): string[] {
+    return subject.cert === "" ? [] : subject.addrs;
+}
+
 /** Introduce or refresh: pin the subject, or upgrade, renew or rotate its pin. */
 function pinSubject(cert: Introduction, sender: Peer, peers: Peer[]): Applied {
     const { subject } = cert;
@@ -260,7 +268,7 @@ function pinSubject(cert: Introduction, sender: Peer, peers: Peer[]): Applied {
                 fingerprint: subject.fingerprint,
                 cert: subject.cert,
                 certSig: subject.certSig,
-                addrs: subject.addrs.length > 0 ? subject.addrs : existing.addrs,
+                addrs: subject.cert === "" ? [] : subject.addrs.length > 0 ? subject.addrs : existing.addrs,
                 ...stamp,
             });
             return { status: "rotated", peer: subject.name, note: `${subject.name}'s new key pinned ${through}` };
@@ -273,7 +281,7 @@ function pinSubject(cert: Introduction, sender: Peer, peers: Peer[]): Applied {
             existing.cert = subject.cert;
             existing.certSig = subject.certSig;
         }
-        if (existing.addrs.length === 0) existing.addrs = subject.addrs;
+        if (existing.addrs.length === 0 && existing.cert !== "") existing.addrs = reachable(subject);
         existing.via ??= sender.name;
         if (mine || handMade) Object.assign(existing, stamp);
         const status = mine ? "renewed" : "upgraded";
@@ -291,7 +299,7 @@ function pinSubject(cert: Introduction, sender: Peer, peers: Peer[]): Applied {
         fingerprint: subject.fingerprint,
         cert: subject.cert,
         certSig: subject.certSig,
-        addrs: subject.addrs,
+        addrs: reachable(subject),
         allow: cappedGrants(cert.grants),
         pairedAt: now().toISOString(),
         pairedBy: "introduced",

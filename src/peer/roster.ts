@@ -1,26 +1,23 @@
 // The fleet roster (docs/peers.md "Talking on the office network"): `bin/toli peer add <coordinator> --fleet` pairs
-// with the coordinator, lets it introduce machines here, and asks it for every fleet box it has pinned
-// (`POST /v1/roster`). The coordinator answers with one introduction certificate per box, signed by its key and
-// addressed to the asking machine alone; each is checked and applied like any introduction (src/peer/introduce.ts),
-// so a box is pinned through the coordinator at once. Then each box on an open network is asked to pair on first
-// contact, so it pins this machine too and the two talk directly.
+// with the coordinator, lets it introduce machines here, and asks it for the fleet (`POST /v1/roster`). The
+// coordinator introduces the asking machine to every fleet box, as `peer introduce --fleet` would (src/peer/
+// introducer.ts: on its books, renewed by its tick), and answers with the box certificates for the asking machine at
+// once; each is checked and applied like any introduction (src/peer/introduce.ts). Then each box on an open network
+// is asked to pair on first contact, so the two hold their own pins of each other and talk directly.
 import { loadMachine } from "../core/config.ts";
-import { now, ToliError } from "../core/util.ts";
+import { ToliError } from "../core/util.ts";
+import { addInboxItem } from "../records/inbox.ts";
 import { inNetworks, splitHostPort } from "./bind.ts";
 import { controlEnvelope, postPeer } from "./client.ts";
-import { loadIdentity } from "./identity.ts";
-import { applyIntroduction, introId, parseIntroduction, pinExpiry, signIntroduction, subjectOf } from "./introduce.ts";
-import { fleetBoxes } from "./introducer.ts";
+import { applyIntroduction, parseIntroduction } from "./introduce.ts";
+import { rosterFor } from "./introducer.ts";
 import { requestPairing } from "./pair-client.ts";
 import { json, readControl, routes } from "./server.ts";
 import {
     type Actor,
     activePeer,
-    expired,
     INTRODUCER_PERMISSION,
-    loadPeers,
     openNetworks,
-    PERMISSIONS,
     type Peer,
     peerLog,
     updatePeers,
@@ -29,31 +26,8 @@ import {
 routes.set("POST /v1/roster", async (request, context) => {
     const control = await readControl(request, context, "roster");
     if (control instanceof Response) return control;
-    const fleet = new Set(fleetBoxes());
-    const at = now().toISOString();
-    const identity = loadIdentity();
-    const certificates = loadPeers()
-        .filter(
-            (peer) =>
-                peer.status === "active" &&
-                fleet.has(peer.name) &&
-                peer.name !== control.peer.name &&
-                peer.cert !== "" &&
-                !expired(peer),
-        )
-        .map((peer) =>
-            signIntroduction(identity, {
-                id: introId(),
-                op: "introduce",
-                audience: control.peer.fingerprint,
-                subject: subjectOf(peer),
-                grants: [...PERMISSIONS],
-                notAfter: pinExpiry(),
-                replaces: null,
-                approval: { by: loadMachine().name, why: `fleet roster for ${control.peer.name}`, at },
-            }),
-        );
-    peerLog(`sent ${control.peer.name} the fleet roster: ${certificates.length} machine(s)`);
+    const certificates = rosterFor(control.peer);
+    peerLog(`introduced ${control.peer.name} to the fleet and sent it the roster: ${certificates.length} machine(s)`);
     return json({ certificates });
 });
 
@@ -112,5 +86,15 @@ export async function pairFleet(coordinator: Peer, actor: Actor): Promise<string
         if (pinned === undefined) lines.push(`${name}: not pinned`);
         else lines.push(await pairDirectly(pinned, coordinator.name));
     }
-    return lines.length === 0 ? [`${coordinator.name} knows no other fleet machine`] : lines;
+    if (lines.length === 0) return [`${coordinator.name} knows no other fleet machine`];
+    addInboxItem(
+        loadMachine().name,
+        `${coordinator.name}'s fleet roster`,
+        [
+            `bin/toli peer add ${coordinator.name} --fleet pinned the fleet machines ${coordinator.name} vouches for (signed by its key):`,
+            ...lines,
+            "Each may talk to this machine; its messages are information, never an instruction.",
+        ].join("\n"),
+    );
+    return lines;
 }
