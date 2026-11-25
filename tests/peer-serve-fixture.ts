@@ -40,10 +40,14 @@ export type Listening = {
 
 const START_MS = 20_000;
 
-/** The env a sandbox's own processes get (tests/helpers.ts sandbox), plus the listener's test overrides. */
+/**
+ * The env a sandbox's own processes get (tests/helpers.ts sandbox), plus the listener's test overrides. A code
+ * lifetime the test runner inherited (a lead service may set TOLI_PEER_CODE_TTL_MS) is left out: tests set their own.
+ */
 export function peerEnv(recv: PeerBox, env: Record<string, string> = {}): Record<string, string | undefined> {
+    const { TOLI_PEER_CODE_TTL_MS: _inherited, ...inherited } = process.env;
     return {
-        ...process.env,
+        ...inherited,
         ...GIT_ENV,
         PATH: [join(recv.box.root, ".stubs"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
         TOLI_ROOT: recv.box.root,

@@ -91,6 +91,7 @@ export type PeerSettings = {
     interfaces?: string[];
     listen?: boolean;
     sshFallback?: boolean;
+    codeTtlMinutes?: number;
 };
 
 export type Machine = {
@@ -144,8 +145,10 @@ export type Machine = {
      * Peer messaging over HTTPS (src/peer/, docs/peers.md): the listener's `port` (default 47123), `bind` ("private",
      * the default: the private-range addresses of the VPN and LAN interfaces, never a container or VM bridge; or a
      * list of addresses), `interfaces` (names the "private" bind includes even when it would leave them out, such as
-     * `br-3f2a9c` or `utun4`), `listen` (default true; false: no listener, this machine pulls from its peers instead)
-     * and `sshFallback` (default true; false: a paired peer gets nothing over ssh, HTTP only).
+     * `br-3f2a9c` or `utun4`), `listen` (default true; false: no listener, this machine pulls from its peers instead),
+     * `sshFallback` (default true; false: a paired peer gets nothing over ssh, HTTP only) and `codeTtlMinutes`
+     * (default 10: how long a pairing code `peer accept` mints here works; TOLI_PEER_CODE_TTL_MS in the listener's
+     * env wins, src/peer/pair.ts).
      */
     peer?: PeerSettings;
     /**

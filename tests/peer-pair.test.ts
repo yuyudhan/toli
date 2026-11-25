@@ -2,7 +2,7 @@
 // (draft-irtf-cfrg-cpace-14, B.3.9 and B.3.11), then two real installations pairing over HTTPS, and every refusal: a
 // wrong code (3 tries, then the request is gone and a 4th try finds nothing), an expired code, a forged request.
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
     calculateGenerator,
@@ -151,6 +151,22 @@ function peersOf(box: PeerBox): Array<{ name: string; allow: string[]; status: s
     }>;
 }
 
+/** Set `peer.codeTtlMinutes` in the box's config/machine.json (the rest of the file kept). */
+function setCodeTtlMinutes(box: PeerBox, minutes: unknown): void {
+    const file = join(box.box.root, "config", "machine.json");
+    const machine = JSON.parse(readFileSync(file, "utf8")) as { peer?: Record<string, unknown> };
+    machine.peer = { ...machine.peer, codeTtlMinutes: minutes };
+    writeFileSync(file, `${JSON.stringify(machine, null, 4)}\n`);
+}
+
+/** The lifetime `peer accept` prints for a fresh request's code. */
+function codeLifetime(pair: Pair): string {
+    const out = pair.b.box.ok(["peer", "accept", requestId(pair), "--by", "owner", "--why", "test"]);
+    const lifetime = /^It works once within (.+)\. Tell it only/m.exec(out)?.[1];
+    if (lifetime === undefined) throw new Error(`no lifetime in: ${out}`);
+    return lifetime;
+}
+
 const wrong = (code: string) => String((Number(code) + 1) % 10_000).padStart(4, "0");
 
 describe("pairing with a 4-digit code", () => {
@@ -232,6 +248,31 @@ describe("pairing with a 4-digit code", () => {
         expect(late.code).toBe(1);
         expect(late.stderr).toContain("the code expired");
         expect(peersOf(pair.b)).toEqual([]);
+    });
+
+    test("a code lives 10 minutes by default, and the request's inbox item says so", async () => {
+        const pair = await pairBoxes();
+        expect(codeLifetime(pair)).toBe("10 minutes");
+        const inbox = join(pair.b.box.root, "data", "inbox");
+        const items = readdirSync(inbox).map((file) => readFileSync(join(inbox, file), "utf8"));
+        expect(items.some((item) => item.includes("prints a 4-digit code (valid 10 minutes)"))).toBe(true);
+    });
+
+    test("peer.codeTtlMinutes in config/machine.json sets the lifetime; TOLI_PEER_CODE_TTL_MS overrides it", async () => {
+        const configured = await pairBoxes();
+        setCodeTtlMinutes(configured.b, 3);
+        expect(codeLifetime(configured)).toBe("3 minutes");
+        const overridden = await pairBoxes({ TOLI_PEER_CODE_TTL_MS: "90000" });
+        setCodeTtlMinutes(overridden.b, 3);
+        expect(codeLifetime(overridden)).toBe("90 s");
+    });
+
+    test("an invalid peer.codeTtlMinutes mints no code and says why", async () => {
+        const pair = await pairBoxes();
+        setCodeTtlMinutes(pair.b, 0);
+        const refused = pair.b.box.toli(["peer", "accept", requestId(pair), "--by", "owner", "--why", "test"]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("config/machine.json peer.codeTtlMinutes must be a positive number");
     });
 
     test("no code before the owner accepts, and a code typed with no request is refused", async () => {

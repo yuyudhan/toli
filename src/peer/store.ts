@@ -135,8 +135,10 @@ export function peerByFingerprint(fingerprint: string): { peer: Peer; key: strin
     return undefined;
 }
 
-/** This machine's `peer` settings with their defaults. */
-export function peerSettings(): Required<Omit<PeerSettings, "bind">> & { bind: "private" | string[] } {
+/** This machine's `peer` settings with their defaults (the pairing code's lifetime is read in pair.ts). */
+export function peerSettings(): Required<Omit<PeerSettings, "bind" | "codeTtlMinutes">> & {
+    bind: "private" | string[];
+} {
     const settings = machineSettings().peer ?? {};
     return {
         port: settings.port ?? DEFAULT_PORT,

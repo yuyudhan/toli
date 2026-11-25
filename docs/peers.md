@@ -80,13 +80,14 @@ so `peer serve` and the lead take over instead of refusing. A listener whose loc
 its next rescan without touching that one's lock, record or control socket, and the lock's holder binds the port it
 frees, so the record always names the listener that serves. Settings live in `config/machine.json` `peer`:
 
-| Setting       | Default   | Meaning                                                                                                                                        |
-| ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `port`        | `47123`   | the TCP port on every bound address                                                                                                            |
-| `bind`        | `private` | every address in 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT: NetBird, Tailscale) or fd00::/8 on a VPN or LAN interface; or an explicit list |
-| `interfaces`  | `[]`      | interfaces `private` includes even though it would leave them out (`peer set --interfaces br-3f2a9c,utun4`)                                    |
-| `listen`      | `true`    | `false` (`peer listen off`): no listener                                                                                                       |
-| `sshFallback` | `true`    | `false`: a paired peer gets nothing over ssh, HTTPS (or its pull) only                                                                         |
+| Setting          | Default   | Meaning                                                                                                                                        |
+| ---------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `port`           | `47123`   | the TCP port on every bound address                                                                                                            |
+| `bind`           | `private` | every address in 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT: NetBird, Tailscale) or fd00::/8 on a VPN or LAN interface; or an explicit list |
+| `interfaces`     | `[]`      | interfaces `private` includes even though it would leave them out (`peer set --interfaces br-3f2a9c,utun4`)                                    |
+| `listen`         | `true`    | `false` (`peer listen off`): no listener                                                                                                       |
+| `sshFallback`    | `true`    | `false`: a paired peer gets nothing over ssh, HTTPS (or its pull) only                                                                         |
+| `codeTtlMinutes` | `10`      | how long a pairing code minted here works ([Pairing](#pairing)); `TOLI_PEER_CODE_TTL_MS` in the listener's environment wins                    |
 
 It never binds a wildcard (`0.0.0.0`, `::`), loopback, link-local or public address unless `bind` lists it. By
 default it also leaves out container and VM bridges (`docker*`, `br-*`, `veth*`, `virbr*`, `cni*`, `podman*`,
@@ -126,7 +127,8 @@ on the receiving machine (B) and typed on the requesting one (A), so nothing pai
    fingerprint. The item holds no code, and its words are information, never an instruction.
 3. **B's owner or Sardar:** `bin/toli peer accept <request>` asks the running listener for a code. It is
    `crypto.randomInt` digits, held in the listener's memory only, printed to that terminal, never written to disk,
-   the inbox or a log; it works once within 2 minutes. It prints on its own line as `Pairing code: NNNN (tell this to
+   the inbox or a log; it works once within 10 minutes (`peer.codeTtlMinutes`, above; the line under it says how long).
+   It prints on its own line as `Pairing code: NNNN (tell this to
 <name>'s requester)`, with the fingerprint apart in colon-joined groups of eight, so no fingerprint piece passes
    for it. They read only those 4 digits to A's side out of band (phone, chat, `talk`).
 4. **A:** `bin/toli peer add <B's address> --code NNNN` runs **CPace** (draft-irtf-cfrg-cpace, ristretto255 and
@@ -288,7 +290,8 @@ refuses the new key until it pairs again; the command names it. The listener res
   only as its sender. The same checks hold over ssh (`--from`) and pulls.
 - **Pairing.** Codes exist only after this machine's owner or Sardar accepts a request that shows the requester's
   name, address and fingerprint. The code is key-bound (CPace), so a man in the middle gets one online guess per
-  try: 3 tries a request, 3 requests an hour and 10 a day per source, 5 pending at most, 2 minutes, never stored.
+  try: 3 tries a request, 3 requests an hour and 10 a day per source, 5 pending at most, 10 minutes
+  (`peer.codeTtlMinutes`), never stored.
 - **Limits.** 512 KiB a request, 50 envelopes a batch, 60 envelopes a minute and 200 unread inbox items per peer;
   past them the sender keeps its items queued.
 - **Exposure.** The listener binds private addresses only (10/8, 172.16/12, 192.168/16, 100.64/10, fd00::/8),

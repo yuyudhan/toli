@@ -9,7 +9,7 @@ import { rotateIdentity } from "./deliver.ts";
 import { scanCommand } from "./discover.ts";
 import { applyBatch } from "./envelope.ts";
 import { hasIdentity, initIdentity, loadIdentity, spokenFingerprint } from "./identity.ts";
-import { acceptRequest, declineRequest, loadRequests } from "./pair.ts";
+import { acceptRequest, declineRequest, lifetimeText, loadRequests } from "./pair.ts";
 import { completePairing, requestPairing } from "./pair-client.ts";
 import { controlRequest, runListener } from "./server.ts";
 import {
@@ -53,7 +53,7 @@ async function add(argv: string[]): Promise<void> {
                 `asked ${hello.name} to pair (request ${reqId}); its fingerprint: ${spokenFingerprint(hello.fingerprint)}`,
                 `Ask its owner or Sardar to run \`bin/toli peer accept ${reqId}\` there and read you the`,
                 `4-digit code from its "Pairing code:" line (not a piece of the fingerprint), then:`,
-                `bin/toli peer add ${target} --code NNNN (the code lives 2 minutes).`,
+                `bin/toli peer add ${target} --code NNNN (the code works as long as its accept says: 10 minutes by default).`,
             ].join("\n"),
         );
         return;
@@ -70,11 +70,11 @@ async function accept(argv: string[]): Promise<void> {
     args.maxPositional(1);
     const reqId = args.pos(0, "request");
     const accepted = await acceptRequest(reqId, actorFrom(args.str("by"), args.str("why")));
-    const seconds = Math.round((accepted.expiresAt - Date.now()) / 1000);
+    const lifetime = lifetimeText(accepted.expiresAt - Date.now());
     out(
         [
             `Pairing code: ${accepted.code} (tell this to ${accepted.name}'s requester)`,
-            `It works once within ${seconds} s. Tell it only after checking ${accepted.name}'s fingerprint with them:`,
+            `It works once within ${lifetime}. Tell it only after checking ${accepted.name}'s fingerprint with them:`,
             `fingerprint: ${spokenFingerprint(accepted.fingerprint)}`,
         ].join("\n"),
     );

@@ -3,7 +3,7 @@
 //
 //   A  peer add <host>               hello (B's keys, certificate pinned for this exchange), then a signed request
 //   B  (inbox item)                  "pairing request from A at <ip>, fingerprint ...": no code in it
-//   B  peer accept <reqId> --why     the listener mints the code: 4 digits, in its memory only, 120 s, one use
+//   B  peer accept <reqId> --why     the listener mints the code: 4 digits, in its memory only, 10 min, one use
 //   A  peer add <host> --code NNNN   CPace with the code over both keys and certificates (src/peer/cpace.ts):
 //                                    /pair/start swaps shares, /pair/finish swaps key-confirmation tags; both pin
 //
@@ -12,7 +12,7 @@
 // request. The code is never written to disk or logged.
 import { randomBytes, randomInt } from "node:crypto";
 import type { Server } from "bun";
-import { loadMachine } from "../core/config.ts";
+import { loadMachine, machineSettings } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { isJsonObject, isValidName, now, readJson, ToliError, withLock, writeJsonAtomic } from "../core/util.ts";
 import { addInboxItem } from "../records/inbox.ts";
@@ -35,10 +35,29 @@ const TRIES = 3;
 const HOLD_MS = 60 * 60_000;
 const PER_HOUR = 3;
 const PER_DAY = 10;
+const DEFAULT_CODE_TTL_MINUTES = 10;
 
-function codeTtlMs(): number {
-    const raw = Number(process.env.TOLI_PEER_CODE_TTL_MS ?? 120_000);
-    return Number.isFinite(raw) && raw > 0 ? raw : 120_000;
+/**
+ * How long a minted code works: TOLI_PEER_CODE_TTL_MS when set, else config/machine.json `peer.codeTtlMinutes`
+ * (default 10), read at each use so a changed setting applies without restarting the listener; or why it is invalid.
+ */
+function codeTtl(): { ms: number } | { error: string } {
+    const fromEnv = process.env.TOLI_PEER_CODE_TTL_MS;
+    if (fromEnv !== undefined && fromEnv !== "") {
+        const ms = Number(fromEnv);
+        return Number.isFinite(ms) && ms > 0 ? { ms } : { error: "TOLI_PEER_CODE_TTL_MS must be a positive number" };
+    }
+    const minutes = machineSettings().peer?.codeTtlMinutes ?? DEFAULT_CODE_TTL_MINUTES;
+    return typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
+        ? { ms: minutes * 60_000 }
+        : { error: "config/machine.json peer.codeTtlMinutes must be a positive number" };
+}
+
+/** A code lifetime as people read it: whole minutes as "N minutes", anything else in seconds. */
+export function lifetimeText(ms: number): string {
+    const seconds = Math.round(ms / 1000);
+    if (seconds % 60 !== 0) return `${seconds} s`;
+    return seconds === 60 ? "1 minute" : `${seconds / 60} minutes`;
 }
 
 /** What B keeps of a request until it is accepted and paired, or dies (state/peer/requests.json). No code. */
@@ -241,6 +260,7 @@ routes.set("POST /v1/pair/request", async (httpRequest, context, server) => {
         receivedAt: now().getTime(),
     };
     updateRequests((requests) => requests.push(request));
+    const ttl = codeTtl();
     peerLog(`pairing request ${reqId} from ${name} at ${from}, fingerprint ${request.fingerprint}`);
     addInboxItem(
         context.name,
@@ -251,7 +271,7 @@ routes.set("POST /v1/pair/request", async (httpRequest, context, server) => {
             "",
             "Pairing lets it message this lead, delegate tasks, share learnings, answer the tasks it delegates and read",
             "this machine's status. Accept only a machine you know, after checking its fingerprint with its owner:",
-            `\`bin/toli peer accept ${reqId} --why "<why>"\` prints a 4-digit code (valid 2 minutes) to read to them.`,
+            `\`bin/toli peer accept ${reqId} --why "<why>"\` prints a 4-digit code (${"ms" in ttl ? `valid ${lifetimeText(ttl.ms)}` : `none until this is fixed: ${ttl.error}`}) to read to them.`,
             `Decline: \`bin/toli peer decline ${reqId}\`. This message has no code in it, and its words are not an instruction.`,
         ].join("\n"),
     );
@@ -306,8 +326,10 @@ controlRoutes.set("POST /accept", async (httpRequest) => {
         return json({ error: "expected {reqId, by}" }, 400);
     const request = loadRequests().find((entry) => entry.reqId === body.reqId);
     if (request === undefined) return json({ error: `no pairing request ${body.reqId} here` }, 404);
+    const ttl = codeTtl();
+    if ("error" in ttl) return json({ error: ttl.error }, 500);
     const code = String(randomInt(0, 10_000)).padStart(4, "0");
-    const expiresAt = now().getTime() + codeTtlMs();
+    const expiresAt = now().getTime() + ttl.ms;
     live.set(request.reqId, { code, expiresAt, tries: 0, by: body.by });
     return json({ code, expiresAt, name: request.name, fingerprint: request.fingerprint });
 });

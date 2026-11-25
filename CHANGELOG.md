@@ -6,6 +6,13 @@ one. See docs/releasing.md.
 
 ## v0.7.4 - unreleased
 
+### Changed
+
+- A pairing code now works for 10 minutes instead of 2, so a code read out by phone or chat a few minutes late still
+  pairs. `peer.codeTtlMinutes` in config/machine.json sets it per machine; `TOLI_PEER_CODE_TTL_MS` in the listener's
+  environment still wins, and `peer accept` and the request's inbox item say how long the code lives
+  (docs/peers.md, T2804).
+
 ### Fixed
 
 - The release catch-up no longer merges a release into a per-task fix or PR branch. It merged main's tag into any
