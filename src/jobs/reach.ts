@@ -3,15 +3,21 @@
 // host's remaining calls in the pass are skipped, so its later items keep their order and nobody waits on its ssh
 // timeout twice. A host the tick's ssh could not reach (ssh's own exit 255, or the call's timeout) is also backed off
 // across ticks in state/reach.json: 30 s after the first failure, doubling with each one after, at most 10 minutes.
-// Any call that reaches it clears that. A paired peer that only pulls, which the tick still tries over HTTPS
-// (src/jobs/pull-peer-retry.ts), is backed off the same way under `peer:<name>`. The fleet probes (`fleet status`,
-// `fleet queues`, `fleet check`, `pick`: src/fleet/fleet-probe.ts) back off a machine none of their routes reached
-// under `fleet:<name>` on the same schedule, and skip it until then.
+// Any call that reaches it clears that. A failure that says this machine itself has no network ("Network is
+// unreachable": its own link or mesh VPN is down) is a local outage, not the host's: it skips the host for the rest
+// of the pass but never backs it off, so the first pass after the network returns tries every host again. A paired
+// peer that only pulls, which the tick still tries over HTTPS (src/jobs/pull-peer-retry.ts), is backed off the same
+// way under `peer:<name>`. The fleet probes (`fleet status`, `fleet queues`, `fleet check`, `pick`:
+// src/fleet/fleet-probe.ts) back off a machine none of their routes reached under `fleet:<name>` on the same
+// schedule, and skip it until then.
 import { paths } from "../core/paths.ts";
 import { now, readJson, withLock, writeJsonAtomic } from "../core/util.ts";
 
 export const BACKOFF_FIRST_MS = 30_000;
 export const BACKOFF_MAX_MS = 10 * 60_000;
+
+/** A failure meaning this machine has no network at all (its link or mesh VPN is down), whichever host it called. */
+export const LOCAL_OUTAGE = /network is unreachable|ENETUNREACH/i;
 
 /** state/reach.json: per ssh name, the failures in a row and when the tick tries it again. */
 export type ReachState = Record<string, { failures: number; retryAt: number; error: string }>;
@@ -69,11 +75,11 @@ export class Reach {
         else this.failed.set(host, error.split("\n")[0] ?? error);
     }
 
-    /** `host` was not reached at all: skip it for the rest of the pass, and the tick backs it off. */
+    /** `host` was not reached at all: skip it for the rest of the pass; the tick backs it off unless the outage is local. */
     unreachable(host: string, error: string): void {
         const line = error.split("\n")[0] ?? error;
         this.failed.set(host, line);
-        if (!this.options.backoff) return;
+        if (!this.options.backoff || LOCAL_OUTAGE.test(error)) return;
         const at = now().getTime();
         updateReach((state) => {
             const failures = (state[host]?.failures ?? 0) + 1;

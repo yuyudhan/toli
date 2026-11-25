@@ -23,6 +23,7 @@ import {
     withLock,
     writeJsonAtomic,
 } from "../core/util.ts";
+import { Reach } from "../jobs/reach.ts";
 import { loadBacklog, type Status, type Task } from "./backlog.ts";
 import { forwardAnswer } from "./delegated-answer.ts";
 import { fleetId, splitFleetId } from "./delegation-report.ts";
@@ -92,6 +93,10 @@ async function fetchCopy(machine: FleetMachine): Promise<FleetCopy> {
         return fallback(`bad task list from ${machine.ssh}`);
     }
     if (!isTaskList(tasks)) return fallback(`bad task list from ${machine.ssh}`);
+    // ssh reached it: the fleet probes' and the tick's backoffs of it end (src/jobs/reach.ts).
+    const reach = new Reach({ backoff: false });
+    reach.success(`fleet:${machine.name}`);
+    reach.success(machine.ssh);
     storeCopy(machine.name, fetchedAt, tasks);
     const kept = cached(machine.name);
     return {

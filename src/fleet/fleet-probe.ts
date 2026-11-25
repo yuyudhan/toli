@@ -3,7 +3,10 @@
 // their routes reached is backed off in state/reach.json under `fleet:<name>`, on the tick's schedule
 // (src/jobs/reach.ts: 30 s, doubling, at most 10 minutes), and so is a machine reached only by ssh while the tick's own
 // ssh to it is backed off. A backed-off machine is not probed: its row says why at once, with the last snapshot seen
-// from it (state/fleet-seen.json) marked stale, so a dead host costs no pass its timeouts again.
+// from it (state/fleet-seen.json) marked stale, so a dead host costs no pass its timeouts again. A local outage backs
+// no machine off: a probe that failed because this machine has no network ("Network is unreachable"), or a pass in
+// which every probed machine (two or more) went unreached at once, says nothing about those machines, so the first
+// pass after the network returns probes them all again.
 import {
     type FleetMachine,
     inboundOff,
@@ -14,7 +17,7 @@ import {
 } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
 import { now, readJson, runAsync, withLock, writeJsonAtomic } from "../core/util.ts";
-import { backedOff, Reach, unreached } from "../jobs/reach.ts";
+import { backedOff, LOCAL_OUTAGE, Reach, unreached } from "../jobs/reach.ts";
 import { httpPeer } from "../peer/transport.ts";
 import type { Full } from "./full.ts";
 import { type Netbird, netbirdOnce, type ProbeFailure, unreachableReason } from "./netbird-reach.ts";
@@ -79,11 +82,18 @@ function withLastSeen(entry: FleetEntry, seen: Seen): FleetEntry {
     return last === undefined ? entry : { ...entry, lastSeen: last };
 }
 
-/** After a probe: a machine no route reached is backed off; one that answered has its backoff cleared. */
-function noteProbe(reach: Reach, machine: FleetMachine, entry: FleetEntry, noRoute: boolean): void {
+/**
+ * After a probe: a machine no route reached is backed off unless the outage is local (`localOutage`); one that
+ * answered has its backoff cleared, and so has the tick's ssh to it when the probe reached it over ssh.
+ */
+function noteProbe(reach: Reach, machine: FleetMachine, result: Probe, localOutage: boolean): void {
     const key = `fleet:${machine.name}`;
-    if (noRoute) reach.unreachable(key, entry.reasons.join("; ").replace(/^unreachable: /, ""));
-    else if (entry.reachable) reach.success(key);
+    if (result.unreached && !localOutage)
+        reach.unreachable(key, result.entry.reasons.join("; ").replace(/^unreachable: /, ""));
+    else if (result.entry.reachable) {
+        reach.success(key);
+        if (result.overSsh) reach.success(machine.ssh);
+    }
 }
 
 /** ssh's ConnectTimeout for a fleet probe: a mesh VPN host that is off the network fails the banner exchange in it. */
@@ -215,14 +225,19 @@ export async function probeMachine(
     return (await probe(machine, budgetMs, netbird)).entry;
 }
 
-/** probeMachine's entry, and whether no route reached the machine at all (what backs it off). */
+/**
+ * One probe: its entry; whether no route reached the machine at all (what backs it off); whether that failure says
+ * this machine has no network (`localOutage`, which backs nothing off); and whether ssh is the route that answered.
+ */
+type Probe = { entry: FleetEntry; unreached: boolean; localOutage: boolean; overSsh: boolean };
+
 async function probe(
     machine: FleetMachine,
     budgetMs: number | undefined,
     netbird: () => Promise<Netbird | null>,
-): Promise<{ entry: FleetEntry; unreached: boolean }> {
+): Promise<Probe> {
     const deadline = budgetMs === undefined ? undefined : performance.now() + budgetMs;
-    const unreachable = (detail: string, noRoute = false) => ({
+    const unreachable = (detail: string, noRoute = false, raw = detail): Probe => ({
         entry: {
             machine: machine.name,
             local: false,
@@ -230,10 +245,12 @@ async function probe(
             available: false,
             reasons: [`unreachable: ${detail}`],
             resources: null,
-        } satisfies FleetEntry,
+        },
         unreached: noRoute,
+        localOutage: noRoute && LOCAL_OUTAGE.test(raw),
+        overSsh: false,
     });
-    const reached = (resources: Resources) => ({
+    const reached = (resources: Resources, overSsh: boolean): Probe => ({
         entry: {
             machine: machine.name,
             local: false,
@@ -241,17 +258,21 @@ async function probe(
             available: resources.available,
             reasons: resources.reasons,
             resources,
-        } satisfies FleetEntry,
+        },
         unreached: false,
+        localOutage: false,
+        overSsh,
     });
     // A paired peer answers over HTTPS (its `status` permission for this machine); ssh is the fallback.
     const peer = httpPeer(machine.name);
     // A budgeted probe has no time for netbird and `ssh -G`; its timeout still reads as no route / host down.
     const view = deadline === undefined ? netbird : () => Promise.resolve(null);
+    // The reason may be rewritten from this machine's NetBird view; whether the outage is local is read from the raw one.
     const failed = async (failure: ProbeFailure, noRoute: boolean) =>
         unreachable(
             await unreachableReason(failure, { ssh: machine.ssh, peerAddrs: peer?.addrs ?? [] }, view, now()),
             noRoute,
+            `${failure.https}${failure.ssh}`,
         );
     let httpsError = "";
     if (peer !== undefined) {
@@ -261,17 +282,16 @@ async function probe(
             const { askStatus } = await import("../peer/deliver.ts");
             // Loading it counts against the budget: on a loaded machine it takes a noticeable part of a second.
             const left = deadline === undefined ? PROBE_HTTPS_MS : Math.max(1, deadline - performance.now());
-            return reached(parseResources(JSON.stringify((await askStatus(peer, left)).value)));
+            return reached(parseResources(JSON.stringify((await askStatus(peer, left)).value)), false);
         } catch (error) {
             httpsError = `HTTPS: ${firstLine(error instanceof Error ? error.message : String(error))}; `;
         }
     }
     // Never probed over ssh, and never picked: work for it goes by `delegate`, which it pulls.
-    if (inboundOff(machine))
-        return {
-            entry: { ...unreachable("").entry, reasons: [`${httpsError}${inboundOffText(machine)}`] },
-            unreached: peer !== undefined,
-        };
+    if (inboundOff(machine)) {
+        const off = unreachable("", peer !== undefined, httpsError);
+        return { ...off, entry: { ...off.entry, reasons: [`${httpsError}${inboundOffText(machine)}`] } };
+    }
     const capMs = deadline === undefined ? PROBE_CAP_MS : Math.ceil(deadline - performance.now());
     if (capMs <= 0) return unreachable(`${httpsError}no time left to try ssh ${machine.ssh}`);
     const capSeconds = Math.ceil(capMs / 1000);
@@ -295,7 +315,7 @@ async function probe(
             unreached(result),
         );
     try {
-        return reached(parseResources(result.stdout));
+        return reached(parseResources(result.stdout), true);
     } catch (error) {
         return unreachable(
             `bad resources output from ${machine.ssh}: ${error instanceof Error ? error.message : String(error)}`,
@@ -305,8 +325,8 @@ async function probe(
 
 /**
  * This machine plus every other `config/fleet.json` machine, probed in parallel. Never throws for a bad machine. A
- * machine backed off after no route reached it is not probed again until its backoff ends (header above); every
- * unreachable row carries the last snapshot seen from that machine, marked stale.
+ * machine backed off after no route reached it is not probed again until its backoff ends (header above), unless the
+ * outage was local; every unreachable row carries the last snapshot seen from that machine, marked stale.
  */
 export async function fleetStatus(): Promise<FleetEntry[]> {
     const local = localResources();
@@ -314,15 +334,21 @@ export async function fleetStatus(): Promise<FleetEntry[]> {
     const netbird = netbirdOnce();
     const reach = new Reach({ backoff: true });
     const seen = readSeen();
-    const remote = await Promise.all(
+    const passes = await Promise.all(
         others.map(async (machine) => {
             const held = heldReason(machine);
-            if (held !== null) return heldEntry(machine, held, seen);
-            const { entry, unreached } = await probe(machine, undefined, netbird);
-            noteProbe(reach, machine, entry, unreached);
-            return withLastSeen(entry, seen);
+            if (held !== null) return { machine, held: heldEntry(machine, held, seen) };
+            return { machine, probed: await probe(machine, undefined, netbird) };
         }),
     );
+    const probed = passes.flatMap((pass) => (pass.probed === undefined ? [] : [pass.probed]));
+    // Every probed machine unreached at once: this machine's network is down, not theirs.
+    const passOutage = probed.length >= 2 && probed.every((result) => result.unreached);
+    const remote = passes.map((pass) => {
+        if (pass.probed === undefined) return pass.held;
+        noteProbe(reach, pass.machine, pass.probed, passOutage || pass.probed.localOutage);
+        return withLastSeen(pass.probed.entry, seen);
+    });
     recordSeen(remote);
     return [
         {
